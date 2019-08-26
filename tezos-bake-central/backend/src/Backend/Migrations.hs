@@ -181,7 +181,7 @@ extraIndexes = do
   createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "id"] "_errorLog_idWhereStarted_idx" (Just "\"stopped\" IS NULL")
   createIndex (QualifiedIdentifier Nothing "Baker") [Right "publicKeyHash"] "_baker_publicKeyHashWhereNotDeleted_idx" (Just "NOT \"data#deleted\"")
   createIndex (QualifiedIdentifier Nothing "BlockTodo") [Right "level"] "_blockTodo_levelWhereNotParsed_idx" (Just "NOT \"parsedParent\" OR NOT \"parsedAccusations\"")
-  createIndex (QualifiedIdentifier Nothing "BlockShellIndex") [Right "predecessor"] "_blockShellIndex_precessor_idx" Nothing
+  createIndex (QualifiedIdentifier Nothing "BlockShellIndex") [Right "chainId", Right "level"] "_blockShellIndex_level_idx" Nothing
 
 createIndex
   :: Migrate m

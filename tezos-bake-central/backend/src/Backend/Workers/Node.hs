@@ -86,15 +86,15 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
   let db = _nodeDataSource_pool nds
   runDb (Identity db) $ do
-    let nHash        = headBlockInfo ^. hash
-        nPredecessor = headBlockInfo ^. predecessor
-        nFitness     = headBlockInfo ^. fitness
-        nLevel       = headBlockInfo ^. level
-        nTimestamp   = headBlockInfo ^. timestamp
+    let hashH        = headBlockInfo ^. hash
+        predecessorH = headBlockInfo ^. predecessor
+        fitnessH     = headBlockInfo ^. fitness
+        levelH       = headBlockInfo ^. level
+        timestampH   = headBlockInfo ^. timestamp
     void [executeQ|
       INSERT INTO "BlockShellIndex"
-                  ( "hash" , "predecessor" , "fitness" , "level" , "timestamp" , "protocolKilnId" )
-           VALUES ( ?nHash , ?nPredecessor , ?nFitness , ?nLevel , ?nTimestamp , null )
+             ( "hash", "predecessor", "fitness", "chainId", "level", "timestamp", "protocolKilnId" )
+      VALUES ( ?hashH, ?predecessorH, ?fitnessH, ?chainId , ?levelH, ?timestampH, null )
       ON CONFLICT ("hash") DO UPDATE
               SET "fitness" = EXCLUDED."fitness",
                   "timestamp" = EXCLUDED."timestamp"

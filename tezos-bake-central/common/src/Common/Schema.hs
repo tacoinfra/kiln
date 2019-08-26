@@ -985,8 +985,9 @@ newtype ProtocolKilnId = ProtocolKilnId Int16
 data BlockShellIndex = BlockShellIndex
   { _blockShellIndex_hash :: !BlockHash
   , _blockShellIndex_predecessor :: !BlockHash
-  , _blockShellIndex_fitness :: !(Maybe Fitness)
+  , _blockShellIndex_chainId :: !ChainId
   , _blockShellIndex_level :: !RawLevel
+  , _blockShellIndex_fitness :: !(Maybe Fitness)
   , _blockShellIndex_timestamp :: !(Maybe UTCTime)
   , _blockShellIndex_protocolKilnId :: !(Maybe ProtocolKilnId)
   } deriving (Eq, Generic, Ord, Show, Typeable)

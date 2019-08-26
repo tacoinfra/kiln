@@ -158,21 +158,6 @@ data NodeQueryIx a where
   NodeQueryIx_EndorsingRights :: BlockHash -> RawLevel -> NodeQueryIx (Seq EndorsingRights)
 deriving instance Show (NodeQueryIx a)
 
--- | Simple write-through cache stored in postgres.
-
-data NodeQueryPg a where
-  NodeQueryPg_BlockAncestors :: BlockHash -> Int -> NodeQueryPg (Maybe BlockAncestors)
---   NodeQueryPg_BlockShell     :: BlockHash -> NodeQueryPg (Maybe VeryBlockLike)
-deriving instance Show (NodeQueryPg a)
-
-data BlockAncestors = BlockAncestors
-   { _blockAncestors_level           :: !RawLevel
-   , _blockAncestors_blockAncestors  :: !(V.Vector BlockHash)
-   } deriving (Eq, Ord, Generic, Typeable, Show)
-makeLenses 'BlockAncestors
-instance Aeson.FromJSON BlockAncestors
-instance Aeson.ToJSON   BlockAncestors
-
 toCacheDelegateInfo :: DelegateInfo -> CacheDelegateInfo
 toCacheDelegateInfo di = CacheDelegateInfo
   { _cacheDelegateInfo_balance = _delegateInfo_balance di
@@ -184,6 +169,8 @@ toCacheDelegateInfo di = CacheDelegateInfo
   , _cacheDelegateInfo_deactivated = _delegateInfo_deactivated di
   , _cacheDelegateInfo_gracePeriod = _delegateInfo_gracePeriod di
   }
+
+
 
 data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
@@ -1128,36 +1115,6 @@ nodeQueryIx q = do
       |]
       where result = Json $ Aeson.toJSON result'
 
-nodeQueryPg
-  :: forall a m.
-    ( MonadNodeQuery m
-    )
-  => NodeQueryPg a -> m a
-nodeQueryPg q = do
-  $(logDebugSH) ("nodeQueryPg called" :: Text,q)
-  case q of
-    -- use join so that we can control the scope of 'nqInDB' better
-    (NodeQueryPg_BlockAncestors blockHash maxLevels) -> join $ nqInDB $ do
-      let
-       getLevel = do
-        [queryQ| SELECT level FROM "BlockShellIndex" WHERE hash = ?blockHash |] >>= \case
-          [] -> do
-            [queryQ| SELECT level FROM "BlockShellIndex" WHERE predecessor = ?blockHash) |] >>= \case
-              [] -> pure Nothing
-              (Only lvlPlusOne:_) -> let !lvl = lvlPlusOne - 1 in pure $! Just $! (False, lvl)
-          (Only lvl:_) -> pure $ Just $! (True, lvl)
-      getLevel >>= \case
-        Nothing -> do
-          pure $ pure $! Nothing
-        Just (havePgAnswer, lvl) -> do
-          if havePgAnswer
-          then do
-            -- here, because of the unadorned 'do', we are inside 'nqInDB' for our next query
-            as <- [queryQ| SELECT predecessor FROM "blockShellAncestors"(?blockHash) LIMIT ?maxLevels |]
-            pure $ pure $! Just $! BlockAncestors lvl (V.fromList (map (\(Only x) -> x) as))
-          else pure $ do
-            -- here, thanks to the 'pure $ do',  we are outside 'nqInDB' for our NodeRPC call
-            pure Nothing   -- FIXME
 
 nodeQueryIxBakingRights1
   :: forall m.
@@ -1321,12 +1278,6 @@ deriveGEq ''NodeQueryIx
 deriveGCompare ''NodeQueryIx
 deriveGShow ''NodeQueryIx
 makeRequestForData ''NodeQueryIx
-
-deriveGEq ''NodeQueryPg
-deriveGCompare ''NodeQueryPg
-deriveGShow ''NodeQueryPg
-makeRequestForData ''NodeQueryPg
-
 
 instance Hashable (NodeQuery a) where
   hashWithSalt s = hashWithSalt s . requestToJSON
