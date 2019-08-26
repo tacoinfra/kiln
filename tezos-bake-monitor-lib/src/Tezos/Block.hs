@@ -273,6 +273,13 @@ instance HasBalanceUpdates Block where
       md' = (blockMetadata_balanceUpdates . traverse) f $ _block_metadata blk
       ops' = (traverse . traverse . balanceUpdates) f $ _block_operations blk
 
+mkVeryBlockSpine :: BlockSpine b => b -> VeryBlockSpine
+mkVeryBlockSpine blk = VeryBlockSpine
+  { _veryBlockSpine_hash = blk ^. hash
+  , _veryBlockSpine_predecessor = blk ^. predecessor
+  , _veryBlockSpine_level = blk ^. level
+  }
+
 mkVeryBlockLike :: BlockLike b => b -> VeryBlockLike
 mkVeryBlockLike blk = VeryBlockLike
   { _veryBlockLike_hash = blk ^. hash
