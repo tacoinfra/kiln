@@ -164,6 +164,13 @@ instance NFData TzScanNonceHash
 instance FromJSON TzScanNonceHash where
   parseJSON v = TzScanNonceHash <$> (parseJSON v <|> pure Nothing)
 
+data VeryBlockSpine = VeryBlockSpine
+  { _veryBlockSpine_hash :: !BlockHash
+  , _veryBlockSpine_predecessor :: !BlockHash
+  , _veryBlockSpine_level :: !RawLevel
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance NFData VeryBlockSpine
+
 data VeryBlockLike = VeryBlockLike
   { _veryBlockLike_hash :: !BlockHash
   , _veryBlockLike_predecessor :: !BlockHash
@@ -183,6 +190,7 @@ concat <$> traverse deriveTezosJson
   , ''TzScanBlock
   , ''TzScanProtocol
   , ''VotingPeriodKind
+  , ''VeryBlockSpine
   , ''VeryBlockLike
   ]
 
@@ -194,52 +202,69 @@ concat <$> traverse makeLenses
   , 'TzScanBaker
   , 'TzScanBlock
   , 'TzScanProtocol
+  , 'VeryBlockSpine
   , 'VeryBlockLike
   ]
 
-class BlockLike b where
-  -- chain :: Lens' b ChainId
+class BlockSpine b where
   hash :: Lens' b BlockHash
   predecessor :: Lens' b BlockHash
   level :: Lens' b RawLevel
+
+class BlockSpine b => BlockLike b where
+  -- chain :: Lens' b ChainId
   fitness :: Lens' b Fitness
   timestamp :: Lens' b UTCTime
 
-instance BlockLike Block where
+instance BlockSpine VeryBlockSpine where
+  hash = veryBlockSpine_hash
+  predecessor = veryBlockSpine_predecessor
+  level = veryBlockSpine_level
+
+instance BlockSpine Block where
   hash = block_hash
   predecessor = block_header . blockHeader_predecessor
   level = block_header . blockHeader_level
+
+instance BlockLike Block where
   fitness = block_header . blockHeader_fitness
   timestamp = block_header . blockHeader_timestamp
 
-instance BlockLike (BlockHash, BlockHeader) where
+instance BlockSpine (BlockHash, BlockHeader) where
   hash = _1
   predecessor = _2 . blockHeader_predecessor
   level = _2 . blockHeader_level
+
+instance BlockLike (BlockHash, BlockHeader) where
   fitness = _2 . blockHeader_fitness
   timestamp = _2 . blockHeader_timestamp
 
-instance BlockLike MonitorBlock where
+instance BlockSpine MonitorBlock where
   hash = monitorBlock_hash
   predecessor = monitorBlock_predecessor
   level = monitorBlock_level
+
+instance BlockLike MonitorBlock where
   fitness = monitorBlock_fitness
   timestamp = monitorBlock_timestamp
 
-instance BlockLike TzScanBlock where
+instance BlockSpine TzScanBlock where
   hash = tzScanBlock_hash
   predecessor = tzScanBlock_predecessorHash
   level = tzScanBlock_level
+
+instance BlockLike TzScanBlock where
   fitness = tzScanBlock_fitness . iso coerce coerce
   timestamp = tzScanBlock_timestamp
 
-instance BlockLike VeryBlockLike where
+instance BlockSpine VeryBlockLike where
   hash = veryBlockLike_hash
   predecessor = veryBlockLike_predecessor
-  fitness = veryBlockLike_fitness
   level = veryBlockLike_level
-  timestamp = veryBlockLike_timestamp
 
+instance BlockLike VeryBlockLike where
+  fitness = veryBlockLike_fitness
+  timestamp = veryBlockLike_timestamp
 
 instance HasBalanceUpdates Block where
   balanceUpdates f blk = blk' <$> md' <*> ops'
@@ -256,4 +281,3 @@ mkVeryBlockLike blk = VeryBlockLike
   , _veryBlockLike_level = blk ^. level
   , _veryBlockLike_timestamp = blk ^. timestamp
   }
-

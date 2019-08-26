@@ -18,7 +18,7 @@ import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Chain (NamedChain, showNamedChain)
-import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
+import Tezos.Types (BlockHash, BlockSpine(..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
 import Common (nominalDiffTimeToSeconds)
