@@ -421,11 +421,35 @@ data OperationContentsBallot = OperationContentsBallot
 data ManagerOperationMetadata a = ManagerOperationMetadata
   { _managerOperationMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
   , _managerOperationMetadata_operationResult :: !(OperationResult a) --  "operation_result": { "$ref": "#/definitions/operation.alpha.operation_result.reveal" },
-  -- I don't see these in the output from the nodes, seems redundant,  i'll skip them for now.
-  -- , _managerOperationMetadata_internalOperationResults :: !(Seq InternalOperationResult) --  "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
+  , _managerOperationMetadata_internalOperationResults :: !(Seq InternalOperationResult) --  "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
 -- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:500:           (dft "internal_operation_results"
 -- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:501:              (list internal_operation_result_encoding) [])) ;
   }
+  deriving (Eq, Ord, Show, Typeable)
+
+data InternalOperationResult
+  = InternalOperationResult_Reveal !InternalOperationContentsReveal
+  | InternalOperationResult_Transaction !InternalOperationContentsTransaction
+  | InternalOperationResult_Origination !InternalOperationContentsOrigination
+  | InternalOperationResult_Delegation !InternalOperationContentsDelegation
+  deriving (Eq, Ord, Show, Typeable)
+
+data InternalOperationContentsReveal = InternalOperationContentsReveal
+  deriving (Eq, Ord, Show, Typeable)
+  -- FIXME: don't drop this one on the floor.
+data InternalOperationContentsTransaction = InternalOperationContentsTransaction
+  { _internalOperationContentsTransaction_source :: !ContractId
+  , _internalOperationContentsTransaction_nonce :: !(Base16ByteString ByteString)
+  , _internalOperationContentsTransaction_amount :: !Tez
+  , _internalOperationContentsTransaction_destination :: !ContractId
+  , _internalOperationContentsTransaction_parameters :: !(Maybe Expression)
+  , _internalOperationContentsTransaction_result :: OperationResultTransaction 
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
+data InternalOperationContentsOrigination = InternalOperationContentsOrigination
+  deriving (Eq, Ord, Show, Typeable)
+data InternalOperationContentsDelegation = InternalOperationContentsDelegation
   deriving (Eq, Ord, Show, Typeable)
 
 data OperationResultStatus
@@ -1000,6 +1024,11 @@ concat <$> traverse deriveTezosJson
   , ''OperationContentsProposals
   , ''OperationContentsBallot , ''Ballot
   , ''OperationResultStatus
+  , ''InternalOperationResult
+  , ''InternalOperationContentsReveal
+  , ''InternalOperationContentsTransaction
+  , ''InternalOperationContentsOrigination
+  , ''InternalOperationContentsDelegation
   , ''OperationContentsReveal , ''OperationResultReveal
   , ''OperationContentsTransaction
   , ''OperationContentsDelegation, ''OperationResultDelegation
