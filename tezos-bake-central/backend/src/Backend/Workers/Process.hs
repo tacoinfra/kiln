@@ -120,7 +120,7 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
         otherProcessRunning <- case pidToRunAfter of
           Nothing -> pure True
           Just pid1 -> all (== ProcessState_Running) <$> project state_ (AutoKeyField ==. fromId pid1)
-        pure $ (not isStopped) && otherProcessRunning
+        pure $ not isStopped && otherProcessRunning
       unless canRun $ threadDelay' 1 *> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
@@ -186,7 +186,7 @@ processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (
                 stop = procControl /= ProcessControl_Run
                 timeoutInSec = 60 :: Int
                 delayInSec = 1 :: NominalDiffTime
-              liftIO $ when stop $ if mCount < Just (ceiling $ (fromIntegral timeoutInSec) / delayInSec)
+              liftIO $ when stop $ if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
                 then terminateProcess ph
                 else Proc.getPid ph >>= traverse_ (signalProcess sigKILL)
               threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)

@@ -50,7 +50,7 @@ import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
-import Backend.Workers.TezosClient (addBakerImpl, startBaking)
+import Backend.Workers.TezosClient (addBakerImpl)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -93,7 +93,6 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
             , _ledgerAccount_shouldSetHWM = Nothing
             , _ledgerAccount_shouldDoVoteProtocol = Nothing
             , _ledgerAccount_shouldDoVoteBallot = Nothing
-            , _ledgerAccount_checkIfRegistered = Nothing
             }
       PublicRequest_ImportSecretKey sk -> inDb $ do
         update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
@@ -101,9 +100,6 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
         update [LedgerAccount_shouldSetupToBakeField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_RegisterKeyAsDelegate sk fee -> inDb $ do
         update [LedgerAccount_shouldRegisterFeeField =. Just fee] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-      PublicRequest_CheckIfRegistered sk pkh -> inDb $ do
-        update [LedgerAccount_checkIfRegisteredField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-      PublicRequest_StartBaking pkh -> inDb $ startBaking pkh
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
@@ -222,11 +218,11 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
               update [ProcessData_controlField =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
               clearErrors nid
               notify NotifyTag_NodeInternal (nid, Nothing)
-          void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $ removeDataDir
+          void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) removeDataDir
         where
           removeDataDir = do
             let dataDir = nodeDataDir appConfig
-            $(logDebug) ("Removing Kiln node's data dir: " <> (tshow dataDir))
+            $(logDebug) ("Removing Kiln node's data dir: " <> tshow dataDir)
             liftIO $ removeDirectoryRecursive dataDir
           clearErrors nid = do
             let

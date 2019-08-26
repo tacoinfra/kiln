@@ -89,6 +89,7 @@ data ClientError
   = ClientError_NodeNotReady
   | ClientError_RequestDeclinedByLedger
   | ClientError_LedgerDisconnected
+  | ClientError_Timeout
   | ClientError_Other Text
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ClientError
@@ -218,7 +219,6 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
   , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe (Id PeriodProposal)) -- ^ Proposal to vote for
   , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Ballot) -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.
-  , _ledgerAccount_checkIfRegistered :: !(Maybe PublicKeyHash)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one
@@ -675,7 +675,6 @@ instance Semigroup BakeEfficiency where
 
 instance Monoid BakeEfficiency where
   mempty = BakeEfficiency 0 0
-  mappend = (<>)
 
 data Notificatee = Notificatee
   { _notificatee_email :: !Email
@@ -820,6 +819,7 @@ data ErrorLogBakerMissed = ErrorLogBakerMissed
   , _errorLogBakerMissed_right :: !RightKind
   , _errorLogBakerMissed_level :: !RawLevel
   , _errorLogBakerMissed_fitness :: !Fitness
+  , _errorLogBakerMissed_bakeTime :: !UTCTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerMissed where
   type IdData ErrorLogBakerMissed = Id ErrorLog
@@ -834,7 +834,6 @@ instance HasId ErrorLogInsufficientFunds where
 
 data ErrorLogVotingReminder = ErrorLogVotingReminder
   { _errorLogVotingReminder_log :: !(Id ErrorLog)
-  , _errorLogVotingReminder_chainId :: !ChainId
   , _errorLogVotingReminder_baker :: !(Id Baker)
   , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
   , _errorLogVotingReminder_votingPeriod :: !RawLevel
@@ -850,6 +849,7 @@ data ErrorLog = ErrorLog
   , _errorLog_stopped :: !(Maybe UTCTime)
   , _errorLog_lastSeen :: !UTCTime
   , _errorLog_noticeSentAt :: !(Maybe UTCTime)
+  , _errorLog_chainId :: !ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
 

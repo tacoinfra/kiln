@@ -129,23 +129,6 @@ data BakerErrorDescriptions = BakerErrorDescriptions
   , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
   }
 
-isUserResolvable :: LogTag t -> Bool
-isUserResolvable = \case
-  LogTag_Node nlt -> case nlt of
-    NodeLogTag_InaccessibleNode -> False
-    NodeLogTag_NodeWrongChain -> False
-    NodeLogTag_BadNodeHead -> False
-    NodeLogTag_NodeInvalidPeerCount -> True
-  LogTag_Baker blt -> case blt of
-    BakerLogTag_BakerMissed -> True
-    BakerLogTag_BakerDeactivated -> False
-    BakerLogTag_BakerDeactivationRisk -> False
-    BakerLogTag_BakerAccused -> True
-    BakerLogTag_InsufficientFunds -> False
-    BakerLogTag_VotingReminder -> True
-  LogTag_BakerNoHeartbeat -> True
-  LogTag_NetworkUpdate -> True
-
 data ErrorLogMessage = ErrorLogMessage
   { _errorLogMessage_resolved :: Bool
   , _errorLogMessage_subject :: Text
@@ -257,8 +240,8 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
       RightKind_Baking -> ("a bake", "to bake")
       RightKind_Endorsing -> ("an endorsement", "to endorse")
 
-bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> ErrorLogBakerMissed -> BakerErrorDescriptions
-bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) elog = BakerErrorDescriptions
+bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> RightKind -> BakerErrorDescriptions
+bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight <> "."
   , _bakerErrorDescriptions_notification = "This baker failed " -- TODO: ... failed what
@@ -277,7 +260,7 @@ bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) elog = BakerErrorDescr
   }
   where
     localTime ts = T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts
-    (aRight, opportunity, theRight) = case _errorLogBakerMissed_right elog of
+    (aRight, opportunity, theRight) = case rightKind of
       RightKind_Baking -> ("a bake", "bake opportunities", "bake")
       RightKind_Endorsing -> ("an endorsement", "endorsement operations", "endorsement")
 

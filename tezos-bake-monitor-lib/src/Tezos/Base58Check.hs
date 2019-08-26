@@ -221,7 +221,7 @@ instance IsBase58Hash t => Read (HashedValue t) where
 
 instance IsBase58Hash t => B.TezosBinary (HashedValue t) where
   build = fromByteString . fromShort . unHashedValue
-  get = (HashedValue . toShort) <$> getByteString (hashSize $ Proxy @t)
+  get = HashedValue . toShort <$> getByteString (hashSize $ Proxy @t)
 
 
 instance IsBase58Hash 'HashType_BlockHash where

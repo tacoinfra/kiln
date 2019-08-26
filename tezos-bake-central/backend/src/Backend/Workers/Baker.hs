@@ -140,7 +140,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
                 , _bakerRightsCycleProgress_cycle = cycle
                 , _bakerRightsCycleProgress_progress = rightsLookAhead + _rightsCycleInfo_minLevel cycleHash - 1
                 }
-            return ((cycle, pkh), (Max v))
+            return ((cycle, pkh), Max v)
 
     let
       pkhs :: Set PublicKeyHash
@@ -160,7 +160,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
         return (x, cycle')
 
     $(logDebugSH) ("Baker rights TODO:" :: Text, unfinished)
-    for_ mNextUnfinished $ \((aBakerRight :| moreUnfinished), aCycleInfo) -> do
+    for_ mNextUnfinished $ \(aBakerRight :| moreUnfinished, aCycleInfo) -> do
       let bakerMinBound = minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished
           bakerMaxBound = rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo
       for_ [bakerMinBound .. bakerMaxBound] $ \lvl -> do
@@ -170,7 +170,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
           (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvl)
         let
           pri1baker :: Maybe BakingRights
-          pri1baker = fmap NonEmpty.head . nonEmpty . (filter $ (flip Set.member pkhs . _bakingRights_delegate) /\ (== 0) . _bakingRights_priority) $ toList reqBakers
+          pri1baker = fmap NonEmpty.head . nonEmpty . filter ((flip Set.member pkhs . _bakingRights_delegate) /\ (== 0) . _bakingRights_priority) $ toList reqBakers
           endorsers :: Seq EndorsingRights
           endorsers = Seq.filter (flip Set.member pkhs . _endorsingRights_delegate) reqEndorsers
           branch :: BlockHash
@@ -322,19 +322,20 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                  <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
-            bool reportMissedBake clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)
+            bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)
               (headBlock ^. fitness)
               RightKind_Baking
               (baker ^. baker_publicKeyHash)
               lvl
       return $ pure action
 
-    -- endorsements *on* this block are *of* the previos block
+    -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
                     <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
-      let action = bool reportMissedBake clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)
+      predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
+      let action = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)
                    (headBlock ^. fitness)
                    RightKind_Endorsing
                    (baker ^. baker_publicKeyHash)
@@ -399,9 +400,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
         isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
 
         insufficientFundAlerts :: mCommit ()
-        insufficientFundAlerts = if isInsufficientFunds
-          then reportInsufficientFunds baker
-          else clearInsufficientFunds baker
+        insufficientFundAlerts = bool clearInsufficientFunds reportInsufficientFunds isInsufficientFunds baker
 
         updateBakerDataInternal :: mCommit ()
         updateBakerDataInternal = update

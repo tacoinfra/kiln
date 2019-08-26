@@ -303,7 +303,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         elAttr "img" ("class" =: "kiln-icon" <> "src" =: static @"images/logo.svg") blank
         divClass "item" $ do
           divClass "title" $ text "Votes will be cast as your Kiln Baker."
-          divClass "detail" $ text $ toPublicKeyHashText $ bakerPkh
+          divClass "detail" $ text $ toPublicKeyHashText bakerPkh
         extras
 
     proposalFlow :: Workflow t m (Event t ())
@@ -329,7 +329,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           voteE <- el "tbody" $ listViewWithKey proposals $ \_ pp -> do
             let protocolHash = toBase58Text . _periodProposal_hash . fst <$> pp
                 attrs = ffor2 protocolHash hashFilter $ \h h' ->
-                  if (T.strip $ T.toCaseFold h') `T.isInfixOf` (T.toCaseFold h)
+                  if T.strip (T.toCaseFold h') `T.isInfixOf` T.toCaseFold h
                   then mempty
                   else "class" =: "filtered"
             elDynAttr "tr" attrs $ do
@@ -351,7 +351,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           pure $ fmapMaybe (fmap fst . Map.minViewWithKey) voteE
         elDynAttr "div" (ffor proposals $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
           text "No proposals have been submitted for this voting period yet."
-        pure (never, waitForWalletAppFlow . (castVoteFlow False Nothing) <$> vote)
+        pure (never, waitForWalletAppFlow . castVoteFlow False Nothing <$> vote)
 
     explorationFlow :: Workflow t m (Event t ())
     explorationFlow = someVotingPeriodFlow "Exploration Period"
@@ -462,7 +462,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             divClass "confirm-title" $ text "Confirm Vote"
             divClass "confirm-content" $ text $ textBallot ballot
         divClass "confirm-title" $ text "Source"
-        divClass "confirm-content" $ text $ toPublicKeyHashText $ bakerPkh
+        divClass "confirm-content" $ text $ toPublicKeyHashText bakerPkh
         divClass "confirm-title" $ text "Protocol"
         divClass "confirm-content" $ text $ toBase58Text $ snd proposal
         divClass "confirm-title" $ text "Period"
@@ -517,12 +517,12 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         dyn_ $ ffor iconType $ mapM $ \it ->
           elClass "span" "mark" $ icon $ "small circular " <> it
       divClass "centered-grey" $ text $ unLedgerIdentifier $ _secretKey_ledgerIdentifier sk
-      pure $ devFound
+      pure devFound
 
     nextBakingRights = do
       mBakerDyn <- fmap (MMap.lookup bakerPkh) <$> watchBakerAddresses
       let
-        mLevel = ffor ((fmap _bakerSummary_nextRight) <$> mBakerDyn) $ \case
+        mLevel = ffor (fmap _bakerSummary_nextRight <$> mBakerDyn) $ \case
           Just (BakerNextRight_KnownRights (_,l)) -> pure l
           _ -> Nothing
       dyn_ $ ffor mLevel $ \case

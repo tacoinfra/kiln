@@ -10,16 +10,19 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE GADTs #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.NodeCmd where
 
-import Control.Exception.Safe (catch, throwIO)
-import Control.Monad.Logger (MonadLogger, logInfoNS, logErrorNS)
+import Control.Exception.Safe (catch, throwIO, tryJust)
+import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logWarn, logError, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Builder as Builder
+import Data.Dependent.Map (DSum (..))
 import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
 import Data.List (find)
@@ -31,21 +34,28 @@ import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Snap.Core (addToOutput, MonadSnap)
 import System.Directory (doesFileExist)
-import System.FilePath (combine)
-import System.Process (readProcessWithExitCode, proc)
+import System.Exit (ExitCode(..))
+import qualified System.FilePath as FilePath
+import System.Process as Proc
+import System.IO (hGetContents)
+import System.IO.Error (isEOFError)
+import qualified System.IO.Streams as Streams
+import System.Which (staticWhich)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
 import Tezos.Base58Check (ProtocolHash)
-import Backend.Workers.Process
-import ExtraPrelude
-import System.Exit (ExitCode(..))
-import System.Which
 import Tezos.Chain (NamedChain(..))
+
+import Backend.CachedNodeRPC
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
+import Backend.Workers.Process
+import Common.Route (ExportLog(..))
 import Common.Schema
+import ExtraPrelude
 
 hasHistoryModes :: Version -> Bool
 hasHistoryModes = (>= Version [0,0,3] [])
@@ -75,9 +85,9 @@ tezosBinaryPaths =
   , $(staticWhich "mainnet-tezos-baker-004-Pt24m4xi")
   , $(staticWhich "mainnet-tezos-endorser-004-Pt24m4xi")
   ) :|
-    [ ( "PtG6cmhhWF8AY5gVQhCaUASbgu8CGebkGPdNSX26m3CSnxvih9v"
-      , $(staticWhich "zeronet-tezos-baker-alpha")
-      , $(staticWhich "zeronet-tezos-endorser-alpha")
+    [ ( "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
+      , $(staticWhich "zeronet-tezos-baker-005-PsBABY5H")
+      , $(staticWhich "zeronet-tezos-endorser-005-PsBABY5H")
       )
     ]
 
@@ -141,7 +151,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
 getVersion :: AppConfig -> IO (Maybe Version)
 getVersion appConfig = do
   let dataDir = nodeDataDir appConfig
-  let versionFile = dataDir `combine` "version.json"
+  let versionFile = dataDir `FilePath.combine` "version.json"
   hasVersionFile <- liftIO $ doesFileExist versionFile
   case hasVersionFile of
     False -> pure Nothing
@@ -161,7 +171,7 @@ initNode
   -> IO (FilePath, [String])
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
-  let identityFile = dataDir `combine` "identity.json"
+  let identityFile = dataDir `FilePath.combine` "identity.json"
       upgrade = runCommandWithLogging nodePath
         ["upgrade", "storage", "--data-dir", T.pack dataDir]
       showConfig = runCommandWithLogging nodePath
@@ -299,3 +309,39 @@ fetchProtocol pid =
       in if pid == tbpid || pid == tepid
         then return $ _bakerDaemonInternalData_altProtocol bdid
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
+
+handleExportLogs :: MonadSnap m => NodeDataSource -> DSum ExportLog Identity -> m ()
+handleExportLogs nds lType = do
+  let
+    logger = _nodeDataSource_logger nds
+    logIdentifier :: String
+    logIdentifier = "kiln-" <> case lType of
+      ExportLog_Baker :=> _ -> "baker"
+      ExportLog_Endorser :=> _ -> "endorser"
+      ExportLog_Node :=> _ -> "node"
+    command = (shell $ unwords
+      [ "journalctl"
+      , "--no-hostname"
+      , "--no-pager"
+      , "-t", logIdentifier
+      ])
+      { Proc.std_out = Proc.CreatePipe
+      , Proc.std_err = Proc.CreatePipe
+      }
+
+  runLoggingEnv logger $ do
+    $(logDebug) $ "Exporting logs for: " <> T.pack logIdentifier
+      <> "\nRunning command :" <> tshow command
+  addToOutput $ \str -> do
+    withCreateProcess command $ \_ mStdout mStderr ph -> for_ mStdout $ \stdout -> do
+      iStr <- Streams.handleToInputStream stdout
+      iStr1 <- Streams.map Builder.byteString iStr
+      Streams.connect iStr1 str
+      waitForProcess ph >>= runLoggingEnv logger . \case
+        ExitSuccess -> $(logDebug) "Exported logs successfully"
+        ExitFailure code -> do
+          $(logWarn) $ "Error in exporting logs: journalctl returned: " <> tshow code
+          for_ mStderr $ \stderr -> liftIO (tryJust (guard . isEOFError) (hGetContents stderr)) >>= \case
+            Left _ -> pure ()
+            Right c -> $(logError) $ "Stderr: " <> T.pack c
+    pure str

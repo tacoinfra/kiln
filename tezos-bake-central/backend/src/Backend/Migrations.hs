@@ -19,6 +19,7 @@ import Database.PostgreSQL.Simple.Types (Identifier (..), QualifiedIdentifier (.
 import Rhyolite.Backend.Account (migrateAccount)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, traceExecuteQ, Only(..))
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
+import Tezos.Types (ChainId)
 
 import ExtraPrelude
 
@@ -27,17 +28,17 @@ type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger
 convQN :: QualifiedIdentifier -> QualifiedName
 convQN (QualifiedIdentifier a b) = (T.unpack <$> a, T.unpack b)
 
-migrateKiln :: (Migrate m) => m ()
-migrateKiln = (getTableAnalysis >>= preMigrate >>= autoMigrate) *> extraIndexes
+migrateKiln :: Migrate m => ChainId -> m ()
+migrateKiln chainId = (getTableAnalysis >>= preMigrate chainId >>= autoMigrate) *> extraIndexes
 
-autoMigrate :: (Migrate m) => TableAnalysis m -> m ()
+autoMigrate :: Migrate m => TableAnalysis m -> m ()
 autoMigrate tableAnalysis = runMigration $ do
   migrateAccount tableAnalysis
   migrateQueuedEmail tableAnalysis
   migrateSchema tableAnalysis
 
-preMigrate :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
-preMigrate =
+preMigrate :: Migrate m => ChainId -> TableAnalysis m -> m (TableAnalysis m)
+preMigrate chainId =
       migrateParameters
   >=> migratePublicNodeHead
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "ErrorLogUpgradeNotice")
@@ -59,6 +60,7 @@ preMigrate =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "alias"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBadNodeHead") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "checkIfRegistered"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "deleted" "data#deleted"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (QualifiedIdentifier Nothing "Delegate") "Baker"
@@ -74,8 +76,10 @@ preMigrate =
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTestingVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodProposal") (ColumnMissing "id") False
+  >=> migrateChainIdToErrorLog chainId
+  >=> migrateErrorLogBakerMissedTimestamp
 
-migrateParameters :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
   let table = QualifiedIdentifier Nothing "Parameters"
   analyzedTable' <- analyzeTable ta (convQN table)
@@ -88,7 +92,7 @@ migrateParameters ta = do
       then dropTable table False *> getTableAnalysis
       else pure ta
 
-migratePublicNodeHead :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migratePublicNodeHead :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migratePublicNodeHead ta = do
   let table = QualifiedIdentifier Nothing "PublicNodeHead"
   hasHeadBlockHash <- fmap (any ((== "headBlock#hash") . colName) . tableColumns) <$> analyzeTable ta (convQN table)
@@ -97,7 +101,7 @@ migratePublicNodeHead ta = do
     Just False -> dropTable table False *> getTableAnalysis
     Just True -> pure ta
 
-renameColumnIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
+renameColumnIfExists :: Migrate m => QualifiedIdentifier -> Identifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
 renameColumnIfExists table columnFrom columnTo ta = do
   maybeTableInfo <- analyzeTable ta (convQN table)
   let columnExists = do
@@ -112,7 +116,7 @@ data DropTableCondition
   | ColumnMissing String
   deriving (Eq, Ord, Show)
 
-dropTableIf :: (Migrate m) => QualifiedIdentifier -> DropTableCondition -> Bool -> TableAnalysis m -> m (TableAnalysis m)
+dropTableIf :: Migrate m => QualifiedIdentifier -> DropTableCondition -> Bool -> TableAnalysis m -> m (TableAnalysis m)
 dropTableIf table cond cascade ta = do
   let
     hasColumn col = fmap (any ((== col) . colName) . tableColumns) <$> analyzeTable ta (convQN table)
@@ -124,12 +128,12 @@ dropTableIf table cond cascade ta = do
     Just True -> dropTable table cascade *> getTableAnalysis
     _ -> pure ta
 
-renameColumn :: (Migrate m) => QualifiedIdentifier -> Identifier -> Identifier -> m ()
+renameColumn :: Migrate m => QualifiedIdentifier -> Identifier -> Identifier -> m ()
 renameColumn tableName columnNameFrom columnNameTo = void [traceExecuteQ|
     ALTER TABLE ?tableName RENAME COLUMN ?columnNameFrom TO ?columnNameTo
   |]
 
-dropColumnIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
+dropColumnIfExists :: Migrate m => QualifiedIdentifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
 dropColumnIfExists table columnFrom ta = do
   maybeTableInfo <- analyzeTable ta (convQN table)
   let columnExists = do
@@ -139,30 +143,30 @@ dropColumnIfExists table columnFrom ta = do
     Just True -> dropColumn table columnFrom *> getTableAnalysis
     _ -> pure ta
 
-dropColumn :: (Migrate m) => QualifiedIdentifier -> Identifier -> m ()
+dropColumn :: Migrate m => QualifiedIdentifier -> Identifier -> m ()
 dropColumn tableName columnNameFrom = void [traceExecuteQ|
     ALTER TABLE ?tableName DROP COLUMN ?columnNameFrom
   |]
 
-createSequence :: (Migrate m) => QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
+createSequence :: Migrate m => QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
 createSequence sequenceName ta = do
   void [traceExecuteQ|
       CREATE SEQUENCE IF NOT EXISTS ?sequenceName
     |]
   return ta
 
-renameTableIfExists :: (Migrate m) => QualifiedIdentifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
+renameTableIfExists :: Migrate m => QualifiedIdentifier -> Identifier -> TableAnalysis m -> m (TableAnalysis m)
 renameTableIfExists tableFrom tableTo ta = do
   analyzeTable ta (convQN tableFrom) >>= \case
     Nothing -> pure ta
     Just _ -> renameTable tableFrom tableTo *> getTableAnalysis
 
-renameTable :: (Migrate m) => QualifiedIdentifier -> Identifier -> m ()
+renameTable :: Migrate m => QualifiedIdentifier -> Identifier -> m ()
 renameTable tableNameFrom tableNameTo = void [traceExecuteQ|
     ALTER TABLE ?tableNameFrom RENAME TO ?tableNameTo
   |]
 
-dropTableIfExists :: (Migrate m) => Bool -> QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
+dropTableIfExists :: Migrate m => Bool -> QualifiedIdentifier -> TableAnalysis m -> m (TableAnalysis m)
 dropTableIfExists cascade table ta = do
   analyzeTable ta (convQN table) >>= \case
     Nothing -> pure ta
@@ -176,7 +180,7 @@ extraIndexes = do
   createIndex (QualifiedIdentifier Nothing "BlockTodo") [Right "level"] "_blockTodo_levelWhereNotParsed_idx" (Just "NOT \"parsedParent\" OR NOT \"parsedAccusations\"")
 
 createIndex
-  :: (Migrate m)
+  :: Migrate m
   => QualifiedIdentifier
   -> [Either Text Identifier]
   -> Identifier
@@ -214,14 +218,14 @@ tableSql (QualifiedIdentifier schema tableName) =
   maybe "" ((<> ".") . quoteNameSql . Identifier) schema
   <> quoteNameSql (Identifier tableName)
 
-dropTable :: (Migrate m) => QualifiedIdentifier -> Bool -> m ()
+dropTable :: Migrate m => QualifiedIdentifier -> Bool -> m ()
 dropTable tableName cascade = if cascade
   then void [traceExecuteQ|DROP TABLE ?tableName CASCADE|]
   else void [traceExecuteQ|DROP TABLE ?tableName|]
 
 
 -- | Move the data into the new tables and then do the "unsafe" column drop.
-migrateNodesToSplitTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateNodesToSplitTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateNodesToSplitTable ta = do
   let table = (Nothing, "Node")
   analyzeTable ta table >>= \case
@@ -314,7 +318,7 @@ migrateNodesToSplitTable ta = do
     _ -> pure ta
 
 -- | Move the data into the new tables and then do the "unsafe" column drop.
-migrateProcessDataToSplitTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateProcessDataToSplitTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateProcessDataToSplitTable ta = do
   let table = (Nothing, "NodeInternal")
   analyzeTable ta table >>= \case
@@ -346,7 +350,7 @@ migrateProcessDataToSplitTable ta = do
           getTableAnalysis
     _ -> pure ta
 
-migrateBakerDaemonInternalTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateBakerDaemonInternalTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateBakerDaemonInternalTable ta = do
   let table = (Nothing, "BakerDaemonInternal")
   analyzeTable ta table >>= \case
@@ -389,8 +393,7 @@ migrateBakerDaemonInternalTable ta = do
             |]
           getTableAnalysis
     _ -> pure ta
-
-migrateProcessDataTable :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateProcessDataTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateProcessDataTable ta = do
   let table = (Nothing, "ProcessData")
   analyzeTable ta table >>= \case
@@ -430,6 +433,47 @@ migrateUpstreamVersionTable ta = do
               ALTER TABLE "UpstreamVersion" ADD COLUMN "dismissed" BOOLEAN NULL;
               UPDATE "UpstreamVersion" SET "dismissed" = FALSE;
               ALTER TABLE "UpstreamVersion" ALTER COLUMN "dismissed" SET NOT NULL;
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateChainIdToErrorLog :: Migrate m => ChainId -> TableAnalysis m -> m (TableAnalysis m)
+migrateChainIdToErrorLog currentChainId ta = do
+  let table = (Nothing, "ErrorLogVotingReminder")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | any ((== "chainId") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "ErrorLog" ADD COLUMN "chainId" BYTEA NULL;
+
+              UPDATE "ErrorLog"
+              SET "chainId" = vr."chainId"
+              FROM "ErrorLogVotingReminder" vr
+              WHERE id = vr.log;
+
+              UPDATE "ErrorLog"
+              SET "chainId" = ?currentChainId
+              WHERE "chainId" IS NULL;
+
+              ALTER TABLE "ErrorLog" ALTER COLUMN "chainId" SET NOT NULL;
+              ALTER TABLE "ErrorLogVotingReminder" DROP COLUMN "chainId";
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateErrorLogBakerMissedTimestamp :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateErrorLogBakerMissedTimestamp ta = do
+  let table = (Nothing, "ErrorLogBakerMissed")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | not . any ((== "bakeTime") . colName) $ tableColumns analyzedTable
+      -> do
+          -- Using the ErrorLog.started as Block's timestamp is not correct, but mostly a good approximation
+          void [traceExecuteQ|
+              ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "bakeTime" TIMESTAMP WITHOUT TIME ZONE NULL;
+              UPDATE "ErrorLogBakerMissed" e SET "bakeTime" = (SELECT started FROM "ErrorLog" l WHERE l.id = e.log);
+              ALTER TABLE "ErrorLogBakerMissed" ALTER COLUMN "bakeTime" SET NOT NULL;
             |]
           getTableAnalysis
     _ -> pure ta

@@ -51,7 +51,7 @@ humanizeDiffTime t = T.unwords elems <> " ago"
     take2 (xy@(x, _y):xys)
       | x >= 2 = [xy]
       | otherwise = xy:take 1 xys
-    take2 xys = take 2 $ xys
+    take2 xys = take 2 xys
 
     putBack x [] = [x]
     putBack _ xs = xs

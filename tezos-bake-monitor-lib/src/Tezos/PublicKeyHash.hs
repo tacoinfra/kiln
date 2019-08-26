@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DeriveGeneric #-}
 
 module Tezos.PublicKeyHash where
@@ -11,6 +12,7 @@ import Data.Aeson
 import Data.Semigroup
 #endif
 import qualified Data.ByteString as BS
+import Data.Word (Word8)
 import Tezos.ShortByteString (fromShort)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Hashable (Hashable)
@@ -23,6 +25,7 @@ import GHC.Generics (Generic)
 import qualified Text.ParserCombinators.ReadPrec as Read
 
 import Tezos.Base58Check
+import qualified Tezos.Binary as B
 
 
 data PublicKeyHash
@@ -75,7 +78,7 @@ instance ToJSONKey PublicKeyHash
 instance Show PublicKeyHash where
   show = ("fromString " <>) . show . toPublicKeyHashText
 
-instance Read (PublicKeyHash) where
+instance Read PublicKeyHash where
   readsPrec =
     Read.readPrec_to_S $ (PublicKeyHash_Ed25519 <$> Read.readS_to_Prec readsPrec)
                 Read.<++ (PublicKeyHash_Secp256k1 <$> Read.readS_to_Prec readsPrec)
@@ -84,14 +87,16 @@ instance Read (PublicKeyHash) where
 instance IsString PublicKeyHash where
   fromString x = either (error . show) id $ tryFromBase58 publicKeyHashConstructorDecoders $ fromString x
 
--- instance TezosBinary PublicKeyHash where
---   parseBinary = parseTagged 0 "ed25519" PublicKeyHash_Ed25519
---         `mplus` parseTagged 1 "secp256k1" PublicKeyHash_Secp256k1
---         `mplus` parseTagged 2 "p256" PublicKeyHash_P256
---
---   encodeBinary (PublicKeyHash_Ed25519 x) = encodeBinary (0 :: Word8) <> encodeBinary x
---   encodeBinary (PublicKeyHash_Secp256k1 x) = encodeBinary (1 :: Word8) <> encodeBinary x
---   encodeBinary (PublicKeyHash_P256 x) = encodeBinary (2 :: Word8) <> encodeBinary x
+instance B.TezosBinary PublicKeyHash where
+  build = \case
+    PublicKeyHash_Ed25519 h -> B.build @Word8 0 <> B.build h
+    PublicKeyHash_Secp256k1 h -> B.build @Word8 1 <> B.build h
+    PublicKeyHash_P256 h -> B.build @Word8 2 <> B.build h
+  get = B.get @Word8 >>= \case
+    0 -> PublicKeyHash_Ed25519 <$> B.get
+    1 -> PublicKeyHash_Secp256k1 <$> B.get
+    2 -> PublicKeyHash_P256 <$> B.get
+    _ -> fail "PublicKeyHash: unknown tag"
 
 
 -- TODO: bitrotted since RPC proposal; can i still get this info?
@@ -116,4 +121,3 @@ rawContextLink pkh = T.intercalate "/"
         , T.drop 8 $ T.take 10 x
         , T.drop 10 x
         ]
-

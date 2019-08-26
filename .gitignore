@@ -9,3 +9,7 @@ ghcid-output.txt
 cabal.project.local
 node_modules
 tezos-bake-central/.tezos-node
+
+# -fobject-code
+*.hi
+*.o

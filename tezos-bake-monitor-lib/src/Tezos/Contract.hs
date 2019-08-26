@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Tezos.Contract where
 
@@ -16,9 +17,11 @@ import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text.Encoding as T
 import Data.Typeable
+import Data.Word (Word8)
 import GHC.Generics (Generic)
 
 import Tezos.Base58Check
+import qualified Tezos.Binary as B
 import Tezos.PublicKeyHash
 import Tezos.Micheline
 import Tezos.Json
@@ -61,6 +64,16 @@ instance FromJSON ContractId where
 instance FromJSONKey ContractId
 instance ToJSONKey ContractId
 
+-- padded to always be equal length
+instance B.TezosBinary ContractId where
+  build = \case
+    Implicit pkh -> B.build @Word8 0 <> B.build pkh
+    Originated ch -> B.build @Word8 1 <> B.build ch <> B.build @Word8 0
+  get = B.get @Word8 >>= \case
+    0 -> Implicit <$> B.get
+    1 -> Originated <$> (B.get <* B.get @Word8)
+    _ -> fail "ContractId: unknown tag"
+
 toContractIdText :: ContractId -> Text
 toContractIdText = \case
   Implicit x -> toPublicKeyHashText x
@@ -78,5 +91,9 @@ data ContractScript = ContractScript
   , _contractScript_storage :: Expression --  "storage": { "$ref": "#/definitions/micheline.michelson_v1.expression" }
   }
   deriving (Eq, Ord, Show, Typeable)
+
+instance B.TezosBinary ContractScript where
+  put = B.puts _contractScript_code B.<** B.puts _contractScript_storage
+  get = ContractScript <$> B.get <*> B.get
 
 deriveTezosJson ''ContractScript

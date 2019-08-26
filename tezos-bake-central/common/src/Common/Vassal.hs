@@ -186,7 +186,6 @@ instance (ViewSelector f, ViewSelector g, Semigroup a, Ord (ViewIndex f)) => Sem
 
 
 instance (Ord (ViewIndex f), ViewSelector f, ViewSelector g, Semigroup a) => Monoid (View (Compose f g) a) where
-  mappend = (<>)
   mempty = ComposeView mempty (Compose mempty)
     \\ (viewIsMonoid :: Semigroup a :- Monoid (View f a))
     \\ (viewIsSemigroup :: Semigroup a :- Semigroup (View g a))
@@ -203,7 +202,7 @@ deriving instance (Traversable (View v), Traversable (View w)) => Traversable (V
 instance (ViewSelector v, ViewSelector w, Ord (ViewIndex v))
     => Filterable (View (Compose v w)) where
   mapMaybe :: forall a b. (a -> Maybe b) -> View (Compose v w) a -> View (Compose v w) b
-  mapMaybe f (ComposeView upper (Compose lower)) = ComposeView (catMaybes upper') (Compose $ MMap.MonoidalMap $  lower')
+  mapMaybe f (ComposeView upper (Compose lower)) = ComposeView (catMaybes upper') (Compose $ MMap.MonoidalMap lower')
     where
       swizzle :: ViewIndex v -> a -> Writer (Map.Map (ViewIndex v) (View w b)) (Maybe b)
       swizzle i x = case f x of
@@ -304,7 +303,7 @@ instance TraversableWithIndex () (View (MaybeSelector v)) where
 
 
 newtype MapSelector k (v :: *) a = MapSelector { unMapSelector :: MonoidalMap k a }
-  deriving (Eq, Ord, Functor, Foldable, Traversable, Semigroup, Filterable, Align)
+  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1, Filterable, Align)
 
 instance Ord k => ViewSelector (MapSelector k v) where
   newtype View (MapSelector k v) a = MapView { unMapView :: MonoidalMap k (First v, a) }
@@ -324,6 +323,10 @@ instance Ord k => ViewSelector (MapSelector k v) where
 instance (Eq v, Ord k) => Eq1 (View (MapSelector k v)) where
   liftEq f (MapView (MMap.MonoidalMap xs)) (MapView (MMap.MonoidalMap ys)) =
     liftEq (liftEq f) xs ys
+
+instance (Ord k, Ord v) => Ord1 (View (MapSelector k v)) where
+  liftCompare f (MapView (MMap.MonoidalMap xs)) (MapView (MMap.MonoidalMap ys)) =
+    liftCompare (liftCompare f) xs ys
 
 instance Filterable (View (MapSelector k v)) where
   mapMaybe f = MapView . mapMaybe (traverse f) . unMapView
@@ -371,7 +374,6 @@ getIntervalViewI (IntervalView _ entries) = IMap.fromList $ (\(i, First (v, k)) 
 
 instance (Ord i, Ord e, Semigroup a) => Monoid (View (IntervalSelector e i v) a ) where
   mempty = IntervalView mempty mempty
-  mappend = (<>)
 
 instance (Semigroup a, Ord e, Ord i) => Semigroup (View (IntervalSelector e i v) a) where
   IntervalView s1 e1 <> IntervalView s2 e2 = IntervalView (s1 <> s2) (e1 <> e2)
@@ -469,7 +471,6 @@ instance (Semigroup a, Ord e) => Semigroup (View (RangeSelector e v) a) where
       inI k v = if null $ IMap.containing i k then Nothing else Just v
 
 instance (Semigroup a, Ord e) => Monoid (View (RangeSelector e v) a) where
-  mappend = (<>)
   mempty = RangeView mempty MMap.empty
 
 instance (Ord e) => Filterable (View (RangeSelector e v)) where
@@ -544,6 +545,8 @@ deriveShow1Methods [d|instance (Show v, Show e) => Show1 (View (RangeSelector e 
 deriveShow1Methods [d|instance (        Show e) => Show1       (RangeSelector e v) |]
 deriveShow1Methods [d|instance (Show i, Show v, Show e) => Show1 (View (IntervalSelector e i v))|]
 deriveShow1Methods [d|instance (                Show e) => Show1       (IntervalSelector e i v) |]
+deriveShow1Methods [d|instance (Show k, Show v) => Show1 (View (MapSelector k v))|]
+deriveShow1Methods [d|instance (Show k        ) => Show1       (MapSelector k v) |]
 deriveShow1Methods [d|instance (Show v) => Show1 (View (MaybeSelector v))|]
 deriveShow1Methods [d|instance             Show1       (MaybeSelector v) |]
 
@@ -570,6 +573,18 @@ instance (ToJSON k, Ord k, ToJSON v, ToJSONKey k) => ToJSON1 (View (RangeSelecto
 instance (Ord k, Semigroup a, ToJSON k, ToJSON a, ToJSON v, ToJSONKey k) => ToJSON (View (RangeSelector k v) a) where
   toEncoding = $(mkToEncoding defaultOptions 'RangeView)
   toJSON = $(mkToJSON defaultOptions 'RangeView)
+
+instance (FromJSON k, Ord k, FromJSON v, FromJSONKey k) => FromJSON1 (View (MapSelector k v)) where
+  liftParseJSON = $(mkLiftParseJSON defaultOptions 'MapView)
+instance (Ord k, Semigroup a, FromJSON k, FromJSON a, FromJSON v, FromJSONKey k) => FromJSON (View (MapSelector k v) a) where
+  parseJSON = $(mkParseJSON defaultOptions 'MapView)
+
+instance (ToJSON k, Ord k, ToJSON v, ToJSONKey k) => ToJSON1 (View (MapSelector k v)) where
+  liftToEncoding = $(mkLiftToEncoding defaultOptions 'MapView)
+  liftToJSON = $(mkLiftToJSON defaultOptions 'MapView)
+instance (Ord k, Semigroup a, ToJSON k, ToJSON a, ToJSON v, ToJSONKey k) => ToJSON (View (MapSelector k v) a) where
+  toEncoding = $(mkToEncoding defaultOptions 'MapView)
+  toJSON = $(mkToJSON defaultOptions 'MapView)
 
 instance (FromJSON (View v a), FromJSON a, FromJSON1 (View w), ViewSelector v, ViewSelector w, Ord (ViewIndex v), FromJSONKey (ViewIndex v)) => FromJSON (View (Compose v w) a) where
   parseJSON = $(mkParseJSON defaultOptions 'ComposeView)

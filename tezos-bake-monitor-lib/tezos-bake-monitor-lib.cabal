@@ -33,6 +33,7 @@ library
     Tezos.Ledger
     Tezos.Level
     Tezos.Micheline
+    Tezos.Michelson
     Tezos.NodeRPC.Class
     Tezos.NodeRPC.Sources
     Tezos.NodeRPC.Types
@@ -62,6 +63,7 @@ library
     , cryptohash
     , cryptonite
     , deepseq
+    , dependent-sum
     , functor-infix
     , groups
     , hashable
@@ -76,6 +78,7 @@ library
     , safe-exceptions
     , scientific
     , semigroups
+    , tagged
     , template-haskell
     , text
     , time

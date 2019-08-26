@@ -105,6 +105,7 @@ let
          addgroup --system --quiet kiln
          adduser --system --quiet --ingroup kiln --no-create-home --home /var/lib/kiln kiln
          adduser --quiet kiln plugdev
+         adduser --quiet kiln systemd-journal
          chown -R kiln /var/lib/kiln
          service procps start
          udevadm trigger
