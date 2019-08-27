@@ -85,9 +85,9 @@ tezosBinaryPaths =
   , $(staticWhich "mainnet-tezos-baker-004-Pt24m4xi")
   , $(staticWhich "mainnet-tezos-endorser-004-Pt24m4xi")
   ) :|
-    [ ( "PtG6cmhhWF8AY5gVQhCaUASbgu8CGebkGPdNSX26m3CSnxvih9v"
-      , $(staticWhich "zeronet-tezos-baker-alpha")
-      , $(staticWhich "zeronet-tezos-endorser-alpha")
+    [ ( "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
+      , $(staticWhich "zeronet-tezos-baker-005-PsBABY5H")
+      , $(staticWhich "zeronet-tezos-endorser-005-PsBABY5H")
       )
     ]
 

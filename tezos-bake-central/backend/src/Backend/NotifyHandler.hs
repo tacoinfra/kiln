@@ -11,8 +11,10 @@ import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
-import Data.Dependent.Sum (DSum(..))
+import Data.Dependent.Map (DSum(..), Some (..))
+import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
+import Data.Semigroup (sconcat)
 import Database.Groundhog.Postgresql (PersistBackend, get, Cond(..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap')
@@ -27,7 +29,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.Schema
-import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses)
+import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses, getBakerAlert)
 import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
                    NodeSummary (..), BakerSummary (..), SetupState (..), VoteState,
                    nodeIdForNodeErrorLogView, nodeErrorViewOnly,
@@ -35,6 +37,7 @@ import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
 import Common.App (bakerErrorViewOnly)
 import Common.App (bakerIdForBakerErrorLogView)
 import Common.App (errorLogIdForErrorLogView)
+import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Alerts (alertsFilter)
 import Common.Schema
 import Common.Vassal
@@ -265,15 +268,31 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
                   (Bounded $ _errorLog_started errorLog)
                   (maybe UpperInfinity Bounded $ _errorLog_stopped errorLog)
 
-          pure $ flip ifoldMap (_bakeViewSelector_errors aggVS)$ \flt errorsVS ->
-            if viewSelects errorInterval errorsVS
-            then mempty
-              { _bakeView_errors = MMap.singleton flt $ IntervalView (unIntervalSelector errorsVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
-                  MMap.singleton logId $ First (First $ alertsFilter fst flt $ Just (errorLog, toView specificLog), errorInterval)
-              }
-            else mempty
+          pure $ flip ifoldMap (_bakeViewSelector_errors aggVS)$ \flt (Compose errorsVS) ->
+            let
+              tagKey = This tag
+              mErrorsIntervalVS = MMap.lookup tagKey $ unMapSelector errorsVS
+              ma = sconcat <$> (NEL.nonEmpty . AppendIMap.elems . unIntervalSelector =<< mErrorsIntervalVS)
+              makeBakeView a errorsIntervalVS = if viewSelects errorInterval errorsIntervalVS
+                then mempty
+                  { _bakeView_errors = MMap.singleton flt $ ComposeView
+                      (MapView $ MMap.singleton tagKey (First (), a)) $
+                      Compose $ MMap.singleton tagKey $ IntervalView (unIntervalSelector errorsIntervalVS) $ -- see comment on instance Semigroup (IntervalView) for why this is "legit"
+                      MMap.singleton logId $ First (First $ alertsFilter fst flt $ Just (errorLog, toView specificLog), errorInterval)
+                  }
+                else mempty
+            in fromMaybe mempty $ liftA2 makeBakeView ma mErrorsIntervalVS
+      bakerAlerts <- for (fmap bakerIdForBakerErrorLogView . bakerErrorViewOnly . toView =<< specificLog') $ \logBakerId -> do
+        let bakerAlertsVS = _bakeViewSelector_bakerAlerts aggVS
+        whenM (viewSelects (Bounded logBakerId) bakerAlertsVS) $ do
+          -- This could be further optimized to only fetch logBakerId' alerts
+          bakerAlerts <- toRangeView bakerAlertsVS . fmap (\(pkh, v) -> (Bounded pkh, v)) <$> getBakerAlert
+          pure mempty
+            { _bakeView_bakerAlerts = bakerAlerts
+            }
       userSupplied <- maybe (pure mempty) k specificLog'
-      return $ newCount <> newErrors <> fold logNodeSummary <> fold logBakerSummary <> userSupplied
+
+      return $ newCount <> newErrors <> fold logNodeSummary <> fold logBakerSummary <> fold bakerAlerts <> userSupplied
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
 

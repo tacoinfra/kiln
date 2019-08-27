@@ -240,8 +240,8 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
       RightKind_Baking -> ("a bake", "to bake")
       RightKind_Endorsing -> ("an endorsement", "to endorse")
 
-bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> ErrorLogBakerMissed -> BakerErrorDescriptions
-bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) elog = BakerErrorDescriptions
+bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> RightKind -> BakerErrorDescriptions
+bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight <> "."
   , _bakerErrorDescriptions_notification = "This baker failed " -- TODO: ... failed what
@@ -260,7 +260,7 @@ bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) elog = BakerErrorDescr
   }
   where
     localTime ts = T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts
-    (aRight, opportunity, theRight) = case _errorLogBakerMissed_right elog of
+    (aRight, opportunity, theRight) = case rightKind of
       RightKind_Baking -> ("a bake", "bake opportunities", "bake")
       RightKind_Endorsing -> ("an endorsement", "endorsement operations", "endorsement")
 

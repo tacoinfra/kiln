@@ -60,6 +60,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "alias"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBadNodeHead") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "checkIfRegistered"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "deleted" "data#deleted"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (QualifiedIdentifier Nothing "Delegate") "Baker"
@@ -76,6 +77,7 @@ preMigrate chainId =
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodPromotionVote") (ColumnExists "periodVote#votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodProposal") (ColumnMissing "id") False
   >=> migrateChainIdToErrorLog chainId
+  >=> migrateErrorLogBakerMissedTimestamp
 
 postMigrate :: Migrate m => m ()
 postMigrate = do
@@ -466,7 +468,23 @@ migrateChainIdToErrorLog currentChainId ta = do
           getTableAnalysis
     _ -> pure ta
 
-createFunctionBlockShellAncestors :: Migrate m => m () 
+migrateErrorLogBakerMissedTimestamp :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateErrorLogBakerMissedTimestamp ta = do
+  let table = (Nothing, "ErrorLogBakerMissed")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | not . any ((== "bakeTime") . colName) $ tableColumns analyzedTable
+      -> do
+          -- Using the ErrorLog.started as Block's timestamp is not correct, but mostly a good approximation
+          void [traceExecuteQ|
+              ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "bakeTime" TIMESTAMP WITHOUT TIME ZONE NULL;
+              UPDATE "ErrorLogBakerMissed" e SET "bakeTime" = (SELECT started FROM "ErrorLog" l WHERE l.id = e.log);
+              ALTER TABLE "ErrorLogBakerMissed" ALTER COLUMN "bakeTime" SET NOT NULL;
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+createFunctionBlockShellAncestors :: Migrate m => m ()
 createFunctionBlockShellAncestors = do
   void [traceExecuteQ|
     CREATE OR REPLACE FUNCTION "blockShellAncestors"
