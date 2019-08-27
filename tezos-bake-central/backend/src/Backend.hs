@@ -428,7 +428,7 @@ backendImpl cfg serve = do
         -- Square roots of rationals are the most effective for this because number theory.
 
       when checkForUpgrade $
-       addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
+        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChainOrPaths $ \v -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
