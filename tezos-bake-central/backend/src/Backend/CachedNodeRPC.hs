@@ -36,8 +36,6 @@ import Control.Concurrent.STM (
     TQueue,
     TVar,
     atomically,
-    newTQueueIO,
-    newTVarIO,
     readTVar,
     readTVarIO,
     retry,
@@ -605,26 +603,6 @@ lookupBlock nds x = do
     LCA.Root -> Nothing
     LCA.Node blockHash () path -> Just $ histToBlockLike (_cachedHistory_minLevel history) blockHash path
 
-blankNodeDataSource :: Pool Postgresql -> ChainId -> Http.Manager -> LoggingEnv -> RawLevel -> Maybe URI -> URI -> IO NodeDataSource
-blankNodeDataSource db chain mgr logger minLevel obsidianURI kilnNodeUri = do
-  hist <- newTVarIO $ emptyCache minLevel
-  cache <- newTVarIO mempty
-  latestHead <- newTVarIO Nothing
-  ioQueue <- newTQueueIO
-
-  return NodeDataSource
-    { _nodeDataSource_history = hist
-    , _nodeDataSource_cache = cache
-    , _nodeDataSource_chain = chain
-    , _nodeDataSource_httpMgr = mgr
-    , _nodeDataSource_pool = db
-    , _nodeDataSource_latestHead = latestHead
-    , _nodeDataSource_logger = logger
-    , _nodeDataSource_ioQueue = ioQueue
-    , _nodeDataSource_osPublicNode = obsidianURI
-    , _nodeDataSource_kilnNodeUri = kilnNodeUri
-    , _nodeDataSource_nodeForQuery = Nothing
-    }
 {-
 
 withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
