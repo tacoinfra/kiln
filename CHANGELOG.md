@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+  * Export logs for Kiln node, baker, and endorser via UI on Ubuntu/Debian.
+  * Fix 'Add Baker' flow issues when communicating with tezos-client.
+  * Performance improvements and bug fixes for alerts.
+  * Fix a bug where already registered baker could not be added.
+  * Bug fixes for UI.
+
 ## 0.6.0
 
   * Support for monitoring nodes running in *full* history mode. (Note that monitoring nodes running in *rolling* history mode is still not officially supported.)
