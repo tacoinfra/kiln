@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -21,6 +22,7 @@ import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, wr
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
+import Control.Monad.Error.Class (MonadError)
 import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Foldable (foldl', length)
@@ -41,7 +43,7 @@ import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, In(..), sql, returning, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
@@ -52,7 +54,7 @@ import qualified Text.URI as Uri
 import Backend.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
-import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
+import Tezos.NodeRPC.Network (AsPublicNodeError, HasPublicNodeContext, PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked, getHistory)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import Tezos.Types
 import qualified Tezos.TestChainStatus as Tezos
@@ -71,6 +73,8 @@ import Backend.ViewSelectorHandler (getProposals)
 import Common.App (getEndTimeForPeriod)
 import Common.Schema
 import ExtraPrelude
+import qualified Data.Sequence as Seq
+import qualified Database.PostgreSQL.Simple.Types as PG
 
 -- We assume that the implicit nodeaddr is the same one we just learned the new
 -- branch from, so we insist that we bootstrap from it (rather than using a
@@ -887,3 +891,50 @@ waitTillNextCycle nds = liftIO $ do
     atomically $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
       when (newHead ^. level < pred nextCycleLvl) retry
+
+-- Assumption: the spine we are passed is stored in Postgres in the
+-- "BlockShellIndex" table at the lowest level for our current chainId
+backfillBlockShellIndex ::
+  ( MonadIO m
+  , MonadLogger m
+  , MonadError e m
+  , AsPublicNodeError e
+  , MonadReader r m
+  , HasPublicNodeContext r
+  , BlockSpine blk
+  , PostgresRaw m
+  ) => ChainId -> blk -> m ()
+backfillBlockShellIndex chainId = loop . mkVeryBlockSpine
+ where
+  loop !blk = do
+    let
+      lvl = blk ^. level
+      fetchLevels = if lvl > 9000 then 6000 else lvl + 1
+    if fetchLevels < 2   -- we need at least two to form a link in the spine
+    then return ()
+    else do
+      blockHashes <- getHistory chainId blk fetchLevels mempty
+      let
+        len = Seq.length blockHashes
+      if len < 2
+      then do
+        -- What should we do if the node doesn't return enough blocks?
+        -- Currently, we consider the backfill complete, though a restart of
+        -- Kiln will cause another attempt at a deeper backfill.
+        return ()
+      else do
+        let
+          blockHashPgArray = PG.PGArray $ toList blockHashes
+        void [executeQ|
+          INSERT INTO "BlockShellIndex"
+               ( hash , predecessor , "chainId" , level    )
+         (SELECT x[i] , x[i+1]      , ?chainId  , ?lvl - i
+            FROM VALUES (?blockHashPgArray::_bytea) a(x)
+            JOIN LATERAL generate_sequence(1,array_length(x,1)::integer-1) i
+                 ON TRUE)
+        |]
+        loop $ VeryBlockSpine {
+            _veryBlockSpine_hash        = blockHashes `Seq.index` (len - 1)
+          , _veryBlockSpine_predecessor = blockHashes `Seq.index` (len - 2)
+          , _veryBlockSpine_level       = lvl - fromIntegral len + 1
+          }
