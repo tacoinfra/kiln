@@ -73,6 +73,13 @@ data Operation = Operation
   }
   deriving (Eq, Ord, Show, Typeable)
 
+data OperationWithMetadata = OperationWithMetadata
+  { _operationWithMetadata_contents :: !(Seq OperationContents) --          "contents": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.operation_contents_and_result" } },
+                                                 --          "contents": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.contents" } },
+  , _operationWithMetadata_signature :: !(Maybe Signature) --          "signature": { "$ref": "#/definitions/Signature" }
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
 data OpKind
   = OpKind_SeedNonceRevelation
   | OpKind_DoubleEndorsementEvidence
@@ -421,7 +428,7 @@ data OperationContentsBallot = OperationContentsBallot
 data ManagerOperationMetadata a = ManagerOperationMetadata
   { _managerOperationMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
   , _managerOperationMetadata_operationResult :: !(OperationResult a) --  "operation_result": { "$ref": "#/definitions/operation.alpha.operation_result.reveal" },
-  , _managerOperationMetadata_internalOperationResults :: !(Seq InternalOperationResult) --  "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
+  , _managerOperationMetadata_internalOperationResults :: !(Maybe (Seq InternalOperationResult)) --  "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
 -- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:500:           (dft "internal_operation_results"
 -- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:501:              (list internal_operation_result_encoding) [])) ;
   }
@@ -1015,6 +1022,7 @@ instance B.TezosBinary (DSum OpsKindTag Op) where
 
 concat <$> traverse deriveTezosJson
   [ ''Operation
+  , ''OperationWithMetadata
   , ''OperationContentsEndorsement , ''EndorsementMetadata
   , ''OperationContentsSeedNonceRevelation , ''SeedNonceRevelationMetadata
   , ''OperationContentsDoubleEndorsementEvidence , ''DoubleEndorsementEvidenceMetadata
@@ -1040,10 +1048,11 @@ concat <$> traverse deriveTezosJson
   , ''OpContentsProposals
   , ''OpContentsBallot
   , ''OpContentsReveal
-  , ''OpContentsTransaction
   , ''OpContentsDelegation
   ]
 
+Aeson.deriveFromJSON tezosJsonOptions ''OpContentsTransaction
+Aeson.deriveToJSON tezosJsonOptions { omitNothingFields = True } ''OpContentsTransaction
 
 instance (ToJSON a, Typeable a) => ToJSON (ManagerOperationMetadata a) where
   toJSON = $(Aeson.mkToJSON tezosJsonOptions ''ManagerOperationMetadata)
