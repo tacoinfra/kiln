@@ -15,24 +15,18 @@
 
 module Backend.Workers.Block where
 
-import Control.Concurrent.STM (atomically, readTVarIO)
-import Control.Monad.Except (runExceptT)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logErrorSH, logDebugSH)
-import Control.Monad.Reader (ReaderT)
+import Control.Lens ((^..))
+import Control.Monad.Logger (LoggingT, logDebug, logErrorSH, logDebugSH)
 import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
 import Data.Time (NominalDiffTime)
-import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql)
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 
 import qualified Tezos.Binary as TBin
 import Tezos.Envelope (Envelope (Envelope_Endorsement))
-import Tezos.History
 import Tezos.NodeRPC.Types (RpcError(RpcError_UnexpectedStatus))
 import Tezos.Operation
 import qualified Tezos.Signature.Verify as Sig
@@ -41,6 +35,7 @@ import Tezos.Types
 import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
+import Backend.IndexQueries (rightsContextLevel, getLatestProtocolConstants)
 import Common.Schema hiding (blockLevel)
 import ExtraPrelude
 
@@ -50,19 +45,13 @@ blockWorker
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ do
+blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let chainId = _nodeDataSource_chain nds
   let claimTimeout = "15 seconds" :: Text
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
-    (params, dsh) <- liftIO $ atomically $
-      (,) <$> waitForParams nds <*> dataSourceHead nds
-    history <- liftIO $ readTVarIO (_nodeDataSource_history nds)
-    let
-      minLevel =  _cachedHistory_minLevel history
-      headLevelMay = (^. level) <$> dsh
-      cutoffLevel = max minLevel $ maybe minLevel (rightsContextLevel params) headLevelMay
-
-    queuedBlockOrNot <- inDb $ do
+    queuedBlockOrNot :: Either CacheError [BlockTodo] <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
+      (headBlock, _) <- getLatestProtocolConstants
+      cutoffLevel <- rightsContextLevel (headBlock ^. hash) (headBlock ^. level)
       [queryQ|
         update "BlockTodo"
         set "claimedBy" = 1
@@ -84,7 +73,7 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
     -- leases on work items time out and let other backends just steal them,
     -- rather than making postgres the central arbiter of locking.
 
-    for_ queuedBlockOrNot $ \queuedBlock -> (either ($(logErrorSH) . \e -> ("blockWorker" :: Text,queuedBlock,e)) pure =<<) $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+    for_ (queuedBlockOrNot ^.. _Right . traverse) $ \queuedBlock -> (either ($(logErrorSH) . \e -> ("blockWorker" :: Text,queuedBlock,e)) pure =<<) $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
       $(logDebug) $ "Scrape block " <> toBase58Text (_blockTodo_hash queuedBlock) <> "."
       couldBeBlock <- unliftEither $ nodeQueryDataSourceSafe $ NodeQuery_Block (_blockTodo_hash queuedBlock)
       case couldBeBlock of
@@ -145,7 +134,3 @@ blockWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) 
                 "parsedAccusations" = true
             where chain = ?chainId and hash = ?blockHash
             |]
-
-  where
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => ReaderT AppConfig (DbPersist Postgresql m) a -> m a
-    inDb = runDb (Identity db) . flip runReaderT appConfig

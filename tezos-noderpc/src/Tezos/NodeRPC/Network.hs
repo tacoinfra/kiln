@@ -229,29 +229,23 @@ getNodeChain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
     Just PublicNode_TzScan     -> nodeRPC $ _tzScanBlock_network <$> plainNodeRequest Http.methodGet "/v2/head/"
     Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet "/v2/chain"
 
-getProtoConstants :: forall e r m.
-  ( MonadIO m, MonadLogger m
-  , MonadReader r m, HasPublicNodeContext r
-  , MonadError e m, AsPublicNodeError e
-  )
-  => ChainId -> m ProtoInfo
-getProtoConstants chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ rAnyConstants chain
-  Just PublicNode_Blockscale -> nodeRPC $ rAnyConstants chain
-  Just PublicNode_TzScan     -> throwFeatureNotSupported
-  Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet $ "/v2/" <> toBase58Text chain <> "/params"
-
 getCurrentHead :: forall e r m.
   ( MonadIO m, MonadLogger m
   , MonadError e m , AsRpcError e
   , MonadReader r m, HasPublicNodeContext r
   )
-  => ChainId -> m VeryBlockLike
+  => ChainId -> m (WithProtocolHash VeryBlockLike)
 getCurrentHead chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rHead (ChainTag_Hash chain)
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rHead (ChainTag_Hash chain)
-  Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @ TzScanBlock <$> plainNodeRequest Http.methodGet "/v2/head/"
+  Nothing                    -> nodeRPC $ mk <$> rHead (ChainTag_Hash chain)
+  Just PublicNode_Blockscale -> nodeRPC $ mk <$> rHead (ChainTag_Hash chain)
+  Just PublicNode_TzScan     -> nodeRPC $ mk @ TzScanBlock <$> plainNodeRequest Http.methodGet "/v2/head/"
   Just PublicNode_Obsidian   -> nodeRPC $                                   plainNodeRequest Http.methodGet $ "/v2/" <> toBase58Text chain <> "/head"
+  where
+    mk :: (HasProtocolHash blk, BlockLike blk) => blk -> WithProtocolHash VeryBlockLike
+    mk blk = WithProtocolHash
+      { _withProtocolHash_value = mkVeryBlockLike blk
+      , _withProtocolHash_protocolHash = blk ^. protocolHash
+      }
 
 canGetHistory :: PublicNode -> Bool
 canGetHistory PublicNode_Blockscale = True
@@ -299,11 +293,17 @@ getBlock ::
   ( MonadIO m, MonadLogger m
   , MonadError e m , AsRpcError e
   , MonadReader r m, HasPublicNodeContext r
-  ) => ChainId -> BlockHash -> m VeryBlockLike
+  ) => ChainId -> BlockHash -> m (WithProtocolHash VeryBlockLike)
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
-  Nothing                    -> nodeRPC $ mkVeryBlockLike <$> rBlockHeader (ChainTag_Hash chainId) blockHash
-  Just PublicNode_Blockscale -> nodeRPC $ mkVeryBlockLike <$> rBlockHeader (ChainTag_Hash chainId) blockHash
-  Just PublicNode_TzScan     -> nodeRPC $ mkVeryBlockLike @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
+  Nothing                    -> nodeRPC $ mk <$> rBlockHeader (ChainTag_Hash chainId) blockHash
+  Just PublicNode_Blockscale -> nodeRPC $ mk <$> rBlockHeader (ChainTag_Hash chainId) blockHash
+  Just PublicNode_TzScan     -> nodeRPC $ mk @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
-    ("/v2/" <> toBase58Text chainId <> "/block/?block=" <> toBase58Text blockHash)
+    ("/v2/" <> toBase58Text chainId <> "/block-header/?hash=" <> toBase58Text blockHash)
+  where
+    mk :: (HasProtocolHash blk, BlockLike blk) => blk -> WithProtocolHash VeryBlockLike
+    mk blk = WithProtocolHash
+      { _withProtocolHash_value = mkVeryBlockLike blk
+      , _withProtocolHash_protocolHash = blk ^. protocolHash
+      }
