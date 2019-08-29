@@ -87,8 +87,8 @@ instance ToJSON ProtoInfo where
 -- We subtract 1 because the first cycle begins after the genesis block. Yet
 -- while that block is not part of the cycle, it is still given a level, level
 -- 0.
-levelToCycle :: ProtoInfo -> RawLevel -> Cycle
-levelToCycle params (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (params ^. protoInfo_blocksPerCycle)
+unsafeAssumptionLevelToCycle :: ProtoInfo -> RawLevel -> Cycle
+unsafeAssumptionLevelToCycle params (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (params ^. protoInfo_blocksPerCycle)
 
 
 -- | Convert a cycle to the level of the first block in that cycle.
@@ -96,15 +96,15 @@ levelToCycle params (RawLevel l) = Cycle $ max 0 (l - 1) `div` unRawLevel (param
 -- We add 1 because we do not consider the genesis block as part of the first
 -- cycle, as that would make the first cycle alone 1 block larger than all the
 -- others.
-firstLevelInCycle :: ProtoInfo -> Cycle -> RawLevel
-firstLevelInCycle params cycl = 1 + fromIntegral cycl * params ^. protoInfo_blocksPerCycle
+unsafeAssumptionFirstLevelInCycle :: ProtoInfo -> Cycle -> RawLevel
+unsafeAssumptionFirstLevelInCycle params cycl = 1 + fromIntegral cycl * params ^. protoInfo_blocksPerCycle
 
 -- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
 -- requested level, that is on the correct branch.
-rightsContextLevel :: ProtoInfo -> RawLevel -> RawLevel
-rightsContextLevel params lvl = firstLevelInCycle params ctxCycle
+unsafeAssumptionRightsContextLevel :: ProtoInfo -> RawLevel -> RawLevel
+unsafeAssumptionRightsContextLevel params lvl = unsafeAssumptionFirstLevelInCycle params ctxCycle
   where
-    ctxCycle = max 0 (levelToCycle params lvl - params ^. protoInfo_preservedCycles)
+    ctxCycle = max 0 (unsafeAssumptionLevelToCycle params lvl - params ^. protoInfo_preservedCycles)
 
 predictFutureTimestamp :: BlockLike blk => ProtoInfo -> RawLevel -> blk -> Time.UTCTime
 predictFutureTimestamp protoInfo lvl blk = Time.addUTCTime (fromInteger $ toInteger lvlDiff * toInteger oneBlockTime) (blk ^. timestamp)

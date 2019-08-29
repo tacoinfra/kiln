@@ -328,7 +328,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
             skipUpdate = isJust mSp && isJust mCurrentCycle && mCurrentCycle == mLastCycle
             mLastCycle = snd =<< mSpData
             mSp = fst =<< mSpData
-            mCurrentCycle = fmap (\protoInfo -> ProtocolConstants.levelToCycle protoInfo (blk ^. level)) mProtoInfo
+            mCurrentCycle = fmap (\protoInfo -> ProtocolConstants.unsafeAssumptionLevelToCycle protoInfo (blk ^. level)) mProtoInfo
 
           if skipUpdate
             then pure (Nothing, Nothing)

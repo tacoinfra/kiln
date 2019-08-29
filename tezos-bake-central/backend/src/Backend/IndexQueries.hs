@@ -51,7 +51,7 @@ levelToCycle
 levelToCycle lvl = do
   (_, protoIx) <- getLatestProtocolConstants
   -- XXX We cheat here, as we dont expect the blocks/cycle to change
-  pure $ Tezos.ProtocolConstants.levelToCycle protoIx lvl
+  pure $ Tezos.ProtocolConstants.unsafeAssumptionLevelToCycle protoIx lvl
 
 firstLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
@@ -61,7 +61,7 @@ firstLevelInCycle
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
 firstLevelInCycle _branch c = do
   (_, protoIx) <- getLatestProtocolConstants
-  pure $ Tezos.ProtocolConstants.firstLevelInCycle protoIx c
+  pure $ Tezos.ProtocolConstants.unsafeAssumptionFirstLevelInCycle protoIx c
 
 lastLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
@@ -79,7 +79,7 @@ rightsContextLevel
   => BlockHash -> RawLevel -> NodeQueryT m RawLevel
 rightsContextLevel ctx lvl = do
   protoInfo <- getProtocolConstants $ Left ctx
-  pure $ Tezos.ProtocolConstants.rightsContextLevel protoInfo lvl
+  pure $ Tezos.ProtocolConstants.unsafeAssumptionRightsContextLevel protoInfo lvl
 
 data RightsCycleInfo = RightsCycleInfo
   { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in some cycle
