@@ -310,25 +310,12 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
           => MonitorBlock
           -> (Maybe (Maybe RawLevel, Maybe Cycle), Maybe ProtoInfo)
           -> m (Maybe RawLevel, Maybe Cycle)
-        updateCheckpoint blk (mSpData, mProtoInfo') = do
-          mProtoInfo <- case mProtoInfo' of
-            Just v -> pure $ Just v
-            Nothing -> do
-              $(logInfo) [i|nodeWorker: fetching protocol for Node: ${nodeAddr}|]
-              pr :: Either CacheError ProtoInfo <- runExceptT $ do
-                flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
-                  nodeQueryDataSourceImmediate $ NodeQuery_ProtocolConstants $ blk ^. hash
-              case pr of
-                Left e -> do
-                  $(logError) [i|nodeWorker: could not fetch protocol for Node: ${nodeAddr}, Error: ${e}|]
-                  pure Nothing
-                Right v -> pure $ Just v
-
+        updateCheckpoint blk (mSpData, mProtoInfo) = do
           let
+            mCurrentCycle = fmap (\protoInfo -> ProtocolConstants.unsafeAssumptionLevelToCycle protoInfo (blk ^. level)) mProtoInfo
             skipUpdate = isJust mSp && isJust mCurrentCycle && mCurrentCycle == mLastCycle
             mLastCycle = snd =<< mSpData
             mSp = fst =<< mSpData
-            mCurrentCycle = fmap (\protoInfo -> ProtocolConstants.unsafeAssumptionLevelToCycle protoInfo (blk ^. level)) mProtoInfo
 
           if skipUpdate
             then pure (Nothing, Nothing)
