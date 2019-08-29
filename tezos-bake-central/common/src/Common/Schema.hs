@@ -929,6 +929,7 @@ data SnapshotMeta = SnapshotMeta
   { _snapshotMeta_filename :: !Text -- user supplied
   , _snapshotMeta_storePath :: !Text -- where stored
   , _snapshotMeta_uploadTime :: !UTCTime
+  , _snapshotMeta_importCompleteTime :: !(Maybe UTCTime)
   , _snapshotMeta_importError :: !(Maybe SnapshotImportError)
   , _snapshotMeta_headBlock :: !(Maybe BlockHash)
   , _snapshotMeta_headBlockPrefix :: !(Maybe Text)

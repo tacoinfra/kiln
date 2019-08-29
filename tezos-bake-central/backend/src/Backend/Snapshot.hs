@@ -98,6 +98,7 @@ handleSnapshotUpload appConfig nds chain lockMVar = do
                 , _snapshotMeta_storePath = T.pack storePath
                 , _snapshotMeta_uploadTime = now
                 , _snapshotMeta_importError = Nothing
+                , _snapshotMeta_importCompleteTime = Nothing
                 , _snapshotMeta_headBlock = Nothing
                 , _snapshotMeta_headBlockPrefix = Nothing
                 , _snapshotMeta_headBlockLevel = Nothing
@@ -217,17 +218,23 @@ updateSnapshotMeta
   -> Key SnapshotMeta BackendSpecific
   -> m ()
 updateSnapshotMeta blkDetails smId = do
+  now <- getTime
   case blkDetails of
     (# hashPrefix | | #) -> update
-      [ SnapshotMeta_headBlockPrefixField =. Just hashPrefix ]
+      [ SnapshotMeta_headBlockPrefixField =. Just hashPrefix
+      , SnapshotMeta_importCompleteTimeField =. Just now
+      ]
       (AutoKeyField ==. smId)
     (# | blkHash | #) -> update
-      [ SnapshotMeta_headBlockField =. Just blkHash ]
+      [ SnapshotMeta_headBlockField =. Just blkHash
+      , SnapshotMeta_importCompleteTimeField =. Just now
+      ]
       (AutoKeyField ==. smId)
     (# | | blk #) -> update
       [ SnapshotMeta_headBlockField =. (Just $ blk ^. hash)
       , SnapshotMeta_headBlockLevelField =. (Just $ blk ^. level)
       , SnapshotMeta_headBlockBakeTimeField =. (Just $ blk ^. timestamp)
+      , SnapshotMeta_importCompleteTimeField =. Just now
       ]
       (AutoKeyField ==. smId)
   traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
