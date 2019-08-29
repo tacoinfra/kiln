@@ -1580,7 +1580,9 @@ nodesTab =
             title = text "Snapshot import failed."
             desc = do
               el "p" $ text "An unknown error has occured and the Kiln Node cannot be started."
-              el "p" $ text "Fix: Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
+              el "p" $ do
+                el "strong" $ text "Fix: "
+                text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
           renderSplashAlert i title Nothing desc
 
       dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case

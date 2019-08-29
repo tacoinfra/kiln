@@ -27,6 +27,7 @@ import Tezos.Level
 import Tezos.Signature
 
 -- This is the JSON embedded in Block
+-- and this is called 'full', because its called $block_header.alpha.full_header in RPC spec
 data BlockHeaderFull = BlockHeaderFull
   { _blockHeaderFull_level :: !RawLevel
   , _blockHeaderFull_proto :: !Word8
