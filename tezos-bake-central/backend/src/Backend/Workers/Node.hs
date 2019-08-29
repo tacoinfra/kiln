@@ -26,7 +26,6 @@ import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Foldable (foldl', length)
 import Data.Functor.Apply
-import Data.IORef
 import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
@@ -128,8 +127,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
             pure Nothing
       for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> Maybe RawLevel -> IO ()
-nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
+nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> IO ()
+nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
     -- This isn't very nuanced: old, stale nodes, even if they are catching
@@ -155,7 +154,8 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
           , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
           , _nodeDetailsData_updated = Just now
           , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
-          , _nodeDetailsData_savePoint = mSp
+          , _nodeDetailsData_savePoint = fst mSpData
+          , _nodeDetailsData_savePointUpdated = snd mSpData
           }
         }
       (_:_) -> update
@@ -165,7 +165,10 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
         , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
         , p NodeDetailsData_updatedSelector =. Just now
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-        ] <> maybe [] (\sp -> [p NodeDetailsData_savePointSelector =. Just sp]) mSp)
+        ] <> maybe [] (\sp -> [ p NodeDetailsData_savePointSelector =. Just sp
+                              , p NodeDetailsData_savePointUpdatedSelector =. (snd mSpData)
+                              ]) (fst mSpData)
+        )
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
@@ -294,8 +297,6 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       chainId = _nodeDataSource_chain nds
 
     ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
-      protoDataVar <- liftIO $ newIORef Nothing
-      lastBlkVar <- liftIO $ newIORef Nothing
       let
         reconnectDelay = 5
 
@@ -305,61 +306,55 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ())
         chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-        updateCheckpoint :: (MonadIO m, MonadLogger m) => MonitorBlock -> Maybe RawLevel -> m (Maybe RawLevel)
-        updateCheckpoint blk mSp = do
-          mLastBlk <- liftIO $ do
-            b <- readIORef lastBlkVar
-            writeIORef lastBlkVar (Just blk)
-            pure b
-          mProtoInfo <- do
-            mOldProtoInfo <- liftIO $ readIORef protoDataVar
-            let protoChanged = maybe True (\lblk -> _monitorBlock_proto lblk  /= _monitorBlock_proto blk) mLastBlk
-            if mOldProtoInfo == Nothing || protoChanged
-              then do
-                $(logInfo) [i|nodeWorker: fetching protocol for Node: ${nodeAddr}|]
-                pr :: Either CacheError ProtoInfo <- runExceptT $ do
-                  flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
-                    nodeQueryDataSourceImmediate $ NodeQuery_ProtocolConstants $ blk ^. hash
-                case pr of
-                  Left e -> do
-                    $(logError) [i|nodeWorker: could not fetch protocol for Node: ${nodeAddr}, Error: ${e}|]
-                    pure Nothing
-                  Right v -> do
-                    liftIO $ writeIORef protoDataVar $ Just v
-                    pure $ Just v
-              else pure mOldProtoInfo
+        updateCheckpoint :: (MonadIO m, MonadLogger m)
+          => MonitorBlock
+          -> (Maybe (Maybe RawLevel, Maybe Cycle), Maybe ProtoInfo)
+          -> m (Maybe RawLevel, Maybe Cycle)
+        updateCheckpoint blk (mSpData, mProtoInfo') = do
+          mProtoInfo <- case mProtoInfo' of
+            Just v -> pure $ Just v
+            Nothing -> do
+              $(logInfo) [i|nodeWorker: fetching protocol for Node: ${nodeAddr}|]
+              pr :: Either CacheError ProtoInfo <- runExceptT $ do
+                flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
+                  nodeQueryDataSourceImmediate $ NodeQuery_ProtocolConstants $ blk ^. hash
+              case pr of
+                Left e -> do
+                  $(logError) [i|nodeWorker: could not fetch protocol for Node: ${nodeAddr}, Error: ${e}|]
+                  pure Nothing
+                Right v -> pure $ Just v
 
           let
-            skipUpdate = isJust mSp && mLastBlk `isInSameCycleAs` blk
-            isInSameCycleAs mBlk thisBlk = case liftA2 (,) mBlk mProtoInfo of
-              Nothing -> False
-              Just (lblk, protoInfo) -> lvl2Cycle (thisBlk ^. level) == lvl2Cycle (lblk ^. level)
-                where lvl2Cycle = ProtocolConstants.levelToCycle protoInfo
+            skipUpdate = isJust mSp && isJust mCurrentCycle && mCurrentCycle == mLastCycle
+            mLastCycle = join $ fmap snd mSpData
+            mSp = join $ fmap fst mSpData
+            mCurrentCycle = fmap (\protoInfo -> ProtocolConstants.levelToCycle protoInfo (blk ^. level)) mProtoInfo
 
           if skipUpdate
-            then pure Nothing
+            then pure (Nothing, Nothing)
             else do
               $(logInfo) [i|nodeWorker: fetching checkpoint for Node: ${nodeAddr}|]
               liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
                 Left e ->
                   case e of
-                    RpcError_UnexpectedStatus 404 _ -> pure $ Just 0
+                    RpcError_UnexpectedStatus 404 _ -> pure $ (Just 0, mCurrentCycle)
                     _ -> do
-                      liftIO $ writeIORef lastBlkVar Nothing -- Try again for next blk
                       $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr}|]
-                      pure Nothing
+                      pure (Nothing, Nothing)
                 Right checkpoint -> do
-                  pure $ Just $ _checkpoint_savePoint checkpoint
+                  pure $ (Just $ _checkpoint_savePoint checkpoint, mCurrentCycle)
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
           mNewSp <- runLoggingEnv (_nodeDataSource_logger nds) $ do
-            mOldSp <- inDb $ do
+            mVals <- inDb $ do
               clearInaccessibleNodeError nodeId
               clearNodeWrongChainError nodeId
-              project1 (NodeDetails_dataField ~> NodeDetailsData_savePointSelector) (NodeDetails_idField `in_` [nodeId])
-            updateCheckpoint block $ join mOldSp
+              mSp <- project1 (NodeDetails_dataField ~> NodeDetailsData_savePointSelector, NodeDetails_dataField ~> NodeDetailsData_savePointUpdatedSelector) (NodeDetails_idField `in_` [nodeId])
+              mProto <- project1 ProtocolIndex_constantsField (ProtocolIndex_protoField ==. _monitorBlock_proto block &&. ProtocolIndex_chainIdField ==. chainId)
+              pure (mSp, mProto)
+            updateCheckpoint block mVals
 
           nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
 

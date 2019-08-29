@@ -328,6 +328,7 @@ data NodeDetailsData = NodeDetailsData
   , _nodeDetailsData_headBlockPred :: !(Maybe BlockHash)
   , _nodeDetailsData_headBlockBakedAt :: !(Maybe UTCTime)
   , _nodeDetailsData_savePoint :: !(Maybe RawLevel)
+  , _nodeDetailsData_savePointUpdated :: !(Maybe Cycle)
   , _nodeDetailsData_peerCount :: !(Maybe Word64)
   , _nodeDetailsData_networkStat :: !NetworkStat
   , _nodeDetailsData_fitness :: !(Maybe Fitness)
@@ -344,6 +345,7 @@ mkNodeDetails = NodeDetailsData
   , _nodeDetailsData_headBlockPred = Nothing
   , _nodeDetailsData_headBlockBakedAt = Nothing
   , _nodeDetailsData_savePoint = Nothing
+  , _nodeDetailsData_savePointUpdated = Nothing
   , _nodeDetailsData_peerCount = Nothing
   , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
   , _nodeDetailsData_fitness = Nothing
