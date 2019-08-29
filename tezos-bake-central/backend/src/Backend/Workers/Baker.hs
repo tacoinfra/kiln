@@ -78,8 +78,10 @@ bakerRightsWorker
   -> m (IO ())
 bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ do
-    (headBlock, protoInfo) <- runNodeQueryT getLatestProtocolConstants
-    cycleHashes <- runNodeQueryT $ cycleStartHashes headBlock
+    (headBlock, protoInfo, cycleHashes) <- runNodeQueryT $ do
+      (headBlock, protoInfo) <- getLatestProtocolConstants
+      cycleHashes <- cycleStartHashes headBlock
+      pure (headBlock, protoInfo, cycleHashes)
 
     $(logDebug) "Update baker cycle."
     let
