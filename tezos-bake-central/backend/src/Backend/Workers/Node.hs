@@ -13,12 +13,12 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
+{-# OPTIONS_GHC -Wall -Werror -fno-warn-orphans #-}
 
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
+import Control.Concurrent.STM (TVar, atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
 import Control.Monad.Reader (ReaderT)
@@ -35,8 +35,10 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import qualified Data.Set as S
+-- import Data.Semigroup(Max(..))
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
+import qualified Data.Time as Time
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
@@ -80,7 +82,11 @@ import qualified Database.PostgreSQL.Simple.Types as PG
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
 
-haveNewHead :: (MonadIO m, MonadBaseNoPureAborts IO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
+haveNewHead ::
+  ( MonadIO m
+--  , MonadBaseNoPureAborts IO m
+  , BlockLike blk
+  ) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let
     httpMgr = _nodeDataSource_httpMgr nds
@@ -88,6 +94,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     historyVar = _nodeDataSource_history nds
   (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
 
+{--
   let db = _nodeDataSource_pool nds
   runDb (Identity db) $ do
     let hashH        = headBlockInfo ^. hash
@@ -106,8 +113,40 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
                OR "BlockShellIndex"."timestamp" IS NULL
      |]
 
+  let
+    blkHash = headBlockInfo ^. hash
+    predHash = headBlockInfo ^. predecessor
+    knownBlocks = _cachedHistory_blocks history
+
+  let
+    upsertBlockLike = error "TODO"
+    updateMemCache  = error "TODO"
+    restoreMemCache = error "TODO"
+
+  if Map.member blkHash knownBlocks
+  then do
+    upsertBlockLike
+  else if Map.member predHash knownBlocks
+    then do
+      upsertBlockLike
+      updateMemCache
+    else do
+      fillCachedHistory chainId headBlockInfo historyVar
+
+      if Map.empty knownBlocks buildMemCache (Just headBlockInfo)
+      then do
+        restoreMemCache (Just headBlockInfo)
+        recur on haveNewHead
+      else do
+        updateMemCache (Just )
+        checkPostgresCache >>= \case
+           Nothing -> intelligentNodeRPC
+           Just spine' ->
+--}
+
   newBlock <- do
     let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
+
     newStateRsp :: Either PublicNodeError () <- runExceptT $
       flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
         accumHistory chainId (const ()) headBlockInfo
@@ -892,6 +931,122 @@ waitTillNextCycle nds = liftIO $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
       when (newHead ^. level < pred nextCycleLvl) retry
 
+type HistoryPath   = LCA.Path BlockHash
+type HistoryMap  a = Map BlockHash (HistoryPath a)
+
+data St = St !RawLevel !(HistoryPath RawLevel) !(HistoryMap RawLevel)
+
+data PreHist = PreHist !(Map BlockHash BlockShellIndex) !(HistoryMap RawLevel)
+
+-- FIXME!  Temporary orphan instance
+instance Semigroup RawLevel where
+  (<>) = max
+instance Monoid RawLevel where
+  mempty = 0
+
+restoreCachedHistory ::
+  ( MonadIO m
+  , MonadLogger m
+  , MonadError e m
+  , AsPublicNodeError e
+  , MonadReader r m
+  , HasPublicNodeContext r
+  , PostgresRaw m
+  ) => ChainId -> TVar (CachedHistory RawLevel) -> MVar () -> m ()
+restoreCachedHistory chainId historyVar _backfillLock = do
+    -- TODO: do everything in a "withMVar backfillLock" code block
+    --         first check that the historyVar is still empty, then proceed
+
+    -- Honestly, using a lateral join here feels funny.  I'd rather
+    -- get rid of the join,  and simply replace `c` with `$1`, and send
+    -- `chainId` in a binary protocol-level parameter.
+    [queryQ|
+      SELECT DISTINCT "BlockShellIndex".*
+        FROM (VALUES (?chainId::bytea)) c
+        JOIN LATERAL "BlockShellIndex"
+          ON "chainId" = c AND level IN
+           ( SELECT MIN(level) FROM "BlockShellIndex" WHERE "chainId" = c
+           , SELECT MAX(level) FROM "BlockShellIndex" WHERE "chainId" = c
+           )
+       ORDER BY level
+    |] >>= \case
+        [] -> return ()
+        [ blk ] -> next blk blk
+        ( blkA : blkB : _ ) -> do
+          if not ((blkA ^. level) < (blkB ^. level))
+            -- this next case should be "impossible"
+            -- FIXME: throw a proper exception here
+          then liftIO $ fail "postgres is double rooted"
+          else next blkA blkB
+  where
+    next blkMin blkMax = do
+      let blkMaxHash  = blkMax ^. hash
+          minBranchLvl = blkMax ^. level - 100 -- FIXME? configurable constant?
+
+      backfillBlockShellIndex chainId blkMin
+
+      -- FIXME: we could eliminate all intermediate lists (and thus also the need
+      -- to reverse the list) if the conversion from postgresql-libpq through
+      -- postgresql-simple wasn't blindingly stupid in this particular case.
+      spine <- reverse . map fromOnly <$>
+        [queryQ| SELECT hash FROM "blockShellAncestors"(?blkMaxHash) |]
+
+      uncles <-  -- Fetch some of the recent uncles
+        [queryQ| SELECT * FROM "BlockShellIndex"
+                  WHERE "chainId" = ?chainId AND level >= ?minBranchLvl
+                  ORDER BY level
+        |]
+
+      let
+        fudge blk = VeryBlockLike
+          { _veryBlockLike_hash        = blk ^. hash
+          , _veryBlockLike_predecessor = blk ^. predecessor
+          , _veryBlockLike_level       = blk ^. level
+          -- Theoretically, the next two "Nothing" cases shouldn't happen
+          , _veryBlockLike_fitness     = fromMaybe mempty (_blockShellIndex_fitness   blk)
+          , _veryBlockLike_timestamp   = fromMaybe epoch  (_blockShellIndex_timestamp blk)
+          } where epoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
+
+      let      -- our cache's "genesis" block need not be at level 0
+        !level0 = (blkMax ^. level) - (fromIntegral $ length spine) + 1
+        !blocks0 = initializeBlocks level0 spine
+        !prehist0 = PreHist (Map.singleton blkMaxHash blkMax) blocks0
+        (PreHist branches blocks)  = foldl' (flip accumPreHist) prehist0 uncles
+
+      let
+        !fudgedBranches = fudge <$> branches
+
+      liftIO $ atomically $ do
+        history <- readTVar historyVar
+        writeTVar historyVar $! CachedHistory
+          { _cachedHistory_blocks = blocks
+          , _cachedHistory_branches = fudgedBranches
+          , _cachedHistory_minLevel = _cachedHistory_minLevel history
+          }
+
+initializeBlocks :: RawLevel -> [BlockHash] -> HistoryMap RawLevel
+initializeBlocks level0 spine = res
+  where (St _ _ res) = foldl' delta (St level0 LCA.empty Map.empty) spine
+        delta (St lvl path blocks) blkHash = St (lvl + 1) path' blocks'
+          where path'   = LCA.cons blkHash lvl path
+                blocks' = Map.insert blkHash path' blocks
+
+accumPreHist :: BlockShellIndex -> PreHist -> PreHist
+accumPreHist blk hist@(PreHist branches blocks) =
+  case Map.lookup blkHash blocks of
+    Just _ -> hist
+    Nothing ->
+      case Map.lookup predHash blocks of
+        Nothing -> hist
+        Just path -> PreHist branches' blocks'
+          where
+            branches' = Map.insert blkHash blk (Map.delete predHash branches)
+            blocks'   = Map.insert blkHash (LCA.cons blkHash lvl path) blocks
+  where
+    blkHash  = blk ^. hash
+    predHash = blk ^. predecessor
+    lvl      = blk ^. level
+
 -- Assumption: the spine we are passed is stored in Postgres in the
 -- "BlockShellIndex" table at the lowest level for our current chainId
 backfillBlockShellIndex ::
@@ -924,6 +1079,7 @@ backfillBlockShellIndex chainId = loop . mkVeryBlockSpine
         return ()
       else do
         let
+          -- FIXME: the codepath from blockHashes to postgres is *atrocious*
           blockHashPgArray = PG.PGArray $ toList blockHashes
         void [executeQ|
           INSERT INTO "BlockShellIndex"

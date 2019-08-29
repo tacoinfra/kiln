@@ -29,7 +29,7 @@ import Data.Semigroup ((<>))
 import qualified Data.Sequence as Seq
 import Data.Sequence (Seq (), (<|))
 import Data.Set (Set)
-import qualified Data.Time as Time
+-- import qualified Data.Time as Time
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 

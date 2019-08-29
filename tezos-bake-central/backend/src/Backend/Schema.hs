@@ -74,7 +74,7 @@ import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
-import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
+import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..), FromRow)
 import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
 import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
@@ -336,7 +336,6 @@ data CacheEndorsingRights = CacheEndorsingRights
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
--- TODO: Move all of this into postgresql-simple
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
 
@@ -424,6 +423,13 @@ instance FromField VotingPeriodKind where
 
 instance ToField VotingPeriodKind where
   toField v = toField (show v)
+
+-- FIXME: we need to cope with the mismatch between this FromRow instance and
+-- groundhog migrations, somehow.
+instance FromRow BlockShellIndex
+
+instance FromField ProtocolKilnId where
+  fromField f mv = ProtocolKilnId <$> fromField f mv
 
 instance PersistField Tez where
   persistName _ = "Tez"
@@ -545,7 +551,7 @@ instance PersistField ProtocolKilnId where
   persistName _ = "ProtocolKilnId"
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
-  dbType p (ProtocolKilnId x) = dbType p x
+  dbType p ~(ProtocolKilnId x) = dbType p x
 
 instance NeverNull ProtocolKilnId
 
