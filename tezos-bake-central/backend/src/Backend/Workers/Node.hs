@@ -166,7 +166,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
         , p NodeDetailsData_updatedSelector =. Just now
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
         ] <> maybe [] (\sp -> [ p NodeDetailsData_savePointSelector =. Just sp
-                              , p NodeDetailsData_savePointUpdatedSelector =. (snd mSpData)
+                              , p NodeDetailsData_savePointUpdatedSelector =. snd mSpData
                               ]) (fst mSpData)
         )
         (NodeDetails_idField `in_` [nodeId])
@@ -326,8 +326,8 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
           let
             skipUpdate = isJust mSp && isJust mCurrentCycle && mCurrentCycle == mLastCycle
-            mLastCycle = join $ fmap snd mSpData
-            mSp = join $ fmap fst mSpData
+            mLastCycle = snd =<< mSpData
+            mSp = fst =<< mSpData
             mCurrentCycle = fmap (\protoInfo -> ProtocolConstants.levelToCycle protoInfo (blk ^. level)) mProtoInfo
 
           if skipUpdate
@@ -337,12 +337,12 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
               liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
                 Left e ->
                   case e of
-                    RpcError_UnexpectedStatus 404 _ -> pure $ (Just 0, mCurrentCycle)
+                    RpcError_UnexpectedStatus 404 _ -> pure (Just 0, mCurrentCycle)
                     _ -> do
                       $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr}|]
                       pure (Nothing, Nothing)
                 Right checkpoint -> do
-                  pure $ (Just $ _checkpoint_savePoint checkpoint, mCurrentCycle)
+                  pure (Just $ _checkpoint_savePoint checkpoint, mCurrentCycle)
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
