@@ -134,7 +134,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
 
   pure ()
   where
-    periods = [VotingPeriodKind_Proposal, VotingPeriodKind_TestingVote, VotingPeriodKind_Testing, VotingPeriodKind_PromotionVote]
+    periods = [minBound .. maxBound]
 
 -- | Display a natural number with comma separation
 textWithCommas :: Int -> Text
