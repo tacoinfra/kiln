@@ -263,19 +263,18 @@ snapPublicKey = runExceptT $ do
 
 snapProtocolIndex :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text ProtocolIndex)
 snapProtocolIndex = do
-  mBranch <- runExceptT $ do
-    branchBS <- requiredQueryParam "branch"
-    protocolBS <- requiredQueryParam "protocol"
+  mBlock <- runExceptT $ do
+    blockBS <- requiredQueryParam "block"
 
-    branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
-    protocol <- either (throwError . T.pack . show) return $ fromBase58 protocolBS
-    pure (branch, protocol)
+    either (throwError . T.pack . show) return $ fromBase58 blockBS
 
   dsrc <- asks (^. nodeDataSource)
   -- To do this without liftIO we would have to add MonadBaseNoPureAborts instance for MonadSnap
   let runNodeQuery x = liftIO $ runLoggingEnv (_nodeDataSource_logger dsrc) $ flip runReaderT dsrc $ runExceptT (runNodeQueryT x)
-  fmap join $ for mBranch $ \(branch, protocol) -> do
-    res :: Either CacheError ProtocolIndex <- runNodeQuery (getProtocolIndex branch protocol)
+  fmap join $ for mBlock $ \block -> do
+    res :: Either CacheError ProtocolIndex <- runNodeQuery $ do
+      blkHeader <- nodeQueryDataSource $ NodeQuery_BlockHeader block
+      getProtocolIndex block (blkHeader ^. protocolHash)
     case res of
       Left e -> pure $ Left $ tshow e
       Right v -> pure $ Right v
