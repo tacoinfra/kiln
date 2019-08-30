@@ -1314,63 +1314,65 @@ getProtocolIndex branch protoHash = do
   history <- nqAtomically $ readTVar' historyVar
   case headMay [x | x <- existingEntries, isJust $ branchPointPure (x ^. hash) branch history] of
     Just existing -> pure existing
-    Nothing -> do
-      -- Search until we have the history up to the desired protocol.
-      protocolHistory <- buildProtocolHistoryUntil
-        ! #predicate (\blk -> blk ^. protocolHash == protoHash)
-        ! #branch branch
-        ! #history history
+    Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
+      Right p' -> pure p'
+      Left _ -> do
+        -- Search until we have the history up to the desired protocol.
+        protocolHistory <- buildProtocolHistoryUntil
+          ! #predicate (\blk -> blk ^. protocolHash == protoHash)
+          ! #branch branch
+          ! #history history
 
-      case NE.nonEmpty $ sortOn (Down . (^. level)) $ toList protocolHistory of
-        Nothing -> nqThrowError CacheError_NotEnoughHistory
-        Just orderedFirstBlocks -> do
-          -- To increase likelihood that a node knows the answer, we will use the *last* block
-          -- in a protocol to get it's constants (the most recent block possible). To do this we
-          -- pair up the protocols with the block immediately *prior* to the first block in the
-          -- next protocol. For the most recent protocol, we will use 'branch' as the query block.
-          let
-            initOrderedLastBlockHashes = flip map (NE.init orderedFirstBlocks) $ \blk ->
-              levelAncestor history (blk ^. level - 1) branch
-            protocolQueryBlockMap = NE.zip orderedFirstBlocks (Just branch NE.:| initOrderedLastBlockHashes)
+        case NE.nonEmpty $ sortOn (Down . (^. level)) $ toList protocolHistory of
+          Nothing -> nqThrowError CacheError_NotEnoughHistory
+          Just orderedFirstBlocks -> do
+            -- To increase likelihood that a node knows the answer, we will use the *last* block
+            -- in a protocol to get it's constants (the most recent block possible). To do this we
+            -- pair up the protocols with the block immediately *prior* to the first block in the
+            -- next protocol. For the most recent protocol, we will use 'branch' as the query block.
+            let
+              initOrderedLastBlockHashes = flip map (NE.init orderedFirstBlocks) $ \blk ->
+                levelAncestor history (blk ^. level - 1) branch
+              protocolQueryBlockMap = NE.zip orderedFirstBlocks (Just branch NE.:| initOrderedLastBlockHashes)
 
-          protoIndexes :: [ProtocolIndex] <- fmap (mapMaybe (^? _Right) . toList) $
-            for protocolQueryBlockMap $ \(firstBlock, queryBlockHash') -> nqTry $ do
-              -- Before using the query block instead of 'firstBlock', make sure it's protocol really is
-              -- the same. If not, fall back to 'firstBlock'.
-              -- While this situation shouldn't happen, it's possible for protocols to be introduced
-              -- apart from the amendment process. In this case we may actually skip one
-              -- in the scan which would cause this logic to pair the wrong constants with a
-              -- protocol hash--and that's just too scary to think about.
-              queryBlock' <- for queryBlockHash' $ nodeQueryDataSourceSafe . NodeQuery_Block
-              let
-                actualQueryBlockHash = case queryBlock' of
-                  Just queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
-                  _ -> firstBlock ^. hash
-              constants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants actualQueryBlockHash
-              pure ProtocolIndex
-                { _protocolIndex_chainId = chainId
-                , _protocolIndex_hash = firstBlock ^. protocolHash
-                , _protocolIndex_proto = firstBlock ^. block_header . blockHeaderFull_proto
-                , _protocolIndex_constants = constants
-                , _protocolIndex_firstBlockHash = firstBlock ^. hash
-                , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
-                , _protocolIndex_firstBlockLevel = firstBlock ^. level
-                , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
-                , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
-                , _protocolIndex_firstBlockCycle = firstBlock ^. block_metadata . blockMetadata_level . level_cycle
-                }
+            protoIndexes :: [ProtocolIndex] <- fmap (mapMaybe (^? _Right) . toList) $
+              for protocolQueryBlockMap $ \(firstBlock, queryBlockHash') -> nqTry $ do
+                -- Before using the query block instead of 'firstBlock', make sure it's protocol really is
+                -- the same. If not, fall back to 'firstBlock'.
+                -- While this situation shouldn't happen, it's possible for protocols to be introduced
+                -- apart from the amendment process. In this case we may actually skip one
+                -- in the scan which would cause this logic to pair the wrong constants with a
+                -- protocol hash--and that's just too scary to think about.
+                queryBlock' <- for queryBlockHash' $ nodeQueryDataSourceSafe . NodeQuery_Block
+                let
+                  actualQueryBlockHash = case queryBlock' of
+                    Just queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
+                    _ -> firstBlock ^. hash
+                constants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants actualQueryBlockHash
+                pure ProtocolIndex
+                  { _protocolIndex_chainId = chainId
+                  , _protocolIndex_hash = firstBlock ^. protocolHash
+                  , _protocolIndex_proto = firstBlock ^. block_header . blockHeaderFull_proto
+                  , _protocolIndex_constants = constants
+                  , _protocolIndex_firstBlockHash = firstBlock ^. hash
+                  , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
+                  , _protocolIndex_firstBlockLevel = firstBlock ^. level
+                  , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
+                  , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
+                  , _protocolIndex_firstBlockCycle = firstBlock ^. block_metadata . blockMetadata_level . level_cycle
+                  }
 
-          for_ protoIndexes $ \protoIndex -> do
-            mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
-              (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
-                &&. (ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash)
-              )
-            when (mp == Nothing) $ do
-              insert protoIndex
-              notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
+            for_ protoIndexes $ \protoIndex -> do
+              mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
+                (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
+                  &&. (ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash)
+                )
+              when (mp == Nothing) $ do
+                insert protoIndex
+                notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
 
-          maybe (nqThrowError CacheError_NotEnoughHistory) pure $
-            find ((protoHash ==) . view protocolHash) protoIndexes
+            maybe (nqThrowError CacheError_NotEnoughHistory) pure $
+              find ((protoHash ==) . view protocolHash) protoIndexes
 
 buildProtocolHistoryUntil
   :: forall m
