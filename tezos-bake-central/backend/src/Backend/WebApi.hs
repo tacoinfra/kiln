@@ -32,7 +32,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.STM (atomicallyWith)
-import Common.Schema (CacheDelegateInfo(..), CacheError, ProtocolIndex)
+import Common.Schema (CacheDelegateInfo(..), CacheError(..), ProtocolIndex)
 import ExtraPrelude
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text (WithProtocolHash VeryBlockLike))
@@ -263,18 +263,18 @@ snapPublicKey = runExceptT $ do
 
 snapProtocolIndex :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text ProtocolIndex)
 snapProtocolIndex = do
-  mBlock <- runExceptT $ do
-    blockBS <- requiredQueryParam "block"
+  mProtocol <- runExceptT $ do
+    protocolBS <- requiredQueryParam "protocol"
 
-    either (throwError . T.pack . show) return $ fromBase58 blockBS
+    either (throwError . T.pack . show) return $ fromBase58 protocolBS
 
   dsrc <- asks (^. nodeDataSource)
   -- To do this without liftIO we would have to add MonadBaseNoPureAborts instance for MonadSnap
   let runNodeQuery x = liftIO $ runLoggingEnv (_nodeDataSource_logger dsrc) $ flip runReaderT dsrc $ runExceptT (runNodeQueryT x)
-  fmap join $ for mBlock $ \block -> do
+  fmap join $ for mProtocol $ \protocol -> do
     res :: Either CacheError ProtocolIndex <- runNodeQuery $ do
-      blkHeader <- nodeQueryDataSource $ NodeQuery_BlockHeader block
-      getProtocolIndex block (blkHeader ^. protocolHash)
+      headBlk <- maybe (nqThrowError CacheError_NotEnoughHistory) pure =<< nqAtomically (dataSourceHead dsrc)
+      getProtocolIndex (headBlk ^. hash) protocol
     case res of
       Left e -> pure $ Left $ tshow e
       Right v -> pure $ Right v

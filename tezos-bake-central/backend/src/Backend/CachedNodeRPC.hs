@@ -140,7 +140,7 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: !BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_ProtocolIndex   :: !BlockHash -> NodeQuery ProtocolIndex
+  NodeQuery_ProtocolIndex   :: !ProtocolHash -> NodeQuery ProtocolIndex
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
@@ -699,7 +699,7 @@ priorityChunkSize = 64
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
   NodeQuery_ProtocolConstants ctx -> pure ctx
-  NodeQuery_ProtocolIndex ctx -> pure ctx
+  NodeQuery_ProtocolIndex _ctx -> getFittestBranch
   NodeQuery_BakingRights ctx _lvl -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
@@ -914,7 +914,7 @@ nodeQueryImpl
   -> IO (Either CacheError a)
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
-  NodeQuery_ProtocolIndex branch -> nodeRPC' $ rProtocolIndex chainId branch
+  NodeQuery_ProtocolIndex protoHash -> nodeRPC' $ rProtocolIndex chainId protoHash
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -965,11 +965,11 @@ data OsNodeQuery a = OsNodeQuery
   }
 
 class QueryProtocolIndex (repr :: * -> *) where
-  rProtocolIndex :: ChainId -> BlockHash -> repr ProtocolIndex
+  rProtocolIndex :: ChainId -> ProtocolHash -> repr ProtocolIndex
 
 instance QueryProtocolIndex OsNodeQuery where
-  rProtocolIndex = chainApi2 "/protocol-index" $ \block ->
-    [("block", toBase58Text block)]
+  rProtocolIndex = chainApi2 "/protocol-index" $ \protocol ->
+    [("protocol", toBase58Text protocol)]
 
 instance QueryProtocolIndex RpcQuery where
   rProtocolIndex = error "rProtocolIndex NYI for RpcQuery"
