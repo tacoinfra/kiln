@@ -310,51 +310,33 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
           => MonitorBlock
           -> (Maybe (Maybe RawLevel, Maybe Cycle), Maybe ProtoInfo)
           -> m (Maybe RawLevel, Maybe Cycle)
-        updateCheckpoint blk (mSpData, mProtoInfo') = do
-          mProtoInfo <- case mProtoInfo' of
-            Just v -> pure $ Just v
-            Nothing -> do
-              $(logInfo) [i|nodeWorker: fetching protocol for Node: ${nodeAddr}|]
-              pr :: Either CacheError ProtoInfo <- runExceptT $ do
-                flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
-                  nodeQueryDataSourceImmediate $ NodeQuery_ProtocolConstants $ blk ^. hash
-              case pr of
-                Left e -> do
-                  $(logError) [i|nodeWorker: could not fetch protocol for Node: ${nodeAddr}, Error: ${e}|]
-                  pure Nothing
-                Right v -> pure $ Just v
-
+        updateCheckpoint blk (mSavePointData, mProtoInfo) = do
           let
-            skipUpdate = isJust mSp && isJust mCurrentCycle && mCurrentCycle == mLastCycle
-            mLastCycle = snd =<< mSpData
-            mSp = fst =<< mSpData
             mCurrentCycle = fmap (\protoInfo -> ProtocolConstants.unsafeAssumptionLevelToCycle protoInfo (blk ^. level)) mProtoInfo
+            mLastCycle = snd =<< mSavePointData
+            mSavePoint = fst =<< mSavePointData
+            skipUpdate = isJust mSavePoint && isJust mCurrentCycle && mCurrentCycle == mLastCycle
 
           if skipUpdate
             then pure (Nothing, Nothing)
             else do
               $(logInfo) [i|nodeWorker: fetching checkpoint for Node: ${nodeAddr}|]
               liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
-                Left e ->
-                  case e of
-                    RpcError_UnexpectedStatus 404 _ -> pure (Just 0, mCurrentCycle)
-                    _ -> do
-                      $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr}|]
-                      pure (Nothing, Nothing)
-                Right checkpoint -> do
-                  pure (Just $ _checkpoint_savePoint checkpoint, mCurrentCycle)
+                Left (RpcError_UnexpectedStatus 404 _) -> pure (Just 0, mCurrentCycle)
+                Right checkpoint -> pure (Just $ _checkpoint_savePoint checkpoint, mCurrentCycle)
+                _ -> (Nothing, Nothing) <$ $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr}|]
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
           mNewSp <- runLoggingEnv (_nodeDataSource_logger nds) $ do
-            mVals <- inDb $ do
+            mSavePointAndProto <- inDb $ do
               clearInaccessibleNodeError nodeId
               clearNodeWrongChainError nodeId
-              mSp <- project1 (NodeDetails_dataField ~> NodeDetailsData_savePointSelector, NodeDetails_dataField ~> NodeDetailsData_savePointUpdatedSelector) (NodeDetails_idField `in_` [nodeId])
+              mSavePoint <- project1 (NodeDetails_dataField ~> NodeDetailsData_savePointSelector, NodeDetails_dataField ~> NodeDetailsData_savePointUpdatedSelector) (NodeDetails_idField `in_` [nodeId])
               mProto <- project1 ProtocolIndex_constantsField (ProtocolIndex_protoField ==. _monitorBlock_proto block &&. ProtocolIndex_chainIdField ==. chainId)
-              pure (mSp, mProto)
-            updateCheckpoint block mVals
+              pure (mSavePoint, mProto)
+            updateCheckpoint block mSavePointAndProto
 
           nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
 
