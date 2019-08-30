@@ -40,8 +40,8 @@ snapHead = do
   nds <- asks (^. nodeDataSource)
   liftIO $ atomically $ maybe (Left "cache not ready") pure <$> dataSourceHead nds
 
-v2PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
-v2PublicApi dataSrc = route $ fmap (first ("api/v2/" <>))
+v3PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
+v3PublicApi dataSrc = route $ fmap (first ("api/v3/" <>))
   [ ("chain",                Snap.writeLBS $ Aeson.encode chain)
   , ( chainTXT <> "/account", writeJSON snapAccount )
   , ( chainTXT <> "/ancestors", writeJSON snapAncestors )
