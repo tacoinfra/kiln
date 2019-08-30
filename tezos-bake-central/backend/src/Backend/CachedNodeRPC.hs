@@ -140,6 +140,7 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: !BlockHash -> NodeQuery ProtoInfo
+  NodeQuery_ProtocolIndex   :: !BlockHash -> NodeQuery ProtocolIndex
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
@@ -698,6 +699,7 @@ priorityChunkSize = 64
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
   NodeQuery_ProtocolConstants ctx -> pure ctx
+  NodeQuery_ProtocolIndex ctx -> pure ctx
   NodeQuery_BakingRights ctx _lvl -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
@@ -846,6 +848,7 @@ validNodes
   => [(URI, Maybe VeryBlockLike, Maybe RawLevel)] -> NodeQuery a -> m (Either CacheError [(URI, VeryBlockLike)])
 validNodes nodes q = case q of
   NodeQuery_ProtocolConstants ctx -> findNode =<< getLvl ctx
+  NodeQuery_ProtocolIndex _ctx -> pure $ Right [] -- only OS public node can do this query
   NodeQuery_BakingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_EndorsingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_Block ctx -> findNode =<< getLvl ctx
@@ -898,7 +901,7 @@ nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC ChainTag_Hash
 
 nodeQueryImpl
   :: forall a chain repr.
-   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
+   ( QueryBlock repr, QueryHistory repr, QueryProtocolIndex repr, BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
      => repr c -> m c)
@@ -911,6 +914,7 @@ nodeQueryImpl
   -> IO (Either CacheError a)
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
+  NodeQuery_ProtocolIndex branch -> nodeRPC' $ rProtocolIndex chainId branch
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -959,6 +963,16 @@ data OsNodeQuery a = OsNodeQuery
   { _osNodeQuery_route :: Text
   , _osNodeQuery_params :: [(Text, Text)]
   }
+
+class QueryProtocolIndex (repr :: * -> *) where
+  rProtocolIndex :: ChainId -> BlockHash -> repr ProtocolIndex
+
+instance QueryProtocolIndex OsNodeQuery where
+  rProtocolIndex = chainApi2 "/protocol-index" $ \block ->
+    [("block", toBase58Text block)]
+
+instance QueryProtocolIndex RpcQuery where
+  rProtocolIndex = error "rProtocolIndex NYI for RpcQuery"
 
 type instance ChainType OsNodeQuery = ChainId
 
