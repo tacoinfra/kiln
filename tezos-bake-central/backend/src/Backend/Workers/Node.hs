@@ -13,7 +13,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
-{-# OPTIONS_GHC -Wall -Werror -fno-warn-orphans #-}
+{-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.Workers.Node where
 
@@ -35,7 +35,6 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import qualified Data.Set as S
--- import Data.Semigroup(Max(..))
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
 import qualified Data.Time as Time
@@ -104,8 +103,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
         timestampH   = headBlockInfo ^. timestamp
     void [executeQ|
       INSERT INTO "BlockShellIndex"
-             ( "hash", "predecessor", "fitness", "chainId", "level", "timestamp", "protocolKilnId" )
-      VALUES ( ?hashH, ?predecessorH, ?fitnessH, ?chainId , ?levelH, ?timestampH, null )
+             ( "hash", "predecessor", "fitness", "chainId", "level", "timestamp" )
+      VALUES ( ?hashH, ?predecessorH, ?fitnessH, ?chainId , ?levelH, ?timestampH )
       ON CONFLICT ("hash") DO UPDATE
               SET "fitness" = EXCLUDED."fitness",
                   "timestamp" = EXCLUDED."timestamp"
@@ -931,18 +930,15 @@ waitTillNextCycle nds = liftIO $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
       when (newHead ^. level < pred nextCycleLvl) retry
 
-type HistoryPath   = LCA.Path BlockHash
-type HistoryMap  a = Map BlockHash (HistoryPath a)
+type HistoryPath   = LCA.Path BlockHash ()
+type HistoryBlocks = Map BlockHash HistoryPath
+type PreHistoryBranches = Map BlockHash BlockShellIndex
 
-data St = St !RawLevel !(HistoryPath RawLevel) !(HistoryMap RawLevel)
+data P a b = P !a !b
 
-data PreHist = PreHist !(Map BlockHash BlockShellIndex) !(HistoryMap RawLevel)
+type St = P HistoryPath HistoryBlocks
 
--- FIXME!  Temporary orphan instance
-instance Semigroup RawLevel where
-  (<>) = max
-instance Monoid RawLevel where
-  mempty = 0
+type PreHistory = P PreHistoryBranches HistoryBlocks
 
 restoreCachedHistory ::
   ( MonadIO m
@@ -952,7 +948,7 @@ restoreCachedHistory ::
   , MonadReader r m
   , HasPublicNodeContext r
   , PostgresRaw m
-  ) => ChainId -> TVar (CachedHistory RawLevel) -> MVar () -> m ()
+  ) => ChainId -> TVar (CachedHistory ()) -> MVar () -> m ()
 restoreCachedHistory chainId historyVar _backfillLock = do
     -- TODO: do everything in a "withMVar backfillLock" code block
     --         first check that the historyVar is still empty, then proceed
@@ -1008,10 +1004,10 @@ restoreCachedHistory chainId historyVar _backfillLock = do
           } where epoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
 
       let      -- our cache's "genesis" block need not be at level 0
-        !level0 = (blkMax ^. level) - (fromIntegral $ length spine) + 1
-        !blocks0 = initializeBlocks level0 spine
-        !prehist0 = PreHist (Map.singleton blkMaxHash blkMax) blocks0
-        (PreHist branches blocks)  = foldl' (flip accumPreHist) prehist0 uncles
+        !levelZero = (blkMax ^. level) - (fromIntegral $ length spine) + 1
+        !blocks0 = initializeBlocks spine
+        !prehist0 = P (Map.singleton blkMaxHash blkMax) blocks0
+        (P branches blocks)  = foldl' (flip accumPreHistory) prehist0 uncles
 
       let
         !fudgedBranches = fudge <$> branches
@@ -1022,30 +1018,30 @@ restoreCachedHistory chainId historyVar _backfillLock = do
           { _cachedHistory_blocks = blocks
           , _cachedHistory_branches = fudgedBranches
           , _cachedHistory_minLevel = _cachedHistory_minLevel history
+          , _cachedHistory_levelZero = levelZero
           }
 
-initializeBlocks :: RawLevel -> [BlockHash] -> HistoryMap RawLevel
-initializeBlocks level0 spine = res
-  where (St _ _ res) = foldl' delta (St level0 LCA.empty Map.empty) spine
-        delta (St lvl path blocks) blkHash = St (lvl + 1) path' blocks'
-          where path'   = LCA.cons blkHash lvl path
+initializeBlocks :: [BlockHash] -> HistoryBlocks
+initializeBlocks spine = res
+  where (P _ res) = foldl' delta (P LCA.empty Map.empty) spine
+        delta (P path blocks) blkHash = P path' blocks'
+          where path'   = LCA.cons blkHash () path
                 blocks' = Map.insert blkHash path' blocks
 
-accumPreHist :: BlockShellIndex -> PreHist -> PreHist
-accumPreHist blk hist@(PreHist branches blocks) =
+accumPreHistory :: BlockShellIndex -> PreHistory -> PreHistory
+accumPreHistory blk hist@(P branches blocks) =
   case Map.lookup blkHash blocks of
     Just _ -> hist
     Nothing ->
       case Map.lookup predHash blocks of
         Nothing -> hist
-        Just path -> PreHist branches' blocks'
+        Just path -> P branches' blocks'
           where
             branches' = Map.insert blkHash blk (Map.delete predHash branches)
-            blocks'   = Map.insert blkHash (LCA.cons blkHash lvl path) blocks
+            blocks'   = Map.insert blkHash (LCA.cons blkHash () path) blocks
   where
     blkHash  = blk ^. hash
     predHash = blk ^. predecessor
-    lvl      = blk ^. level
 
 -- Assumption: the spine we are passed is stored in Postgres in the
 -- "BlockShellIndex" table at the lowest level for our current chainId

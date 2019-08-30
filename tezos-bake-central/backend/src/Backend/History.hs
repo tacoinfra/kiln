@@ -29,7 +29,6 @@ import Data.Semigroup ((<>))
 import qualified Data.Sequence as Seq
 import Data.Sequence (Seq (), (<|))
 import Data.Set (Set)
--- import qualified Data.Time as Time
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
@@ -46,12 +45,13 @@ data CachedHistory a = CachedHistory
   { _cachedHistory_branches :: !(Map BlockHash VeryBlockLike)
   , _cachedHistory_blocks :: !(Map BlockHash (LCA.Path BlockHash a))
   , _cachedHistory_minLevel :: !RawLevel
+  , _cachedHistory_levelZero :: !RawLevel
   } deriving (Show, Typeable, Generic)
 instance NFData a => NFData (CachedHistory a)
 makeLenses 'CachedHistory
 
 emptyCache :: RawLevel -> CachedHistory a
-emptyCache = CachedHistory Map.empty Map.empty
+emptyCache x = CachedHistory Map.empty Map.empty x (RawLevel maxBound)
 
 class HasCachedHistory f s t a b | s -> a, t -> b where
   cachedHistory :: Lens s t (f (CachedHistory a)) (f (CachedHistory b))
@@ -189,6 +189,7 @@ accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistor
       { _cachedHistory_blocks = Map.insert blkHash newPath blocks
       , _cachedHistory_branches = Map.delete predHash branches
       , _cachedHistory_minLevel = _cachedHistory_minLevel c
+      , _cachedHistory_levelZero = _cachedHistory_levelZero c
       }
     where
       blocks = _cachedHistory_blocks c
