@@ -256,10 +256,10 @@ snapDelegateInfo = runExceptT $ do
 
 snapPublicKey :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text PublicKey)
 snapPublicKey = runExceptT $ do
-  pkhBS <- requiredQueryParam "pkh"
-  pkh <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash pkhBS
+  contractIdBS <- requiredQueryParam "contract-id"
+  contractId <- either (throwError . T.pack . show) return $ tryReadContractId contractIdBS
 
-  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_PublicKey (Implicit pkh)
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_PublicKey contractId
 
 snapProtocolIndex :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text ProtocolIndex)
 snapProtocolIndex = do

@@ -990,7 +990,6 @@ instance QueryHistory OsNodeQuery where
   rBlocks = error "rBlocks NYI for OsNodeQuery"
   rBlockPred = error "rBlockPred NYI for OsNodeQuery"
   rProtoConstants = error "rProtoConstants NYI for OsNodeQuery"
-  rManagerKey = error "rManagerKey NYI for OsNodeQuery"
   rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
 
   rBallots = blockApi1 "/ballots"
@@ -1006,6 +1005,8 @@ instance QueryHistory OsNodeQuery where
     [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
   rProposalVote = chainApi3 "/proposal-vote" $ \block pkh ->
     [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
+  rManagerKey contractId = chainApi2 "/public-key" $ \_ ->
+    [("contract-id", toContractIdText contractId)]
 
   rBakingRightsFull levelSet _ = chainApi2 "/baking-rights" (\branch ->
     [("branch", toBase58Text branch), ("level", tshow lvl)])
