@@ -48,7 +48,6 @@ v3PublicApi dataSrc = route $ fmap (first ("api/v3/" <>))
   , ( chainTXT <> "/baking-rights", writeJSON snapBakingRights )
   , ( chainTXT <> "/ballot", writeJSON snapBallot )
   , ( chainTXT <> "/ballots", writeJSON snapBallots )
-  , ( chainTXT <> "/block",     writeJSON snapVeryBlockLike )
   , ( chainTXT <> "/block-full", writeJSON snapBlock )
   , ( chainTXT <> "/block-header", writeJSON snapBlockHeader )
   , ( chainTXT <> "/current-proposal", writeJSON snapCurrentProposal )
@@ -111,14 +110,6 @@ snapAncestors = runExceptT $ do
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
   either (throwError . T.pack . show ) return =<< runExceptT (ancestors blockLevel branch)
-
-snapVeryBlockLike :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
-snapVeryBlockLike = runExceptT $ do
-  nds <- asks (^. nodeDataSource)
-  blockBS <- requiredQueryParam "block"
-  block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
-
-  maybe (throwError "block unknown") return =<< liftIO (atomically $ lookupBlock nds block)
 
 snapBallots :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Ballots)
 snapBallots = runExceptT $ do
