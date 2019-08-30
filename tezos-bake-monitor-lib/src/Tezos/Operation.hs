@@ -441,12 +441,28 @@ data InternalOperationResult
   | InternalOperationResult_Delegation !InternalOperationContentsDelegation
   deriving (Eq, Ord, Show, Typeable)
 
+instance FromJSON InternalOperationResult where
+  parseJSON = withObject "Operation" $ \v -> do
+    kind :: Text <- v .: "kind"
+    case kind of
+      "reveal"                      -> InternalOperationResult_Reveal                    <$> parseJSON (Object v)
+      "transaction"                 -> InternalOperationResult_Transaction               <$> parseJSON (Object v)
+      "origination"                 -> InternalOperationResult_Origination               <$> parseJSON (Object v)
+      "delegation"                  -> InternalOperationResult_Delegation                <$> parseJSON (Object v)
+      bad -> fail $ "wrong kind:" <> show bad
+
+instance ToJSON InternalOperationResult where
+  toJSON (InternalOperationResult_Reveal                    x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "reveal"                      ; _ -> error "toJSON did not return an object" }
+  toJSON (InternalOperationResult_Transaction               x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "transaction"                 ; _ -> error "toJSON did not return an object" }
+  toJSON (InternalOperationResult_Origination               x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "origination"                 ; _ -> error "toJSON did not return an object" }
+  toJSON (InternalOperationResult_Delegation                x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "delegation"                  ; _ -> error "toJSON did not return an object" }
+
 data InternalOperationContentsReveal = InternalOperationContentsReveal
   deriving (Eq, Ord, Show, Typeable)
   -- FIXME: don't drop this one on the floor.
 data InternalOperationContentsTransaction = InternalOperationContentsTransaction
   { _internalOperationContentsTransaction_source :: !ContractId
-  , _internalOperationContentsTransaction_nonce :: !(Base16ByteString ByteString)
+  , _internalOperationContentsTransaction_nonce :: !Word16
   , _internalOperationContentsTransaction_amount :: !Tez
   , _internalOperationContentsTransaction_destination :: !ContractId
   , _internalOperationContentsTransaction_parameters :: !(Maybe Expression)
@@ -1032,7 +1048,6 @@ concat <$> traverse deriveTezosJson
   , ''OperationContentsProposals
   , ''OperationContentsBallot , ''Ballot
   , ''OperationResultStatus
-  , ''InternalOperationResult
   , ''InternalOperationContentsReveal
   , ''InternalOperationContentsTransaction
   , ''InternalOperationContentsOrigination
@@ -1069,15 +1084,21 @@ fmap concat $ sequence
     ]
   , concat <$> traverse makePrisms
     [ ''OperationContents
+    , ''InternalOperationResult
     ]
   , concat <$> traverse makeLenses
     [ 'Operation
+    , 'OperationWithMetadata
     , 'ActivateMetadata
     , 'DoubleBakingEvidenceMetadata
     , 'DoubleEndorsementEvidenceMetadata
     , 'EndorsementMetadata
     , 'InlinedEndorsement
     , 'InlinedEndorsementContents
+    , 'InternalOperationContentsReveal
+    , 'InternalOperationContentsTransaction
+    , 'InternalOperationContentsOrigination
+    , 'InternalOperationContentsDelegation
     , 'ManagerOperationMetadata
     , 'OperationContentsActivateAccount
     , 'OperationContentsBallot
