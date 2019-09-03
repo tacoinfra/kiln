@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -9,7 +10,7 @@
 module Tezos.NodeRPC.Class where
 
 import Control.Lens (uncons)
-import Data.Aeson
+import Data.Dependent.Sum (DSum(..))
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Semigroup ((<>))
@@ -29,9 +30,8 @@ import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPos
 
 import Tezos.Chain (ChainTag(ChainTag_Hash))
 import Tezos.NodeRPC.Types (NetworkStat)
-import Tezos.Operation (Ballot, OperationContents)
+import Tezos.Operation (Ballot, OperationWithMetadata, OpsKindTag, Op)
 import Tezos.Types
-import Tezos.Signature
 
 
 class QueryChain repr where
@@ -72,7 +72,7 @@ class QueryHistory repr where -- blockscale
 
   rDelegateInfo :: PublicKeyHash -> ChainId -> BlockHash -> repr DelegateInfo
 
-  rRunOperation :: ChainId -> BlockHash -> Seq OperationContents -> Maybe Signature -> repr ()
+  rRunOperation :: ChainId -> BlockHash -> DSum OpsKindTag Op -> repr OperationWithMetadata
 
 
 class QueryNode repr where -- my node
@@ -137,9 +137,9 @@ instance QueryHistory RpcQuery where
   rEndorsingRights params = blockAPI $ "/helpers/endorsing_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
-  rRunOperation chainId blockHash contents maybeSignature =
+  rRunOperation chainId blockHash contents =
     postNodeRequest
-      (object $ [ "branch" .= blockHash, "contents" .= toJSON contents, "signature" .= maybeSignature])
+      contents
       (chainBlockUrl chainId blockHash <> "/helpers/scripts/run_operation")
 
 chainAPI :: FromJSON a => Text -> ChainId -> RpcQuery a

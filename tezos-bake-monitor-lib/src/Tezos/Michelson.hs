@@ -12,11 +12,12 @@ import Data.Maybe
 import Data.Sequence (Seq(..), elemIndexL, ViewL(..), viewl)
 import qualified Data.Text as T
 import Prelude hiding (pattern Left, pattern Right)
+import qualified Prelude
 
 import Tezos.Base16ByteString (Base16ByteString(..))
 import qualified Tezos.Binary as B
 import Tezos.Micheline (Expression(..), MichelinePrimAp(..), MichelinePrimitive(..), Annotation(..))
-import Tezos.Contract (ContractScript(..))
+import Tezos.Contract (ContractScript(..), ContractId, toContractIdText, tryReadContractIdText)
 
 pattern Prim :: T.Text -> Seq Expression -> Expression
 pattern Prim p a <- Expression_Prim (MichelinePrimAp (MichelinePrimitive p) a _)
@@ -52,7 +53,7 @@ pattern AsBytes x = Bytes (B.TezosBinary x)
 
 findInOrTree :: T.Text -> Expression -> Maybe (Expression -> Expression)
 findInOrTree annot = \case
-  Prim2 "or" r l -> ((Left .) <$> findInOrTree annot l) <|> ((Right .) <$> findInOrTree annot r)
+  Prim2 "or" l r -> ((Left .) <$> findInOrTree annot l) <|> ((Right .) <$> findInOrTree annot r)
   Expression_Prim (MichelinePrimAp (MichelinePrimitive _) _ annots) -> do
     guard $ isJust $ Annotation_Field annot `elemIndexL` annots
     pure id
@@ -68,3 +69,26 @@ wrapEndpointCall endpoint ContractScript { _contractScript_code = code } =
       Prim1 "parameter" param :< _ <- pure $ viewl codeParts
       findInOrTree endpoint param
 
+class FromMicheline a where
+  fromMicheline :: Expression -> Either String a
+
+instance FromMicheline Expression where
+  fromMicheline = Prelude.Right
+
+mapEitherToString :: Show a => Either a b -> Either String b
+mapEitherToString (Prelude.Left a) = Prelude.Left (show a)
+mapEitherToString (Prelude.Right a) = Prelude.Right a
+
+instance FromMicheline ContractId where
+  fromMicheline (Expression_String a) = mapEitherToString $ tryReadContractIdText a
+  fromMicheline (Expression_Bytes (Base16ByteString a)) = B.decodeEither a
+  fromMicheline _ = Prelude.Left "Unrecognized type when decoding address"
+
+class ToMicheline a where
+  toMicheline :: a -> Expression
+
+instance ToMicheline Expression where
+  toMicheline = id
+
+instance ToMicheline ContractId where
+  toMicheline = Expression_String . toContractIdText
