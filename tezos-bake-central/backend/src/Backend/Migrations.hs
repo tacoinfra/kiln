@@ -489,14 +489,13 @@ createFunctionBlockShellAncestors = do
   void [traceExecuteQ|
     CREATE OR REPLACE FUNCTION "blockShellAncestors"
     ( "blockHash" bytea
-    , "minLevel" integer DEFAULT null
     ) RETURNS SETOF "BlockShellIndex" AS $$
     DECLARE
       blockshell "BlockShellIndex";
     BEGIN
       LOOP
         SELECT INTO blockshell * FROM "BlockShellIndex" WHERE hash = "blockHash";
-        EXIT WHEN NOT FOUND OR blockshell.level < "minLevel";
+        EXIT WHEN NOT FOUND;
         RETURN NEXT blockshell;
         "blockHash" := blockshell.predecessor;
       END LOOP;

@@ -96,7 +96,7 @@ import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
-import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
+import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker, restoreCachedHistoryWorker)
 import Backend.Workers.TezosClient
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
@@ -381,6 +381,7 @@ backendImpl cfg serve = do
       protoInfoVar <- newTVarIO params
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
+      blockShellIndexNonemptyBarrier <- newEmptyMVar
 
       -- If the user disables the OS node from command line and only monitors it then we wont use it for CacheRPC.
       pure NodeDataSource
@@ -395,6 +396,7 @@ backendImpl cfg serve = do
         , _nodeDataSource_ioQueue = ioQueue
         , _nodeDataSource_osPublicNode = if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
+        , _nodeDataSource_blockShellIndexNonemptyBarrier = blockShellIndexNonemptyBarrier
         }
 
     withTermination $ \addFinalizer -> do
@@ -438,6 +440,7 @@ backendImpl cfg serve = do
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
+      addFinalizer =<< restoreCachedHistoryWorker dataSrc
       addFinalizer =<< cacheWorker 90 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources

@@ -30,6 +30,7 @@ import Prelude hiding (cycle)
 
 import Control.Applicative (ZipList (..))
 import Control.Arrow (left)
+import Control.Concurrent.MVar (MVar)
 import Control.Concurrent.STM (
     STM,
     TQueue,
@@ -202,6 +203,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
   , _nodeDataSource_osPublicNode :: !(Maybe URI)
   , _nodeDataSource_kilnNodeUri :: !URI
+  , _nodeDataSource_blockShellIndexNonemptyBarrier :: !(MVar ())
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
