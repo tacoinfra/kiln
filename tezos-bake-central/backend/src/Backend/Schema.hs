@@ -768,6 +768,12 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null
+    constructors:
+      - name: ConnectedLedger
+        fields:
+          - name: _connectedLedger_forceConnectivityCheck
+            type: Bool
+            default: "False"
   - embedded: SecretKey
   - entity: LedgerAccount
     autoKey: null
