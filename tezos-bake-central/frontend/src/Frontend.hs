@@ -1568,7 +1568,7 @@ nodesTab =
               <> maybe "" (\t -> "at " <> time t <> ", ") (_snapshotMeta_importCompleteTime =<< sm)
               <> "and a Kiln Node has been created. Before starting the node you must verify the snapshot."
             btn = do
-              ev <- divClass "buttons" $ uiButtonM "" $ do
+              ev <- divClass "buttons" $ uiButtonM "primary" $ do
                 icon "icon-angle-right"
                 text "Start Verification"
               dyn_ $ ffor dSm $ traverse $ \sm -> tellModal $ verifySnapshotModal sm <$ ev
