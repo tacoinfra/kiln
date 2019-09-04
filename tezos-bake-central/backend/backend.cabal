@@ -1,5 +1,5 @@
 name: backend
-version: 0.6.0
+version: 0.6.1
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -44,6 +44,7 @@ library
     , groundhog
     , groundhog-postgresql
     , groundhog-th
+    , here
     , hashable
     , http-client
     , http-client-tls
@@ -102,6 +103,7 @@ library
     , unordered-containers
     , uri-encode
     , vector
+    , witherable
 
   exposed-modules:
     Backend
@@ -116,6 +118,7 @@ library
     Backend.Config
     --Backend.Graphs
     Backend.Http
+    Backend.IndexQueries
     Backend.Migrations
     Backend.NodeCmd
     Backend.NotifyHandler

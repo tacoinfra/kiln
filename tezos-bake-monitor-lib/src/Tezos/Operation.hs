@@ -220,8 +220,8 @@ data OpContentsDoubleEndorsementEvidence = OpContentsDoubleEndorsementEvidence
   deriving (Eq, Ord, Show, Typeable)
 
 data OpContentsDoubleBakingEvidence = OpContentsDoubleBakingEvidence
-  { _opContentsDoubleBakingEvidence_bh1 :: !BlockHeader
-  , _opContentsDoubleBakingEvidence_bh2 :: !BlockHeader
+  { _opContentsDoubleBakingEvidence_bh1 :: !BlockHeaderFull
+  , _opContentsDoubleBakingEvidence_bh2 :: !BlockHeaderFull
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -369,8 +369,8 @@ data DoubleEndorsementEvidenceMetadata = DoubleEndorsementEvidenceMetadata
 -- | "kind": { "type": "string", "enum": [ "double_baking_evidence" ] },
 data OperationContentsDoubleBakingEvidence = OperationContentsDoubleBakingEvidence
   { _operationContentsDoubleBakingEvidence_metadata :: !DoubleBakingEvidenceMetadata
-  , _operationContentsDoubleBakingEvidence_bh1 :: !BlockHeader --  "bh1": { "$ref": "#/definitions/block_header.alpha.full_header" },
-  , _operationContentsDoubleBakingEvidence_bh2 :: !BlockHeader --  "bh2": { "$ref": "#/definitions/block_header.alpha.full_header" },
+  , _operationContentsDoubleBakingEvidence_bh1 :: !BlockHeaderFull --  "bh1": { "$ref": "#/definitions/block_header.alpha.full_header" },
+  , _operationContentsDoubleBakingEvidence_bh2 :: !BlockHeaderFull --  "bh2": { "$ref": "#/definitions/block_header.alpha.full_header" },
   }
   deriving (Eq, Ord, Show, Typeable)
 

@@ -11,34 +11,34 @@ oops() {
 }
 
 tmpDir="$(mktemp -d -t nix-binary-tarball-unpack.XXXXXXXXXX || \
-          oops "Can\'t create temporary directory for downloading the Nix binary tarball")"
+          oops "Can't create temporary directory for downloading the Nix binary tarball")"
 cleanup() {
     rm -rf "$tmpDir"
 }
 trap cleanup EXIT INT QUIT TERM
 
 require_util() {
-    type "$1" > /dev/null 2>&1 || which "$1" > /dev/null 2>&1 ||
+    type "$1" > /dev/null 2>&1 || command -v "$1" > /dev/null 2>&1 ||
         oops "you do not have '$1' installed, which I need to $2"
 }
 
 case "$(uname -s).$(uname -m)" in
-    Linux.x86_64) system=x86_64-linux; hash=d6db178007014ed47ad5460c1bd5b2cb9403b1ec543a0d6507cb27e15358341f;;
-    Linux.i?86) system=i686-linux; hash=b2e5b62a66c6d1951fdd5e01109680592b498ef40f28bfc790341f5b986ba34d;;
-    Linux.aarch64) system=aarch64-linux; hash=248be69c25f599ac214bad1e4f4003e27f1da83cb17f7cd762746bd2c215a0df;;
-    Darwin.x86_64) system=x86_64-darwin; hash=ec6279bb6d628867d82a6e751dac2bcb64ccea3194d753756a309f75fd704d4c;;
+    Linux.x86_64) system=x86_64-linux; hash=7ce46548509837d4bc8d01b63973f8fb8972fbbe8ba6a9b5e929cf5954c3d85e;;
+    Linux.i?86) system=i686-linux; hash=b055b9ac5e65d43cb6b1d1fe99eb106371a6b5782c3522209a73f473dc7b8779;;
+    Linux.aarch64) system=aarch64-linux; hash=1d5c5ede3d7be3963f34f6b51a7b37b3ce3adc5ce623f2a50c11501b9c95bd4e;;
+    Darwin.x86_64) system=x86_64-darwin; hash=2286e52c2047fcc23ac0dec030eb1f69da1be2983b0defd744b1acbe285db1f7;;
     *) oops "sorry, there is no binary distribution of Nix for your platform";;
 esac
 
-url="https://nixos.org/releases/nix/nix-2.0.4/nix-2.0.4-$system.tar.bz2"
+url="https://nixos.org/releases/nix/nix-2.2.2/nix-2.2.2-$system.tar.bz2"
 
-tarball="$tmpDir/$(basename "$tmpDir/nix-2.0.4-$system.tar.bz2")"
+tarball="$tmpDir/$(basename "$tmpDir/nix-2.2.2-$system.tar.bz2")"
 
 require_util curl "download the binary tarball"
 require_util bzcat "decompress the binary tarball"
 require_util tar "unpack the binary tarball"
 
-echo "downloading Nix 2.0.4 binary tarball for $system from '$url' to '$tmpDir'..."
+echo "downloading Nix 2.2.2 binary tarball for $system from '$url' to '$tmpDir'..."
 curl -L "$url" -o "$tarball" || oops "failed to download '$url'"
 
 if type sha256sum > /dev/null 2>&1; then

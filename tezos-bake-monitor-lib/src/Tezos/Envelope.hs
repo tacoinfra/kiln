@@ -15,7 +15,7 @@ import Tezos.BlockHeader
 import Tezos.Operation
 
 data Envelope
-  = Envelope_BlockHeader !ChainId !BlockHeader
+  = Envelope_BlockHeader !ChainId !BlockHeaderFull
   | Envelope_Endorsement !ChainId !(Op 'OpKind_Endorsement)
   deriving (Show, Eq, Ord, Generic, Typeable)
 -- instance NFData Envelope
