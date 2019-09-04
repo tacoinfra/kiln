@@ -972,7 +972,7 @@ instance QueryProtocolIndex OsNodeQuery where
     [("protocol", toBase58Text protocol)]
 
 instance QueryProtocolIndex RpcQuery where
-  rProtocolIndex = error "rProtocolIndex NYI for RpcQuery"
+  rProtocolIndex = error "rProtocolIndex not possible for RpcQuery"
 
 type instance ChainType OsNodeQuery = ChainId
 
