@@ -12,16 +12,15 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE PartialTypeSignatures #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar, putMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
+import Control.Concurrent.STM (TVar, atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, {- logInfoSH, -} logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Error.Class (MonadError)
 import Control.Monad.Trans (lift)
@@ -54,7 +53,7 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Backend.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
+import Backend.History (AccumHistoryContext (..), CachedHistory (..))
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (AsPublicNodeError, HasPublicNodeContext, PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked, getHistory)
@@ -81,7 +80,6 @@ import qualified Database.PostgreSQL.Simple as PG
 import qualified Database.PostgreSQL.Simple.Transaction as PG
 import Database.PostgreSQL.Simple.Types (Only)
 import qualified Database.PostgreSQL.Simple.Types as PG
-import Database.PostgreSQL.Simple.SqlQQ(sql)
 
 -- We assume that the implicit nodeaddr is the same one we just learned the new
 -- branch from, so we insist that we bootstrap from it (rather than using a
@@ -89,12 +87,11 @@ import Database.PostgreSQL.Simple.SqlQQ(sql)
 
 haveNewHead ::
   ( MonadIO m
---  , MonadBaseNoPureAborts IO m
+  , MonadBaseNoPureAborts IO m
   , BlockLike blk
   ) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let
-    httpMgr = _nodeDataSource_httpMgr nds
     chainId = _nodeDataSource_chain nds
     historyVar = _nodeDataSource_history nds
 
@@ -180,26 +177,27 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
         [] -> return []
         hashes -> go (reverse hashes)
       where
+        failMsg = fail "the 'impossible' happened: getHistoryFromPg: invariant(s) violated"
+        go [] = failMsg
         go hashes@(blkHash' : _) = do
           if Map.member blkHash' knownBlocks
           then return hashes
           else do
             hashes' <- getBlockShellAncestors blkHash'
-            when (null hashes') $ fail "the 'impossible' happened: getHistoryFromPg: invariant(s) violated"
+            when (null hashes') failMsg
             go (foldl' (flip (:)) hashes hashes')
 
   let
-    getHistoryFromNodeRPC :: VeryBlockLike -> HistoryBlocks -> _ [BlockHash]
     getHistoryFromNodeRPC oldHead knownBlocks = do
       let blkLevel    = headBlockInfo ^. level
-          fetchLevels = 11 + max 0 ((headBlockInfo ^. level) - (oldHead ^. level))
+          fetchLevels = 11 + max 0 (blkLevel - (oldHead ^. level))
       xs <- getHistory chainId headBlockInfo fetchLevels (S.singleton (oldHead ^. hash))
       let len = length xs
       when (len < 2) failMsg
       let lvl = blkLevel - fromIntegral len
       go lvl (foldl' (flip (:)) [] xs)
      where
-      failMsg = "the 'impossible' happened: getHistoryFromNodeRPC: invariant(s) violated"
+      failMsg = fail "the 'impossible' happened: getHistoryFromNodeRPC: invariant(s) violated"
       go lvl blks@(predHash:blkHash:_) = do
         if Map.member predHash knownBlocks
         then do
@@ -207,8 +205,11 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
           return blks
         else do
           pgBlks <- getHistoryFromPg knownBlocks predHash
-          if null pgBlks
+          if not (null pgBlks)
           then do
+            updatePgCache lvl blks
+            return (pgBlks ++ blks)
+          else do
             let vbs = VeryBlockSpine {
                         _veryBlockSpine_hash = blkHash
                       , _veryBlockSpine_predecessor = predHash
@@ -219,22 +220,26 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
             when (len < 2) failMsg
             let lvl' = lvl - fromIntegral len + 1
             go lvl' (foldl' (flip (:)) blks (Seq.drop 1 xs))
-          else do
-            updatePgCache lvl blks
-            return (pgBlks ++ blks)
+      go _ _ = failMsg
 
   let
-    getHistoryImpl :: VeryBlockLike -> HistoryBlocks -> _ [BlockHash]
     getHistoryImpl oldHead knownBlocks = do
-      xs <- getHistoryFromPg knownBlocks (headBlockInfo ^. predecessor)
-      if null xs
-      then getHistoryFromNodeRPC oldHead knownBlocks
-      else return xs
+      rsp <- runGetHistory nds pn nodeAddr $ do
+        xs <- getHistoryFromPg knownBlocks (headBlockInfo ^. predecessor)
+        if null xs
+        then getHistoryFromNodeRPC oldHead knownBlocks
+        else return xs
+      case rsp of
+        Left (e :: PublicNodeError) -> do
+          $(logWarnSH) e
+          return []  -- FIXME?  What should we do here?
+        Right h -> do
+          return h
 
   let
-    updateLatestHead mOldHead = do
+    updateLatestHead oldHead = do
       let blkFitness = headBlockInfo ^. fitness
-      when (Just blkFitness > mOldHead ^? _Just . fitness) $ do
+      when (blkFitness > oldHead ^. fitness) $ do
         updatedLevel <- liftIO $ atomically $ do
           let latestHeadTVar = _nodeDataSource_latestHead nds
           latestHead <- readTVar latestHeadTVar
@@ -249,8 +254,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
   let
     blkHash = headBlockInfo ^. hash
     predHash = headBlockInfo ^. predecessor
-    blkLevel = headBlockInfo ^. level
     db = _nodeDataSource_pool nds
+    failMsg = fail "the 'impossible' happened: haveNewHead: invariant(s) violated"
 
   runDb (Identity db) . fix $ \tryAgain -> do
     (mOldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
@@ -264,21 +269,34 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
       then do
         upsertHeadBlock
         updateMemCache []
-        updateLatestHead mOldHead
+        -- having a nonempty cache implies that mOldHead is Just
+        oldHead <- maybe failMsg return mOldHead
+        updateLatestHead oldHead
       else if Map.null knownBlocks
         then do
           attemptFirstInsert
           waitForNonEmptyCache
           tryAgain
         else do
-          case mOldHead of
-            -- having a non-empty _cacheHistory_blocks implies that mOldHead is Just.
-            Nothing -> fail "the 'impossible' happened: haveNewHead: invariant(s) violated"
-            Just oldHead -> do
-              xs <- getHistoryImpl oldHead knownBlocks
-              upsertHeadBlock
-              updateMemCache xs
-              updateLatestHead mOldHead
+          oldHead <- maybe failMsg return mOldHead
+          xs <- getHistoryImpl oldHead knownBlocks
+          when (not (null xs)) $ do
+            upsertHeadBlock
+            updateMemCache xs
+            updateLatestHead oldHead
+
+runGetHistory
+  :: NodeDataSource
+  -> Maybe PublicNode
+  -> URI
+  -> ReaderT (AccumHistoryContext TVar ())  (ExceptT e m) a
+  -> m (Either e a)
+runGetHistory nds pn nodeAddr
+  = runExceptT
+  . flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn)
+  where
+    httpMgr = _nodeDataSource_httpMgr nds
+    historyVar = _nodeDataSource_history nds
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> Maybe RawLevel -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
@@ -1053,8 +1071,8 @@ type St = P HistoryPath HistoryBlocks
 
 type PreHistory = P PreHistoryBranches HistoryBlocks
 
-restoreCachedHistoryWorker :: NodeDataSource -> IO ()
-restoreCachedHistoryWorker nds = fail "TODO"
+restoreCachedHistoryWorker :: NodeDataSource -> IO (IO ())
+restoreCachedHistoryWorker _nds = fail "TODO"
 
 restoreCachedHistory ::
   ( MonadIO m
@@ -1149,7 +1167,6 @@ initializeBlocks blks = res
 
 addBlocks :: BlockLike blk => [BlockHash] -> blk -> (CachedHistory ()) -> Maybe (CachedHistory ())
 addBlocks blks_ blk history = do
-  let knownBlocks = _cachedHistory_blocks history
   case Map.lookup blkHash knownBlocks of
     Just _ -> Just history
     Nothing -> do
@@ -1176,24 +1193,25 @@ addBlocks blks_ blk history = do
   where
     blkHash = blk ^. hash
     predHash = blk ^. predecessor
+    knownBlocks = _cachedHistory_blocks history
 
     skipDuplicates a bs =
-      case Map.lookup a of
+      case Map.lookup a knownBlocks of
         Nothing -> Nothing
         Just path -> Just $ loop a path bs
       where
-        loop a path [] =
-          (a, path, [])
-        loop a path bs@(b:cs) =
-          case Map.lookup b knownBlocks of
-            Nothing -> (a, path, bs)
-            Just path' -> loop path' b cs
+        loop b path [] =
+          (b, path, [])
+        loop b path cs@(c:ds) =
+          case Map.lookup c knownBlocks of
+            Nothing -> (b, path, cs)
+            Just path' -> loop c path' ds
 
 emptySt :: St
 emptySt = P LCA.empty Map.empty
 
 addBlocks_ :: [BlockHash] -> St -> St
-addBlocks_ spine st = foldl' delta emptySt spine
+addBlocks_ spine st = foldl' delta st spine
   where delta (P path blocks) blkHash = P path' blocks'
           where path'   = LCA.cons blkHash () path
                 blocks' = Map.insert blkHash path' blocks
