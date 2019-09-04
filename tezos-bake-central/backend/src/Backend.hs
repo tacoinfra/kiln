@@ -91,7 +91,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
 import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
-import Backend.WebApi (v2PublicApi)
+import Backend.WebApi (v3PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
@@ -459,7 +459,7 @@ backendImpl cfg serve = do
         BackendRoute_Listen :=> _ -> handleListen
         BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc chain snapshotUploadLock
         BackendRoute_PublicCacheApi :=> _
-          | serveNodeCache -> v2PublicApi dataSrc
+          | serveNodeCache -> v3PublicApi dataSrc
           | otherwise -> return ()
         BackendRoute_ExportLogs :=> Identity lType -> when logExportAvailable $ handleExportLogs dataSrc lType
 
