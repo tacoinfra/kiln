@@ -206,6 +206,6 @@ in (obApp distroMethods.source) // {
     obApp = obAppGargoyle distroMethods.linuxPackage;
     nodeKit = tezosScopedKit;
     pkgName = "kiln";
-    version = "0.6.1"; # TODO: Calculate this
+    version = "0.6.2"; # TODO: Calculate this
   }).kiln-debian;
 }
