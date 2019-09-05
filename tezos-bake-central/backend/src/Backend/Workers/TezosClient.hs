@@ -88,10 +88,9 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
     currentTime <- inDb getTime
     case mConnectedLedger of
-      Just cl
+      Just cl -> do
         -- If we think the ledger is connected
-        | isJust (_connectedLedger_ledgerIdentifier cl) && isJust (_connectedLedger_updated cl)
-        -> do
+        when (isJust (_connectedLedger_ledgerIdentifier cl) && isJust (_connectedLedger_updated cl)) $ do
           -- import secret keys
           inDb (selectSingle $ LedgerAccount_shouldImportField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
