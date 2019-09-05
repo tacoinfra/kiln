@@ -22,6 +22,7 @@ in {
   protocol = let
     tzFlextesa = tbp-flextesa.tezos.master;
     tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.mainnet;
+    oldProtoHash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd";
     oldSuffix = "004-Pt24m4xi";
     newSuffix = "005-PsBABY5H";
     propto = tzMultiProto.tezos-src + /src/proto_004_Pt24m4xi/lib_protocol;
@@ -72,7 +73,7 @@ in {
       --extra-dummy-proposals-batch-size 1 \
       --extra-dummy-proposals-batch-levels "$(seq -s, 5 "$blocks_per_voting_period")" \
       --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
-      --protocol-hash PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP \
+      --protocol-hash ${oldProtoHash} \
       --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \
       --first-endorser-alpha-binary  ${tzMultiProto.kit + /bin/tezos-endorser- + oldSuffix} \
       --first-accuser-alpha-binary   ${tzMultiProto.kit + /bin/tezos-accuser- + oldSuffix} \
