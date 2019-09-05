@@ -22,8 +22,8 @@ in {
   protocol = let
     tzFlextesa = tbp-flextesa.tezos.master;
     tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.mainnet;
-    oldSuffix = "003-PsddFKi3";
-    newSuffix = "004-Pt24m4xi";
+    oldSuffix = "004-Pt24m4xi";
+    newSuffix = "005-PsBABY5H";
     propto = tzMultiProto.tezos-src + /src/proto_004_Pt24m4xi/lib_protocol;
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
