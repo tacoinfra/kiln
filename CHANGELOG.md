@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+  * Update mainnet tezos binaries. This fixes the problem of 100% cpu usage by the tezos-node (and "updater: COMPILATION ERROR" messages). The tezos-node released with v0.6.1 has problem in compiling the new protocol binaries (PsBABY5HQTSk), and this issue surfaced now because mainnet entered the testing phase of the protocol amendement cycle.
+
 ## 0.6.1
 
   * Export logs for Kiln node, baker, and endorser via UI on Ubuntu/Debian.
