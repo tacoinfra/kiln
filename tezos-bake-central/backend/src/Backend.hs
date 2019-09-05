@@ -381,7 +381,7 @@ backendImpl cfg serve = do
       protoInfoVar <- newTVarIO params
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
-      blockShellIndexNonemptyBarrier <- newEmptyMVar
+      blockShellIndexInitBarrier <- newEmptyMVar
 
       -- If the user disables the OS node from command line and only monitors it then we wont use it for CacheRPC.
       pure NodeDataSource
@@ -396,7 +396,7 @@ backendImpl cfg serve = do
         , _nodeDataSource_ioQueue = ioQueue
         , _nodeDataSource_osPublicNode = if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
-        , _nodeDataSource_blockShellIndexNonemptyBarrier = blockShellIndexNonemptyBarrier
+        , _nodeDataSource_blockShellIndexInitBarrier = blockShellIndexInitBarrier
         }
 
     withTermination $ \addFinalizer -> do

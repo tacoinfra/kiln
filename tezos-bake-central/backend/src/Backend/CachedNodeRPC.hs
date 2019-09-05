@@ -203,7 +203,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
   , _nodeDataSource_osPublicNode :: !(Maybe URI)
   , _nodeDataSource_kilnNodeUri :: !URI
-  , _nodeDataSource_blockShellIndexNonemptyBarrier :: !(MVar ())
+  , _nodeDataSource_blockShellIndexInitBarrier :: !(MVar (VeryBlockLike, PublicNodeContext))
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
