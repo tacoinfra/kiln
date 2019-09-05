@@ -236,17 +236,17 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
             _ -> pure () -- shouldn't happen
 
         -- If we want to immediately do the connectivity check
-        | (_connectedLedger_forceConnectivityCheck cl) ->
-            updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+        when (_connectedLedger_forceConnectivityCheck cl) $ do
+          updateConnectedLedgerViaGetConnectedLedger appConfig db chain
 
         -- Otherwise, we might want to do the connectivity check because some time has passed
-        | otherwise ->
-            case _connectedLedger_updated cl of
-              Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-              Just upd ->
-                if (currentTime `diffUTCTime` upd > 15)
-                then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-                else pure ()
+        case _connectedLedger_updated cl of
+          Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+          Just upd ->
+            if (currentTime `diffUTCTime` upd > 5)
+            then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+            else pure ()
+
       _ -> pure ()
     where
       inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a

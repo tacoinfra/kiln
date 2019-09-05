@@ -667,6 +667,10 @@ body {
             font-weight: normal;
             color: rgba(0, 0, 0, .6);
             padding-bottom: @4px;
+
+            > .ledger {
+              height: 1em;
+            }
           }
           .description {
             display: flex;
