@@ -20,7 +20,7 @@ module Backend.Workers.Node where
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar, tryPutMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, {- logInfoSH, -} logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
@@ -33,7 +33,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Ord (comparing)
-import Data.Pool (Pool)
+import Data.Pool (Pool, withResource)
 import qualified Data.Set as S
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
@@ -44,7 +44,7 @@ import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, In(..), sql, returning, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, In(..), sql, returning, queryQ, PGArray(..))
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
@@ -75,7 +75,14 @@ import Common.App (getEndTimeForPeriod)
 import Common.Schema
 import ExtraPrelude
 import qualified Data.Sequence as Seq
-import qualified Database.PostgreSQL.Simple.Types as PG
+import qualified Database.PostgreSQL.Simple as PG
+import qualified Database.PostgreSQL.Simple.ToField as PG
+
+import Tezos.Base58Check (HashedValue(..), fromBase58)
+import qualified Data.ByteString.Base16 as Base16
+import qualified Data.ByteString.Short  as BS
+import Data.ByteString.Builder (shortByteString, byteString)
+
 
 -- We assume that the implicit nodeaddr is the same one we just learned the new
 -- branch from, so we insist that we bootstrap from it (rather than using a
@@ -109,7 +116,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
   let
     updatePgCache lvl xs = do
-      let blockHashPgArray = PG.PGArray xs
+      let blockHashPgArray = PGArray xs
           plvl = lvl - 1
       void $ [executeQ|
         INSERT INTO "BlockShellIndex"
@@ -130,7 +137,6 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
   let
     trySignalInitBarrier = do
-      liftIO $ putStrLn "trySignalInitBarrier"
       let mvar = _nodeDataSource_blockShellIndexInitBarrier nds
           blk = mkVeryBlockLike headBlockInfo
       void $ liftIO $ tryPutMVar mvar (blk, publicNodeContext)
@@ -228,7 +234,6 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     failMsg = fail "the 'impossible' happened: haveNewHead: invariant(s) violated"
 
   fix $ \tryAgain -> do
-    liftIO $ putStrLn "haveNewHead"
     (mOldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
 
     let knownBlocks = _cachedHistory_blocks history
@@ -1215,7 +1220,6 @@ backfillBlockShellIndex nds = \case
     loop ctx Nothing (mkVeryBlockSpine blk)
   Left (blk, ctx) -> do
     -- FIXME: this upsert, along with the first bulk insert,  should be in a single transaction
-    liftIO $ putStrLn "Left"
     loop ctx (Just blk) (mkVeryBlockSpine blk)
  where
   db = _nodeDataSource_pool nds
@@ -1224,11 +1228,10 @@ backfillBlockShellIndex nds = \case
   loop ctx mHead !blk = do
     let
       lvl = blk ^. level
-      fetchLevels = if lvl > 90 then 60 else lvl + 1
+      fetchLevels = if lvl > 12000 then 8000 else lvl + 1
     if fetchLevels < 2   -- we need at least two to form a link in the spine
     then return ()
     else do
-      liftIO $ putStrLn "getHistory"
       runExceptT (runReaderT (getHistory chainId blk fetchLevels mempty) ctx) >>= \case
         Left (err :: PublicNodeError) -> do
           $(logErrorSH) err
@@ -1244,27 +1247,40 @@ backfillBlockShellIndex nds = \case
             -- Kiln will cause another attempt at a deeper backfill.
             return ()
           else do
-            let
-              -- FIXME: the codepath from blockHashes to postgres is *atrocious*
-              blockHashPgArray = PG.PGArray $ toList blockHashes
-            runDb (Identity db) $ do
-              maybe (pure ()) (upsertBlockLike chainId) mHead
-              liftIO $ putStrLn "bulk insert starting"
-              void [executeQ|
+            let blockHashPgArray = toArrayAction blockHashes
+            liftIO . withResource db $ \pconn@(Postgresql conn) -> PG.withTransaction conn $ do
+              let runUpsert x = runDbPersist (upsertBlockLike chainId x) pconn
+              maybe (pure ()) runUpsert mHead
+              void $ PG.execute conn [sql|
                 INSERT INTO "BlockShellIndex"
                      ( hash , predecessor , "chainId" , level    )
-               (SELECT x[i] , x[i+1]      , ?chainId  , ?lvl - i
-                  FROM VALUES (?blockHashPgArray::_bytea) a(x)
-                  JOIN LATERAL generate_sequence(1,array_length(x,1)::integer-1) i
+               (SELECT x[i] , x[i+1]      , ?         , ? - i
+                  FROM (VALUES (?::_bytea)) a(x)
+                  JOIN LATERAL generate_series(1,array_length(x,1)::integer-1) i
                        ON TRUE)
-              |]
-              liftIO $ putStrLn "bulk insert finished"
+              |] (chainId, lvl, blockHashPgArray)
 
             loop ctx Nothing $ VeryBlockSpine {
                 _veryBlockSpine_hash        = blockHashes `Seq.index` (n - 1)
               , _veryBlockSpine_predecessor = blockHashes `Seq.index` (n - 2)
               , _veryBlockSpine_level       = lvl - fromIntegral n + 1
               }
+
+toArrayAction :: Seq.Seq BlockHash -> PG.Action
+toArrayAction hs = PG.Plain $ res
+  where
+    res = case Seq.viewl hs of
+           Seq.EmptyL -> empty
+           (h Seq.:< hs') -> left <> base16 h <> foldr delta right hs'
+
+    delta h rest = comma <> base16 h <> rest
+
+    empty = shortByteString "'{}'"
+    left  = shortByteString "'{\"\\x"
+    right = shortByteString "\"}'"
+    comma = shortByteString "\",\"\\x"
+
+    base16 (HashedValue h) = byteString . Base16.encode . BS.fromShort $ h
 
 upsertBlockLike ::
   ( BlockLike blk
