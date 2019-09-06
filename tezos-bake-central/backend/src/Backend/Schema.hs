@@ -64,6 +64,7 @@ import Data.Some (Some(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
+import Data.Time (localTimeToUTC, utc)
 import Data.Version (Version)
 import qualified Data.Version as Version
 import Data.Word (Word64)
@@ -74,7 +75,8 @@ import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
-import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..), FromRow)
+import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..))
+import Database.PostgreSQL.Simple.FromRow (FromRow(..), field)
 import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
 import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
@@ -426,7 +428,9 @@ instance ToField VotingPeriodKind where
 
 -- FIXME: we need to cope with the mismatch between this FromRow instance and
 -- groundhog migrations, somehow.
-instance FromRow BlockShellIndex
+instance FromRow BlockShellIndex where
+  fromRow = BlockShellIndex <$> field <*> field <*> field <*> field <*> field
+          <*> ((fmap (localTimeToUTC utc) <$> field) <|> field) <*> field
 
 instance FromField ProtocolKilnId where
   fromField f mv = ProtocolKilnId <$> fromField f mv

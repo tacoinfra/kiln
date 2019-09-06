@@ -122,8 +122,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
         INSERT INTO "BlockShellIndex"
              ( hash   , predecessor , "chainId" , level     )
        (SELECT x[i+1] , x[i]        , ?chainId  , ?plvl + i
-          FROM VALUES (?blockHashPgArray::_bytea) a(x)
-          JOIN LATERAL generate_sequence(1,array_length(x,1)::integer-1) i
+          FROM (VALUES (?blockHashPgArray::_bytea)) a(x)
+          JOIN LATERAL generate_series(1,array_length(x,1)::integer-1) i
             ON TRUE) ON CONFLICT DO NOTHING
       |]
 
@@ -1215,9 +1215,10 @@ backfillBlockShellIndex ::
   , MonadLogger m
   ) => NodeDataSource -> Either (VeryBlockLike, PublicNodeContext) BlockShellIndex -> m ()
 backfillBlockShellIndex nds = \case
-  Right blk -> do
-    let ctx = error "FIXME: resume BlockShellIndex backfills"
-    loop ctx Nothing (mkVeryBlockSpine blk)
+  Right _blk -> do
+    -- let ctx = error "FIXME: resume BlockShellIndex backfills"
+    -- loop ctx Nothing (mkVeryBlockSpine blk)
+    return ()
   Left (blk, ctx) -> do
     -- FIXME: this upsert, along with the first bulk insert,  should be in a single transaction
     loop ctx (Just blk) (mkVeryBlockSpine blk)
