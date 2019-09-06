@@ -22,10 +22,13 @@ in {
   protocol = let
     tzFlextesa = tbp-flextesa.tezos.master;
     tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.mainnet;
+
+    # CONFIGURATION
     oldProtoHash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd";
-    oldSuffix = "004-Pt24m4xi";
+    oldSuffix = "004-${builtins.substring 0 8 oldProtoHash}";
     newSuffix = "005-PsBABY5H";
-    propto = tzMultiProto.tezos-src + /src/proto_004_Pt24m4xi/lib_protocol;
+
+    winningProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -58,7 +61,7 @@ in {
     rm -rf "$root_path"
 
     mkdir -p "$kiln_config_dir"
-    ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${propto} \
+    ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${winningProtocolLib} \
       --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
       --no-daemons-for LBK \
       --add-external 10000 \
