@@ -78,7 +78,7 @@ import qualified Data.Sequence as Seq
 import qualified Database.PostgreSQL.Simple as PG
 import qualified Database.PostgreSQL.Simple.ToField as PG
 
-import Tezos.Base58Check (HashedValue(..), fromBase58)
+import Tezos.Base58Check (HashedValue(..))
 import qualified Data.ByteString.Base16 as Base16
 import qualified Data.ByteString.Short  as BS
 import Data.ByteString.Builder (shortByteString, byteString)
@@ -1276,9 +1276,9 @@ toArrayAction hs = PG.Plain $ res
     delta h rest = comma <> base16 h <> rest
 
     empty = shortByteString "'{}'"
-    left  = shortByteString "'{\"\\x"
+    left  = shortByteString "'{\"\\\\x"
     right = shortByteString "\"}'"
-    comma = shortByteString "\",\"\\x"
+    comma = shortByteString "\",\"\\\\x"
 
     base16 (HashedValue h) = byteString . Base16.encode . BS.fromShort $ h
 
