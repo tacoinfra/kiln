@@ -111,7 +111,7 @@ import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Backend.History (CachedHistory (..))
+import Tezos.History (CachedHistory (..))
 import Tezos.NodeRPC.Class
 import Tezos.NodeRPC.Network
 import Tezos.NodeRPC.Sources

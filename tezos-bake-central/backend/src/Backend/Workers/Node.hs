@@ -52,7 +52,7 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Backend.History (CachedHistory (..))
+import Tezos.History (CachedHistory (..))
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked, getHistory)
@@ -1220,7 +1220,6 @@ backfillBlockShellIndex nds = \case
     -- loop ctx Nothing (mkVeryBlockSpine blk)
     return ()
   Left (blk, ctx) -> do
-    -- FIXME: this upsert, along with the first bulk insert,  should be in a single transaction
     loop ctx (Just blk) (mkVeryBlockSpine blk)
  where
   db = _nodeDataSource_pool nds

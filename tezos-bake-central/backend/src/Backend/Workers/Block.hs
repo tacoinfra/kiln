@@ -32,7 +32,7 @@ import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 
 import qualified Tezos.Binary as TBin
 import Tezos.Envelope (Envelope (Envelope_Endorsement))
-import Backend.History
+import Tezos.History
 import Tezos.NodeRPC.Types (RpcError(RpcError_UnexpectedStatus))
 import Tezos.Operation
 import qualified Tezos.Signature.Verify as Sig
