@@ -52,7 +52,7 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.History (CachedHistory (..))
+import Tezos.History (CachedHistory (..), Prehistory(..), addBlocks, accumPrehistory, initializeBlocks)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked, getHistory)
@@ -143,6 +143,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
 
   let
     getBlockShellAncestors blkHash = do
+      -- FIXME: make the number of predecessors to fetch configurable for QA
       map fromOnly <$> [queryQ|
         SELECT predecessor FROM "blockShellAncestors"(?blkHash) LIMIT 21
       |]
@@ -166,6 +167,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
   let
     getHistoryFromNodeRPC oldHead knownBlocks = do
       let blkLevel    = headBlockInfo ^. level
+          -- FIXME: make the number of additional levels to fetch configurable for QA
           fetchLevels = 11 + max 0 (blkLevel - (oldHead ^. level))
       xs <- getHistory chainId headBlockInfo fetchLevels (S.singleton (oldHead ^. hash))
       let len = length xs
@@ -1028,16 +1030,6 @@ waitTillNextCycle nds = liftIO $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
       when (newHead ^. level < pred nextCycleLvl) retry
 
-type HistoryPath   = LCA.Path BlockHash ()
-type HistoryBlocks = Map BlockHash HistoryPath
-type PreHistoryBranches = Map BlockHash BlockShellIndex
-
-data P a b = P !a !b
-
-type St = P HistoryPath HistoryBlocks
-
-type PreHistory = P PreHistoryBranches HistoryBlocks
-
 restoreCachedHistoryWorker :: NodeDataSource -> IO (IO ())
 restoreCachedHistoryWorker nds =
   oneShot $ runLoggingEnv (_nodeDataSource_logger nds) $ restoreCachedHistory nds
@@ -1122,8 +1114,8 @@ restoreCachedHistory nds = do
       let      -- our cache's "genesis" block need not be at level 0
         !levelZero = (blkMax ^. level) - (fromIntegral $ length spine) + 1
         !blocks0 = initializeBlocks spine
-        !prehist0 = P (Map.singleton blkMaxHash blkMax) blocks0
-        (P branches blocks)  = foldl' (flip accumPreHistory) prehist0 uncles
+        !prehist0 = Prehistory (Map.singleton blkMaxHash blkMax) blocks0
+        (Prehistory branches blocks)  = foldl' (flip accumPrehistory) prehist0 uncles
 
       let
         !fudgedBranches = fudge <$> branches
@@ -1136,76 +1128,6 @@ restoreCachedHistory nds = do
           , _cachedHistory_minLevel = _cachedHistory_minLevel history
           , _cachedHistory_levelZero = levelZero
           }
-
-initializeBlocks :: [BlockHash] -> HistoryBlocks
-initializeBlocks blks = res
-   where (P _ res) = addBlocks_ blks emptySt
-
-addBlocks :: BlockLike blk => [BlockHash] -> blk -> (CachedHistory ()) -> Maybe (CachedHistory ())
-addBlocks blks_ blk history = do
-  case Map.lookup blkHash knownBlocks of
-    Just _ -> Just history
-    Nothing -> do
-      let a = case blks_ of
-                [] -> predHash
-                (x:_) -> x
-      case skipDuplicates a (drop 1 blks_) of
-        Nothing -> Nothing
-        Just (oldBranch, path, as) -> do
-          let P path' blocks' = addBlocks_ as (P path knownBlocks)
-          if null as || last as == predHash
-          then do
-            let
-              blocks'' = Map.insert blkHash (LCA.cons blkHash () path') blocks'
-              branches' = Map.delete oldBranch (_cachedHistory_branches history)
-              branches'' = Map.insert blkHash (mkVeryBlockLike blk) branches'
-            Just $ CachedHistory {
-              _cachedHistory_blocks = blocks''
-            , _cachedHistory_branches = branches''
-            , _cachedHistory_minLevel = _cachedHistory_minLevel history
-            , _cachedHistory_levelZero = _cachedHistory_levelZero history
-            }
-          else Nothing
-  where
-    blkHash = blk ^. hash
-    predHash = blk ^. predecessor
-    knownBlocks = _cachedHistory_blocks history
-
-    skipDuplicates a bs =
-      case Map.lookup a knownBlocks of
-        Nothing -> Nothing
-        Just path -> Just $ loop a path bs
-      where
-        loop b path [] =
-          (b, path, [])
-        loop b path cs@(c:ds) =
-          case Map.lookup c knownBlocks of
-            Nothing -> (b, path, cs)
-            Just path' -> loop c path' ds
-
-emptySt :: St
-emptySt = P LCA.empty Map.empty
-
-addBlocks_ :: [BlockHash] -> St -> St
-addBlocks_ spine st = foldl' delta st spine
-  where delta (P path blocks) blkHash = P path' blocks'
-          where path'   = LCA.cons blkHash () path
-                blocks' = Map.insert blkHash path' blocks
-
-accumPreHistory :: BlockShellIndex -> PreHistory -> PreHistory
-accumPreHistory blk hist@(P branches blocks) =
-  case Map.lookup blkHash blocks of
-    Just _ -> hist
-    Nothing ->
-      case Map.lookup predHash blocks of
-        Nothing -> hist
-        Just path -> P branches' blocks'
-          where
-            branches' = Map.insert blkHash blk (Map.delete predHash branches)
-            blocks'   = Map.insert blkHash (LCA.cons blkHash () path) blocks
-  where
-    blkHash  = blk ^. hash
-    predHash = blk ^. predecessor
 
 -- Assumption: the spine we are passed is stored in Postgres in the
 -- "BlockShellIndex" table at the lowest level for our current chainId
