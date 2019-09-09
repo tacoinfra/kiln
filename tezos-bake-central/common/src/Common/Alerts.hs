@@ -142,12 +142,12 @@ data ErrorLogWidgets m = ErrorLogWidgets
 
 bakerLedgerDisconnectedDescriptions :: ErrorLogBakerLedgerDisconnected -> BakerErrorDescriptions
 bakerLedgerDisconnectedDescriptions _elog = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "The ledger walled is disconnected"
+  { _bakerErrorDescriptions_title = "Ledger Device is disconnected"
   , _bakerErrorDescriptions_tile = "Disconnected"
   , _bakerErrorDescriptions_notification = "The ledger wallet for this baker is disconected."
   , _bakerErrorDescriptions_problem = ["The ledger wallet for this baker is disconnected, and so it cannot process any baking or signing activity."]
   , _bakerErrorDescriptions_warning = Nothing
-  , _bakerErrorDescriptions_fix = "Connect your ledger wallet to your computer."
+  , _bakerErrorDescriptions_fix = "Make sure the Ledger Device is connected to your computer and has the Tezos Baking App open."
   , _bakerErrorDescriptions_resolved = \b ->
       let (primary, secondary) = bakerIdentification b
       in ( "Resolved: The ledger has been re-connected"
