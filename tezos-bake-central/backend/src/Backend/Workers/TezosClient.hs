@@ -82,9 +82,6 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
 
-    inDb (selectSingle $ ConnectedLedger_forceConnectivityCheckField ==. True) >>= \mcl -> for_ mcl $ \(_cl :: ConnectedLedger) -> do
-      updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
     currentTime <- inDb getTime
     case mConnectedLedger of
@@ -234,15 +231,14 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
                 notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First vs })
             _ -> pure () -- shouldn't happen
 
+        if _connectedLedger_forceConnectivityCheck cl
         -- If we want to immediately do the connectivity check
-        when (_connectedLedger_forceConnectivityCheck cl) $ do
-          updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-
+        then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
         -- Otherwise, we might want to do the connectivity check because some time has passed
-        case _connectedLedger_updated cl of
+        else case _connectedLedger_updated cl of
           Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
           Just upd ->
-            if (currentTime `diffUTCTime` upd > 5)
+            if (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval)
             then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
             else pure ()
 
@@ -250,6 +246,8 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
     where
       inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
+      ledgerBackgroundUpdateInterval :: NominalDiffTime -- seconds
+      ledgerBackgroundUpdateInterval = 5
 
 withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
 withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
