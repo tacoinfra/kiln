@@ -378,7 +378,17 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
               divClass "header" $ text title
               divClass "description" body
 
-      infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+      divClass "item" $ divClass "withRightIcon" $ do
+        divClass "content" $ do
+          divClass "header" $ text "Network"
+          divClass "description" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+        divClass "iconDiv" $
+          dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
+            SemUi.icon "icon-disconnected"
+            (def
+              & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
+              & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
+              )
 
       cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
       whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
@@ -413,12 +423,6 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
           text "Ledger Device "
           dynText $ ffor dIsLedgerConnected $ bool "Disconnected" "Connected"
 
-    dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
-      SemUi.icon "icon-disconnected"
-      (def
-        & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
-        & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
-        )
   headerBell
 
   where
