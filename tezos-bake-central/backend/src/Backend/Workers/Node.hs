@@ -117,11 +117,10 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
   let
     updatePgCache lvl xs = do
       let blockHashPgArray = PGArray xs
-          plvl = lvl - 1
       void $ [executeQ|
         INSERT INTO "BlockShellIndex"
              ( hash   , predecessor , "chainId" , level     )
-       (SELECT x[i+1] , x[i]        , ?chainId  , ?plvl + i
+       (SELECT x[i+1] , x[i]        , ?chainId  , ?lvl + i
           FROM (VALUES (?blockHashPgArray::_bytea)) a(x)
           JOIN LATERAL generate_series(1,array_length(x,1)::integer-1) i
             ON TRUE) ON CONFLICT DO NOTHING
@@ -145,7 +144,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     getBlockShellAncestors blkHash = do
       -- FIXME: make the number of predecessors to fetch configurable for QA
       map fromOnly <$> [queryQ|
-        SELECT predecessor FROM "blockShellAncestors"(?blkHash) LIMIT 21
+        SELECT predecessor FROM "blockShellAncestors"(?blkHash, 21)
       |]
 
   let

@@ -502,3 +502,21 @@ createFunctionBlockShellAncestors = do
     END;
     $$ LANGUAGE 'plpgsql' STABLE;
   |]
+
+  void [traceExecuteQ|
+    CREATE OR REPLACE FUNCTION "blockShellAncestors"
+    ( "blockHash" bytea
+    , "numLevels" integer
+    ) RETURNS SETOF "BlockShellIndex" AS $$
+    DECLARE
+      blockshell "BlockShellIndex";
+    BEGIN
+      FOR i IN 1.."numLevels" LOOP
+        SELECT INTO blockshell * FROM "BlockShellIndex" WHERE hash = "blockHash";
+        EXIT WHEN NOT FOUND;
+        RETURN NEXT blockshell;
+        "blockHash" := blockshell.predecessor;
+      END LOOP;
+    END;
+    $$ LANGUAGE 'plpgsql' STABLE;
+  |]
