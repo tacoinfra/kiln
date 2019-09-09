@@ -1228,7 +1228,12 @@ backfillBlockShellIndex nds = \case
   loop ctx mHead !blk = do
     let
       lvl = blk ^. level
-      fetchLevels = if lvl > 12000 then 8000 else lvl + 1
+      -- TODO: make these numbers config params for QA & Dev purposes
+      backfillLevel    = 0
+      threshholdLevels = 12000
+      defaultLevels    = 8000
+      fetchLevels = let x = lvl - backfillLevel in
+                     if x > threshholdLevels then defaultLevels else x + 1
     if fetchLevels < 2   -- we need at least two to form a link in the spine
     then return ()
     else do
@@ -1261,8 +1266,8 @@ backfillBlockShellIndex nds = \case
               |] (chainId, lvl, blockHashPgArray)
 
             loop ctx Nothing $ VeryBlockSpine {
-                _veryBlockSpine_hash        = blockHashes `Seq.index` (n - 1)
-              , _veryBlockSpine_predecessor = blockHashes `Seq.index` (n - 2)
+                _veryBlockSpine_hash        = blockHashes `Seq.index` (n - 2)
+              , _veryBlockSpine_predecessor = blockHashes `Seq.index` (n - 1)
               , _veryBlockSpine_level       = lvl - fromIntegral n + 1
               }
 
