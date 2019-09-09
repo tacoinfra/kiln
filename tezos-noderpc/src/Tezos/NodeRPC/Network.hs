@@ -226,8 +226,8 @@ getNodeChain :: forall e r m.
 getNodeChain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
     Nothing                    -> nodeRPC rChain
     Just PublicNode_Blockscale -> nodeRPC rChain
-    Just PublicNode_TzScan     -> nodeRPC $ _tzScanBlock_network <$> plainNodeRequest Http.methodGet "/v2/head/"
-    Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet "/v2/chain"
+    Just PublicNode_TzScan     -> nodeRPC $ _tzScanBlock_network <$> plainNodeRequest Http.methodGet "/v3/head/"
+    Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet "/v3/chain"
 
 getCurrentHead :: forall e r m.
   ( MonadIO m, MonadLogger m
@@ -238,8 +238,8 @@ getCurrentHead :: forall e r m.
 getCurrentHead chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> nodeRPC $ mk <$> rHead (ChainTag_Hash chain)
   Just PublicNode_Blockscale -> nodeRPC $ mk <$> rHead (ChainTag_Hash chain)
-  Just PublicNode_TzScan     -> nodeRPC $ mk @ TzScanBlock <$> plainNodeRequest Http.methodGet "/v2/head/"
-  Just PublicNode_Obsidian   -> nodeRPC $                                   plainNodeRequest Http.methodGet $ "/v2/" <> toBase58Text chain <> "/head"
+  Just PublicNode_TzScan     -> nodeRPC $ mk @ TzScanBlock <$> plainNodeRequest Http.methodGet "/v3/head/"
+  Just PublicNode_Obsidian   -> nodeRPC $                                   plainNodeRequest Http.methodGet $ "/v3/" <> toBase58Text chain <> "/head"
   where
     mk :: (HasProtocolHash blk, BlockLike blk) => blk -> WithProtocolHash VeryBlockLike
     mk blk = WithProtocolHash
@@ -254,11 +254,11 @@ canGetHistory PublicNode_TzScan = False
 
 obsidianLCA :: (BlockLike blk, Foldable f) => ChainId -> blk -> f BlockHash -> RpcQuery VeryBlockLike
 obsidianLCA chain blk branches = plainNodeRequest Http.methodGet $
-  "/v2/" <> toBase58Text chain <> "/lca?block=" <> toBase58Text (blk ^. hash) <> foldMap (\b' -> "&block=" <> toBase58Text b') branches
+  "/v3/" <> toBase58Text chain <> "/lca?block=" <> toBase58Text (blk ^. hash) <> foldMap (\b' -> "&block=" <> toBase58Text b') branches
 
 obsidianAncestors :: ChainId -> BlockHash -> RawLevel -> RpcQuery (Seq BlockHash)
 obsidianAncestors chain branch (RawLevel levels) = plainNodeRequest Http.methodGet $
-  "/v2/" <> toBase58Text chain <> "/ancestors?branch=" <> toBase58Text branch <> "&level=" <> T.pack (show levels)
+  "/v3/" <> toBase58Text chain <> "/ancestors?branch=" <> toBase58Text branch <> "&level=" <> T.pack (show levels)
 
 -- fetch some history, starting at head, for at most n levels, optionally stop at ancestors of branches
 getHistory :: forall blk e r m.
@@ -297,10 +297,10 @@ getBlock ::
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> nodeRPC $ mk <$> rBlockHeader (ChainTag_Hash chainId) blockHash
   Just PublicNode_Blockscale -> nodeRPC $ mk <$> rBlockHeader (ChainTag_Hash chainId) blockHash
-  Just PublicNode_TzScan     -> nodeRPC $ mk @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v2/block/" <> toBase58Text blockHash <> "/header")
+  Just PublicNode_TzScan     -> nodeRPC $ mk @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v3/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
-    ("/v2/" <> toBase58Text chainId <> "/block-header/?hash=" <> toBase58Text blockHash)
+    ("/v3/" <> toBase58Text chainId <> "/block-header/?hash=" <> toBase58Text blockHash)
   where
     mk :: (HasProtocolHash blk, BlockLike blk) => blk -> WithProtocolHash VeryBlockLike
     mk blk = WithProtocolHash

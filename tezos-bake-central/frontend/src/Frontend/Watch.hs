@@ -217,7 +217,7 @@ watchBakerAlerts = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerAlerts = viewRangeAll 1
     }
-  return $ ffor theView $ \v' ->  getRangeView' (_bakeView_bakerAlerts v')
+  return $ ffor theView $ \v' -> MMap.mapMaybe getFirst $ getRangeView' (_bakeView_bakerAlerts v')
 
 data CollectiveNodesFailure
   = CollectiveNodesFailure_NoNodes

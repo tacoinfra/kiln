@@ -152,7 +152,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let bakerAlertsVS = _bakeViewSelector_bakerAlerts vs
   bakerAlerts <- whenM (not $ null bakerAlertsVS) $
-    toRangeView bakerAlertsVS . fmap (\(pkh, v) -> (Bounded pkh, v)) <$> getBakerAlert
+    toRangeView bakerAlertsVS . fmap (\(pkh, v) -> (Bounded pkh, First $ Just v)) <$> getBakerAlert
 
   -- maybeCurrentHead <- runReaderT dataSourceHead nds
 

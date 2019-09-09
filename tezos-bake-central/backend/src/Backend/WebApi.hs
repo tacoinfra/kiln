@@ -32,7 +32,7 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.STM (atomicallyWith)
-import Common.Schema (CacheDelegateInfo(..), CacheError, ProtocolIndex)
+import Common.Schema (CacheDelegateInfo(..), CacheError(..), ProtocolIndex)
 import ExtraPrelude
 
 snapHead :: (MonadIO m, MonadReader r m, HasNodeDataSource r) => m (Either Text (WithProtocolHash VeryBlockLike))
@@ -40,15 +40,14 @@ snapHead = do
   nds <- asks (^. nodeDataSource)
   liftIO $ atomically $ maybe (Left "cache not ready") pure <$> dataSourceHead nds
 
-v2PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
-v2PublicApi dataSrc = route $ fmap (first ("api/v2/" <>))
+v3PublicApi :: forall m. MonadSnap m => NodeDataSource -> m ()
+v3PublicApi dataSrc = route $ fmap (first ("api/v3/" <>))
   [ ("chain",                Snap.writeLBS $ Aeson.encode chain)
   , ( chainTXT <> "/account", writeJSON snapAccount )
   , ( chainTXT <> "/ancestors", writeJSON snapAncestors )
   , ( chainTXT <> "/baking-rights", writeJSON snapBakingRights )
   , ( chainTXT <> "/ballot", writeJSON snapBallot )
   , ( chainTXT <> "/ballots", writeJSON snapBallots )
-  , ( chainTXT <> "/block",     writeJSON snapVeryBlockLike )
   , ( chainTXT <> "/block-full", writeJSON snapBlock )
   , ( chainTXT <> "/block-header", writeJSON snapBlockHeader )
   , ( chainTXT <> "/current-proposal", writeJSON snapCurrentProposal )
@@ -111,14 +110,6 @@ snapAncestors = runExceptT $ do
   blockLevel :: RawLevel <- either (throwError . T.pack . show) return $ Aeson.eitherDecodeStrict' levelBS
 
   either (throwError . T.pack . show ) return =<< runExceptT (ancestors blockLevel branch)
-
-snapVeryBlockLike :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
-snapVeryBlockLike = runExceptT $ do
-  nds <- asks (^. nodeDataSource)
-  blockBS <- requiredQueryParam "block"
-  block <- either (throwError . T.pack . show) return $ fromBase58 blockBS
-
-  maybe (throwError "block unknown") return =<< liftIO (atomically $ lookupBlock nds block)
 
 snapBallots :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Ballots)
 snapBallots = runExceptT $ do
@@ -256,26 +247,25 @@ snapDelegateInfo = runExceptT $ do
 
 snapPublicKey :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text PublicKey)
 snapPublicKey = runExceptT $ do
-  pkhBS <- requiredQueryParam "pkh"
-  pkh <- either (throwError . T.pack . show) return $ tryReadPublicKeyHash pkhBS
+  contractIdBS <- requiredQueryParam "contract-id"
+  contractId <- either (throwError . T.pack . show) return $ tryReadContractId contractIdBS
 
-  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_PublicKey (Implicit pkh)
+  asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_PublicKey contractId
 
 snapProtocolIndex :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text ProtocolIndex)
 snapProtocolIndex = do
-  mBranch <- runExceptT $ do
-    branchBS <- requiredQueryParam "branch"
+  mProtocol <- runExceptT $ do
     protocolBS <- requiredQueryParam "protocol"
 
-    branch <- either (throwError . T.pack . show) return $ fromBase58 branchBS
-    protocol <- either (throwError . T.pack . show) return $ fromBase58 protocolBS
-    pure (branch, protocol)
+    either (throwError . T.pack . show) return $ fromBase58 protocolBS
 
   dsrc <- asks (^. nodeDataSource)
   -- To do this without liftIO we would have to add MonadBaseNoPureAborts instance for MonadSnap
   let runNodeQuery x = liftIO $ runLoggingEnv (_nodeDataSource_logger dsrc) $ flip runReaderT dsrc $ runExceptT (runNodeQueryT x)
-  fmap join $ for mBranch $ \(branch, protocol) -> do
-    res :: Either CacheError ProtocolIndex <- runNodeQuery (getProtocolIndex branch protocol)
+  fmap join $ for mProtocol $ \protocol -> do
+    res :: Either CacheError ProtocolIndex <- runNodeQuery $ do
+      headBlk <- maybe (nqThrowError CacheError_NotEnoughHistory) pure =<< nqAtomically (dataSourceHead dsrc)
+      getProtocolIndex (headBlk ^. hash) protocol
     case res of
       Left e -> pure $ Left $ tshow e
       Right v -> pure $ Right v

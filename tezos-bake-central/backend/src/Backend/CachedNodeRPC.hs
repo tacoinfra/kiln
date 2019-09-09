@@ -140,6 +140,7 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: !BlockHash -> NodeQuery ProtoInfo
+  NodeQuery_ProtocolIndex   :: !ProtocolHash -> NodeQuery ProtocolIndex
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
@@ -698,6 +699,7 @@ priorityChunkSize = 64
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
   NodeQuery_ProtocolConstants ctx -> pure ctx
+  NodeQuery_ProtocolIndex _ctx -> getFittestBranch
   NodeQuery_BakingRights ctx _lvl -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
@@ -846,6 +848,7 @@ validNodes
   => [(URI, Maybe VeryBlockLike, Maybe RawLevel)] -> NodeQuery a -> m (Either CacheError [(URI, VeryBlockLike)])
 validNodes nodes q = case q of
   NodeQuery_ProtocolConstants ctx -> findNode =<< getLvl ctx
+  NodeQuery_ProtocolIndex _ctx -> pure $ Right [] -- only OS public node can do this query
   NodeQuery_BakingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_EndorsingRights _ctx lvl -> findNode $ Just lvl
   NodeQuery_Block ctx -> findNode =<< getLvl ctx
@@ -898,7 +901,7 @@ nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC ChainTag_Hash
 
 nodeQueryImpl
   :: forall a chain repr.
-   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
+   ( QueryBlock repr, QueryHistory repr, QueryProtocolIndex repr, BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
      => repr c -> m c)
@@ -911,6 +914,7 @@ nodeQueryImpl
   -> IO (Either CacheError a)
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
+  NodeQuery_ProtocolIndex protoHash -> nodeRPC' $ rProtocolIndex chainId protoHash
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -960,10 +964,20 @@ data OsNodeQuery a = OsNodeQuery
   , _osNodeQuery_params :: [(Text, Text)]
   }
 
+class QueryProtocolIndex (repr :: * -> *) where
+  rProtocolIndex :: ChainId -> ProtocolHash -> repr ProtocolIndex
+
+instance QueryProtocolIndex OsNodeQuery where
+  rProtocolIndex = chainApi2 "/protocol-index" $ \protocol ->
+    [("protocol", toBase58Text protocol)]
+
+instance QueryProtocolIndex RpcQuery where
+  rProtocolIndex = error "rProtocolIndex not possible for RpcQuery"
+
 type instance ChainType OsNodeQuery = ChainId
 
 instance QueryChain OsNodeQuery where
-  rChain = OsNodeQuery "/v2/chain" []
+  rChain = OsNodeQuery "/v3/chain" []
 
 instance QueryBlock OsNodeQuery where
   type BlockType OsNodeQuery = Block
@@ -976,7 +990,6 @@ instance QueryHistory OsNodeQuery where
   rBlocks = error "rBlocks NYI for OsNodeQuery"
   rBlockPred = error "rBlockPred NYI for OsNodeQuery"
   rProtoConstants = error "rProtoConstants NYI for OsNodeQuery"
-  rManagerKey = error "rManagerKey NYI for OsNodeQuery"
   rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
 
   rBallots = blockApi1 "/ballots"
@@ -992,6 +1005,8 @@ instance QueryHistory OsNodeQuery where
     [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
   rProposalVote = chainApi3 "/proposal-vote" $ \block pkh ->
     [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
+  rManagerKey contractId = chainApi2 "/public-key" $ \_ ->
+    [("contract-id", toContractIdText contractId)]
 
   rBakingRightsFull levelSet _ = chainApi2 "/baking-rights" (\branch ->
     [("branch", toBase58Text branch), ("level", tshow lvl)])
@@ -1013,7 +1028,7 @@ chainApi2 path getParams chainId = chainApi3 path (const getParams) chainId ()
 
 chainApi3 :: Text -> (b -> c  -> [(Text, Text)]) -> ChainId -> b -> c -> OsNodeQuery a
 chainApi3 path getParams chainId b c = OsNodeQuery route (getParams b c)
-  where route = "/v2/" <> toBase58Text chainId <> path
+  where route = "/v3/" <> toBase58Text chainId <> path
 
 blockApi1 :: Text -> ChainId -> BlockHash -> OsNodeQuery a
 blockApi1 path = chainApi2 path (\block -> [("block", toBase58Text block)])
@@ -1300,63 +1315,72 @@ getProtocolIndex branch protoHash = do
   history <- nqAtomically $ readTVar' historyVar
   case headMay [x | x <- existingEntries, isJust $ branchPointPure (x ^. hash) branch history] of
     Just existing -> pure existing
-    Nothing -> do
-      -- Search until we have the history up to the desired protocol.
-      protocolHistory <- buildProtocolHistoryUntil
-        ! #predicate (\blk -> blk ^. protocolHash == protoHash)
-        ! #branch branch
-        ! #history history
+    Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
+      Right p' -> pure p'
+      Left _ -> buildProtocolIndex branch protoHash history
 
-      case NE.nonEmpty $ sortOn (Down . (^. level)) $ toList protocolHistory of
-        Nothing -> nqThrowError CacheError_NotEnoughHistory
-        Just orderedFirstBlocks -> do
-          -- To increase likelihood that a node knows the answer, we will use the *last* block
-          -- in a protocol to get it's constants (the most recent block possible). To do this we
-          -- pair up the protocols with the block immediately *prior* to the first block in the
-          -- next protocol. For the most recent protocol, we will use 'branch' as the query block.
+buildProtocolIndex
+  :: forall m
+   . (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
+  => BlockHash -> ProtocolHash -> CachedHistory' -> NodeQueryT m ProtocolIndex
+buildProtocolIndex branch protoHash history = do
+  chainId <- asksNodeDataSource _nodeDataSource_chain
+  -- Search until we have the history up to the desired protocol.
+  protocolHistory <- buildProtocolHistoryUntil
+    ! #predicate (\blk -> blk ^. protocolHash == protoHash)
+    ! #branch branch
+    ! #history history
+
+  case NE.nonEmpty $ sortOn (Down . (^. level)) $ toList protocolHistory of
+    Nothing -> nqThrowError CacheError_NotEnoughHistory
+    Just orderedFirstBlocks -> do
+      -- To increase likelihood that a node knows the answer, we will use the *last* block
+      -- in a protocol to get it's constants (the most recent block possible). To do this we
+      -- pair up the protocols with the block immediately *prior* to the first block in the
+      -- next protocol. For the most recent protocol, we will use 'branch' as the query block.
+      let
+        initOrderedLastBlockHashes = flip map (NE.init orderedFirstBlocks) $ \blk ->
+          levelAncestor history (blk ^. level - 1) branch
+        protocolQueryBlockMap = NE.zip orderedFirstBlocks (Just branch NE.:| initOrderedLastBlockHashes)
+
+      protoIndexes :: [ProtocolIndex] <- fmap (mapMaybe (^? _Right) . toList) $
+        for protocolQueryBlockMap $ \(firstBlock, queryBlockHash') -> nqTry $ do
+          -- Before using the query block instead of 'firstBlock', make sure it's protocol really is
+          -- the same. If not, fall back to 'firstBlock'.
+          -- While this situation shouldn't happen, it's possible for protocols to be introduced
+          -- apart from the amendment process. In this case we may actually skip one
+          -- in the scan which would cause this logic to pair the wrong constants with a
+          -- protocol hash--and that's just too scary to think about.
+          queryBlock' <- for queryBlockHash' $ nodeQueryDataSourceSafe . NodeQuery_Block
           let
-            initOrderedLastBlockHashes = flip map (NE.init orderedFirstBlocks) $ \blk ->
-              levelAncestor history (blk ^. level - 1) branch
-            protocolQueryBlockMap = NE.zip orderedFirstBlocks (Just branch NE.:| initOrderedLastBlockHashes)
+            actualQueryBlockHash = case queryBlock' of
+              Just queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
+              _ -> firstBlock ^. hash
+          constants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants actualQueryBlockHash
+          pure ProtocolIndex
+            { _protocolIndex_chainId = chainId
+            , _protocolIndex_hash = firstBlock ^. protocolHash
+            , _protocolIndex_proto = firstBlock ^. block_header . blockHeaderFull_proto
+            , _protocolIndex_constants = constants
+            , _protocolIndex_firstBlockHash = firstBlock ^. hash
+            , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
+            , _protocolIndex_firstBlockLevel = firstBlock ^. level
+            , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
+            , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
+            , _protocolIndex_firstBlockCycle = firstBlock ^. block_metadata . blockMetadata_level . level_cycle
+            }
 
-          protoIndexes :: [ProtocolIndex] <- fmap (mapMaybe (^? _Right) . toList) $
-            for protocolQueryBlockMap $ \(firstBlock, queryBlockHash') -> nqTry $ do
-              -- Before using the query block instead of 'firstBlock', make sure it's protocol really is
-              -- the same. If not, fall back to 'firstBlock'.
-              -- While this situation shouldn't happen, it's possible for protocols to be introduced
-              -- apart from the amendment process. In this case we may actually skip one
-              -- in the scan which would cause this logic to pair the wrong constants with a
-              -- protocol hash--and that's just too scary to think about.
-              queryBlock' <- for queryBlockHash' $ nodeQueryDataSourceSafe . NodeQuery_Block
-              let
-                actualQueryBlockHash = case queryBlock' of
-                  Just queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
-                  _ -> firstBlock ^. hash
-              constants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants actualQueryBlockHash
-              pure ProtocolIndex
-                { _protocolIndex_chainId = chainId
-                , _protocolIndex_hash = firstBlock ^. protocolHash
-                , _protocolIndex_proto = firstBlock ^. block_header . blockHeaderFull_proto
-                , _protocolIndex_constants = constants
-                , _protocolIndex_firstBlockHash = firstBlock ^. hash
-                , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
-                , _protocolIndex_firstBlockLevel = firstBlock ^. level
-                , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
-                , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
-                , _protocolIndex_firstBlockCycle = firstBlock ^. block_metadata . blockMetadata_level . level_cycle
-                }
+      for_ protoIndexes $ \protoIndex -> do
+        mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
+          (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
+            &&. (ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash)
+          )
+        when (mp == Nothing) $ do
+          insert protoIndex
+          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
 
-          for_ protoIndexes $ \protoIndex -> do
-            mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
-              (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
-                &&. (ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash)
-              )
-            when (mp == Nothing) $ do
-              insert protoIndex
-              notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
-
-          maybe (nqThrowError CacheError_NotEnoughHistory) pure $
-            find ((protoHash ==) . view protocolHash) protoIndexes
+      maybe (nqThrowError CacheError_NotEnoughHistory) pure $
+        find ((protoHash ==) . view protocolHash) protoIndexes
 
 buildProtocolHistoryUntil
   :: forall m
