@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Semigroup ((<>))
 import qualified Data.Sequence as Seq
-import Data.Sequence (Seq (),x (<|))
+import Data.Sequence (Seq (), (<|))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -80,8 +80,9 @@ initializeBlocks blks = _blockPath_blockMap (extendBlockPath blks emptyBlockPath
 -- 'predecessor' hash of the @block@.   If @spine@ is @[]@,  then it's assumed
 -- to be equivalent to @[block ^. predecessor]@.
 --
--- Duplicate blocks are harmless.  The only situations where @addHeadBlock@ will
--- return 'Nothing' is when the preconditions described above are violated.
+-- Duplicate blocks are harmless beyond minor resource consumption.
+-- The only times @addHeadBlock@ when will return 'Nothing' are when the
+-- preconditions described above are violated.
 addHeadBlock :: (BlockLike b, HasProtocolHash b)  => [BlockHash] -> b -> CachedHistory () -> Maybe (CachedHistory ())
 addHeadBlock spine blk history = do
   case Map.lookup blkHash knownBlocks of

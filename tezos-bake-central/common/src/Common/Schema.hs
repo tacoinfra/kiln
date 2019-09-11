@@ -59,7 +59,7 @@ import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
 import Data.Some (Some(..))
 import Data.Text (Text)
-import Data.Int (Int64, Int16)
+import Data.Int (Int64)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
@@ -976,10 +976,6 @@ deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
 deriving instance Show (BakerLogTag a)
 
--- | Short Protocol Id internal to Kiln.   Probably should not be exposed to the outside world.
-newtype ProtocolKilnId = ProtocolKilnId Int16
-  deriving (Eq, Ord, Show, Typeable, Generic)
-
 data BlockShellIndex = BlockShellIndex
   { _blockShellIndex_hash :: !BlockHash
   , _blockShellIndex_predecessor :: !BlockHash
@@ -987,7 +983,7 @@ data BlockShellIndex = BlockShellIndex
   , _blockShellIndex_level :: !RawLevel
   , _blockShellIndex_fitness :: !(Maybe Fitness)
   , _blockShellIndex_timestamp :: !(Maybe UTCTime)
-  , _blockShellIndex_protocolKilnId :: !(Maybe ProtocolKilnId)
+  , _blockShellIndex_proto :: !(Maybe Word8)
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId BlockShellIndex
 
@@ -1045,7 +1041,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
-  , ''ProtocolKilnId
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''Report

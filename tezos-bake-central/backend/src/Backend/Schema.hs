@@ -57,7 +57,7 @@ import Data.Fixed (Fixed (MkFixed), HasResolution)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Compare.TH (deriveGCompare)
 import Data.GADT.Show.TH (deriveGShow)
-import Data.Int (Int64)
+import Data.Int (Int64, Int32)
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
 import Data.Some (Some(..))
@@ -67,7 +67,7 @@ import qualified Data.Text.Lazy as LT
 import Data.Time (localTimeToUTC, utc)
 import Data.Version (Version)
 import qualified Data.Version as Version
-import Data.Word (Word64)
+import Data.Word (Word64, Word8)
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Generic
@@ -433,11 +433,16 @@ instance ToField VotingPeriodKind where
 -- FIXME: we need to cope with the mismatch between this FromRow instance and
 -- groundhog migrations, somehow.
 instance FromRow BlockShellIndex where
-  fromRow = BlockShellIndex <$> field <*> field <*> field <*> field <*> field
-          <*> ((fmap (localTimeToUTC utc) <$> field) <|> field) <*> field
-
-instance FromField ProtocolKilnId where
-  fromField f mv = ProtocolKilnId <$> fromField f mv
+  fromRow = BlockShellIndex
+              <$> field
+              <*> field
+              <*> field
+              <*> field
+              <*> field
+              <*> ((fmap (localTimeToUTC utc) <$> field) <|> field)
+              <*> fmap (fmap toWord8) field
+    where toWord8 :: Int32 -> Word8
+          toWord8 = fromIntegral
 
 instance PersistField Tez where
   persistName _ = "Tez"
@@ -554,18 +559,6 @@ instance PersistField PublicKeyHash where
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
   dbType p _ = dbType p ("" :: Text)
-
-instance PersistField ProtocolKilnId where
-  persistName _ = "ProtocolKilnId"
-  toPersistValues = primToPersistValue
-  fromPersistValues = primFromPersistValue
-  dbType p ~(ProtocolKilnId x) = dbType p x
-
-instance NeverNull ProtocolKilnId
-
-instance PrimitivePersistField ProtocolKilnId where
-  toPrimitivePersistValue x (ProtocolKilnId v) = toPrimitivePersistValue x v
-  fromPrimitivePersistValue x v = ProtocolKilnId $ fromPrimitivePersistValue x v
 
 leftPad :: Int -> Text
 leftPad n = if T.length n' > 4 then error "too dang big" else n'

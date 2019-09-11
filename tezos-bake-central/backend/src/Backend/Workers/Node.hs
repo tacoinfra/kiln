@@ -102,6 +102,7 @@ haveNewHead
   -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logInfo) [i|Node reported new head: ${headBlockInfo ^. hash}, level ${headBlockInfo ^. level}|]
+  liftIO $ putStrLn "haveNewHead"
   res <- runExceptT $ do
     flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
       nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
@@ -112,13 +113,14 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
       haveNewHead' nds pn nodeAddr headBlockHeader
 
 haveNewHead'
-  :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m, BlockLike blk, HasProtocolHash blk)
+  :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m)
   => NodeDataSource
   -> Maybe PublicNode
   -> URI
-  -> blk
+  -> BlockHeader
   -> m ()
 haveNewHead' nds pn nodeAddr headBlock = do
+  liftIO $ putStrLn "haveNewHead'"
   let
     httpMgr = _nodeDataSource_httpMgr nds
     chainId = _nodeDataSource_chain nds
@@ -126,7 +128,7 @@ haveNewHead' nds pn nodeAddr headBlock = do
     publicNodeContext = PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn
 
   let
-    upsertHeadBlock = upsertBlockLike chainId headBlock
+    upsertHeadBlock = upsertBlockHeader chainId headBlock
 
   let
     updateMemCache xs = do
@@ -162,8 +164,8 @@ haveNewHead' nds pn nodeAddr headBlock = do
   let
     trySignalInitBarrier = do
       let mvar = _nodeDataSource_blockShellIndexInitBarrier nds
-          blk = WithProtocolHash (mkVeryBlockLike headBlock) (headBlock ^. protocolHash)
-      void $ liftIO $ tryPutMVar mvar (blk, publicNodeContext)
+      liftIO $ putStrLn "trySignalInitBarrier"
+      void $ liftIO $ tryPutMVar mvar (headBlock, publicNodeContext)
 
   let
     getBlockShellAncestors blkHash = do
@@ -233,7 +235,7 @@ haveNewHead' nds pn nodeAddr headBlock = do
         else return xs
       case rsp of
         Left (e :: PublicNodeError) -> do
-          $(logWarnSH) e
+          $(logWarn) [i|Failed to handle new node head: ${e}|]
           return []  -- FIXME?  What should we do here?
         Right h -> do
           return h
@@ -1081,6 +1083,7 @@ restoreCachedHistory nds = do
   -- simply replace `c` with `$1`, and send `chainId` in a binary
   -- protocol-level parameter.
   let db  =_nodeDataSource_pool nds
+  liftIO $ putStrLn "restoring cached history"
   runDb (Identity db) [queryQ|
     SELECT DISTINCT "BlockShellIndex".*
       FROM (VALUES (?chainId::bytea)) a(c)
@@ -1093,17 +1096,18 @@ restoreCachedHistory nds = do
      ORDER BY level
   |] >>= \case
     [] -> do
+      liftIO $ putStrLn "waiting on initialization barrier"
       let initBarrier = _nodeDataSource_blockShellIndexInitBarrier nds
-      headCtx <- liftIO $ readMVar initBarrier
+      headCtx@(hblk,_) <- liftIO $ readMVar initBarrier
       backfillBlockShellIndex nds (Left headCtx)
       next BlockShellIndex {
-        _blockShellIndex_hash        = fst headCtx ^. hash
-      , _blockShellIndex_predecessor = fst headCtx ^. predecessor
+        _blockShellIndex_hash        = hblk ^. hash
+      , _blockShellIndex_predecessor = hblk ^. predecessor
       , _blockShellIndex_chainId     = chainId
-      , _blockShellIndex_level       = fst headCtx ^. level
-      , _blockShellIndex_fitness     = Just $! (fst headCtx ^. fitness  )
-      , _blockShellIndex_timestamp   = Just $! (fst headCtx ^. timestamp)
-      , _blockShellIndex_protocolKilnId = Nothing
+      , _blockShellIndex_level       = hblk ^. level
+      , _blockShellIndex_fitness     = Just $! (hblk ^. fitness  )
+      , _blockShellIndex_timestamp   = Just $! (hblk ^. timestamp)
+      , _blockShellIndex_proto       = Just $! _blockHeader_proto hblk
       }
     [ blk ] -> do
       backfillBlockShellIndex nds (Right blk)
@@ -1139,7 +1143,7 @@ restoreCachedHistory nds = do
         return (spine, uncles)
 
       let
-        fudge blk = WithProtocolHash blk' (HashedValue "")
+        fudge blk = WithProtocolHash blk' (HashedValue "")  -- WIP TODO
           where
             blk' = VeryBlockLike
               { _veryBlockLike_hash        = blk ^. hash
@@ -1175,7 +1179,7 @@ backfillBlockShellIndex ::
   ( MonadIO m
   , MonadBaseNoPureAborts IO m
   , MonadLogger m
-  ) => NodeDataSource -> Either (WithProtocolHash VeryBlockLike, PublicNodeContext) BlockShellIndex -> m ()
+  ) => NodeDataSource -> Either (BlockHeader, PublicNodeContext) BlockShellIndex -> m ()
 backfillBlockShellIndex nds = \case
   Right _blk -> do
     -- let ctx = error "FIXME: resume BlockShellIndex backfills"
@@ -1215,9 +1219,11 @@ backfillBlockShellIndex nds = \case
             return ()
           else do
             let blockHashPgArray = toArrayAction blockHashes
+            liftIO $ putStrLn "starting backfill insert"
             liftIO . withResource db $ \pconn@(Postgresql conn) -> PG.withTransaction conn $ do
-              let runUpsert x = runDbPersist (upsertBlockLike chainId x) pconn
+              let runUpsert x = runDbPersist (upsertBlockHeader chainId x) pconn
               maybe (pure ()) runUpsert mHead
+              liftIO $ putStrLn "starting backfill bulk insert"
               void $ PG.execute conn [sql|
                 INSERT INTO "BlockShellIndex"
                      ( hash , predecessor , "chainId" , level    )
@@ -1226,6 +1232,7 @@ backfillBlockShellIndex nds = \case
                   JOIN LATERAL generate_series(1,array_length(x,1)::integer-1) i
                        ON TRUE)
               |] (chainId, lvl, blockHashPgArray)
+              liftIO $ putStrLn "finished backfill insert"
 
             loop ctx Nothing $ VeryBlockSpine {
                 _veryBlockSpine_hash        = blockHashes `Seq.index` (n - 2)
@@ -1249,22 +1256,21 @@ toArrayAction hs = PG.Plain $ res
 
     base16 (HashedValue h) = byteString . Base16.encode . BS.fromShort $ h
 
-upsertBlockLike ::
-  ( BlockLike blk, HasProtocolHash blk
-  , Functor m
+upsertBlockHeader ::
+  ( Functor m
   , PostgresRaw m
-  ) => ChainId -> blk -> m ()
-upsertBlockLike chainId headBlockInfo = do
-  let hashH        = headBlockInfo ^. hash
-      predecessorH = headBlockInfo ^. predecessor
-      fitnessH     = headBlockInfo ^. fitness
-      levelH       = headBlockInfo ^. level
-      timestampH   = headBlockInfo ^. timestamp
-      _protocolH   = headBlockInfo ^. protocolHash
+  ) => ChainId -> BlockHeader -> m ()
+upsertBlockHeader chainId blk = do
+  let hashH        = blk ^. hash
+      predecessorH = blk ^. predecessor
+      fitnessH     = blk ^. fitness
+      levelH       = blk ^. level
+      timestampH   = blk ^. timestamp
+      protoH       = _blockHeader_proto blk
   void [executeQ|
     INSERT INTO "BlockShellIndex"
-           ( "hash", "predecessor", "fitness", "chainId", "level", "timestamp" )
-    VALUES ( ?hashH, ?predecessorH, ?fitnessH, ?chainId , ?levelH, ?timestampH )
+           ( "hash", "predecessor", "fitness", "chainId", "level", "timestamp", "proto" )
+    VALUES ( ?hashH, ?predecessorH, ?fitnessH, ?chainId , ?levelH, ?timestampH, ?protoH )
     ON CONFLICT (hash) DO UPDATE
             SET fitness = COALESCE ( "BlockShellIndex".fitness, EXCLUDED.fitness )
               , timestamp = COALESCE ( "BlockShellIndex".timestamp, EXCLUDED.timestamp )
