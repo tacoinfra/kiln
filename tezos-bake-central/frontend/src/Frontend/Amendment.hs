@@ -34,7 +34,8 @@ import qualified Data.Text as T
 import qualified Data.Time as Time
 
 import Tezos.Operation
-import Tezos.Types
+import Tezos.ProtocolConstants (predictFutureTimestamp)
+import Tezos.Types hiding (protocolHash)
 
 import Common.Api
 import Common.App
@@ -80,7 +81,6 @@ amendmentPopup
   -- ^ Protocol information
   -> m ()
 amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
-  let periods = [VotingPeriodKind_Proposal, VotingPeriodKind_TestingVote, VotingPeriodKind_Testing, VotingPeriodKind_PromotionVote]
   rec
     chosenPeriod <- holdDyn Nothing $ Just <$> choosePeriod
     selectedPeriod <- holdUniqDyn $ fromMaybe . _amendment_period <$> amendment <*> chosenPeriod
@@ -133,6 +133,8 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
       VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
 
   pure ()
+  where
+    periods = [minBound .. maxBound]
 
 -- | Display a natural number with comma separation
 textWithCommas :: Int -> Text
@@ -528,13 +530,16 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       dyn_ $ ffor mLevel $ \case
         Nothing -> blank
         Just l -> divClass "ui message" $ do
-          latestHead <- watchLatestHead
-          dparameters <- watchProtoInfo
+          (latestHead, knownProto) <- watchHeadWithProtocol
+          let
+            dparameters = (fmap . fmap) _protocolIndex_constants knownProto
+            mNextOp :: Dynamic t (Maybe Time.UTCTime)
+            mNextOp = getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ constDyn $ Just l) <*> Compose latestHead
           el "div" $ do
             icon "icon-warning big orange"
           el "div" $ do
             divClass "bigtitle" $ do
               text "Your baker's next opportunity is "
-              etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ constDyn $ Just l) <*> Compose latestHead
+              etaDyn <- maybeDyn mNextOp
               dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
             divClass "description" $ text "You will not be able to sign blocks or endorsements while outside the Tezos Baking app. Be sure you have a few minutes to vote before your baker's next opportunity."

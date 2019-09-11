@@ -12,6 +12,7 @@ import qualified Data.Time as Time
 import Data.Time.Clock (NominalDiffTime)
 import qualified Text.URI as Uri
 import Data.Maybe (mapMaybe)
+
 import ExtraPrelude
 
 nominalDiffTimeToSeconds :: NominalDiffTime -> Integer
@@ -33,10 +34,10 @@ humanizeTimestampGen withTz tz now ts = if diff > 0 then futureMoment else human
     futureMoment = T.pack $ Time.formatTime Time.defaultTimeLocale (day <> format) $ Time.utcToZonedTime tz ts
 
 humanizeTimestamp :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
-humanizeTimestamp tz now ts = humanizeTimestampGen True tz now ts
+humanizeTimestamp = humanizeTimestampGen True
 
 humanizeTimestampWithoutTZ :: Time.TimeZone -> Time.UTCTime -> Time.UTCTime -> Text
-humanizeTimestampWithoutTZ tz now ts = humanizeTimestampGen False tz now ts
+humanizeTimestampWithoutTZ = humanizeTimestampGen False
 
 humanizeDiffTime :: Time.NominalDiffTime -> Text
 humanizeDiffTime t = T.unwords elems <> " ago"

@@ -49,13 +49,35 @@ watchFrontendConfig =
     { _bakeViewSelector_config = viewJust 1
     }
 
-watchProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
-watchProtoInfo =
-  (fmap . fmap) (getMaybeView . _bakeView_parameters) $ watchViewSelector $ pure $ mempty
-    { _bakeViewSelector_parameters = viewJust 1
-    }
+watchProtocolConstants :: MonadRhyoliteFrontendWidget Bake t m => Dynamic t ProtocolHash -> m (Dynamic t (Maybe ProtocolIndex))
+watchProtocolConstants protocol = do
+  mmap <- (fmap . fmap) (unMapView . _bakeView_parameters) $
+    watchViewSelector $
+      ffor protocol $ \protoHash -> mempty
+        { _bakeViewSelector_parameters = MapSelector $ MMap.singleton protoHash 1
+        }
+  pure $ liftA2 (\p m -> getFirst . fst <$> MMap.lookup p m) protocol mmap
 
-watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe VeryBlockLike))
+watchHeadWithProtocol
+  :: forall t m. MonadRhyoliteFrontendWidget Bake t m
+  => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)), Dynamic t (Maybe ProtocolIndex))
+watchHeadWithProtocol = do
+  latestHead <- watchLatestHead
+  protoHash' <- maybeDyn $ (fmap.fmap) (^. protocolHash) latestHead
+  protoConstantsEvt :: Event t (Dynamic t (Maybe ProtocolIndex)) <- dyn $ ffor protoHash' $ \case
+    Nothing -> pure $ pure Nothing
+    Just protoHash -> do
+      protoHashUniq <- holdUniqDyn protoHash
+      watchProtocolConstants protoHashUniq
+  protoConstants <- join <$> holdDyn (pure Nothing) protoConstantsEvt
+  pure (latestHead, protoConstants)
+
+watchLatestProtoInfo :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe ProtoInfo))
+watchLatestProtoInfo = do
+  (_, knownProto) <- watchHeadWithProtocol
+  pure $ fmap _protocolIndex_constants <$> knownProto
+
+watchLatestHead :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)))
 watchLatestHead =
   (fmap . fmap) (getMaybeView . _bakeView_latestHead) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_latestHead = viewJust 1
@@ -195,7 +217,7 @@ watchBakerAlerts = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerAlerts = viewRangeAll 1
     }
-  return $ ffor theView $ \v' ->  getRangeView' (_bakeView_bakerAlerts v')
+  return $ ffor theView $ \v' -> MMap.mapMaybe getFirst $ getRangeView' (_bakeView_bakerAlerts v')
 
 data CollectiveNodesFailure
   = CollectiveNodesFailure_NoNodes

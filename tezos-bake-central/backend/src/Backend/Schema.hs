@@ -122,13 +122,13 @@ data NotifyTag a where
   NotifyTag_BakerDetails :: NotifyTag BakerDetails
   NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
   NotifyTag_ErrorLog :: LogTag b -> NotifyTag (Id b)
+  NotifyTag_ProtocolIndex :: NotifyTag (Id ProtocolIndex)
   NotifyTag_UpstreamVersion :: NotifyTag (Id UpstreamVersion, UpstreamVersion)
   NotifyTag_MailServerConfig :: NotifyTag (Id MailServerConfig, MailServerConfig)
   NotifyTag_NodeExternal :: NotifyTag (Id Node, Maybe NodeExternalData)
   NotifyTag_NodeInternal :: NotifyTag (Id Node, Maybe ProcessData)
   NotifyTag_NodeDetails :: NotifyTag (Id Node, Maybe NodeDetailsData)
   NotifyTag_Notificatee :: NotifyTag (Id Notificatee)
-  NotifyTag_Parameters :: NotifyTag (Id Parameters, Parameters)
   NotifyTag_PublicNodeConfig :: NotifyTag (Id PublicNodeConfig, PublicNodeConfig)
   NotifyTag_PublicNodeHead :: NotifyTag (Id PublicNodeHead, Maybe PublicNodeHead)
   NotifyTag_SnapshotMeta :: NotifyTag SnapshotMeta
@@ -200,6 +200,7 @@ instance HasDefaultNotify (DSum NodeLogTag Id) where
 instance HasDefaultNotify (DSum BakerLogTag Id) where
   mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Baker t :=> v
 
+instance HasDefaultNotify (Id ProtocolIndex)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead)
@@ -212,6 +213,9 @@ instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat)
 instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
 instance HasDefaultNotify (Id ErrorLogVotingReminder)
+
+instance HasNotification NotifyTag ProtocolIndex where
+  notification _ = NotifyTag_ProtocolIndex
 
 instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
@@ -690,11 +694,23 @@ instance Field1 (a :. b) (a' :. b) a a' where
 instance Field2 (a :. b) (a :. b') b b' where
   _2 a2fb (a :. b) = (a :.) <$> a2fb b
 
---        - name: LedgerAccount_secretKey
---          type: primary
---          fields: [_ledgerAccount_secretKey] #secretKey#ledgerIdentifier
-
 mkRhyolitePersist (Just "migrateSchema") [groundhog|
+  - embedded: ProtoInfo
+  - entity: ProtocolIndex
+    autoKey: null
+    keys:
+      - name: ProtocolIndexKey
+        default: true
+    constructors:
+      - name: ProtocolIndex
+        uniques:
+          - name: ProtocolIndexKey
+            type: primary
+            fields:
+              - _protocolIndex_chainId
+              - _protocolIndex_hash
+              - _protocolIndex_firstBlockHash
+
   - primitive: VotingPeriodKind
   - primitive: Ballot
   - embedded: Ballots
@@ -869,14 +885,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           fields: [_publicNodeHead_source, _publicNodeHead_chain]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
-  - entity: Parameters
-    constructors:
-      - name: Parameters
-        uniques:
-          - name: _parameters_uniqueness
-            type: constraint
-            fields: [_parameters_chain]
-  - embedded: ProtoInfo
   - entity: Baker
     autoKey: null
     keys:
@@ -1077,14 +1085,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogVotingReminderId
             type: primary
             fields: [_errorLogVotingReminder_log]
-  - entity: CachedProtocolConstants
-    constructors:
-     - name: CachedProtocolConstants
-       uniques:
-        - name: _cachedprotocolconstants_uniqueness
-          type: constraint
-          fields:
-           - _cachedProtocolConstants_protocol
   - entity: GenericCacheEntry
     constructors:
      - name: GenericCacheEntry
@@ -1141,8 +1141,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
-  [ (''CachedProtocolConstants, 'CachedProtocolConstantsKey)
-  , (''BakerDaemon, 'BakerDaemonKey)
+  [ (''BakerDaemon, 'BakerDaemonKey)
   , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
@@ -1150,7 +1149,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)
-  , (''Parameters, 'ParametersKey)
   , (''PeriodProposal, 'PeriodProposalKey)
   , (''ProcessData, 'ProcessDataKey)
   , (''PublicNodeConfig, 'PublicNodeConfigKey)
@@ -1162,8 +1160,12 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''UpstreamVersion, 'UpstreamVersionKey)
   ]
 
+instance DefaultKeyId ProtocolIndex where
+  toIdData _ (ProtocolIndexKeyKey chainId protoHash firstBlockHash) = (chainId, protoHash, firstBlockHash)
+  fromIdData _ (chainId, protoHash, firstBlockHash) = ProtocolIndexKeyKey chainId protoHash firstBlockHash
+
 instance DefaultKeyId Accusation where
-  toIdData _ (Accusation_hashKey oh bh) = (oh,bh)
+  toIdData _ (Accusation_hashKey oh bh) = (oh, bh)
   fromIdData _ = uncurry Accusation_hashKey
 
 instance DefaultKeyId Baker where
@@ -1368,11 +1370,11 @@ instance ArgDict NotifyTag where
     , c (Id ErrorLogVotingReminder)
     , c (Id UpstreamVersion, UpstreamVersion)
     , c (Id MailServerConfig, MailServerConfig)
+    , c (Id ProtocolIndex)
     , c (Id Node, Maybe NodeExternalData)
     , c (Id Node, Maybe ProcessData)
     , c (Id Node, Maybe NodeDetailsData)
     , c (Id Notificatee)
-    , c (Id Parameters, Parameters)
     , c (Id PublicNodeConfig, PublicNodeConfig)
     , c (Id PublicNodeHead, Maybe PublicNodeHead)
     , c SnapshotMeta
@@ -1411,13 +1413,13 @@ instance ArgDict NotifyTag where
         BakerLogTag_BakerAccused -> Dict
         BakerLogTag_InsufficientFunds -> Dict
         BakerLogTag_VotingReminder -> Dict
+    NotifyTag_ProtocolIndex -> Dict
     NotifyTag_UpstreamVersion -> Dict
     NotifyTag_MailServerConfig -> Dict
     NotifyTag_NodeExternal -> Dict
     NotifyTag_NodeInternal -> Dict
     NotifyTag_NodeDetails -> Dict
     NotifyTag_Notificatee -> Dict
-    NotifyTag_Parameters -> Dict
     NotifyTag_PublicNodeConfig -> Dict
     NotifyTag_PublicNodeHead -> Dict
     NotifyTag_SnapshotMeta -> Dict

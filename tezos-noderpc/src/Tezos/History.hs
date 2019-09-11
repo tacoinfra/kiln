@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Semigroup ((<>))
 import qualified Data.Sequence as Seq
-import Data.Sequence (Seq (), (<|))
+import Data.Sequence (Seq (),x (<|))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -42,7 +42,7 @@ data CachedHistory a = CachedHistory
   -- what i really need here is a cover tree (or some other metric index)
   -- a plausible alternative is to only keep the fittest n branches
   -- investigate: https://github.com/mikeizbicki/HLearn/blob/master/src/HLearn/Data/SpaceTree/CoverTree.hs
-  { _cachedHistory_branches :: !(Map BlockHash VeryBlockLike)
+  { _cachedHistory_branches :: !(Map BlockHash (WithProtocolHash VeryBlockLike))
   , _cachedHistory_blocks :: !(Map BlockHash (LCA.Path BlockHash a))
   , _cachedHistory_minLevel :: !RawLevel
   , _cachedHistory_levelZero :: !RawLevel
@@ -72,24 +72,35 @@ data Prehistory a = Prehistory
 initializeBlocks :: [BlockHash] -> BlockMap
 initializeBlocks blks = _blockPath_blockMap (extendBlockPath blks emptyBlockPath)
 
-addBlocks :: BlockLike blk => [BlockHash] -> blk -> CachedHistory () -> Maybe (CachedHistory ())
-addBlocks blks_ blk history = do
+-- | @'addHeadBlock' spine block history@ adds a head @block@ to the history,
+-- while enforcing invariants. The @spine@ consists any hashes that need to be
+-- added to the history in order to connect the head block back to already known
+-- hashes in the history.   The first element of @spine@ must be in
+-- '_cachedHistory_blocks', and the last element of @spine@ must be the
+-- 'predecessor' hash of the @block@.   If @spine@ is @[]@,  then it's assumed
+-- to be equivalent to @[block ^. predecessor]@.
+--
+-- Duplicate blocks are harmless.  The only situations where @addHeadBlock@ will
+-- return 'Nothing' is when the preconditions described above are violated.
+addHeadBlock :: (BlockLike b, HasProtocolHash b)  => [BlockHash] -> b -> CachedHistory () -> Maybe (CachedHistory ())
+addHeadBlock spine blk history = do
   case Map.lookup blkHash knownBlocks of
     Just _ -> Just history
     Nothing -> do
-      let a = case blks_ of
+      let a = case spine of
                 [] -> predHash
                 (x:_) -> x
-      case skipDuplicates a (drop 1 blks_) of
+      case skipDuplicates a (drop 1 spine) of
         Nothing -> Nothing
         Just (oldBranch, path, as) -> do
           let BlockPath path' blocks' = extendBlockPath as (BlockPath path knownBlocks)
-          if null as || last as == predHash
+          if (if null as then oldBranch == predHash else last as == predHash)
           then do
             let
+              blk' = WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash)
               blocks'' = Map.insert blkHash (LCA.cons blkHash () path') blocks'
               branches' = Map.delete oldBranch (_cachedHistory_branches history)
-              branches'' = Map.insert blkHash (mkVeryBlockLike blk) branches'
+              branches'' = Map.insert blkHash blk' branches'
             Just $ CachedHistory {
               _cachedHistory_blocks = blocks''
             , _cachedHistory_branches = branches''
@@ -148,7 +159,7 @@ scanBranch ::
   )
   => Block -> RawLevel -> RawLevel -> (Block -> m a) -> m ()
 scanBranch branch start stop k = do
-  let headLvl = _blockHeader_level $ _block_header branch
+  let headLvl = _blockHeaderFull_level $ _block_header branch
   for_ [start .. stop] $ \n -> do
     blk <- nodeRPC $ rBlockPred (headLvl - n) (_block_chainId branch) (_block_hash branch)
     void $ k blk
