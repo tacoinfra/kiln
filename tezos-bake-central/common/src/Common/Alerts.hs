@@ -142,17 +142,16 @@ data ErrorLogWidgets m = ErrorLogWidgets
 
 bakerLedgerDisconnectedDescriptions :: ErrorLogBakerLedgerDisconnected -> BakerErrorDescriptions
 bakerLedgerDisconnectedDescriptions _elog = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Ledger Device is disconnected"
+  { _bakerErrorDescriptions_title = "Ledger device is disconnected"
   , _bakerErrorDescriptions_tile = "Disconnected"
-  , _bakerErrorDescriptions_notification = "The ledger wallet for this baker is disconected."
-  , _bakerErrorDescriptions_problem = ["The ledger wallet for this baker is disconnected, and so it cannot process any baking or signing activity."]
+  , _bakerErrorDescriptions_notification = "The Ledger device for this baker is disconected."
+  , _bakerErrorDescriptions_problem = ["The Ledger device for this baker is disconnected, and so it cannot process any baking or signing activity."]
   , _bakerErrorDescriptions_warning = Nothing
-  , _bakerErrorDescriptions_fix = "Make sure the Ledger Device is connected to your computer and has the Tezos Baking App open."
-  , _bakerErrorDescriptions_resolved = \b ->
-      let (primary, secondary) = bakerIdentification b
-      in ( "Resolved: The ledger has been re-connected"
-         , "Baker " <> primary <> maybe "" (" at " <>) secondary <> " has reconnected the ledger wallet."
-         )
+  , _bakerErrorDescriptions_fix = "Make sure the Ledger device is connected to your computer and has the Tezos Baking app open."
+  , _bakerErrorDescriptions_resolved = const
+     ( "Resolved: The Ledger device has been re-connected."
+     , "The Ledger device has been re-connected."
+     )
   }
 
 bakerVotingReminderDescriptions :: ErrorLogVotingReminder -> Time.NominalDiffTime -> BakerErrorDescriptions
