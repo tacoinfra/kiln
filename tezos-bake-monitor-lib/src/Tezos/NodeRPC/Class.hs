@@ -28,6 +28,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPost)
 
+import Tezos.Base16ByteString
 import Tezos.Chain (ChainTag(ChainTag_Hash))
 import Tezos.NodeRPC.Types (NetworkStat)
 import Tezos.Operation (Ballot, OperationWithMetadata, OpsKindTag, Op)
@@ -82,6 +83,9 @@ class QueryNode repr where -- my node
 
 class MonitorHeads repr where
   rMonitorHeads :: ChainId -> repr MonitorBlock
+
+class Injection repr where
+  rInjectOperation :: DSum OpsKindTag Op -> repr OperationHash
 
 data RpcQuery a = RpcQuery
   { _RpcQuery_decoder :: LBS.ByteString -> Either String a
@@ -164,6 +168,12 @@ instance QueryNode RpcQuery where
 
 instance MonitorHeads PlainNodeStream where
   rMonitorHeads chainId = PlainNodeStream $ plainNodeRequest Http.methodGet ("/monitor/heads/" <> toBase58Text chainId)
+
+instance Injection RpcQuery where
+  rInjectOperation contents =
+    postNodeRequest
+      (Base16ByteString contents)
+      "/injection/operation"
 
 chainBlockUrl :: ChainId -> BlockHash -> Text
 chainBlockUrl = chainBlockUrl' . ChainTag_Hash
