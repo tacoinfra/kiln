@@ -28,6 +28,7 @@ import Data.Align
 import Data.Foldable (foldl', length)
 import Data.Functor.Apply
 import Data.Function (fix)
+import Data.Int (Int32)
 import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
@@ -40,6 +41,7 @@ import Data.String.Here.Interpolated (i)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
 import qualified Data.Time as Time
+import Data.Word (Word8)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql(..), in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
@@ -1141,24 +1143,33 @@ restoreCachedHistory nds = do
           |]
         return (spine, uncles)
 
-      let
-        fudge blk = WithProtocolHash blk' (HashedValue "")  -- WIP TODO
-          where
-            blk' = VeryBlockLike
-              { _veryBlockLike_hash        = blk ^. hash
-              , _veryBlockLike_predecessor = blk ^. predecessor
-              , _veryBlockLike_level       = blk ^. level
-              -- Theoretically, the next two "Nothing" cases shouldn't happen
-              , _veryBlockLike_fitness     = fromMaybe mempty (_blockShellIndex_fitness   blk)
-              , _veryBlockLike_timestamp   = fromMaybe epoch  (_blockShellIndex_timestamp blk)
-              }
-            epoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
 
       let      -- our cache's "genesis" block need not be at level 0
         !levelZero = (blkMax ^. level) - (fromIntegral $ length spine) + 1
         !blocks0 = initializeBlocks spine
         !prehist0 = Prehistory (Map.singleton blkMaxHash blkMax) blocks0
         (Prehistory branches blocks)  = foldl' (flip accumPrehistory) prehist0 uncles
+        toInt32 :: Word8 -> Int32 = fromIntegral
+        protos = In . S.toList . foldl' delta S.empty $ branches
+          where delta acc blk = maybe acc (flip S.insert acc . toInt32) (_blockShellIndex_proto blk)
+
+      protoMap <- runDb (Identity db) $ do
+         [queryQ| SELECT proto, hash FROM "ProtocolIndex" WHERE "chainId" = ?chainId AND proto IN ?protos |]
+
+      let
+        fudge blk = WithProtocolHash blk' protoHash
+          where
+            blk' = VeryBlockLike
+              { _veryBlockLike_hash        = blk ^. hash
+              , _veryBlockLike_predecessor = blk ^. predecessor
+              , _veryBlockLike_level       = blk ^. level
+              -- Theoretically, the next three "Nothing" cases shouldn't happen
+              , _veryBlockLike_fitness     = fromMaybe mempty (_blockShellIndex_fitness   blk)
+              , _veryBlockLike_timestamp   = fromMaybe epoch  (_blockShellIndex_timestamp blk)
+              }
+            protoHash = fromMaybe emptyHash (flip lookup protoMap . toInt32 =<< _blockShellIndex_proto blk)
+            epoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
+            emptyHash = HashedValue ""
 
       let
         !fudgedBranches = fudge <$> branches
