@@ -29,11 +29,13 @@ import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
+import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id (..))
+import Safe
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
 import System.IO (hIsEOF)
@@ -53,6 +55,7 @@ import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
+import Backend.IndexQueries
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
 import Common.Schema
@@ -237,10 +240,12 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
         -- Otherwise, we might want to do the connectivity check because some time has passed
         else case _connectedLedger_updated cl of
           Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-          Just upd ->
-            if (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval)
-            then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-            else pure ()
+          Just upd -> when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
+            dsh <- liftIO $ atomically $ dataSourceHead nds
+            doCheck <- for dsh $ \blk -> checkNextBakeOpportunity appConfig nds blk >>= \case
+              Just (_, lvl) -> pure (lvl > blk ^. level + 1)
+              _ -> pure False
+            when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
 
       _ -> pure ()
     where
@@ -587,3 +592,26 @@ addBakerImpl pkh alias = do
              ]
              (BakerKey ==. fromId bId)
   notify NotifyTag_Baker (Id pkh, Just newVal)
+
+-- Logic copied from viewselector' next rights code
+checkNextBakeOpportunity :: (BlockLike blk) => AppConfig -> NodeDataSource -> blk -> LoggingT IO (Maybe (RightKind, RawLevel))
+checkNextBakeOpportunity appConfig nds blk = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
+  (v :: Either CacheError (Maybe (Maybe [(RightKind, RawLevel)]))) <- flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
+    bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
+      (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+    rightsInfo <- cycleStartHashes blk
+    let headLevel = blk ^. level
+        chainId = _appConfig_chainId appConfig
+        rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
+    for bakerInt $ \pkh -> [queryQ|
+        SELECT br."right", MIN(br.level)
+        FROM "BakerRightsCycleProgress" brcp
+        LEFT OUTER JOIN "BakerRight" br
+          ON br.branch = brcp.id
+          AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
+        WHERE brcp."chainId" = ?chainId
+          AND brcp.branch in ?rightsHashes
+          AND brcp."publicKeyHash" = ?pkh
+        GROUP BY brcp."publicKeyHash", br."right"
+      |]
+  pure $ either (const Nothing) (((=<<) headMay) . join) v
