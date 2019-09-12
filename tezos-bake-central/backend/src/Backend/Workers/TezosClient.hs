@@ -247,7 +247,7 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
       inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
       ledgerBackgroundUpdateInterval :: NominalDiffTime -- seconds
-      ledgerBackgroundUpdateInterval = 5
+      ledgerBackgroundUpdateInterval = 45
 
 withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
 withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
