@@ -446,7 +446,6 @@ instance PrimitivePersistField PeriodSequence where
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
 
 instance NeverNull (HashedValue a)
-instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
 instance NeverNull Cycle
 instance NeverNull Fitness

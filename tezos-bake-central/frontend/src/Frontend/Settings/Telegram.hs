@@ -24,7 +24,7 @@ import Safe (headMay)
 
 import Common.Api
 import Common.App (Bake, BakeView (..), BakeViewSelector (..))
-import Common.Schema hiding (Event)
+import Common.Schema
 import Common.Vassal (getRangeView', viewRangeAll)
 import ExtraPrelude
 import Frontend.Common (Enabled (..), formIsLoading, formWithSubmit, icon, uiButton,

@@ -113,7 +113,6 @@ library
     Backend.Alerts
     Backend.Alerts.Common
     Backend.CachedNodeRPC
-    Backend.ChainHealth
     Backend.Common
     Backend.Config
     --Backend.Graphs

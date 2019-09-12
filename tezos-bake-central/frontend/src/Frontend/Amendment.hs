@@ -40,7 +40,7 @@ import Tezos.Types hiding (protocolHash)
 import Common.Api
 import Common.App
 import Common.Config
-import Common.Schema hiding (Event)
+import Common.Schema
 import ExtraPrelude
 import Frontend.Common
 import Frontend.Watch
