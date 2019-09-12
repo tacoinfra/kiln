@@ -38,7 +38,7 @@ import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Config (FrontendConfig(..))
-import Common.Schema hiding (Event)
+import Common.Schema
 import Common.Vassal
 import Common.Alerts (AlertsFilter(..))
 import ExtraPrelude
