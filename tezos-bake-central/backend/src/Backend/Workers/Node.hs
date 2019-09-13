@@ -282,13 +282,20 @@ haveNewHead' nds pn nodeAddr headBlock = do
           tryAgain
         else do
           oldHead <- maybe failMsg return mOldHead
+          -- note the use of 'join' to correctly delimit the scope of the transaction
           join . runDb (Identity db) $ do
             xs <- getHistoryImpl oldHead knownBlocks
             if null xs
-            then return (return ())
+            then do
+              -- here, we are in the transaction
+              return $ do
+                -- here, we are outside the transaction, but this code path has nothing to do.
+                return ()
             else do
+              -- we upsertHeadBlock while we are still in the transaction
               upsertHeadBlock
               return $ do
+                -- then, after this transaction successfully completes,  we update the in-memory LCA cache
                 updateMemCache xs
                 updateLatestHead oldHead
 
@@ -1295,6 +1302,8 @@ upsertBlockHeader chainId blk = do
     ON CONFLICT (hash) DO UPDATE
             SET fitness = COALESCE ( "BlockShellIndex".fitness, EXCLUDED.fitness )
               , timestamp = COALESCE ( "BlockShellIndex".timestamp, EXCLUDED.timestamp )
+              , proto = COALESCE ( "BlockShellIndex".proto, EXCLUDED.proto )
           WHERE "BlockShellIndex".fitness IS NULL
              OR "BlockShellIndex".timestamp IS NULL
+             OR "BlockShellIndex".proto IS NULL
   |]

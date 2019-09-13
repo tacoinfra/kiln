@@ -64,6 +64,10 @@ data BlockPath = BlockPath
   , _blockPath_blockMap    :: !BlockMap
   }
 
+-- This is a strict pair used when filling in an empty LCA cache from the postgresql
+-- database, so that GHC can do some of it's optimization magic on a foldl' in the
+-- tezos-bake-central backend.  However, managing branches on the initial fill
+-- seems best left to something that is not a @WithProtocolHash VeryBlockLike@
 data Prehistory a = Prehistory
   { _prehistory_branches :: !(Map BlockHash a)
   , _prehistory_blockMap :: !BlockMap
@@ -88,19 +92,25 @@ addHeadBlock spine blk history = do
   case Map.lookup blkHash knownBlocks of
     Just _ -> Just history
     Nothing -> do
-      let a = case spine of
-                [] -> predHash
-                (x:_) -> x
-      case skipDuplicates a (drop 1 spine) of
+      let (firstBlk, rest) =
+            case spine of
+              [] -> (predHash, [])
+              (x:xs) -> (x, xs)
+      case skipKnownBlocks firstBlk rest of
         Nothing -> Nothing
-        Just (oldBranch, path, as) -> do
-          let BlockPath path' blocks' = extendBlockPath as (BlockPath path knownBlocks)
-          if (if null as then oldBranch == predHash else last as == predHash)
-          then do
+        -- path is the LCA blockpath of lastKnownBlock
+        Just (path, lastKnownBlock, newBlocks) -> do
+          -- We used skipKnownBlocks to do some or all of the work that `last` would be doing here,
+          -- so remember `(lastKnownBlock:newBlocks)` is the spine that connects to what we know,
+          -- and we are checking if `last (lastKnownBlock:newBlocks)` is equal to `predHash`
+          if (if null newBlocks then lastKnownBlock == predHash else last newBlocks == predHash)
+          then Nothing
+          else do
             let
+              BlockPath path' blocks' = extendBlockPath newBlocks (BlockPath path knownBlocks)
               blk' = WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash)
               blocks'' = Map.insert blkHash (LCA.cons blkHash () path') blocks'
-              branches' = Map.delete oldBranch (_cachedHistory_branches history)
+              branches' = Map.delete lastKnownBlock (_cachedHistory_branches history)
               branches'' = Map.insert blkHash blk' branches'
             Just $ CachedHistory {
               _cachedHistory_blocks = blocks''
@@ -108,23 +118,25 @@ addHeadBlock spine blk history = do
             , _cachedHistory_minLevel = _cachedHistory_minLevel history
             , _cachedHistory_levelZero = _cachedHistory_levelZero history
             }
-          else Nothing
   where
     blkHash = blk ^. hash
     predHash = blk ^. predecessor
     knownBlocks = _cachedHistory_blocks history
 
-    skipDuplicates a bs =
+    -- skipKnownBlocks is conceptually operating on the guaranteed-nonempty list (a:bs), which is
+    -- the spine (explicit or implicit) that was passed to the function
+    -- the return value is the guaranteed-nonempty list (lastKnownBlock:unknownBlocks)
+    skipKnownBlocks a bs =
       case Map.lookup a knownBlocks of
         Nothing -> Nothing
-        Just path -> Just $ loop a path bs
+        Just path -> Just $ go path a bs
       where
-        loop b path [] =
-          (b, path, [])
-        loop b path cs@(c:ds) =
+        go path b [] =
+          (path, b, [])
+        go path b cs@(c:ds) =
           case Map.lookup c knownBlocks of
-            Nothing -> (b, path, cs)
-            Just path' -> loop c path' ds
+            Nothing -> (path, b, cs)
+            Just path' -> go path' c ds
 
 emptyBlockPath :: BlockPath
 emptyBlockPath = BlockPath LCA.empty Map.empty
