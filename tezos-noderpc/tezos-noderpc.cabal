@@ -15,6 +15,7 @@ library
     Tezos.NodeRPC.Helpers
     Tezos.NodeRPC.Network
     Tezos.Signature.Verify
+    Tezos.Signature.Sign
   other-modules:
     Paths_tezos_noderpc
   -- other-extensions:
