@@ -120,9 +120,9 @@ addHeadBlock spine blk history = do
     predHash = blk ^. predecessor
     knownBlocks = _cachedHistory_blocks history
 
-    -- skipKnownBlocks is conceptually operating on the guaranteed-nonempty list (a:bs), which is
-    -- the spine (explicit or implicit) that was passed to the function
-    -- the return value is the guaranteed-nonempty list (lastKnownBlock:unknownBlocks)
+    -- skipKnownBlocks is conceptually operating on the guaranteed-nonempty list (a:bs),
+    -- which is the spine (explicit or implicit) passed to the top-level function.
+    -- The return value contains the guaranteed-nonempty list (lastKnownBlock:newBlocks)
     skipKnownBlocks a bs =
       case Map.lookup a knownBlocks of
         Nothing -> Nothing
