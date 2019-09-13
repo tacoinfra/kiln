@@ -166,9 +166,9 @@ instance FromJSON TzScanNonceHash where
   parseJSON v = TzScanNonceHash <$> (parseJSON v <|> pure Nothing)
 
 data BlockSpine = BlockSpine
-  { _blockSpineLike_hash :: !BlockHash
-  , _blockSpineLike_predecessor :: !BlockHash
-  , _blockSpineLike_level :: !RawLevel
+  { _blockSpine_hash :: !BlockHash
+  , _blockSpine_predecessor :: !BlockHash
+  , _blockSpine_level :: !RawLevel
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance NFData BlockSpine
 
@@ -315,9 +315,9 @@ instance HasProtocolHash TzScanBlock where
   protocolHash = tzScanBlock_protocol . coerced
 
 instance BlockSpineLike BlockSpine where
-  hash = blockSpineLike_hash
-  predecessor = blockSpineLike_predecessor
-  level = blockSpineLike_level
+  hash = blockSpine_hash
+  predecessor = blockSpine_predecessor
+  level = blockSpine_level
 
 instance BlockSpineLike VeryBlockLike where
   hash = veryBlockLike_hash
@@ -352,9 +352,9 @@ instance HasBalanceUpdates Block where
 
 mkBlockSpine :: BlockSpineLike b => b -> BlockSpine
 mkBlockSpine blk = BlockSpine
-  { _blockSpineLike_hash = blk ^. hash
-  , _blockSpineLike_predecessor = blk ^. predecessor
-  , _blockSpineLike_level = blk ^. level
+  { _blockSpine_hash = blk ^. hash
+  , _blockSpine_predecessor = blk ^. predecessor
+  , _blockSpine_level = blk ^. level
   }
 
 mkVeryBlockLike :: BlockLike b => b -> VeryBlockLike

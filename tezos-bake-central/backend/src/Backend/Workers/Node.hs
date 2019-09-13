@@ -213,12 +213,12 @@ haveNewHead' nds pn nodeAddr headBlock = do
             updatePgCache lvl blks
             return (pgBlks ++ blks)
           else do
-            let vbs = BlockSpine {
-                        _blockSpineLike_hash = blkHash
-                      , _blockSpineLike_predecessor = predHash
-                      , _blockSpineLike_level = lvl
-                      }
-            xs <- getHistory chainId vbs 11 mempty
+            let bs = BlockSpine {
+                       _blockSpine_hash = blkHash
+                     , _blockSpine_predecessor = predHash
+                     , _blockSpine_level = lvl
+                     }
+            xs <- getHistory chainId bs 11 mempty
             let len = length xs
             when (len < 2) failMsg
             let lvl' = lvl - fromIntegral len + 1
@@ -1256,9 +1256,9 @@ backfillBlockShellIndex nds = \case
               |]
 
             loop ctx Nothing $ BlockSpine {
-                _blockSpineLike_hash        = blockHashes `Seq.index` (n - 2)
-              , _blockSpineLike_predecessor = blockHashes `Seq.index` (n - 1)
-              , _blockSpineLike_level       = lvl'
+                _blockSpine_hash        = blockHashes `Seq.index` (n - 2)
+              , _blockSpine_predecessor = blockHashes `Seq.index` (n - 1)
+              , _blockSpine_level       = lvl'
               }
 
 toArrayAction :: Seq.Seq BlockHash -> PG.Action
