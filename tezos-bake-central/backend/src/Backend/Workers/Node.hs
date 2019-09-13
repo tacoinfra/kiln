@@ -213,10 +213,10 @@ haveNewHead' nds pn nodeAddr headBlock = do
             updatePgCache lvl blks
             return (pgBlks ++ blks)
           else do
-            let vbs = VeryBlockSpine {
-                        _veryBlockSpine_hash = blkHash
-                      , _veryBlockSpine_predecessor = predHash
-                      , _veryBlockSpine_level = lvl
+            let vbs = BlockSpine {
+                        _blockSpineLike_hash = blkHash
+                      , _blockSpineLike_predecessor = predHash
+                      , _blockSpineLike_level = lvl
                       }
             xs <- getHistory chainId vbs 11 mempty
             let len = length xs
@@ -1200,10 +1200,10 @@ backfillBlockShellIndex ::
 backfillBlockShellIndex nds = \case
   Right _blk -> do
     -- let ctx = error "FIXME: resume BlockShellIndex backfills"
-    -- loop ctx Nothing (mkVeryBlockSpine blk)
+    -- loop ctx Nothing (mkBlockSpine blk)
     return ()
   Left (blk, ctx) -> do
-    loop ctx (Just blk) (mkVeryBlockSpine blk)
+    loop ctx (Just blk) (mkBlockSpine blk)
  where
   db = _nodeDataSource_pool nds
   chainId = _nodeDataSource_chain nds
@@ -1255,10 +1255,10 @@ backfillBlockShellIndex nds = \case
                        ON TRUE)
               |]
 
-            loop ctx Nothing $ VeryBlockSpine {
-                _veryBlockSpine_hash        = blockHashes `Seq.index` (n - 2)
-              , _veryBlockSpine_predecessor = blockHashes `Seq.index` (n - 1)
-              , _veryBlockSpine_level       = lvl'
+            loop ctx Nothing $ BlockSpine {
+                _blockSpineLike_hash        = blockHashes `Seq.index` (n - 2)
+              , _blockSpineLike_predecessor = blockHashes `Seq.index` (n - 1)
+              , _blockSpineLike_level       = lvl'
               }
 
 toArrayAction :: Seq.Seq BlockHash -> PG.Action

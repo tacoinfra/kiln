@@ -147,7 +147,7 @@ extendBlockPath spine st = foldl' delta st spine
           where path'   = LCA.cons blkHash () path
                 blocks' = Map.insert blkHash path' blocks
 
-accumPrehistory :: BlockSpine blk => blk -> Prehistory blk -> Prehistory blk
+accumPrehistory :: BlockSpineLike blk => blk -> Prehistory blk -> Prehistory blk
 accumPrehistory blk hist@(Prehistory branches blocks) =
   case Map.lookup blkHash blocks of
     Just _ -> hist

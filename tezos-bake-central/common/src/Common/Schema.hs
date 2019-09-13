@@ -1148,7 +1148,7 @@ deriveSomeUniverse ''BakerLogTag
 instance Universe (Some LogTag) where
   universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
 
-instance BlockSpine (Event BakedEvent) where
+instance BlockSpineLike (Event BakedEvent) where
   hash = event_detail . bakedEvent_hash
   predecessor = event_detail . bakedEvent_signedHeader . blockHeader_predecessor
   level = event_detail . bakedEvent_signedHeader . blockHeader_level
@@ -1157,7 +1157,7 @@ instance BlockLike (Event BakedEvent) where
   fitness = event_detail . bakedEvent_signedHeader . blockHeader_fitness
   timestamp = event_time
 
-instance BlockSpine (Event SeenEvent) where
+instance BlockSpineLike (Event SeenEvent) where
   hash = event_detail . seenEvent_hash
   predecessor = event_detail . seenEvent_predecessor
   level = event_detail . seenEvent_level
@@ -1166,7 +1166,7 @@ instance BlockLike (Event SeenEvent) where
   fitness = event_detail . seenEvent_fitness
   timestamp = event_time
 
-instance BlockSpine PublicNodeHead where
+instance BlockSpineLike PublicNodeHead where
   hash = publicNodeHead_headBlock . hash
   predecessor = publicNodeHead_headBlock . predecessor
   level = publicNodeHead_headBlock . level
@@ -1175,7 +1175,7 @@ instance BlockLike PublicNodeHead where
   fitness = publicNodeHead_headBlock . fitness
   timestamp = publicNodeHead_headBlock . timestamp
 
-instance BlockSpine BlockShellIndex where
+instance BlockSpineLike BlockShellIndex where
   hash = blockShellIndex_hash
   predecessor = blockShellIndex_predecessor
   level = blockShellIndex_level
@@ -1183,7 +1183,7 @@ instance BlockSpine BlockShellIndex where
 instance HasProtocolHash PublicNodeHead where
   protocolHash = publicNodeHead_protocolHash
 
-instance BlockSpine ProtocolIndex where
+instance BlockSpineLike ProtocolIndex where
   hash = protocolIndex_firstBlockHash
   predecessor = protocolIndex_firstBlockPredecessor
   level = protocolIndex_firstBlockLevel
