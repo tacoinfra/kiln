@@ -103,7 +103,7 @@ addHeadBlock spine blk history = do
           -- We used skipKnownBlocks to do some or all of the work that `last` would be doing here,
           -- so remember `(lastKnownBlock:newBlocks)` is the spine that connects to what we know,
           -- and we are checking if `last (lastKnownBlock:newBlocks)` is equal to `predHash`
-          if (if null newBlocks then lastKnownBlock == predHash else last newBlocks == predHash)
+          if predHash /= (if null newBlocks then lastKnownBlock else last newBlocks)
           then Nothing
           else do
             let
