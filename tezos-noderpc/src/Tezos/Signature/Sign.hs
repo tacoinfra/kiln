@@ -21,8 +21,8 @@ data SecretKeyInMemory
   | SecretKey_Ed25519 Ed25519SecretKey
   deriving (Show, Eq)
 
-instance FromJSON SecretKeyInMemory where
-  parseJSON v = (SecretKey_Ed25519Seed <$> parseJSON v) <|> (SecretKey_Ed25519 <$> parseJSON v)
+tryReadSecretKeyInMemory :: BS.ByteString -> Either HashBase58Error SecretKeyInMemory
+tryReadSecretKeyInMemory = tryFromBase58 [ TryDecodeBase58 SecretKey_Ed25519Seed, TryDecodeBase58 SecretKey_Ed25519 ]
 
 sign :: SecretKeyInMemory -> BS.ByteString -> Maybe Signature
 sign key msg = case key of
