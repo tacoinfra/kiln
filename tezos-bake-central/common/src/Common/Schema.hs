@@ -901,6 +901,42 @@ data BlockShellIndex = BlockShellIndex
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId BlockShellIndex
 
+data OpKindIx
+  = OpKindIx_SeedNonceRevelation
+  | OpKindIx_DoubleEndorsementEvidence
+  | OpKindIx_DoubleBakingEvidence
+  | OpKindIx_ActivateAccount
+  | OpKindIx_Endorsement
+  | OpKindIx_Proposals
+  | OpKindIx_Ballot
+  | OpKindIx_Reveal
+  | OpKindIx_Transaction
+  | OpKindIx_Origination
+  | OpKindIx_Delegation
+  deriving (Eq, Generic, Ord, Show, Read, Typeable)
+
+data OperationIndex = OperationIndex
+  { _operationIndex_hash :: !OperationHash
+  , _operationIndex_chainId :: !ChainId
+  , _operationIndex_branch :: !BlockHash
+  , _operationIndex_kind :: !OpKindIx
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId OperationIndex where
+  type IdData OperationIndex = OperationHash
+
+data TransactionIndex = TransactionIndex
+  { _transactionIndex_operation :: !OperationHash
+  , _transactionIndex_source :: !ContractId
+  , _transactionIndex_destination :: !ContractId
+  , _transactionIndex_fee :: !Tez
+  , _transactionIndex_counter :: !TezosWord64
+  , _transactionIndex_gasLimit :: !TezosWord64
+  , _transactionIndex_storageLimit :: !TezosWord64
+  , _transactionIndex_amount :: !Tez
+  , _transactionIndex_parameters :: !(Maybe Text)
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId TransactionIndex
+
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
   , ''Amendment
