@@ -378,7 +378,6 @@ backendImpl cfg serve = do
       cache <- newTVarIO mempty
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
-      blockShellIndexInitBarrier <- newEmptyMVar
 
       return NodeDataSource
         { _nodeDataSource_history = hist
@@ -391,7 +390,6 @@ backendImpl cfg serve = do
         , _nodeDataSource_ioQueue = ioQueue
         , _nodeDataSource_osPublicNode = if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
-        , _nodeDataSource_blockShellIndexInitBarrier = blockShellIndexInitBarrier
         , _nodeDataSource_nodeForQuery = Nothing
         }
 

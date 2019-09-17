@@ -17,7 +17,7 @@
 
 module Backend.Workers.Node where
 
-import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar, tryPutMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
@@ -153,20 +153,6 @@ haveNewHead' nds pn nodeAddr headBlock = do
       |]
 
   let
-    waitForNonEmptyCache = do
-      liftIO . atomically $ do
-        history <- readTVar historyVar
-        if Map.null (_cachedHistory_blocks history)
-        then retry
-        else return ()
-
-  let
-    trySignalInitBarrier = do
-      let mvar = _nodeDataSource_blockShellIndexInitBarrier nds
-      $(logDebug) [i| trySignalInitBarrier ${headBlock} ${formatPublicNodeContext publicNodeContext} |]
-      void $ liftIO $ tryPutMVar mvar (headBlock, publicNodeContext)
-
-  let
     getBlockShellAncestors blkHash = do
       -- FIXME: make the number of predecessors to fetch configurable for QA
       map fromOnly <$> [queryQ|
@@ -277,8 +263,7 @@ haveNewHead' nds pn nodeAddr headBlock = do
         updateLatestHead oldHead
       else if Map.null knownBlocks
         then do
-          trySignalInitBarrier
-          waitForNonEmptyCache
+          restoreCachedHistory nds $ Just (headBlock, publicNodeContext)
           tryAgain
         else do
           oldHead <- maybe failMsg return mOldHead
@@ -1077,14 +1062,14 @@ waitTillEndOfCycle nds blk = do
 
 restoreCachedHistoryWorker :: NodeDataSource -> IO (IO ())
 restoreCachedHistoryWorker nds =
-  oneShot $ runLoggingEnv (_nodeDataSource_logger nds) $ restoreCachedHistory nds
+  oneShot $ runLoggingEnv (_nodeDataSource_logger nds) $ restoreCachedHistory nds Nothing
 
 restoreCachedHistory ::
   ( MonadIO m
   , MonadBaseNoPureAborts IO m
   , MonadLogger m
-  ) => NodeDataSource -> m ()
-restoreCachedHistory nds = do
+  ) => NodeDataSource -> Maybe (BlockHeader, PublicNodeContext) -> m ()
+restoreCachedHistory nds mHeadCtx = do
   -- Honestly, using a join here feels funny.  I'd rather get rid of it,  and
   -- simply replace `c` with `$1`, and send `chainId` in a binary
   -- protocol-level parameter
@@ -1102,19 +1087,18 @@ restoreCachedHistory nds = do
      ORDER BY level
   |] >>= \case
     [] -> do
-      $(logInfo) [i| restoreCachedHistory is waiting on initialization barrier |]
-      let initBarrier = _nodeDataSource_blockShellIndexInitBarrier nds
-      headCtx@(hblk,_) <- liftIO $ readMVar initBarrier
-      backfillBlockShellIndex nds (Left headCtx)
-      next BlockShellIndex {
-        _blockShellIndex_hash        = hblk ^. hash
-      , _blockShellIndex_predecessor = hblk ^. predecessor
-      , _blockShellIndex_chainId     = chainId
-      , _blockShellIndex_level       = hblk ^. level
-      , _blockShellIndex_fitness     = Just $! (hblk ^. fitness  )
-      , _blockShellIndex_timestamp   = Just $! (hblk ^. timestamp)
-      , _blockShellIndex_proto       = Just $! _blockHeader_proto hblk
-      }
+      for_ mHeadCtx $ \headCtx@(hblk, _) -> do
+        $(logInfo) [i| restoreCachedHistory doing backfill via RPC |]
+        backfillBlockShellIndex nds (Left headCtx)
+        next BlockShellIndex
+          { _blockShellIndex_hash        = hblk ^. hash
+          , _blockShellIndex_predecessor = hblk ^. predecessor
+          , _blockShellIndex_chainId     = chainId
+          , _blockShellIndex_level       = hblk ^. level
+          , _blockShellIndex_fitness     = Just $! (hblk ^. fitness  )
+          , _blockShellIndex_timestamp   = Just $! (hblk ^. timestamp)
+          , _blockShellIndex_proto       = Just $! _blockHeader_proto hblk
+          }
     [ blk ] -> do
       $(logInfo) [i| restoreCachedHistory proceeding from single block ${blk} |]
       backfillBlockShellIndex nds (Right blk)

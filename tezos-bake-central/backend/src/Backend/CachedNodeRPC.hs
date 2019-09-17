@@ -31,7 +31,6 @@ module Backend.CachedNodeRPC where
 
 import Prelude hiding (cycle)
 import Control.Arrow (left)
-import Control.Concurrent.MVar (MVar)
 import Control.Concurrent.STM (
     STM,
     TQueue,
@@ -201,7 +200,6 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
   , _nodeDataSource_osPublicNode :: !(Maybe URI)
   , _nodeDataSource_kilnNodeUri :: !URI
-  , _nodeDataSource_blockShellIndexInitBarrier :: !(MVar (BlockHeader, PublicNodeContext))
   , _nodeDataSource_nodeForQuery :: !(Maybe URI) -- Override the node selection algo, and do RPC using this node
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
