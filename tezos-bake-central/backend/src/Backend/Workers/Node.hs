@@ -578,7 +578,8 @@ updateDataSource nds (pn, chain, uri) = do
     updatePublicNodeInDb = getHeadFromSource >>= runLoggingEnv (_nodeDataSource_logger nds) . \case
       Left e -> $(logErrorSH) ("updatePublicNodeInDb"::Text,(pn,chain,Uri.render uri),e)
       Right b -> do
-        haveNewHead nds (Just pn) uri b
+        liftIO $ atomically $
+          writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds (Just pn) uri b
         runDb (Identity db) $ do
           let newHash = b ^. hash
               newLevel = b ^. level
