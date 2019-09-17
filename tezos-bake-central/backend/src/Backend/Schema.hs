@@ -1153,6 +1153,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             fields: [_operationIndex_hash]
   - primitive: OpKindIx
   - entity: TransactionIndex
+  - entity: IxBlockTodo
+    autoKey: null
+    constructors:
+      - name: IxBlockTodo
+        uniques:
+          - name: IxBlockTodo_hash
+            type: primary
+            fields: [_ixBlockTodo_hash]
+    keys:
+      - name: IxBlockTodo_hash
+        default: true
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)

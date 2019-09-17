@@ -937,6 +937,15 @@ data TransactionIndex = TransactionIndex
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TransactionIndex
 
+data IxBlockTodo = IxBlockTodo
+  { _ixBlockTodo_hash :: !BlockHash
+  , _ixBlockTodo_level :: !Int
+  , _ixBlockTodo_chain :: !ChainId
+  , _ixBlockTodo_claimedBy :: !(Maybe Int)
+  , _ixBlockTodo_claimedAt :: !(Maybe UTCTime)
+  , _ixBlockTodo_parsedParent :: !Bool
+  } deriving (Show, Eq, Ord, Typeable, Generic)
+
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
   , ''Amendment
