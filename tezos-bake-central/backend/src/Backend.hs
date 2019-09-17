@@ -93,7 +93,7 @@ import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v3PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
-import Backend.Workers.Block (blockWorker)
+import Backend.Workers.Block (blockWorker, indexerBlockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker, restoreCachedHistoryWorker)
@@ -441,6 +441,7 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
+      addFinalizer =<< indexerBlockWorker 0.3 dataSrc
       addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
       addFinalizer =<< amendmentProcessWorker appConfig dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
