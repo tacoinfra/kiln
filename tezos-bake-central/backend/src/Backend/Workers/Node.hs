@@ -1168,12 +1168,13 @@ restoreCachedHistory nds mHeadCtx = do
 
       liftIO $ atomically $ do
         history <- readTVar historyVar
-        writeTVar historyVar $! CachedHistory
-          { _cachedHistory_blocks = blocks
-          , _cachedHistory_branches = fudgedBranches
-          , _cachedHistory_minLevel = _cachedHistory_minLevel history
-          , _cachedHistory_levelZero = levelZero
-          }
+        when (Map.null (_cachedHistory_blocks history)) $ do
+          writeTVar historyVar $! CachedHistory
+            { _cachedHistory_blocks = blocks
+            , _cachedHistory_branches = fudgedBranches
+            , _cachedHistory_minLevel = _cachedHistory_minLevel history
+            , _cachedHistory_levelZero = levelZero
+            }
 
 -- Assumption: the spine we are passed is stored in Postgres in the
 -- "BlockShellIndex" table at the lowest level for our current chainId
