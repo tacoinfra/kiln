@@ -221,10 +221,13 @@ indexerBlockWorker delay nds = runLoggingEnv (_nodeDataSource_logger nds) $ do
                 insert_ txIx
                 pure OpKindIx_Transaction
             let
+              -- There can be more than one kind of operation in a single Operation.
+              -- Like Reveal + Transaction, or Transaction + Delegation
+              -- But since we are more interested in Transactions (than others), give it preference
               opKind
                 | elem OpKindIx_Transaction opKinds = OpKindIx_Transaction
                 | Just o <- Seq.lookup 0 opKinds = o
-                | otherwise = OpKindIx_Transaction
+                | otherwise = OpKindIx_Transaction -- Should never happen
               opIx = OperationIndex
                 { _operationIndex_hash = opHash
                 , _operationIndex_chainId = _operation_chainId op
