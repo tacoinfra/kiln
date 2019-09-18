@@ -141,8 +141,9 @@ blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds
 indexerBlockWorker
   :: NominalDiffTime -- delay between checking for updates
   -> NodeDataSource
+  -> Bool
   -> IO (IO ())
-indexerBlockWorker delay nds = runLoggingEnv (_nodeDataSource_logger nds) $ do
+indexerBlockWorker delay nds skipEndorsements = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let chainId = _nodeDataSource_chain nds
   let claimTimeout = "15 seconds" :: Text
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
@@ -234,7 +235,7 @@ indexerBlockWorker delay nds = runLoggingEnv (_nodeDataSource_logger nds) $ do
                 , _operationIndex_branch = _block_hash block
                 , _operationIndex_kind = opKind
                 }
-            insert opIx
+            unless (skipEndorsements && opKind == OpKindIx_Endorsement) $ insert_ opIx
 
           void [executeQ|
             update "IxBlockTodo"
