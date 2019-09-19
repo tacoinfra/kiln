@@ -357,6 +357,17 @@ mkBlockSpine blk = BlockSpine
   , _blockSpine_level = blk ^. level
   }
 
+-- | use of this function is strongly discouraged
+fudgeVeryBlockLike :: BlockSpine -> VeryBlockLike
+fudgeVeryBlockLike blk = VeryBlockLike
+  { _veryBlockLike_hash = blk ^. hash
+  , _veryBlockLike_predecessor = blk ^. predecessor
+  , _veryBlockLike_level = blk ^. level
+  , _veryBlockLike_fitness = mempty
+  , _veryBlockLike_timestamp = unixEpoch
+  } where unixEpoch = UTCTime (fromGregorian 1970 1 1) 0
+
+
 mkVeryBlockLike :: BlockLike b => b -> VeryBlockLike
 mkVeryBlockLike blk = VeryBlockLike
   { _veryBlockLike_hash = blk ^. hash

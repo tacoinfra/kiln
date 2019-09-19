@@ -40,7 +40,6 @@ import qualified Data.Set as S
 import Data.String.Here.Interpolated (i)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
-import qualified Data.Time as Time
 import Data.Word (Word8)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql(..), in_, isFieldNothing, (&&.), (=.), (==.))
@@ -78,6 +77,7 @@ import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
 import Backend.ViewSelectorHandler (getProposals)
+import Common (unixEpoch)
 import Common.App (getEndTimeForPeriod)
 import Common.Schema
 import ExtraPrelude
@@ -628,7 +628,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
       lcaBlock' <- atomicallyWith $ branchPoint nodeHeadHash (latestHead ^. hash)
-      let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
+      let bad = reportBadNodeHeadError nodeId latestHead nodeHead (fudgeVeryBlockLike <$> lcaBlock')
           good = clearBadNodeHeadError nodeId
       case lcaBlock' of
         Nothing -> return bad
@@ -1157,10 +1157,9 @@ restoreCachedHistory nds mHeadCtx = do
               , _veryBlockLike_level       = blk ^. level
               -- Theoretically, the next three "Nothing" cases shouldn't happen
               , _veryBlockLike_fitness     = fromMaybe mempty (_blockShellIndex_fitness   blk)
-              , _veryBlockLike_timestamp   = fromMaybe epoch  (_blockShellIndex_timestamp blk)
+              , _veryBlockLike_timestamp   = fromMaybe unixEpoch  (_blockShellIndex_timestamp blk)
               }
             protoHash = fromMaybe emptyHash (flip lookup protoMap . toInt32 =<< _blockShellIndex_proto blk)
-            epoch = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
             emptyHash = HashedValue ""
 
       let

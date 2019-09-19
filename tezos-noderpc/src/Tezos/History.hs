@@ -11,6 +11,7 @@
 
 module Tezos.History where
 
+import Control.Applicative (liftA2)
 import Control.Concurrent.STM (TVar, atomically, readTVar, readTVarIO, writeTVar)
 import Control.DeepSeq (NFData)
 import Control.Lens (Lens, view, (^.))
@@ -73,34 +74,41 @@ data Prehistory a = Prehistory
   , _prehistory_blockMap :: !BlockMap
   }
 
+lookupBranchPoint :: Monoid a => BlockHash -> BlockHash -> CachedHistory a -> Maybe BlockSpine
+lookupBranchPoint x y history =
+    liftA2 LCA.lca (lookupPath x history) (lookupPath y history) >>= pathToBlockSpine history
+
+pathToBlockSpine :: Monoid a => CachedHistory a -> LCA.Path BlockHash a -> Maybe BlockSpine
+pathToBlockSpine history path =
+  case LCA.view path of
+    LCA.Root -> Nothing   -- should be impossible
+    LCA.Node blkHash _ path' ->
+      case LCA.view path' of
+        -- FIXME:  how should this case be handled?
+        --   To handle the actual genesis block, _maybe_ we should lie
+        --   about the predecessor hash (say, report it as a zero-length hash)
+        --   But then how do we handle a local sub-genesis block, when the
+        --   LCA cache is incomplete?  (we probably shouldn't lie about the
+        --   predecessor hash in this case;  returning Nothing seems the most
+        --   appropriate:  this does imply that `lookupLevel` will return
+        --   a `Just` in cases where `lookupBlockSpine` returns `Nothing`.
+        LCA.Root -> Nothing
+        LCA.Node predHash _ _path'' ->
+          Just $! BlockSpine
+            { _blockSpine_hash = blkHash
+            , _blockSpine_predecessor = predHash
+            , _blockSpine_level = _cachedHistory_levelZero history + fromIntegral (length path')
+            }
+
+lookupPath :: Monoid a => BlockHash -> CachedHistory a -> Maybe (LCA.Path BlockHash a)
+lookupPath blkHash history = Map.lookup blkHash (_cachedHistory_blocks history)
+
 lookupBlockSpine :: Monoid a => BlockHash -> CachedHistory a -> Maybe BlockSpine
-lookupBlockSpine blkHash history =
-  case Map.lookup blkHash (_cachedHistory_blocks history) of
-    Nothing -> Nothing
-    Just path ->
-      case LCA.view path of
-        LCA.Root -> Nothing   -- should be impossible
-        LCA.Node _blkHash _ path' ->
-          case LCA.view path' of
-            -- FIXME:  how should this case be handled?
-            --   To handle the actual genesis block, _maybe_ we should lie
-            --   about the predecessor hash (say, report it as all zeros)
-            --   But then how do we handle a local sub-genesis block, when the
-            --   LCA cache is incomplete?  (we probably shouldn't lie about the
-            --   predecessor hash in this case;  returning Nothing seems the most
-            --   appropriate:  this does imply that `lookupLevel` will return
-            --   a `Just` in cases where `lookupBlockSpine` returns `Nothing`.
-            LCA.Root -> Nothing
-            LCA.Node predHash _ _path'' ->
-              Just $! BlockSpine
-                { _blockSpine_hash = blkHash
-                , _blockSpine_predecessor = predHash
-                , _blockSpine_level = fromIntegral (length path') + _cachedHistory_levelZero history
-                }
+lookupBlockSpine blkHash history = lookupPath blkHash history >>= pathToBlockSpine history
 
 lookupLevel :: Monoid a => BlockHash -> CachedHistory a -> Maybe RawLevel
 lookupLevel blkHash history = f <$> Map.lookup blkHash (_cachedHistory_blocks history)
-  where f path = fromIntegral (length path) + _cachedHistory_levelZero history - 1
+  where f path = _cachedHistory_levelZero history + fromIntegral (length path) - 1
 
 initializeBlocks :: [BlockHash] -> BlockMap
 initializeBlocks blks = _blockPath_blockMap (extendBlockPath blks emptyBlockPath)
