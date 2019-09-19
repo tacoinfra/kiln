@@ -143,7 +143,7 @@ haveNewHead' nds pn nodeAddr headBlock = do
   let
     updatePgCache lvl xs = do
       let blockHashPgArray = PGArray xs
-      void $ [executeQ|
+      void [executeQ|
         INSERT INTO "BlockShellIndex"
              ( hash   , predecessor , "chainId" , level     )
        (SELECT x[i+1] , x[i]        , ?chainId  , ?lvl + i
@@ -253,10 +253,10 @@ haveNewHead' nds pn nodeAddr headBlock = do
 
     if Map.member blkHash knownBlocks
     then do
-      runDb (Identity db) $ upsertHeadBlock
+      runDb (Identity db) upsertHeadBlock
     else if Map.member predHash knownBlocks
       then do
-        runDb (Identity db) $ upsertHeadBlock
+        runDb (Identity db) upsertHeadBlock
         updateMemCache []
         -- having a nonempty cache implies that mOldHead is Just
         oldHead <- maybe failMsg return mOldHead
@@ -1106,7 +1106,7 @@ restoreCachedHistory nds mHeadCtx = do
       next blk
     ( blkA : blkB : _ ) -> do
       $(logInfo) [i| restoreCachedHistory proceeding with blocks ${blkA} and ${blkB} |]
-      if not ((blkA ^. level) < (blkB ^. level))
+      if (blkA ^. level) >= (blkB ^. level)
         -- FIXME: throw a proper exception here
       then fail "the 'impossible' happened: postgres is double rooted"
       else do
@@ -1137,7 +1137,7 @@ restoreCachedHistory nds mHeadCtx = do
 
 
       let      -- our cache's "genesis" block need not be at level 0
-        !levelZero = (blkMax ^. level) - (fromIntegral $ length spine) + 1
+        !levelZero = (blkMax ^. level) - fromIntegral (length spine) + 1
         !blocks0 = initializeBlocks spine
         !prehist0 = Prehistory (Map.singleton blkMaxHash blkMax) blocks0
         (Prehistory branches blocks)  = foldl' (flip accumPrehistory) prehist0 uncles
@@ -1231,7 +1231,7 @@ backfillBlockShellIndex nds = \case
             let blockHashPgArray = toArrayAction blockHashes
             runDb (Identity db) $ do
               maybe (pure ()) (upsertBlockHeader chainId) mHead
-              void $ [executeQ|
+              void [executeQ|
                 INSERT INTO "BlockShellIndex"
                      ( hash , predecessor , "chainId" , level    )
                (SELECT x[i] , x[i+1]      , ?chainId  , ?lvl - i
@@ -1247,7 +1247,7 @@ backfillBlockShellIndex nds = \case
               }
 
 toArrayAction :: Seq.Seq BlockHash -> PG.Action
-toArrayAction hs = PG.Plain $ res
+toArrayAction hs = PG.Plain res
   where
     res = case Seq.viewl hs of
            Seq.EmptyL -> empty

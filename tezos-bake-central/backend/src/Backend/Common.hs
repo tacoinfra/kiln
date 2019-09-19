@@ -32,7 +32,7 @@ worker' :: MonadIO m => IO () -> m (IO ())
 worker' f = return . cancel <=< liftIO $ async $ supervise $ void $ forever f
 
 oneShot :: MonadIO m => IO () -> m (IO ())
-oneShot f = return . cancel <=< liftIO $ async $ superviseOneShot $ void $ f
+oneShot f = return . cancel <=< liftIO $ async $ superviseOneShot $ void f
 
 superviseOneShot :: IO () -> IO ()
 superviseOneShot a = go
