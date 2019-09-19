@@ -567,15 +567,12 @@ branchPoint
 branchPoint x y =
   fmap (branchPointPure x y) $ readTVar' =<< asks (^. nodeDataSource . nodeDataSource_history)
 
-branchPointPure :: BlockHash -> BlockHash -> CachedHistory' -> Maybe VeryBlockLike
+branchPointPure :: BlockHash -> BlockHash -> CachedHistory' -> Maybe BlockSpine
 branchPointPure x y history =
   let
     xPath = Map.lookup x $ _cachedHistory_blocks history
     yPath = Map.lookup y $ _cachedHistory_blocks history
-  in liftA2 LCA.lca xPath yPath >>= \v -> case LCA.view v of
-      LCA.Root -> Nothing
-      LCA.Node blockHash () path -> Just $ histToBlockLike (_cachedHistory_minLevel history) blockHash path
-
+  in liftA2 LCA.lca xPath yPath >>= flip lookupBlockSpine history
 
 -- | enumerate the block hashes between lca(x, y) and (x,y), respectively, from newest to oldest
 enumerateBranches
@@ -592,17 +589,13 @@ enumerateBranches x y = do
     let pathPrefix long = fmap fst $ take (LCA.length long - LCA.length (LCA.lca xPath yPath)) $ LCA.toList long
     pure (pathPrefix xPath, pathPrefix yPath)
 
-
 lookupBlock
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> BlockHash -> m (Maybe VeryBlockLike)
+  => nds -> BlockHash -> m (Maybe BlockSpine)
 lookupBlock nds x = do
   let dsrc = nds ^. nodeDataSource
   history <- readTVar' $ _nodeDataSource_history dsrc
-  let xPath = Map.lookup x $ _cachedHistory_blocks history
-  pure $ xPath >>= \v -> case LCA.view v of
-    LCA.Root -> Nothing
-    LCA.Node blockHash () path -> Just $ histToBlockLike (_cachedHistory_minLevel history) blockHash path
+  return (lookupBlockSpine history)
 
 {-
 
@@ -646,13 +639,6 @@ waitForNewHead nds = do
     newHead <- maybe retry pure =<< readTVar (nds ^. nodeDataSource . nodeDataSource_latestHead)
     when (oldHead == Just newHead || newHead ^. level <= minLevel) retry
     pure newHead
-
--- turn the result of an LCA.view on the block history into a VeryBlockLike
-histToBlockLike :: RawLevel -> BlockHash -> LCA.Path BlockHash () -> VeryBlockLike
-histToBlockLike minLevel h path = VeryBlockLike h p mempty blkLevel unixEpoch
-  where
-    blkLevel = minLevel + fromIntegral (length path)
-    p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
 fittestBranchInHistory :: CachedHistory a -> Maybe (WithProtocolHash VeryBlockLike)
 fittestBranchInHistory hist =
@@ -1389,7 +1375,7 @@ buildProtocolHistoryUntil
   -> "branch" :! BlockHash
   -> "history" :! CachedHistory'
   -> NodeQueryT m (Map ProtocolHash Block)
-  -- Turns this into table, ProtocolHash 
+  -- Turns this into table, ProtocolHash
 buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
   branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
   go ! #currentBlock branchBlock
