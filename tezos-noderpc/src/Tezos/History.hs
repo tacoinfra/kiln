@@ -11,6 +11,7 @@
 
 module Tezos.History where
 
+import Control.Applicative (liftA2)
 import Control.Concurrent.STM (TVar, atomically, readTVar, readTVarIO, writeTVar)
 import Control.DeepSeq (NFData)
 import Control.Lens (Lens, view, (^.))
@@ -20,7 +21,7 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Logger (MonadLogger)
 import Control.Monad.Reader (MonadReader, asks)
 import Control.Monad.State.Strict (MonadState, get, modify, runState)
-import Data.Foldable (for_)
+import Data.Foldable (for_, foldl')
 import Data.Functor (void)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -29,7 +30,6 @@ import Data.Semigroup ((<>))
 import qualified Data.Sequence as Seq
 import Data.Sequence (Seq (), (<|))
 import Data.Set (Set)
-import qualified Data.Time as Time
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
@@ -46,156 +46,155 @@ data CachedHistory a = CachedHistory
   { _cachedHistory_branches :: !(Map BlockHash (WithProtocolHash VeryBlockLike))
   , _cachedHistory_blocks :: !(Map BlockHash (LCA.Path BlockHash a))
   , _cachedHistory_minLevel :: !RawLevel
+  , _cachedHistory_levelZero :: !RawLevel
   } deriving (Show, Typeable, Generic)
 instance NFData a => NFData (CachedHistory a)
 makeLenses 'CachedHistory
 
 emptyCache :: RawLevel -> CachedHistory a
-emptyCache = CachedHistory Map.empty Map.empty
+emptyCache lvl = CachedHistory Map.empty Map.empty lvl (RawLevel maxBound)
 
 class HasCachedHistory f s t a b | s -> a, t -> b where
   cachedHistory :: Lens s t (f (CachedHistory a)) (f (CachedHistory b))
 
--- | Data type with the right instances for 'MonadReader' constraints required by 'accumHistory'.
-data AccumHistoryContext f a = AccumHistoryContext
-  { _accumHistoryContext_cachedHistory :: !(f (CachedHistory a))
-  , _accumHistoryContext_publicNodeContext :: !PublicNodeContext
-  } deriving (Typeable, Generic)
-makeLenses 'AccumHistoryContext
-instance HasCachedHistory f (AccumHistoryContext f a) (AccumHistoryContext f b) a b where
-  cachedHistory = accumHistoryContext_cachedHistory
-instance HasPublicNodeContext (AccumHistoryContext f a) where
-  publicNodeContext = accumHistoryContext_publicNodeContext
-instance HasNodeRPC (AccumHistoryContext f a) where
-  nodeRPCContext = accumHistoryContext_publicNodeContext . nodeRPCContext
+type LCABlockPath = LCA.Path BlockHash ()
+type BlockMap  = Map BlockHash LCABlockPath
 
-getHistoryIncremental :: forall blk e r m a.
-  ( MonadIO m, MonadLogger m
-  , MonadError e m , AsPublicNodeError e
-  , MonadReader r m, HasPublicNodeContext r
-  , BlockLike blk
-  )
-  => IO (Map BlockHash a) -> RawLevel -> ChainId -> blk -> RawLevel -> Set BlockHash -> m (Seq BlockHash)
-getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
-  | numLevels <= maxBatch = getHistory chainId blk numLevels branches
-  | otherwise = do
-      prefix <- getHistory chainId blk maxBatch mempty
-      let
-        prefixLen = length prefix
-          -- (blk) .. [1,2,3,4] not including blk
-          -- The node RPC includes blk, but getHistory removes it again.
-        lastHash = Seq.index prefix (prefixLen - 1) -- 4
-      -- TODO: turn some of these comments into logging messages.
-      -- liftIO $ print ("getHistory", prefixLen, blk ^. level, (blk ^. level) - numLevels)
-      history <- liftIO askHistory
-      if Map.member lastHash history
-        then return prefix
-        else do
-          let
-            lastButOneHash = Seq.index prefix (prefixLen - 2) -- 3
-            stepBlock = VeryBlockLike
-              { _veryBlockLike_hash = lastButOneHash
-              , _veryBlockLike_predecessor = lastHash
-              , _veryBlockLike_level = blk ^. level - RawLevel (fromIntegral prefixLen) + 1
-                -- this is usually maxBatch-2 levels below blk.  Theoretically it could
-                --   run into genesis and be less far, and maybe with the new history
-                --   trimming stuff it could run out at higher levels.  However, if
-                --   that ever happens, we're violating assumptions that accumHistory is
-                --   making.
-              , _veryBlockLike_fitness = mempty -- TODO i'd like these to be not be available.
-              , _veryBlockLike_timestamp = Time.UTCTime (Time.fromGregorian 1970 1 1) 0
-              }
-            remainingLevels = numLevels - RawLevel (fromIntegral prefixLen) + 1
-          -- -- Sanity check for debugging
-          -- preflight <- nodeRPC $ rBlock chainId lastButOneHash
-          -- if (stepBlock ^. level /= preflight ^.level) || (stepBlock ^. predecessor /= preflight ^. predecessor)
-          --   then  do
-          --     liftIO $ print ("stepBlock", stepBlock)
-          --     liftIO $ print ("checkBlock", mkVeryBlockLike preflight)
-          --     error "bad"
-          --   else return ()
-          remaining <- getHistoryIncremental askHistory maxBatch chainId stepBlock remainingLevels mempty
-          return (prefix <> Seq.drop 1 remaining) -- remaining includes lastHash again, so drop that.
-
--- add a block to cached history.  If there are multipe blocks between the
--- added block and the deepest allowed root, the summary for those blocks will
--- be mempty
-accumHistory
-  :: forall a b e r m.
-    ( BlockLike b, HasProtocolHash b
-    , MonadIO m, MonadLogger m
-    , MonadReader r m, Monoid a, HasCachedHistory TVar r r a a, HasPublicNodeContext r
-    , MonadError e m, AsPublicNodeError e
-    )
-  => ChainId -> (forall b0. BlockLike b0 => b0 -> a) -> b -> m a
-accumHistory chainId f blk = do
-  historyVar <- asks (view cachedHistory)
-  history <- liftIO $ readTVarIO historyVar
-  let minLevel = _cachedHistory_minLevel history
-  let blkHash = view hash blk
-  let predHash = view predecessor blk
-
-  let
-    updateBranches :: forall n. MonadState (CachedHistory a) n => n a
-    updateBranches = if view level blk >= minLevel
-      then do
-        modify $ exposeBranch blk . accumHistoryImpl blkHash predHash (f blk)
-        hist :: CachedHistory a <- get
-        let blkBranch = _cachedHistory_blocks hist Map.! blkHash
-        return $ LCA.measure blkBranch
-      else return mempty
-
-  -- check to see if we already have history for the predecessor block
-  updateHist <- case view level blk > minLevel && Map.notMember predHash (_cachedHistory_blocks history) of
-    False -> pure (pure ())
-    True -> do
-      -- we will now proceed to restore the missing history.  We ask a node for
-      -- enough block-hashes to reach from the new block to "the root" at
-      -- minLevel
-      let !levels = view level blk - minLevel + 1
-      let !branches = _cachedHistory_branches history
-      !descendents <- getHistoryIncremental (fmap _cachedHistory_blocks $ readTVarIO historyVar) 100000 chainId blk levels $ Map.keysSet branches -- this gives, e.g. [4,3,2,1]
-
-      -- make sure we have a root node
-      let !rootHash = Seq.index (blkHash <| descendents) (length descendents) -- gets 1 from [blkHash,4,3,2,1]
-      !rootBlk <- getBlock chainId rootHash
-
-      -- scan insert the intermediate nodes
-      let !preds = Seq.reverse descendents -- [1,2,3,4]
-      let !blks = Seq.drop 1 preds -- [2,3,4]
-
-      pure $ do
-        modify $ accumHistoryImpl (rootBlk ^. hash) (rootBlk ^. predecessor) (f rootBlk)
-        for_ (Seq.zip blks preds) $ \(blkHash', predhash') -> do
-          modify $ accumHistoryImpl blkHash' predhash' mempty
-
-  liftIO $ atomically $ do
-    hist <- readTVar historyVar
-    let (a, newHist) = flip runState hist $ updateHist *> updateBranches
-    writeTVar historyVar newHist
-    pure a
-
-exposeBranch :: (HasProtocolHash b, BlockLike b) => b -> CachedHistory a -> CachedHistory a
-exposeBranch blk c = c
-  { _cachedHistory_branches
-      = Map.delete (blk ^. predecessor)
-      $ Map.insert (blk ^. hash) (WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash))
-      $ _cachedHistory_branches c
+data BlockPath = BlockPath
+  { _blockPath_currentPath :: !LCABlockPath
+  , _blockPath_blockMap    :: !BlockMap
   }
 
-accumHistoryImpl
-  :: Monoid a => BlockHash -> BlockHash -> a -> CachedHistory a -> CachedHistory a
-accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistory_blocks c) of
-  Just _ -> c -- why dont we replace acc?  It'd have to be updated in every path that contains it, O(n log h) work.  this way we're only O(log n)
-  Nothing -> CachedHistory
-      { _cachedHistory_blocks = Map.insert blkHash newPath blocks
-      , _cachedHistory_branches = Map.delete predHash branches
-      , _cachedHistory_minLevel = _cachedHistory_minLevel c
-      }
-    where
-      blocks = _cachedHistory_blocks c
-      branches = _cachedHistory_branches c
-      newPath = LCA.cons blkHash acc $ fromMaybe LCA.empty $ Map.lookup predHash blocks
+-- This is a strict pair used when filling in an empty LCA cache from the postgresql
+-- database, so that GHC can do some of it's optimization magic on a foldl' in the
+-- tezos-bake-central backend.  However, managing branches on the initial fill
+-- seems best left to something that is not a @WithProtocolHash VeryBlockLike@
+data Prehistory a = Prehistory
+  { _prehistory_branches :: !(Map BlockHash a)
+  , _prehistory_blockMap :: !BlockMap
+  }
+
+lookupBranchPoint :: Monoid a => BlockHash -> BlockHash -> CachedHistory a -> Maybe BlockSpine
+lookupBranchPoint x y history =
+    liftA2 LCA.lca (lookupPath x history) (lookupPath y history) >>= pathToBlockSpine history
+
+pathToBlockSpine :: Monoid a => CachedHistory a -> LCA.Path BlockHash a -> Maybe BlockSpine
+pathToBlockSpine history path =
+  case LCA.view path of
+    LCA.Root -> Nothing   -- should be impossible
+    LCA.Node blkHash _ path' ->
+      case LCA.view path' of
+        -- FIXME:  how should this case be handled?
+        --   To handle the actual genesis block, _maybe_ we should lie
+        --   about the predecessor hash (say, report it as a zero-length hash)
+        --   But then how do we handle a local sub-genesis block, when the
+        --   LCA cache is incomplete?  (we probably shouldn't lie about the
+        --   predecessor hash in this case;  returning Nothing seems the most
+        --   appropriate:  this does imply that `lookupLevel` will return
+        --   a `Just` in cases where `lookupBlockSpine` returns `Nothing`.
+        LCA.Root -> Nothing
+        LCA.Node predHash _ _path'' ->
+          Just $! BlockSpine
+            { _blockSpine_hash = blkHash
+            , _blockSpine_predecessor = predHash
+            , _blockSpine_level = _cachedHistory_levelZero history + fromIntegral (length path')
+            }
+
+lookupPath :: Monoid a => BlockHash -> CachedHistory a -> Maybe (LCA.Path BlockHash a)
+lookupPath blkHash history = Map.lookup blkHash (_cachedHistory_blocks history)
+
+lookupBlockSpine :: Monoid a => BlockHash -> CachedHistory a -> Maybe BlockSpine
+lookupBlockSpine blkHash history = lookupPath blkHash history >>= pathToBlockSpine history
+
+lookupLevel :: Monoid a => BlockHash -> CachedHistory a -> Maybe RawLevel
+lookupLevel blkHash history = f <$> Map.lookup blkHash (_cachedHistory_blocks history)
+  where f path = _cachedHistory_levelZero history + fromIntegral (length path) - 1
+
+initializeBlocks :: [BlockHash] -> BlockMap
+initializeBlocks blks = _blockPath_blockMap (extendBlockPath blks emptyBlockPath)
+
+-- | @'addHeadBlock' spine block history@ adds a head @block@ to the history,
+-- while enforcing invariants. The @spine@ consists any hashes that need to be
+-- added to the history in order to connect the head block back to already known
+-- hashes in the history.   The first element of @spine@ must be in
+-- '_cachedHistory_blocks', and the last element of @spine@ must be the
+-- 'predecessor' hash of the @block@.   If @spine@ is @[]@,  then it's assumed
+-- to be equivalent to @[block ^. predecessor]@.
+--
+-- Duplicate blocks are harmless beyond minor resource consumption.
+-- The only times @addHeadBlock@ when will return 'Nothing' are when the
+-- preconditions described above are violated.
+addHeadBlock :: (BlockLike b, HasProtocolHash b)  => [BlockHash] -> b -> CachedHistory () -> Maybe (CachedHistory ())
+addHeadBlock spine blk history = do
+  case Map.lookup blkHash knownBlocks of
+    Just _ -> Just history
+    Nothing -> do
+      let (firstBlk, rest) =
+            case spine of
+              [] -> (predHash, [])
+              (x:xs) -> (x, xs)
+      case skipKnownBlocks firstBlk rest of
+        Nothing -> Nothing
+        -- path is the LCA blockpath of lastKnownBlock
+        Just (path, lastKnownBlock, newBlocks) -> do
+          if predHash /= last (lastKnownBlock:newBlocks)
+          then Nothing
+          else do
+            let
+              BlockPath path' blocks' = extendBlockPath newBlocks (BlockPath path knownBlocks)
+              blk' = WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash)
+              blocks'' = Map.insert blkHash (LCA.cons blkHash () path') blocks'
+              branches' = Map.delete lastKnownBlock (_cachedHistory_branches history)
+              branches'' = Map.insert blkHash blk' branches'
+            Just $ CachedHistory {
+              _cachedHistory_blocks = blocks''
+            , _cachedHistory_branches = branches''
+            , _cachedHistory_minLevel = _cachedHistory_minLevel history
+            , _cachedHistory_levelZero = _cachedHistory_levelZero history
+            }
+  where
+    blkHash = blk ^. hash
+    predHash = blk ^. predecessor
+    knownBlocks = _cachedHistory_blocks history
+
+    -- skipKnownBlocks is conceptually operating on the guaranteed-nonempty list (a:bs),
+    -- which is the spine (explicit or implicit) passed to the top-level function.
+    -- The return value contains the guaranteed-nonempty list (lastKnownBlock:newBlocks)
+    skipKnownBlocks a bs =
+      case Map.lookup a knownBlocks of
+        Nothing -> Nothing
+        Just path -> Just $ go path a bs
+      where
+        go path b [] =
+          (path, b, [])
+        go path b cs@(c:ds) =
+          case Map.lookup c knownBlocks of
+            Nothing -> (path, b, cs)
+            Just path' -> go path' c ds
+
+emptyBlockPath :: BlockPath
+emptyBlockPath = BlockPath LCA.empty Map.empty
+
+extendBlockPath :: [BlockHash] -> BlockPath -> BlockPath
+extendBlockPath spine st = foldl' delta st spine
+  where delta (BlockPath path blocks) blkHash = BlockPath path' blocks'
+          where path'   = LCA.cons blkHash () path
+                blocks' = Map.insert blkHash path' blocks
+
+accumPrehistory :: BlockSpineLike blk => blk -> Prehistory blk -> Prehistory blk
+accumPrehistory blk hist@(Prehistory branches blocks) =
+  case Map.lookup blkHash blocks of
+    Just _ -> hist
+    Nothing ->
+      case Map.lookup predHash blocks of
+        Nothing -> hist
+        Just path -> Prehistory branches' blocks'
+          where
+            branches' = Map.insert blkHash blk (Map.delete predHash branches)
+            blocks'   = Map.insert blkHash (LCA.cons blkHash () path) blocks
+  where
+    blkHash  = blk ^. hash
+    predHash = blk ^. predecessor
 
 accumBalance :: MonadState Balances m => Block -> m ()
 accumBalance = modify . (<>) . getBalanceChanges

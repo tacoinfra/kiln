@@ -1,9 +1,12 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Backend.Common where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, cancel)
+import Control.Concurrent.Async (async, cancel, withAsync, waitCatch)
+import Control.Exception (SomeException, try)
 import Control.Monad (forever, (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, logDebug)
@@ -27,6 +30,23 @@ workerWithDelay getDelay f = worker' $ do
 
 worker' :: MonadIO m => IO () -> m (IO ())
 worker' f = return . cancel <=< liftIO $ async $ supervise $ void $ forever f
+
+oneShot :: MonadIO m => IO () -> m (IO ())
+oneShot f = return . cancel <=< liftIO $ async $ superviseOneShot $ void f
+
+superviseOneShot :: IO () -> IO ()
+superviseOneShot a = go
+ where
+   go = do
+     withAsync a $ \child -> do
+       waitCatch child >>= \case
+         Right () -> return ()
+         Left (err :: SomeException) -> do
+            printResult :: Either SomeException () <-
+              try $ putStrLn $ "supervise: child terminated with " <> show err <> "; restarting"
+            threadDelay 1000000
+            when (isLeft printResult) $ putStrLn "supervise: note: an exception was encountered when printing the previous result"
+            go
 
 -- Like 'workerWithDelay' but without a supervising thread. Use this when you don't
 -- want your thread to be restarted without you controlling how that happens.
