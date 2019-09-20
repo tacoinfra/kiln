@@ -36,7 +36,7 @@ import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.IndexQueries (rightsContextLevel, getLatestProtocolConstants)
-import Common.Schema hiding (blockLevel)
+import Common.Schema
 import ExtraPrelude
 
 blockWorker

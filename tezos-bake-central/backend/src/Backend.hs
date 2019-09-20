@@ -96,7 +96,7 @@ import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
-import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
+import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker, restoreCachedHistoryWorker)
 import Backend.Workers.TezosClient (tezosClientWorker)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
@@ -378,6 +378,7 @@ backendImpl cfg serve = do
       cache <- newTVarIO mempty
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
+
       return NodeDataSource
         { _nodeDataSource_history = hist
         , _nodeDataSource_cache = cache
@@ -432,6 +433,7 @@ backendImpl cfg serve = do
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
+      addFinalizer =<< restoreCachedHistoryWorker dataSrc
       addFinalizer =<< cacheWorker 90 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources

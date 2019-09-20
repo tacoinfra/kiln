@@ -93,7 +93,7 @@ import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chainId
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
-import Common.Schema hiding (Event)
+import Common.Schema
 import ExtraPrelude
 import Frontend.Amendment
 import Frontend.Common

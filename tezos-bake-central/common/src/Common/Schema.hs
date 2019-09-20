@@ -52,7 +52,6 @@ import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
 import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
 import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
 import Data.Dependent.Sum.Orphans ()
-import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
@@ -133,18 +132,10 @@ sumFees baker = getSum . views balanceUpdates getFee
     getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == baker = Sum (_freezerUpdate_change x)
     getFee _ = Sum 0
 
-type Baked = Event BakedEvent
-
 data Error = Error
   { _error_time :: !UTCTime
   , _error_text :: !Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
-
-mkErr :: Event ErrorEvent -> Error
-mkErr err = Error
-  { _error_time = _event_time err
-  , _error_text = _errorEvent_message $ _event_detail err
-  }
 
 data BlockBaker = BlockBaker
   { _blockBaker_publicKeyHash :: !PublicKeyHash
@@ -409,60 +400,6 @@ data PublicNodeHead = PublicNodeHead
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId PublicNodeHead
 
-data BakedEventOperation = BakedEventOperation
-  { _bakedEventOperation_branch :: !BlockHash
-  , _bakedEventOperation_data :: !Operation
-  } deriving (Show, Eq, Ord, Typeable, Generic)
-
-data BakedEvent = BakedEvent
-  { _bakedEvent_hash :: !BlockHash
-  , _bakedEvent_operations :: ![[BakedEventOperation]]
-  , _bakedEvent_signedHeader :: !BlockHeader
-  , _bakedEvent_baker :: !PublicKeyHash
-  } deriving (Show, Eq, Ord, Typeable, Generic)
-
-data SeenEvent = SeenEvent
-  { _seenEvent_hash :: !BlockHash
-  -- , _seenEvent_chainId :: !ChainId
-  , _seenEvent_fitness :: !Fitness
-  , _seenEvent_level :: !RawLevel
-  , _seenEvent_predecessor :: !BlockHash
-  -- , _seenEvent_protocol :: !Protocol
-  , _seenEvent_timestamp :: !UTCTime
-  } deriving (Show, Eq, Ord, Typeable, Generic)
-
-data Event e = Event
-  { _event_detail :: !e
-  , _event_seq :: !Int
-  , _event_time :: !UTCTime
-  , _event_worker :: !Text
-  } deriving (Show, Eq, Ord, Typeable, Generic)
-
-data ErrorEvent = ErrorEvent
-  { _errorEvent_message :: !Text
-  , _errorEvent_trace :: !(Json [Aeson.Value])
-  } deriving (Show, Eq, Typeable, Generic)
-
-instance Ord ErrorEvent where
-  compare = compare `on` _errorEvent_message
-
-data EndorseEvent = EndorseEvent
-  { _endorseEvent_hash :: !BlockHash
-  , _endorseEvent_level :: !Int
-  , _endorseEvent_slot :: !Int -- todo, pluralize
-  , _endorseEvent_baker :: !PublicKeyHash
-  , _endorseEvent_name :: !String
-  , _endorseEvent_oph :: !OperationHash
-  } deriving (Show, Eq, Typeable, Generic)
-
-data Report = Report
-  { _report_baked :: ![Event BakedEvent]
-  -- , _report_endorsed :: ![Event EndorseEvent]
-  , _report_errors :: ![Event ErrorEvent]
-  , _report_seen :: ![Event SeenEvent]
-  , _report_startTime :: !UTCTime
-  } deriving (Show, Eq, Ord, Typeable, Generic)
-
 data Accusation = Accusation
   { _accusation_hash :: !OperationHash -- ^ hash of the accusation operation
   , _accusation_blockHash :: !BlockHash -- ^ hash of the block where the accusation was included
@@ -547,29 +484,6 @@ data BlockTodo = BlockTodo
   , _blockTodo_parsedParent :: !Bool
   , _blockTodo_parsedAccusations :: !Bool
   } deriving (Show, Eq, Ord, Typeable, Generic)
-
-blockLevel :: Event BakedEvent -> Int
-blockLevel = fromIntegral . _blockHeader_level . _bakedEvent_signedHeader . _event_detail
-
-blockRewards :: Event BakedEvent -> ProtoInfo -> Tez
-blockRewards b p = _protoInfo_blockReward p + fees + nonceTip
-  where
-    blockHeader = _bakedEvent_signedHeader $ _event_detail b
-    nonceTip = maybe 0 (const $ _protoInfo_seedNonceRevelationTip p) (_blockHeader_seedNonceHash blockHeader)
-    baker = _bakedEvent_baker $ _event_detail b
-    fees = getSum $ (foldMap.foldMap) (Sum . sumFees baker . _bakedEventOperation_data) $ _bakedEvent_operations $ _event_detail b
-
-endorsementReward :: Event EndorseEvent -> ProtoInfo -> Tez
-endorsementReward b p = Tez $ getTez (_protoInfo_endorsementReward p) / fromIntegral (1 + _endorseEvent_slot (_event_detail b))
-
--- Used to produce info on the summary tab
-instance Semigroup Report where
-  u <> v = Report
-    { _report_baked = _report_baked u <> _report_baked v
-    , _report_errors = _report_errors u <> _report_errors v
-    , _report_seen = _report_seen u <> _report_seen v
-    , _report_startTime = min (_report_startTime u) (_report_startTime v)
-    }
 
 data ClientDaemonWorker
   = ClientDaemonWorker_Baking
@@ -985,13 +899,22 @@ deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
 deriving instance Show (BakerLogTag a)
 
+data BlockShellIndex = BlockShellIndex
+  { _blockShellIndex_hash :: !BlockHash
+  , _blockShellIndex_predecessor :: !BlockHash
+  , _blockShellIndex_chainId :: !ChainId
+  , _blockShellIndex_level :: !RawLevel
+  , _blockShellIndex_fitness :: !(Maybe Fitness)
+  , _blockShellIndex_timestamp :: !(Maybe UTCTime)
+  , _blockShellIndex_proto :: !(Maybe Word8)
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+instance HasId BlockShellIndex
+
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
   , ''Amendment
   , ''AlertNotificationMethod
   , ''BakeEfficiency
-  , ''BakedEvent
-  , ''BakedEventOperation
   , ''Baker
   , ''BakerDaemon
   , ''BakerDaemonInternalData
@@ -1003,10 +926,9 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerVote
   , ''BlockBaker
   , ''BlockTodo
+  , ''BlockShellIndex
   , ''CacheDelegateInfo
   , ''DeletableRow
-  , ''EndorseEvent
-  , ''ErrorEvent
   , ''ErrorLog
   , ''ErrorLogBadNodeHead
   , ''ErrorLogBakerAccused
@@ -1021,7 +943,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
-  , ''Event
   , ''ProtocolIndex
   , ''MailServerConfig
   , ''Node
@@ -1041,11 +962,9 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessState
   , ''PublicNodeConfig
   , ''PublicNodeHead
-  , ''Report
   , ''RightKind
   , ''RightNotificationLimit
   , ''RightNotificationSettings
-  , ''SeenEvent
   , ''SnapshotMeta
   , ''SmtpProtocol
   , ''TelegramConfig
@@ -1057,8 +976,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ 'Accusation
   , 'Amendment
   , 'BakeEfficiency
-  , 'BakedEvent
-  , 'BakedEventOperation
   , 'Baker
   , 'BakerDaemon
   , 'BakerDaemonInternalData
@@ -1068,10 +985,9 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'BlockTodo
+  , 'BlockShellIndex
   , 'DeletableRow
-  , 'EndorseEvent
   , 'Error
-  , 'ErrorEvent
   , 'ErrorLog
   , 'ErrorLogBadNodeHead
   , 'ErrorLogBakerAccused
@@ -1086,7 +1002,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNodeWrongChain
   , 'ErrorLogVotingReminder
-  , 'Event
   , 'MailServerConfig
   , 'Node
   , 'NodeDetails
@@ -1103,10 +1018,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ProtocolIndex
   , 'PublicNodeConfig
   , 'PublicNodeHead
-  , 'Report
   , 'RightNotificationLimit
   , 'RightNotificationSettings
-  , 'SeenEvent
   , 'SnapshotMeta
   , 'TelegramConfig
   , 'TelegramMessageQueue
@@ -1146,35 +1059,30 @@ deriveSomeUniverse ''BakerLogTag
 instance Universe (Some LogTag) where
   universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
 
-instance BlockLike (Event BakedEvent) where
-  hash = event_detail . bakedEvent_hash
-  predecessor = event_detail . bakedEvent_signedHeader . blockHeader_predecessor
-  fitness = event_detail . bakedEvent_signedHeader . blockHeader_fitness
-  level = event_detail . bakedEvent_signedHeader . blockHeader_level
-  timestamp = event_time
-
-instance BlockLike (Event SeenEvent) where
-  hash = event_detail . seenEvent_hash
-  predecessor = event_detail . seenEvent_predecessor
-  fitness = event_detail . seenEvent_fitness
-  level = event_detail . seenEvent_level
-  timestamp = event_time
-
-instance BlockLike PublicNodeHead where
+instance BlockSpineLike PublicNodeHead where
   hash = publicNodeHead_headBlock . hash
   predecessor = publicNodeHead_headBlock . predecessor
-  fitness = publicNodeHead_headBlock . fitness
   level = publicNodeHead_headBlock . level
+
+instance BlockLike PublicNodeHead where
+  fitness = publicNodeHead_headBlock . fitness
   timestamp = publicNodeHead_headBlock . timestamp
+
+instance BlockSpineLike BlockShellIndex where
+  hash = blockShellIndex_hash
+  predecessor = blockShellIndex_predecessor
+  level = blockShellIndex_level
 
 instance HasProtocolHash PublicNodeHead where
   protocolHash = publicNodeHead_protocolHash
 
-instance BlockLike ProtocolIndex where
+instance BlockSpineLike ProtocolIndex where
   hash = protocolIndex_firstBlockHash
   predecessor = protocolIndex_firstBlockPredecessor
-  fitness = protocolIndex_firstBlockFitness
   level = protocolIndex_firstBlockLevel
+
+instance BlockLike ProtocolIndex where
+  fitness = protocolIndex_firstBlockFitness
   timestamp = protocolIndex_firstBlockTimestamp
 
 instance HasProtocolHash ProtocolIndex where

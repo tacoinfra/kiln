@@ -57,16 +57,17 @@ import Data.Fixed (Fixed (MkFixed), HasResolution)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Compare.TH (deriveGCompare)
 import Data.GADT.Show.TH (deriveGShow)
-import Data.Int (Int64)
+import Data.Int (Int64, Int32)
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
 import Data.Some (Some(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
+import Data.Time (localTimeToUTC, utc)
 import Data.Version (Version)
 import qualified Data.Version as Version
-import Data.Word (Word64)
+import Data.Word (Word64, Word8)
 import Database.Groundhog.Core
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Generic
@@ -74,7 +75,8 @@ import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
-import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
+import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..))
+import Database.PostgreSQL.Simple.FromRow (FromRow(..), field)
 import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
 import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
@@ -343,7 +345,6 @@ data CacheEndorsingRights = CacheEndorsingRights
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
--- TODO: Move all of this into postgresql-simple
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
 
@@ -432,6 +433,20 @@ instance FromField VotingPeriodKind where
 instance ToField VotingPeriodKind where
   toField v = toField (show v)
 
+-- FIXME: we need to cope with the mismatch between this FromRow instance and
+-- groundhog migrations, somehow.
+instance FromRow BlockShellIndex where
+  fromRow = BlockShellIndex
+              <$> field
+              <*> field
+              <*> field
+              <*> field
+              <*> field
+              <*> ((fmap (localTimeToUTC utc) <$> field) <|> field)
+              <*> fmap (fmap toWord8) field
+    where toWord8 :: Int32 -> Word8
+          toWord8 = fromIntegral
+
 instance PersistField Tez where
   persistName _ = "Tez"
   toPersistValues = primToPersistValue
@@ -449,7 +464,6 @@ instance PrimitivePersistField PeriodSequence where
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
 
 instance NeverNull (HashedValue a)
-instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
 instance NeverNull Cycle
 instance NeverNull Fitness
@@ -1128,6 +1142,14 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: CacheEndorsingRights_context
             type: primary
             fields: [_cacheEndorsingRights_context, _cacheEndorsingRights_level]
+  - entity: BlockShellIndex
+    autoKey: null
+    constructors:
+      - name: BlockShellIndex
+        uniques:
+          - name: BlockShellIndexId
+            type: primary
+            fields: [_blockShellIndex_hash]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
