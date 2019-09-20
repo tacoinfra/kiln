@@ -243,7 +243,8 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
           Just upd -> when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
             dsh <- liftIO $ atomically $ dataSourceHead nds
             doCheck <- for dsh $ \blk -> checkNextBakeOpportunity appConfig nds blk >>= \case
-              Just (_, lvl) -> pure (lvl > blk ^. level + 1)
+              -- Avoid sending commands to the ledger within two blocks of baking rights
+              Just (_, lvl) -> pure (blk ^. level < lvl - 2 || blk ^. level > lvl + 2)
               _ -> pure False
             when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
 
