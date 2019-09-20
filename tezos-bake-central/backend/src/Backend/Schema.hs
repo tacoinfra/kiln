@@ -641,6 +641,19 @@ instance ToField DerivationPath where
 instance FromField DerivationPath where
   fromField f = fmap DerivationPath . fromField f
 
+instance PersistField ContractId where
+  persistName _ = "ContractId"
+  toPersistValues = primToPersistValue . toContractIdText
+  fromPersistValues vs = first toContractId <$> fromPersistValues vs
+    where
+      toContractId = either (error . show) id . tryReadContractId
+  dbType p x = dbType p ("" :: Text)
+
+instance ToField OpKindIx where
+  toField = toField . show
+instance FromField OpKindIx where
+  fromField f = maybe (fail "Invalid value for OpKindIx") pure . readMaybe <=< fromField f
+
 instance ToField SigningCurve where
   toField = toField . show
 instance FromField SigningCurve where
@@ -1130,6 +1143,27 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: BlockShellIndexId
             type: primary
             fields: [_blockShellIndex_hash]
+  - entity: OperationIndex
+    autoKey: null
+    constructors:
+      - name: OperationIndex
+        uniques:
+          - name: OperationIndexId
+            type: primary
+            fields: [_operationIndex_hash]
+  - primitive: OpKindIx
+  - entity: TransactionIndex
+  - entity: IxBlockTodo
+    autoKey: null
+    constructors:
+      - name: IxBlockTodo
+        uniques:
+          - name: IxBlockTodo_hash
+            type: primary
+            fields: [_ixBlockTodo_hash]
+    keys:
+      - name: IxBlockTodo_hash
+        default: true
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)

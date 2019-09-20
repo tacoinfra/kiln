@@ -296,11 +296,17 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
     let newHash = headBlockInfo ^. hash
         newLevel = headBlockInfo ^. level
         chainId = _nodeDataSource_chain nds
-     in void [executeQ|
-          insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
-          values (?newHash, ?newLevel, ?chainId, null, null, false, false)
-          on conflict do nothing
-          |]
+     in do
+      void $ [executeQ|
+        insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
+        values (?newHash, ?newLevel, ?chainId, null, null, false, false)
+        on conflict do nothing
+        |]
+      void $ [executeQ|
+        insert into "IxBlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent")
+        values (?newHash, ?newLevel, ?chainId, null, null, false)
+        on conflict do nothing
+        |]
     let p = (NodeDetails_dataField ~>)
     project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
       [] -> insert $ NodeDetails
