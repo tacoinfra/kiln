@@ -340,7 +340,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   -- This is the things that fails. First go look up the account, and see who/if
   -- it is delegated (`NodeQuery_Account`). Only proceed if there is a delegate,
   -- and cache that.
-  delegate <- _accountDelegate_value . _account_delegate <$>
+  delegate <- (^.account_delegatePkh) <$>
     nodeQueryDataSource (NodeQuery_Account headHash (Implicit pkh))
   selfDelegateActions <- case delegate of
     Nothing -> pure []
