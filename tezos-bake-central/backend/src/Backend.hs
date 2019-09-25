@@ -360,7 +360,6 @@ backendImpl cfg serve = do
     let
       minLevel :: RawLevel
       minLevel = case maybeNamedChain of
-        Just NamedChain_Zeronet -> 3 -- Due to the current zeronet genesis block messup
         _ -> 2
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
