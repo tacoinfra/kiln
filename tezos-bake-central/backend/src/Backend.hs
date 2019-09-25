@@ -359,8 +359,8 @@ backendImpl cfg serve = do
 
     let
       minLevel :: RawLevel
-      minLevel = case maybeNamedChain of
-        _ -> 2
+      minLevel = 2
+
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
