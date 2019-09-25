@@ -1,7 +1,11 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Tezos.Account where
 
-import Control.Lens.TH (makeLenses)
+import Control.Applicative ((<|>))
+import Control.Lens (Getter, (^.), to)
+import Control.Lens.TH (makeLenses, makePrisms)
+import Data.Aeson (ToJSON(toJSON), FromJSON(parseJSON))
 import Data.Time
 import Data.Typeable
 import Data.Word
@@ -20,11 +24,22 @@ data AccountDelegate = AccountDelegate
   , _accountDelegate_value :: !(Maybe PublicKeyHash) -- "value": { "$ref": "#/definitions/Signature.Public_key_hash" }
   } deriving (Show, Eq, Ord, Typeable)
 
+data AccountDelegateVersioned
+  = AccountDelegateAthens !AccountDelegate -- { "type": "object", "properties": {
+  | AccountDelegateBabylon !(Maybe PublicKeyHash) -- "value": { "$ref": "#/definitions/Signature.Public_key_hash" }
+  deriving (Show, Eq, Ord, Typeable)
+
+instance ToJSON AccountDelegateVersioned where
+  toJSON v = case v of
+    AccountDelegateAthens ad -> toJSON ad
+    AccountDelegateBabylon pkh -> toJSON pkh
+
+instance FromJSON AccountDelegateVersioned where
+  parseJSON v = (AccountDelegateBabylon <$> parseJSON v) <|> (AccountDelegateAthens <$> parseJSON v)
+
 data Account = Account
-  { _account_manager :: !PublicKeyHash -- "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx" "manager": { "$ref": "#/definitions/Signature.Public_key_hash" },
+  { _account_delegate :: !AccountDelegateVersioned -- "delegate": (different for babylon and athens)
   , _account_balance :: !Tez -- "2052452947621" "balance": { "$ref": "#/definitions/mutez" },
-  , _account_spendable :: !Bool -- true "spendable": { "type": "boolean" },
-  , _account_delegate :: !AccountDelegate -- "delegate": { "type": "object", "properties": {
   , _account_script :: !(Maybe ContractScript) -- "script": { "$ref": "#/definitions/scripted.contracts" },
   , _account_counter :: !TezosWord64 -- 1540 "counter": { "$ref": "#/definitions/positive_bignum" }
   } deriving (Show, Eq, Ord, Typeable)
@@ -85,3 +100,14 @@ concat <$> traverse makeLenses
   , 'FrozenBalanceByCycle
   , 'ManagerKey
   ]
+
+concat <$> traverse makePrisms
+  [ ''AccountDelegateVersioned
+  ]
+
+account_delegatePkh :: Getter Account (Maybe PublicKeyHash)
+account_delegatePkh = account_delegate . to unPkh
+  where
+    unPkh = \case
+      AccountDelegateAthens ad -> ad ^. accountDelegate_value
+      AccountDelegateBabylon pkh -> pkh
