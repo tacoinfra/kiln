@@ -165,13 +165,6 @@ instance NFData TzScanNonceHash
 instance FromJSON TzScanNonceHash where
   parseJSON v = TzScanNonceHash <$> (parseJSON v <|> pure Nothing)
 
-data BlockSpine = BlockSpine
-  { _blockSpine_hash :: !BlockHash
-  , _blockSpine_predecessor :: !BlockHash
-  , _blockSpine_level :: !RawLevel
-  } deriving (Eq, Ord, Show, Typeable, Generic)
-instance NFData BlockSpine
-
 data VeryBlockLike = VeryBlockLike
   { _veryBlockLike_hash :: !BlockHash
   , _veryBlockLike_predecessor :: !BlockHash
@@ -240,7 +233,6 @@ concat <$> traverse deriveTezosJson
   , ''TzScanBlock
   , ''TzScanProtocol
   , ''VotingPeriodKind
-  , ''BlockSpine
   , ''VeryBlockLike
   ]
 
@@ -252,30 +244,25 @@ concat <$> traverse makeLenses
   , 'TzScanBaker
   , 'TzScanBlock
   , 'TzScanProtocol
-  , 'BlockSpine
   , 'VeryBlockLike
   , 'WithProtocolHash
   ]
 
-class BlockSpineLike b where
+class BlockLike b where
+  -- chain :: Lens' b ChainId
   hash :: Lens' b BlockHash
   predecessor :: Lens' b BlockHash
   level :: Lens' b RawLevel
-
-class BlockSpineLike b => BlockLike b where
-  -- chain :: Lens' b ChainId
   fitness :: Lens' b Fitness
   timestamp :: Lens' b UTCTime
 
 class HasProtocolHash a where
   protocolHash :: Lens' a ProtocolHash
 
-instance BlockSpineLike Block where
+instance BlockLike Block where
   hash = block_hash
   predecessor = block_header . blockHeaderFull_predecessor
   level = block_header . blockHeaderFull_level
-
-instance BlockLike Block where
   fitness = block_header . blockHeaderFull_fitness
   timestamp = block_header . blockHeaderFull_timestamp
 
@@ -285,61 +272,45 @@ instance HasProtocolHash Block where
 instance HasProtocolHash BlockHeader where
   protocolHash = blockHeader_protocol
 
-instance BlockSpineLike BlockHeader where
+instance BlockLike BlockHeader where
   hash = blockHeader_hash
   predecessor = blockHeader_predecessor
   level = blockHeader_level
-
-instance BlockLike BlockHeader where
   fitness = blockHeader_fitness
   timestamp = blockHeader_timestamp
 
-instance BlockSpineLike MonitorBlock where
+instance BlockLike MonitorBlock where
   hash = monitorBlock_hash
   predecessor = monitorBlock_predecessor
   level = monitorBlock_level
-
-instance BlockLike MonitorBlock where
   fitness = monitorBlock_fitness
   timestamp = monitorBlock_timestamp
 
-instance BlockSpineLike TzScanBlock where
+instance BlockLike TzScanBlock where
   hash = tzScanBlock_hash
   predecessor = tzScanBlock_predecessorHash
   level = tzScanBlock_level
-
-instance BlockLike TzScanBlock where
   fitness = tzScanBlock_fitness . coerced
   timestamp = tzScanBlock_timestamp
 instance HasProtocolHash TzScanBlock where
   protocolHash = tzScanBlock_protocol . coerced
 
-instance BlockSpineLike BlockSpine where
-  hash = blockSpine_hash
-  predecessor = blockSpine_predecessor
-  level = blockSpine_level
-
-instance BlockSpineLike VeryBlockLike where
+instance BlockLike VeryBlockLike where
   hash = veryBlockLike_hash
   predecessor = veryBlockLike_predecessor
-  level = veryBlockLike_level
-
-instance BlockLike VeryBlockLike where
   fitness = veryBlockLike_fitness
+  level = veryBlockLike_level
   timestamp = veryBlockLike_timestamp
 
 instance HasProtocolHash BlockMetadata where
   protocolHash = blockMetadata_protocol
 
-instance BlockSpineLike a => BlockSpineLike (WithProtocolHash a) where
+instance BlockLike a => BlockLike (WithProtocolHash a) where
   hash = withProtocolHash_value . hash
   predecessor = withProtocolHash_value . predecessor
-  level = withProtocolHash_value . level
-
-instance BlockLike a => BlockLike (WithProtocolHash a) where
   fitness = withProtocolHash_value . fitness
+  level = withProtocolHash_value . level
   timestamp = withProtocolHash_value . timestamp
-
 instance HasProtocolHash (WithProtocolHash a) where
   protocolHash = withProtocolHash_protocolHash
 
@@ -350,24 +321,6 @@ instance HasBalanceUpdates Block where
       md' = (blockMetadata_balanceUpdates . traverse) f $ _block_metadata blk
       ops' = (traverse . traverse . balanceUpdates) f $ _block_operations blk
 
-mkBlockSpine :: BlockSpineLike b => b -> BlockSpine
-mkBlockSpine blk = BlockSpine
-  { _blockSpine_hash = blk ^. hash
-  , _blockSpine_predecessor = blk ^. predecessor
-  , _blockSpine_level = blk ^. level
-  }
-
--- | use of this function is strongly discouraged
-fudgeVeryBlockLike :: BlockSpine -> VeryBlockLike
-fudgeVeryBlockLike blk = VeryBlockLike
-  { _veryBlockLike_hash = blk ^. hash
-  , _veryBlockLike_predecessor = blk ^. predecessor
-  , _veryBlockLike_level = blk ^. level
-  , _veryBlockLike_fitness = mempty
-  , _veryBlockLike_timestamp = unixEpoch
-  } where unixEpoch = UTCTime (fromGregorian 1970 1 1) 0
-
-
 mkVeryBlockLike :: BlockLike b => b -> VeryBlockLike
 mkVeryBlockLike blk = VeryBlockLike
   { _veryBlockLike_hash = blk ^. hash
@@ -376,3 +329,4 @@ mkVeryBlockLike blk = VeryBlockLike
   , _veryBlockLike_level = blk ^. level
   , _veryBlockLike_timestamp = blk ^. timestamp
   }
+

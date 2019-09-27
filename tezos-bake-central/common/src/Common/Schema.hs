@@ -890,17 +890,6 @@ deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
 deriving instance Show (BakerLogTag a)
 
-data BlockShellIndex = BlockShellIndex
-  { _blockShellIndex_hash :: !BlockHash
-  , _blockShellIndex_predecessor :: !BlockHash
-  , _blockShellIndex_chainId :: !ChainId
-  , _blockShellIndex_level :: !RawLevel
-  , _blockShellIndex_fitness :: !(Maybe Fitness)
-  , _blockShellIndex_timestamp :: !(Maybe UTCTime)
-  , _blockShellIndex_proto :: !(Maybe Word8)
-  } deriving (Eq, Generic, Ord, Show, Typeable)
-instance HasId BlockShellIndex
-
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
   , ''Amendment
@@ -917,7 +906,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerVote
   , ''BlockBaker
   , ''BlockTodo
-  , ''BlockShellIndex
   , ''CacheDelegateInfo
   , ''DeletableRow
   , ''ErrorLog
@@ -975,7 +963,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'BlockTodo
-  , 'BlockShellIndex
   , 'DeletableRow
   , 'Error
   , 'ErrorLog
@@ -1048,30 +1035,21 @@ deriveSomeUniverse ''BakerLogTag
 instance Universe (Some LogTag) where
   universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
 
-instance BlockSpineLike PublicNodeHead where
+instance BlockLike PublicNodeHead where
   hash = publicNodeHead_headBlock . hash
   predecessor = publicNodeHead_headBlock . predecessor
-  level = publicNodeHead_headBlock . level
-
-instance BlockLike PublicNodeHead where
   fitness = publicNodeHead_headBlock . fitness
+  level = publicNodeHead_headBlock . level
   timestamp = publicNodeHead_headBlock . timestamp
-
-instance BlockSpineLike BlockShellIndex where
-  hash = blockShellIndex_hash
-  predecessor = blockShellIndex_predecessor
-  level = blockShellIndex_level
 
 instance HasProtocolHash PublicNodeHead where
   protocolHash = publicNodeHead_protocolHash
 
-instance BlockSpineLike ProtocolIndex where
+instance BlockLike ProtocolIndex where
   hash = protocolIndex_firstBlockHash
   predecessor = protocolIndex_firstBlockPredecessor
-  level = protocolIndex_firstBlockLevel
-
-instance BlockLike ProtocolIndex where
   fitness = protocolIndex_firstBlockFitness
+  level = protocolIndex_firstBlockLevel
   timestamp = protocolIndex_firstBlockTimestamp
 
 instance HasProtocolHash ProtocolIndex where
