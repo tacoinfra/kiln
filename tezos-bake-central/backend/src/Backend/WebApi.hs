@@ -73,7 +73,7 @@ v3PublicApi dataSrc = route $ fmap (first ("api/v3/" <>))
     sulk msg = Snap.modifyResponse (Snap.setResponseCode 400) *> Snap.writeLBS (LBS.fromStrict $ T.encodeUtf8 msg)
 
 
-snapBranchPoint :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockSpine)
+snapBranchPoint :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text VeryBlockLike)
 snapBranchPoint = runExceptT $ do
   blockBS <- asTextMaybe "missing param:block" $ params "block"
   case traverse fromBase58 blockBS of

@@ -126,6 +126,7 @@ import Backend.Schema
 import Backend.STM (HasTimestamp, MonadSTM (liftSTM), atomicallyWith, atomicallyWithTime,
                     newTVar', readTVar', retry', writeTVar')
 import qualified Backend.STM as Stm
+import Common (unixEpoch)
 import Common.Schema
 import ExtraPrelude
 
@@ -562,9 +563,19 @@ unpackCacheResult (Compose var) = do
 -- get lca between two blocks
 branchPoint
   :: forall r m. (HasNodeDataSource r, MonadSTM m, MonadReader r m)
-  => BlockHash -> BlockHash -> m (Maybe BlockSpine)
+  => BlockHash -> BlockHash -> m (Maybe VeryBlockLike)
 branchPoint x y =
-  fmap (lookupBranchPoint x y) $ readTVar' =<< asks (^. nodeDataSource . nodeDataSource_history)
+  fmap (branchPointPure x y) $ readTVar' =<< asks (^. nodeDataSource . nodeDataSource_history)
+
+branchPointPure :: BlockHash -> BlockHash -> CachedHistory' -> Maybe VeryBlockLike
+branchPointPure x y history =
+  let
+    xPath = Map.lookup x $ _cachedHistory_blocks history
+    yPath = Map.lookup y $ _cachedHistory_blocks history
+  in liftA2 LCA.lca xPath yPath >>= \v -> case LCA.view v of
+      LCA.Root -> Nothing
+      LCA.Node blockHash () path -> Just $ histToBlockLike (_cachedHistory_minLevel history) blockHash path
+
 
 -- | enumerate the block hashes between lca(x, y) and (x,y), respectively, from newest to oldest
 enumerateBranches
@@ -581,13 +592,17 @@ enumerateBranches x y = do
     let pathPrefix long = fmap fst $ take (LCA.length long - LCA.length (LCA.lca xPath yPath)) $ LCA.toList long
     pure (pathPrefix xPath, pathPrefix yPath)
 
+
 lookupBlock
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> BlockHash -> m (Maybe BlockSpine)
+  => nds -> BlockHash -> m (Maybe VeryBlockLike)
 lookupBlock nds x = do
   let dsrc = nds ^. nodeDataSource
   history <- readTVar' $ _nodeDataSource_history dsrc
-  return (lookupBlockSpine x history)
+  let xPath = Map.lookup x $ _cachedHistory_blocks history
+  pure $ xPath >>= \v -> case LCA.view v of
+    LCA.Root -> Nothing
+    LCA.Node blockHash () path -> Just $ histToBlockLike (_cachedHistory_minLevel history) blockHash path
 
 {-
 
@@ -632,6 +647,13 @@ waitForNewHead nds = do
     when (oldHead == Just newHead || newHead ^. level <= minLevel) retry
     pure newHead
 
+-- turn the result of an LCA.view on the block history into a VeryBlockLike
+histToBlockLike :: RawLevel -> BlockHash -> LCA.Path BlockHash () -> VeryBlockLike
+histToBlockLike minLevel h path = VeryBlockLike h p mempty blkLevel unixEpoch
+  where
+    blkLevel = minLevel + fromIntegral (length path)
+    p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
+
 fittestBranchInHistory :: CachedHistory a -> Maybe (WithProtocolHash VeryBlockLike)
 fittestBranchInHistory hist =
   maximumByMay (comparing $ view fitness) (Map.elems $ _cachedHistory_branches hist)
@@ -655,11 +677,10 @@ dataSourceNode nds = do
     maximumByMay (compare `on` snd) $ mapMaybe sequence $ Map.toList nodes
 -}
 
--- TODO: figure out exactly what this function does,  and move it to Tezos.History
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
-levelAncestor hist lvl ctx = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - levelZero + 1) <$> branch
+levelAncestor hist lvl ctx = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel + 1) <$> branch
   where
-    levelZero = _cachedHistory_levelZero hist
+    minLevel = _cachedHistory_minLevel hist
     branch = Map.lookup ctx $ _cachedHistory_blocks hist
 
 -- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
@@ -1292,7 +1313,7 @@ getProtocolIndex branch protoHash = do
     ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
 
   history <- nqAtomically $ readTVar' historyVar
-  case headMay [x | x <- existingEntries, isJust $ lookupBranchPoint (x ^. hash) branch history] of
+  case headMay [x | x <- existingEntries, isJust $ branchPointPure (x ^. hash) branch history] of
     Just existing -> pure existing
     Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
       Right p' -> pure p'
@@ -1368,7 +1389,7 @@ buildProtocolHistoryUntil
   -> "branch" :! BlockHash
   -> "history" :! CachedHistory'
   -> NodeQueryT m (Map ProtocolHash Block)
-  -- Turns this into table, ProtocolHash
+  -- Turns this into table, ProtocolHash 
 buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
   branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
   go ! #currentBlock branchBlock

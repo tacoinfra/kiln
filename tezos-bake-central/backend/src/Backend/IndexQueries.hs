@@ -104,15 +104,14 @@ cycleStartHashes branchBlock = do
   branchProtocolConstants <- getProtocolConstants $ Left branchBlockHash
   cycle' <- levelToCycle $ branchBlock ^. level
   let
-    lvl0 = _cachedHistory_levelZero history
+    minLvl = _cachedHistory_minLevel history
     preservedCycles = branchProtocolConstants ^. protoInfo_preservedCycles
     cycles = [max 0 (cycle' - (1 + preservedCycles)) .. cycle' - 1] -- ignore the unconfirmed "current" cycle.
   (minLevels, maxLevels) <- fmap unzip $ for cycles $ \c -> liftA2 (,)
     (firstLevelInCycle branchBlockHash c)
     (pred <$> firstLevelInCycle branchBlockHash (succ c))
   let
-    -- TODO: factor this into Tezos.History
-    branches = maybe [] (\branch -> fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract lvl0 <$> minLevels) mbranch
+    branches = maybe [] (\branch -> fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels) mbranch
     mbranch = branchBlockHash `Map.lookup` _cachedHistory_blocks history
   return $ getZipList $ RightsCycleInfo
     <$> ZipList branches

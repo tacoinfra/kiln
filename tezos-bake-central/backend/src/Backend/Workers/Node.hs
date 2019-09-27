@@ -1,5 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -21,15 +19,13 @@ module Backend.Workers.Node where
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Catch (MonadMask)
-import Control.Monad.Except (ExceptT, runExceptT, unless)
+import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
 import Data.Foldable (foldl', length)
 import Data.Functor.Apply
-import Data.Function (fix)
-import Data.Int (Int32)
 import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
@@ -41,14 +37,13 @@ import qualified Data.Set as S
 import Data.String.Here.Interpolated (i)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
-import Data.Word (Word8)
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql(..), in_, isFieldNothing, (&&.), (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, In(..), sql, returning, queryQ, PGArray(..))
+import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
@@ -57,10 +52,10 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Block (toBlockHeader)
-import Tezos.History (CachedHistory (..), Prehistory(..), addHeadBlock, accumPrehistory, initializeBlocks)
+import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
-import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked, getHistory)
+import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
 import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
 import qualified Tezos.ProtocolConstants as ProtocolConstants
 import Tezos.Types
@@ -71,219 +66,66 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError,
                        clearPastVotingPeriodErrors, reportVotingReminderError)
 import Backend.CachedNodeRPC
-import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', oneShot, workerWithDelay, timeout')
+import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.IndexQueries
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
 import Backend.ViewSelectorHandler (getProposals)
-import Common (unixEpoch)
 import Common.App (getEndTimeForPeriod)
 import Common.Schema
 import ExtraPrelude
-import qualified Data.Sequence as Seq
-import qualified Database.PostgreSQL.Simple.ToField as PG
-
-import Tezos.Base58Check (HashedValue(..))
-import qualified Data.ByteString.Base16 as Base16
-import qualified Data.ByteString.Short  as BS
-import Data.ByteString.Builder (shortByteString, byteString)
-
 
 -- We assume that the implicit nodeaddr is the same one we just learned the new
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
 
 haveNewHead
-  :: (MonadIO m, MonadBaseNoPureAborts IO m, BlockLike blk)
+  :: (MonadIO m, BlockLike blk)
   => NodeDataSource
   -> Maybe PublicNode
   -> URI
   -> blk
   -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
-  $(logInfo) [i|Node reported new head: ${headBlockInfo ^. hash}, level ${headBlockInfo ^. level}|]
-  res <- runExceptT $ do
-    flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
-      nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
-  case res of
-    Left (e :: CacheError) -> do
-      $(logWarn) [i|Failed to handle new node head: ${e}|]
-    Right headBlockHeader -> do
-      haveNewHead' nds pn nodeAddr headBlockHeader
-
-haveNewHead'
-  :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m)
-  => NodeDataSource
-  -> Maybe PublicNode
-  -> URI
-  -> BlockHeader
-  -> m ()
-haveNewHead' nds pn nodeAddr headBlock = do
   let
     httpMgr = _nodeDataSource_httpMgr nds
     chainId = _nodeDataSource_chain nds
     historyVar = _nodeDataSource_history nds
-    publicNodeContext = PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn
+  $(logInfo) [i|Node reported new head: ${headBlockInfo ^. hash}, level ${headBlockInfo ^. level}|]
+  (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
+  res <- do
+    -- TODO: Why do we accumHistory if it's not a new block?
+    let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
+    newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
+      headBlockHeader <- withExceptT Right $ do
+        flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
+          nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
 
-  let
-    upsertHeadBlock = upsertBlockHeader chainId headBlock
+      withExceptT Left $
+        flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
+          accumHistory chainId (const ()) headBlockHeader
+          $(logInfo) [i|${if isNewBlock then "New" else "Known" :: Text} block from ${pn}, URI ${Uri.render nodeAddr}, ${mkVeryBlockLike headBlockInfo}|]
 
-  let
-    updateMemCache xs = do
-      mHistory' <- liftIO . atomically $ do
-        history <- readTVar historyVar
-        let mHistory' = addHeadBlock xs headBlock history
-        writeTVar historyVar $ fromMaybe history mHistory'
-        return mHistory'
-      case mHistory' of
-        Nothing -> fail "the 'impossible' happened: updateMemCache: invariants violated"
-        Just !_ -> return ()
+      pure headBlockHeader
 
-  let
-    updatePgCache lvl xs = do
-      let blockHashPgArray = PGArray xs
-      void [executeQ|
-        INSERT INTO "BlockShellIndex"
-             ( hash   , predecessor , "chainId" , level     )
-       (SELECT x[i+1] , x[i]        , ?chainId  , ?lvl + i
-          FROM (VALUES (?blockHashPgArray::_bytea)) a(x)
-          JOIN LATERAL generate_series(1,array_length(x,1)::integer-1) i
-            ON TRUE) ON CONFLICT DO NOTHING
-      |]
+    case newStateRsp of
+      Left e -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left e
+      Right headBlockHeader -> pure $ Right (isNewBlock, headBlockHeader)
 
-  let
-    getBlockShellAncestors blkHash = do
-      -- FIXME: make the number of predecessors to fetch configurable for QA
-      map fromOnly <$> [queryQ|
-        SELECT predecessor FROM "blockShellAncestors"(?blkHash, 21)
-      |]
-
-  let
-    getHistoryFromPg knownBlocks blkHash = do
-      getBlockShellAncestors blkHash >>= \case
-        [] -> return []
-        hashes -> go (reverse hashes)
-      where
-        failMsg = fail "the 'impossible' happened: getHistoryFromPg: invariant(s) violated"
-        go [] = failMsg
-        go hashes@(blkHash' : _) = do
-          if Map.member blkHash' knownBlocks
-          then return hashes
-          else do
-            hashes' <- getBlockShellAncestors blkHash'
-            when (null hashes') failMsg
-            go (foldl' (flip (:)) hashes hashes')
-
-  let
-    getHistoryFromNodeRPC oldHead knownBlocks = do
-      let blkLevel    = headBlock ^. level
-          -- FIXME: make the number of additional levels to fetch configurable for QA
-          fetchLevels = 11 + max 0 (blkLevel - (oldHead ^. level))
-      xs <- getHistory chainId headBlock fetchLevels (S.singleton (oldHead ^. hash))
-      let len = length xs
-      when (len < 2) failMsg
-      let lvl = blkLevel - fromIntegral len
-      go lvl (foldl' (flip (:)) [] xs)
-     where
-      failMsg = fail "the 'impossible' happened: getHistoryFromNodeRPC: invariant(s) violated"
-      go lvl blks@(predHash:blkHash:_) = do
-        if Map.member predHash knownBlocks
-        then do
-          updatePgCache lvl blks
-          return blks
-        else do
-          pgBlks <- getHistoryFromPg knownBlocks predHash
-          if not (null pgBlks)
+  for_ res $ \(isNewBlock, headBlockHeader) ->
+    when (isNewBlock && Just (headBlockHeader ^. fitness) > oldHead ^? _Just . fitness) $ do
+      updatedLevel <- liftIO $ atomically $ do
+        let latestHeadTVar = _nodeDataSource_latestHead nds
+        latestHead <- readTVar latestHeadTVar
+        if Just (headBlockHeader ^. fitness) > latestHead ^? _Just . fitness
           then do
-            updatePgCache lvl blks
-            return (pgBlks ++ blks)
-          else do
-            let bs = BlockSpine {
-                       _blockSpine_hash = blkHash
-                     , _blockSpine_predecessor = predHash
-                     , _blockSpine_level = lvl
-                     }
-            xs <- getHistory chainId bs 11 mempty
-            let len = length xs
-            when (len < 2) failMsg
-            let lvl' = lvl - fromIntegral len + 1
-            go lvl' (foldl' (flip (:)) blks (Seq.drop 1 xs))
-      go _ _ = failMsg
-
-  let
-    getHistoryImpl oldHead knownBlocks = do
-      rsp <- runExceptT . flip runReaderT publicNodeContext $ do
-        xs <- getHistoryFromPg knownBlocks (headBlock ^. predecessor)
-        if null xs
-        then getHistoryFromNodeRPC oldHead knownBlocks
-        else return xs
-      case rsp of
-        Left (e :: PublicNodeError) -> do
-          $(logWarn) [i|Failed to handle new node head: ${e}|]
-          return []  -- FIXME?  What should we do here?
-        Right h -> do
-          return h
-
-  let
-    updateLatestHead oldHead = do
-      let blkFitness = headBlock ^. fitness
-      when (blkFitness > oldHead ^. fitness) $ do
-        updatedLevel <- liftIO $ atomically $ do
-          let latestHeadTVar = _nodeDataSource_latestHead nds
-          latestHead <- readTVar latestHeadTVar
-          if Just blkFitness > latestHead ^? _Just . fitness
-            then do
-              writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlock
-              pure $ Just $ headBlock ^. level
-            else
-              pure Nothing
-        for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
-
-  let
-    blkHash = headBlock ^. hash
-    predHash = headBlock ^. predecessor
-    db = _nodeDataSource_pool nds
-    failMsg = fail "the 'impossible' happened: haveNewHead: invariant(s) violated"
-
-  fix $ \tryAgain -> do
-    (mOldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
-
-    let knownBlocks = _cachedHistory_blocks history
-
-    if Map.member blkHash knownBlocks
-    then do
-      runDb (Identity db) upsertHeadBlock
-    else if Map.member predHash knownBlocks
-      then do
-        runDb (Identity db) upsertHeadBlock
-        updateMemCache []
-        -- having a nonempty cache implies that mOldHead is Just
-        oldHead <- maybe failMsg return mOldHead
-        updateLatestHead oldHead
-      else if Map.null knownBlocks
-        then do
-          restoreCachedHistory nds $ Just (headBlock, publicNodeContext)
-          tryAgain
-        else do
-          oldHead <- maybe failMsg return mOldHead
-          -- note the use of 'join' to correctly delimit the scope of the transaction
-          join . runDb (Identity db) $ do
-            xs <- getHistoryImpl oldHead knownBlocks
-            if null xs
-            then do
-              -- here, we are in the transaction
-              return $ do
-                -- here, we are outside the transaction, but this code path has nothing to do.
-                return ()
-            else do
-              -- we upsertHeadBlock while we are still in the transaction
-              upsertHeadBlock
-              return $ do
-                -- then, after this transaction successfully completes,  we update the in-memory LCA cache
-                updateMemCache xs
-                updateLatestHead oldHead
+            writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockHeader
+            pure $ Just $ headBlockHeader ^. level
+          else
+            pure Nothing
+      for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
@@ -579,8 +421,7 @@ updateDataSource nds (pn, chain, uri) = do
     updatePublicNodeInDb = getHeadFromSource >>= runLoggingEnv (_nodeDataSource_logger nds) . \case
       Left e -> $(logErrorSH) ("updatePublicNodeInDb"::Text,(pn,chain,Uri.render uri),e)
       Right b -> do
-        liftIO $ atomically $
-          writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds (Just pn) uri b
+        haveNewHead nds (Just pn) uri b
         runDb (Identity db) $ do
           let newHash = b ^. hash
               newLevel = b ^. level
@@ -629,7 +470,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
       lcaBlock' <- atomicallyWith $ branchPoint nodeHeadHash (latestHead ^. hash)
-      let bad = reportBadNodeHeadError nodeId latestHead nodeHead (fudgeVeryBlockLike <$> lcaBlock')
+      let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
           good = clearBadNodeHeadError nodeId
       case lcaBlock' of
         Nothing -> return bad
@@ -1061,235 +902,3 @@ waitTillEndOfCycle nds blk = do
     liftIO $ atomically $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
       when (newHead ^. level < lvl) retry
-
-restoreCachedHistoryWorker :: NodeDataSource -> IO (IO ())
-restoreCachedHistoryWorker nds =
-  oneShot $ runLoggingEnv (_nodeDataSource_logger nds) $ restoreCachedHistory nds Nothing
-
-restoreCachedHistory ::
-  ( MonadIO m
-  , MonadBaseNoPureAborts IO m
-  , MonadLogger m
-  ) => NodeDataSource -> Maybe (BlockHeader, PublicNodeContext) -> m ()
-restoreCachedHistory nds mHeadCtx = do
-  -- Honestly, using a join here feels funny.  I'd rather get rid of it,  and
-  -- simply replace `c` with `$1`, and send `chainId` in a binary
-  -- protocol-level parameter
-  let db  =_nodeDataSource_pool nds
-  $(logDebug) [i| restoreCachedHistory worker started, checking postgres table "BlockShellIndex" for cached data |]
-  runDb (Identity db) [queryQ|
-    SELECT DISTINCT "BlockShellIndex".*
-      FROM (VALUES (?chainId::bytea)) a(c)
-      JOIN "BlockShellIndex"
-        ON "chainId" = c AND level IN
-         ( (SELECT MIN(level) FROM "BlockShellIndex" WHERE "chainId" = c)
-           UNION
-           (SELECT MAX(level) FROM "BlockShellIndex" WHERE "chainId" = c)
-         )
-     ORDER BY level
-  |] >>= \case
-    [] -> do
-      for_ mHeadCtx $ \headCtx@(hblk, _) -> do
-        $(logInfo) [i| restoreCachedHistory doing backfill via RPC |]
-        backfillBlockShellIndex nds (Left headCtx)
-        next BlockShellIndex
-          { _blockShellIndex_hash        = hblk ^. hash
-          , _blockShellIndex_predecessor = hblk ^. predecessor
-          , _blockShellIndex_chainId     = chainId
-          , _blockShellIndex_level       = hblk ^. level
-          , _blockShellIndex_fitness     = Just $! (hblk ^. fitness  )
-          , _blockShellIndex_timestamp   = Just $! (hblk ^. timestamp)
-          , _blockShellIndex_proto       = Just $! _blockHeader_proto hblk
-          }
-    [ blk ] -> do
-      $(logInfo) [i| restoreCachedHistory proceeding from single block ${blk} |]
-      backfillBlockShellIndex nds (Right blk)
-      next blk
-    ( blkA : blkB : _ ) -> do
-      $(logInfo) [i| restoreCachedHistory proceeding with blocks ${blkA} and ${blkB} |]
-      if (blkA ^. level) >= (blkB ^. level)
-        -- FIXME: throw a proper exception here
-      then fail "the 'impossible' happened: postgres is double rooted"
-      else do
-        backfillBlockShellIndex nds (Right blkA)
-        next blkB
-  where
-    chainId = _nodeDataSource_chain nds
-    historyVar = _nodeDataSource_history nds
-
-    next blkMax = do
-      let blkMaxHash = blkMax ^. hash
-          minBranchLvl = blkMax ^. level - 100 -- FIXME? configurable constant?
-
-      -- FIXME: we could eliminate all intermediate lists (and thus also the need
-      -- to reverse the list) if the conversion from postgresql-libpq
-      -- postgresql-simple wasn't blindingly stupid in this particular case.
-      let db = _nodeDataSource_pool nds
-      (spine, uncles) <- runDb (Identity db) $ do
-        spine <- reverse . map fromOnly <$>
-          [queryQ| SELECT hash FROM "blockShellAncestors"(?blkMaxHash) |]
-
-        uncles <-  -- Fetch some of the recent uncles
-          [queryQ| SELECT * FROM "BlockShellIndex"
-                    WHERE "chainId" = ?chainId AND level >= ?minBranchLvl
-                    ORDER BY level
-          |]
-        return (spine, uncles)
-
-
-      let      -- our cache's "genesis" block need not be at level 0
-        !levelZero = (blkMax ^. level) - fromIntegral (length spine) + 1
-        !blocks0 = initializeBlocks spine
-        !prehist0 = Prehistory (Map.singleton blkMaxHash blkMax) blocks0
-        (Prehistory branches blocks)  = foldl' (flip accumPrehistory) prehist0 uncles
-        toInt32 :: Word8 -> Int32 = fromIntegral
-        protos = In . S.toList . foldl' delta S.empty $ branches
-          where delta acc blk = maybe acc (flip S.insert acc . toInt32) (_blockShellIndex_proto blk)
-
-      protoMap <- runDb (Identity db) $ do
-         [queryQ| SELECT proto, hash FROM "ProtocolIndex" WHERE "chainId" = ?chainId AND proto IN ?protos |]
-
-      let
-        fudge blk = WithProtocolHash blk' protoHash
-          where
-            blk' = VeryBlockLike
-              { _veryBlockLike_hash        = blk ^. hash
-              , _veryBlockLike_predecessor = blk ^. predecessor
-              , _veryBlockLike_level       = blk ^. level
-              -- Theoretically, the next three "Nothing" cases shouldn't happen
-              , _veryBlockLike_fitness     = fromMaybe mempty (_blockShellIndex_fitness   blk)
-              , _veryBlockLike_timestamp   = fromMaybe unixEpoch  (_blockShellIndex_timestamp blk)
-              }
-            protoHash = fromMaybe emptyHash (flip lookup protoMap . toInt32 =<< _blockShellIndex_proto blk)
-            emptyHash = HashedValue ""
-
-      let
-        !fudgedBranches = fudge <$> branches
-
-      liftIO $ atomically $ do
-        history <- readTVar historyVar
-        when (Map.null (_cachedHistory_blocks history)) $ do
-          writeTVar historyVar $! CachedHistory
-            { _cachedHistory_blocks = blocks
-            , _cachedHistory_branches = fudgedBranches
-            , _cachedHistory_minLevel = _cachedHistory_minLevel history
-            , _cachedHistory_levelZero = levelZero
-            }
-
--- Assumption: the spine we are passed is stored in Postgres in the
--- "BlockShellIndex" table at the lowest level for our current chainId
-backfillBlockShellIndex ::
-  ( MonadIO m
-  , MonadBaseNoPureAborts IO m
-  , MonadLogger m
-  ) => NodeDataSource -> Either (BlockHeader, PublicNodeContext) BlockShellIndex -> m ()
-backfillBlockShellIndex nds = \case
-  Right _blk -> do
-    -- let ctx = error "FIXME: resume BlockShellIndex backfills"
-    -- loop ctx Nothing (mkBlockSpine blk)
-    return ()
-  Left (blk, ctx) -> do
-    loop ctx (Just blk) (mkBlockSpine blk)
- where
-  db = _nodeDataSource_pool nds
-  chainId = _nodeDataSource_chain nds
-
-  loop ctx mHead !blk = do
-    let
-      lvl = blk ^. level
-      -- TODO: make these numbers config params for QA & Dev purposes
-      backfillLevel    = 0
-      threshholdLevels = 12000
-      defaultLevels    = 8000
-      fetchLevels = let x = lvl - backfillLevel in
-                     if x > threshholdLevels then defaultLevels else x + 1
-      blkLevel = blk ^. level
-      warnPartiallyComplete = do
-        $(logWarn) [i| backfill only partially complete, stopped at level ${blkLevel} |]
-    if fetchLevels < 2   -- we need at least two to form a link in the spine
-    then return ()
-    else do
-      $(logDebug) [i| fetching the block spine from level ${blkLevel} down to level ${blkLevel - fetchLevels + 1} from ${formatPublicNodeContext ctx} |]
-      runExceptT (runReaderT (getHistory chainId blk fetchLevels mempty) ctx) >>= \case
-        Left (err :: PublicNodeError) -> do
-          $(logError) [i| fetch failed: ${err} |]
-          -- We only need to warn about a partial backfill when the table is nonempty.
-          -- The table is non-empty when mHead is @Nothing@
-          maybe warnPartiallyComplete (const $ pure ()) mHead
-        Right blockHashes -> do
-          let
-            n = length blockHashes
-            lvl' = lvl - fromIntegral n + 1
-          if n < 2
-          then do
-            -- What should we do if the node doesn't return enough blocks?
-            -- Currently, we consider the backfill complete, though a restart of
-            -- Kiln will cause another attempt at a deeper backfill.
-            -- (Err... should cause another attempt:  see resume backfills FIXME above)
-            warnPartiallyComplete
-          else do
-            $(logDebug) [i| inserting block spines from level ${blkLevel} down to level ${lvl'} into postgres table "BlockShellIndex" |]
-            let blockHashPgArray = toArrayAction blockHashes
-            runDb (Identity db) $ do
-              maybe (pure ()) (upsertBlockHeader chainId) mHead
-              void [executeQ|
-                INSERT INTO "BlockShellIndex"
-                     ( hash , predecessor , "chainId" , level    )
-               (SELECT x[i] , x[i+1]      , ?chainId  , ?lvl - i
-                  FROM (VALUES (?blockHashPgArray::_bytea)) a(x)
-                  JOIN LATERAL generate_series(1,array_length(x,1)::integer-1) i
-                       ON TRUE)
-              |]
-
-            loop ctx Nothing $ BlockSpine {
-                _blockSpine_hash        = blockHashes `Seq.index` (n - 2)
-              , _blockSpine_predecessor = blockHashes `Seq.index` (n - 1)
-              , _blockSpine_level       = lvl'
-              }
-
-toArrayAction :: Seq.Seq BlockHash -> PG.Action
-toArrayAction hs = PG.Plain res
-  where
-    res = case Seq.viewl hs of
-           Seq.EmptyL -> empty
-           (h Seq.:< hs') -> left <> base16 h <> foldr delta right hs'
-
-    delta h rest = comma <> base16 h <> rest
-
-    empty = shortByteString "'{}'"
-    left  = shortByteString "'{\"\\\\x"
-    right = shortByteString "\"}'"
-    comma = shortByteString "\",\"\\\\x"
-
-    base16 (HashedValue h) = byteString . Base16.encode . BS.fromShort $ h
-
-formatPublicNodeContext :: PublicNodeContext -> String
-formatPublicNodeContext ctx =
-  case _publicNodeContext_api ctx of
-    Nothing -> show_node
-    Just api  -> show api ++ " " ++ show_node
-  where show_node = show . _nodeRPCContext_node . _publicNodeContext_nodeCtx $ ctx
-
-upsertBlockHeader ::
-  ( Functor m
-  , PostgresRaw m
-  ) => ChainId -> BlockHeader -> m ()
-upsertBlockHeader chainId blk = do
-  let hashH        = blk ^. hash
-      predecessorH = blk ^. predecessor
-      fitnessH     = blk ^. fitness
-      levelH       = blk ^. level
-      timestampH   = blk ^. timestamp
-      protoH       = _blockHeader_proto blk
-  void [executeQ|
-    INSERT INTO "BlockShellIndex"
-           ( "hash", "predecessor", "fitness", "chainId", "level", "timestamp", "proto" )
-    VALUES ( ?hashH, ?predecessorH, ?fitnessH, ?chainId , ?levelH, ?timestampH, ?protoH )
-    ON CONFLICT (hash) DO UPDATE
-            SET fitness = COALESCE ( "BlockShellIndex".fitness, EXCLUDED.fitness )
-              , timestamp = COALESCE ( "BlockShellIndex".timestamp, EXCLUDED.timestamp )
-              , proto = COALESCE ( "BlockShellIndex".proto, EXCLUDED.proto )
-          WHERE "BlockShellIndex".fitness IS NULL
-             OR "BlockShellIndex".timestamp IS NULL
-             OR "BlockShellIndex".proto IS NULL
-  |]
