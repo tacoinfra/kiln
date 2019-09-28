@@ -1085,9 +1085,12 @@ fmap concat $ sequence
   , concat <$> traverse makePrisms
     [ ''OperationContents
     , ''InternalOperationResult
+    , ''OpContentsList
+    , ''OperationResultStatus
     ]
   , concat <$> traverse makeLenses
-    [ 'Operation
+    [ 'Op
+    , 'Operation
     , 'OperationWithMetadata
     , 'ActivateMetadata
     , 'DoubleBakingEvidenceMetadata
@@ -1117,6 +1120,7 @@ fmap concat $ sequence
     , 'OperationResultReveal
     , 'OperationResultTransaction
     , 'OpContentsEndorsement
+    , 'OpContentsManager
     , 'OpContentsTransaction
     , 'OpContentsOrigination
     , 'SeedNonceRevelationMetadata
