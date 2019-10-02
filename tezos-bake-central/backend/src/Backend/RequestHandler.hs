@@ -40,7 +40,7 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Email, Id (..), IdData)
 import System.Directory (removeDirectoryRecursive)
-import Tezos.Types (Tez, PublicKeyHash)
+import Tezos.V005.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Config (AppConfig (..), nodeDataDir)

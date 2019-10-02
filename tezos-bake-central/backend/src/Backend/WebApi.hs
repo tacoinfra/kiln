@@ -24,11 +24,12 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Snap.Core (MonadSnap, route)
 import qualified Snap.Core as Snap
 
-import Tezos.Base58Check (fromBase58, toBase58)
-import Tezos.Block (VeryBlockLike (..))
-import Tezos.Operation (Ballot)
-import Tezos.PublicKey
-import Tezos.Types
+import Tezos.V005.Base58Check (fromBase58, toBase58)
+import Tezos.V005.Block (VeryBlockLike (..))
+import Tezos.V005.Operation (Ballot)
+import Tezos.V005.PublicKey
+import Tezos.V005.NodeRPC.CrossCompat as CrossCompat
+import Tezos.V005.Types
 
 import Backend.CachedNodeRPC
 import Backend.STM (atomicallyWith)
@@ -181,7 +182,9 @@ snapRights f = do
       Left e -> pure $ Left $ tshow e
       Right v -> pure $ Right v
 
-snapAccount :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Account)
+-- Hmm, this doesn't seem right. In this case it's OK, but on the way out we probably want a way
+-- to Upgrade to the latest protocol.
+snapAccount :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text CrossCompat.Account)
 snapAccount = runExceptT $ do
   blockBS <- requiredQueryParam "block"
   pkhBS <- requiredQueryParam "pkh"

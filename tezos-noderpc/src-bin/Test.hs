@@ -22,10 +22,10 @@ import System.Environment
 
 import Tezos.History
 import Tezos.NodeRPC.Network
-import Tezos.NodeRPC.Types
-import Tezos.NodeRPC.Class
-import Tezos.Types
-import Tezos.NodeRPC.Sources
+import Tezos.V005.NodeRPC.Types
+import Tezos.V005.NodeRPC.Class
+import Tezos.V005.Types
+import Tezos.V005.NodeRPC.Sources
 
 onRPCError :: PublicNodeError -> a
 onRPCError = \case

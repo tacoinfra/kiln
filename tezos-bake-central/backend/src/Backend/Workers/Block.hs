@@ -25,12 +25,12 @@ import Database.Groundhog.Postgresql (Postgresql)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 
-import qualified Tezos.Binary as TBin
-import Tezos.Envelope (Envelope (Envelope_Endorsement))
-import Tezos.NodeRPC.Types (RpcError(RpcError_UnexpectedStatus))
-import Tezos.Operation
+import qualified Tezos.V005.Binary as TBin
+import Tezos.V005.Envelope (Envelope (Envelope_Endorsement))
+import Tezos.V005.NodeRPC.Types (RpcError(RpcError_UnexpectedStatus))
+import Tezos.V005.Operation
 import qualified Tezos.Signature.Verify as Sig
-import Tezos.Types
+import Tezos.V005.Types
 
 import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)

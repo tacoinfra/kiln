@@ -42,7 +42,7 @@ import Reflex.Dom.Form.Widgets (validatedInput)
 import Rhyolite.Api (public)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Text.Read (readMaybe)
-import Tezos.Types
+import Tezos.V005.Types
 
 import Common.Api
 import Common.App

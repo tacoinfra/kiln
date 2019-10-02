@@ -20,9 +20,9 @@ import Rhyolite.Request.TH (makeRequestForDataInstance)
 import Rhyolite.Schema (Email, Id)
 import Text.URI (URI)
 
-import Tezos.NodeRPC.Sources (PublicNode)
-import Tezos.Operation(Ballot)
-import Tezos.Types
+import Tezos.V005.NodeRPC.Sources (PublicNode)
+import Tezos.V005.Operation(Ballot)
+import Tezos.V005.Types
 
 import Common.App (AlertNotificationMethod, Bake, MailServerView, WorkerType)
 import Common.Schema

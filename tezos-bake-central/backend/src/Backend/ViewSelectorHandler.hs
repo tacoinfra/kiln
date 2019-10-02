@@ -78,8 +78,8 @@ import Rhyolite.Schema (Id(..))
 import Safe (maximumMay)
 import Safe (minimumByMay)
 
-import Tezos.PublicKeyHash
-import Tezos.Types
+import Tezos.V005.PublicKeyHash
+import Tezos.V005.Types
 
 import Backend.CachedNodeRPC
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)

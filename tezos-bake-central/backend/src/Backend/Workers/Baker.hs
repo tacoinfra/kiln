@@ -48,8 +48,9 @@ import Rhyolite.Schema (Id (..))
 import Rhyolite.Schema (Id (..), Json(..))
 import Safe (maximumDef, minimumDef)
 
-import Tezos.Types
-import Tezos.Operation
+import Tezos.V005.Types
+import Tezos.V005.Operation
+import Tezos.V005.NodeRPC.CrossCompat (account_delegatePkh)
 
 import Backend.Config (AppConfig (..), HasAppConfig)
 import Backend.Alerts

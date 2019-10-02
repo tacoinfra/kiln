@@ -73,10 +73,10 @@ import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (PublicNode)
-import Tezos.NodeRPC.Types (NetworkStat (..), RpcError, AsRpcError (asRpcError))
-import Tezos.Operation
-import Tezos.Types
+import Tezos.V005.NodeRPC.Sources (PublicNode)
+import Tezos.V005.NodeRPC.Types (NetworkStat (..), RpcError, AsRpcError (asRpcError))
+import Tezos.V005.Operation
+import Tezos.V005.Types
 
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
@@ -125,12 +125,13 @@ instance Aeson.ToJSON Uri.URI where
 instance Aeson.FromJSON Uri.URI where
   parseJSON x = maybe (fail "Invalid URI") pure . Uri.mkURI =<< Aeson.parseJSON x
 
-sumFees :: PublicKeyHash -> Operation -> Tez
+sumFees :: PublicKeyHash -> Operation -> TezDelta
 sumFees baker = getSum . views balanceUpdates getFee
   where
-    getFee :: BalanceUpdate -> Sum Tez
+    getFee :: BalanceUpdate -> Sum TezDelta
     getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == baker = Sum (_freezerUpdate_change x)
     getFee _ = Sum 0
+
 
 data Error = Error
   { _error_time :: !UTCTime

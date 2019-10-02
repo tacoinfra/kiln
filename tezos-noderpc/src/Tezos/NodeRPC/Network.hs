@@ -45,10 +45,10 @@ import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 import qualified Network.HTTP.Types.Status as Http (Status (..))
 
 import Paths_tezos_noderpc (version)
-import Tezos.NodeRPC.Class
-import Tezos.NodeRPC.Sources
-import Tezos.NodeRPC.Types
-import Tezos.Types
+import Tezos.V005.NodeRPC.Class
+import Tezos.V005.NodeRPC.Sources
+import Tezos.V005.NodeRPC.Types
+import Tezos.V005.Types
 
 nodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e)

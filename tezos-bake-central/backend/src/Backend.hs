@@ -70,11 +70,11 @@ import Text.URI (URI)
 import qualified Text.URI as URI
 
 import Backend.Db (gargoyleSupported, withDb)
-import Tezos.Chain (mainnetChainId)
+import Tezos.V005.Chain (mainnetChainId)
 import Tezos.History (emptyCache)
 import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
-import Tezos.Types
+import Tezos.V005.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
+import Tezos.V005.Types
 
 import Backend.CachedNodeRPC (NodeDataSource(..))
 import Backend.Common (workerWithDelay, worker')

@@ -18,8 +18,8 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.Map as Map
 import Database.Groundhog.Postgresql (PersistBackend)
 import Tezos.History
-import qualified Tezos.ProtocolConstants
-import Tezos.Types
+import qualified Tezos.V005.ProtocolConstants
+import Tezos.V005.Types
 
 import Backend.CachedNodeRPC
   ( MonadNodeQuery (asksNodeDataSource, nqAtomically, nqThrowError)
@@ -51,7 +51,7 @@ levelToCycle
 levelToCycle lvl = do
   (_, protoIx) <- getLatestProtocolConstants
   -- XXX We cheat here, as we dont expect the blocks/cycle to change
-  pure $ Tezos.ProtocolConstants.unsafeAssumptionLevelToCycle protoIx lvl
+  pure $ Tezos.V005.ProtocolConstants.unsafeAssumptionLevelToCycle protoIx lvl
 
 firstLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
@@ -61,7 +61,7 @@ firstLevelInCycle
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
 firstLevelInCycle _branch c = do
   (_, protoIx) <- getLatestProtocolConstants
-  pure $ Tezos.ProtocolConstants.unsafeAssumptionFirstLevelInCycle protoIx c
+  pure $ Tezos.V005.ProtocolConstants.unsafeAssumptionFirstLevelInCycle protoIx c
 
 lastLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
@@ -79,7 +79,7 @@ rightsContextLevel
   => BlockHash -> RawLevel -> NodeQueryT m RawLevel
 rightsContextLevel ctx lvl = do
   protoInfo <- getProtocolConstants $ Left ctx
-  pure $ Tezos.ProtocolConstants.unsafeAssumptionRightsContextLevel protoInfo lvl
+  pure $ Tezos.V005.ProtocolConstants.unsafeAssumptionRightsContextLevel protoInfo lvl
 
 data RightsCycleInfo = RightsCycleInfo
   { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in some cycle

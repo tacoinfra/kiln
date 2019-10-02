@@ -37,7 +37,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 
 import Tezos.NodeRPC
 import Tezos.NodeRPC.Network
-import Tezos.Types
+import Tezos.V005.Types
 
 data CachedHistory a = CachedHistory
   -- what i really need here is a cover tree (or some other metric index)

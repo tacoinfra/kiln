@@ -36,10 +36,10 @@ import System.Directory
 import System.Exit (ExitCode(..))
 import qualified System.Process as Process
 
-import Tezos.Base58Check
+import Tezos.V005.Base58Check
 import Tezos.History
-import Tezos.ShortByteString (toShort)
-import Tezos.Types
+import Tezos.V005.ShortByteString (toShort)
+import Tezos.V005.Types
 
 import Backend.CachedNodeRPC
 import Backend.Common
@@ -254,7 +254,7 @@ completeBlockHash prefix' history = (checkBlockHash =<< fst =<< mHashes)
     blks = _cachedHistory_blocks history
     mPrefix :: Maybe BlockHash
     mPrefix = HashedValue . toShort . BS.drop prefixDropLen <$> decodeBase58 bitcoinAlphabet (T.encodeUtf8 appendedPrefix)
-    prefixDropLen = BS.length $ Tezos.Base58Check.prefix (Proxy @'HashType_BlockHash)
+    prefixDropLen = BS.length $ Tezos.V005.Base58Check.prefix (Proxy @'HashType_BlockHash)
     blkHashLength = 51 :: Int
     appendedPrefix = prefix' <> T.replicate (blkHashLength - T.length prefix') "1"
 

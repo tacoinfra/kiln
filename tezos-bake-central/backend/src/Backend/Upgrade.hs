@@ -41,7 +41,7 @@ import Common.Schema
 import Rhyolite.Schema (Id(..))
 import Common.Alerts
 import ExtraPrelude
-import Tezos.Chain
+import Tezos.V005.Chain
 
 upgradeCheckWorker
   :: MonadIO m

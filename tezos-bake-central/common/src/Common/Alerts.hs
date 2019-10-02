@@ -17,8 +17,8 @@ import Data.Time (UTCTime, TimeZone)
 import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.Chain (NamedChain, showNamedChain)
-import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
+import Tezos.V005.Chain (NamedChain, showNamedChain)
+import Tezos.V005.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
 import Common (nominalDiffTimeToSeconds)

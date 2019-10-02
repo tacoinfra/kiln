@@ -51,15 +51,15 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Block (toBlockHeader)
+import Tezos.V005.Block (toBlockHeader)
 import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
 import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
                       rMonitorHeads, rNetworkStat, rCheckpoint)
 import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
-import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
-import qualified Tezos.ProtocolConstants as ProtocolConstants
-import Tezos.Types
-import qualified Tezos.TestChainStatus as Tezos
+import Tezos.V005.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
+import qualified Tezos.V005.ProtocolConstants as ProtocolConstants
+import Tezos.V005.Types
+import qualified Tezos.V005.TestChainStatus as Tezos
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,

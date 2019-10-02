@@ -2,9 +2,9 @@
 
 module Common.Calculations where
 
-import Tezos.Block
-import Tezos.Level
-import Tezos.ProtocolConstants (protoInfo_blocksPerCycle)
+import Tezos.V005.Block
+import Tezos.V005.Level
+import Tezos.V005.ProtocolConstants (protoInfo_blocksPerCycle)
 
 import Common.Schema
 import ExtraPrelude

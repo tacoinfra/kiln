@@ -19,7 +19,7 @@ import Database.PostgreSQL.Simple.Types (Identifier (..), QualifiedIdentifier (.
 import Rhyolite.Backend.Account (migrateAccount)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, traceExecuteQ, Only(..))
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
-import Tezos.Types (ChainId)
+import Tezos.V005.Types (ChainId)
 
 import ExtraPrelude
 
