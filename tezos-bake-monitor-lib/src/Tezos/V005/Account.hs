@@ -16,6 +16,17 @@ import Tezos.V005.Tez
 
 import Tezos.V004.Account as Old hiding (Account(..), account_delegate, account_balance, account_counter, account_script)
 
+{-
+Changes between V005 and V005:
+  - Counter is now optional
+  - spendable and manager fields go
+  - delegate.delegatable goes, meaning delegate is now just an optional PKH vs a mandatory sub record
+
+Also, this depends on new ContractScript because there is a new Micheline primitive.
+
+See https://tezos.gitlab.io/master/protocols/005_babylon.html for further details.
+-}
+
 data Account = Account
   { _account_delegate :: !(Maybe PublicKeyHash) --  { "$ref": "#/definitions/Signature.Public_key_hash" },
   , _account_balance :: !Tez -- "2052452947621" "balance": { "$ref": "#/definitions/mutez" },

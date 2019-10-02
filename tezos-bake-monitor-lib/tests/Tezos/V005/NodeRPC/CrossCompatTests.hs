@@ -334,7 +334,7 @@ testOperationOriginationV005 = V005.Operation
         , V005._operationContentsOrigination_balance = 100.000000
         , V005._operationContentsOrigination_delegate = Nothing
         , V005._operationContentsOrigination_source = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
-        , V005._operationContentsOrigination_script = Just $ V005.ContractScript
+        , V005._operationContentsOrigination_script = V005.ContractScript
           { V005._contractScript_code = V005.Expression_Seq
             [ V005.Expression_Prim $ V005.MichelinePrimAp
               (V005.MichelinePrimitive "parameter")

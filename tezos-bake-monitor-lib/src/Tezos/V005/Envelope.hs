@@ -14,6 +14,16 @@ import qualified Tezos.V005.Binary as B
 import Tezos.V005.BlockHeader
 import Tezos.V005.Operation
 
+{-
+There are no changes to envelope, other than operation changed.
+None of the Endorsements structure changed, but because there
+duplicated types in V005 that are unchanged this needs to be
+done. Operation reuses nothing from V004 when it probably could.
+
+TODO: Maybe we should reimplement less in operation to make this
+reimpl unnecessary.
+-}
+
 data Envelope
   = Envelope_BlockHeader !ChainId !BlockHeaderFull
   | Envelope_Endorsement !ChainId !(Op 'OpKind_Endorsement)

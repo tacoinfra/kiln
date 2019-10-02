@@ -9,6 +9,12 @@ import Tezos.V005.Micheline (Expression)
 
 import Tezos.V004.Contract as Old hiding (ContractScript(..))
 
+{-
+Changes from V004 to V005:
+
+- Updated to use the V005 version of Micheline that has the new APPLY primitive.
+-}
+
 -- | "scripted.contracts": {
 data ContractScript = ContractScript
   { _contractScript_code :: Expression --  "code": { "$ref": "#/definitions/micheline.michelson_v1.expression" },

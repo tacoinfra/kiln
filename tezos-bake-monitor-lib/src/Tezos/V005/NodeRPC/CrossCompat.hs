@@ -24,13 +24,16 @@ import qualified Tezos.V005.Types as V005
 -- parser if it bottoms out of all of them. If we continue with this encoding
 -- we probably want a better combinator than <|>
 
+-- See the comments at the top of V005.Account to see what changed.
+
 data Account
   = AccountV004 V004.Account
   | AccountV005 V005.Account
   deriving (Eq, Show)
 
--- This forces both accounts to agree on their PKH type. In this case
--- that's probably okay and we don't have to get any fancier than this.
+-- The user needs a way to get the delegate PKH out regardless of version.
+-- This forces both accounts to agree on their PKH type. In this case they
+-- currently do agree and this is probably OK for now.
 account_delegatePkh :: Getter Account (Maybe V004.PublicKeyHash)
 account_delegatePkh = to $ \case
   AccountV004 a -> a ^. V004.account_delegate . V004.accountDelegate_value
@@ -46,6 +49,9 @@ instance ToJSON Account where
     AccountV004 a4 -> toJSON a4
     AccountV005 a5 -> toJSON a5
 
+-- We don't actually need this cross compat because there is nothing at the
+-- top level RPC that just gets out an operation. I'll delete this when I add
+-- the cross compat block.
 data Operation
   = OperationV004 V004.Operation
   | OperationV005 V005.Operation
@@ -60,6 +66,8 @@ instance ToJSON Operation where
   toJSON a = case a of
     OperationV004 a4 -> toJSON a4
     OperationV005 a5 -> toJSON a5
+
+-- TODO: Add a cross compat block and add it to the NodeRPC returns
 
 -- MichelinePrimitive
 -- This added a new primitive "APPLY" into this enum. I've made the executive decision

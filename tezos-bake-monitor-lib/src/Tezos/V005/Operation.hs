@@ -63,6 +63,17 @@ import Tezos.V005.PublicKeyHash
 import Tezos.V005.Signature
 import Tezos.V005.Tez
 
+{-
+Changes from V005 to V004:
+- depends on the new contract script that has the new micheline primitive
+- Script is non optional on originations now
+- spendable, manager_pubKey and delegatable dissappear on originations
+- Scripts now have entrypoints, so parameters are accompanied by entrypoints
+
+See: https://tezos.gitlab.io/master/protocols/005_babylon.html#id4 for more details
+
+Stuff on the Michelson Entrypoints is explained by https://blog.nomadic-labs.com/michelson-updates-in-005.html
+-}
 
 -- | "operation": {
 data Operation = Operation
@@ -329,7 +340,7 @@ data OpContentsTransaction = OpContentsTransaction
 data OpContentsOrigination = OpContentsOrigination
   { _opContentsOrigination_balance :: !Tez
   , _opContentsOrigination_delegate :: !(Maybe PublicKeyHash)
-  , _opContentsOrigination_script :: !(Maybe ContractScript)
+  , _opContentsOrigination_script :: !ContractScript
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -602,7 +613,7 @@ data OperationContentsOrigination = OperationContentsOrigination
   , _operationContentsOrigination_storageLimit :: !TezosWord64 --  "storage_limit": { "$ref": "#/definitions/positive_bignum" },
   , _operationContentsOrigination_balance :: !Tez --  "balance": { "$ref": "#/definitions/mutez" },
   , _operationContentsOrigination_delegate :: !(Maybe PublicKeyHash) --  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _operationContentsOrigination_script :: !(Maybe ContractScript) --  "script": { "$ref": "#/definitions/scripted.contracts" },
+  , _operationContentsOrigination_script :: !ContractScript --  "script": { "$ref": "#/definitions/scripted.contracts" },
   }
   deriving (Eq, Ord, Show, Typeable)
 

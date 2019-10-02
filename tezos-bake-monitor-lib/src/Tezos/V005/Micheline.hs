@@ -9,7 +9,12 @@ module Tezos.V005.Micheline
   ) where
   
 
--- TODO: https://tezos.gitlab.io/master/protocols/005_babylon.html#id4
+{-
+Changes from V005 to V004:
+- Added the APPLY primitive.
+
+https://tezos.gitlab.io/master/protocols/005_babylon.html#id4
+-}
 
 import Control.Applicative
 import Data.Aeson (ToJSON, FromJSON, (.:), (.:?), (.!=), withObject, toEncoding, toJSON, parseJSON)
