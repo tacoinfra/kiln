@@ -3,7 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
-module Tezos.V004.Binary where
+module Tezos.Common.Binary where
 
 import Control.Applicative (many)
 import Data.Binary.Builder
@@ -28,8 +28,8 @@ import Data.Word
 import qualified Data.Text
 import qualified Data.Text.Encoding as TE
 
-import Tezos.V004.Json (TezosWord64(..))
-import Tezos.V004.ShortByteString (ShortByteString, fromShort, toShort)
+import Tezos.Common.Json (TezosWord64(..))
+import Tezos.Common.ShortByteString (ShortByteString, fromShort, toShort)
 
 -- FIXME there are a million places integer overflow should be checked, just
 -- grep for fromIntegral

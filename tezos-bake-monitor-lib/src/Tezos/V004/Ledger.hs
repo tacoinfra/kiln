@@ -12,7 +12,7 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import qualified Data.Text as T
 
-import Tezos.V004.Json
+import Tezos.Common.Json
 
 newtype LedgerIdentifier = LedgerIdentifier
   { unLedgerIdentifier :: Text -- adjective-animal

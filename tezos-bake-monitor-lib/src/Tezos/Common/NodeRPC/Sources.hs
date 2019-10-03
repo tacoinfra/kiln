@@ -12,7 +12,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Tezos.V005.NodeRPC.Sources where
+module Tezos.Common.NodeRPC.Sources where
 
 import Control.Lens.TH (makePrisms)
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
@@ -24,9 +24,9 @@ import GHC.Generics (Generic)
 import Text.URI (URI, mkURI)
 import qualified Text.URI.QQ as Uri
 
-import Tezos.V005.NodeRPC.Types
-import Tezos.V005.Types
-
+import Tezos.Common.NodeRPC.Types
+import Tezos.Common.Chain (NamedChain(..))
+import Tezos.Common.Base58Check (ChainId)
 
 type DataSource = (PublicNode, Either NamedChain ChainId, NonEmpty URI)
 

@@ -4,7 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Tezos.V004.Chain where
+module Tezos.Common.Chain where
 
 import Control.Monad ((<=<))
 import Control.Monad.Except (MonadError, runExceptT, throwError)
@@ -15,7 +15,7 @@ import qualified Data.Text.Encoding as T
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
-import Tezos.V004.Base58Check (ChainId, HashBase58Error, fromBase58, toBase58Text)
+import Tezos.Common.Base58Check (ChainId, HashBase58Error, fromBase58, toBase58Text)
 
 data NamedChain
   = NamedChain_Mainnet

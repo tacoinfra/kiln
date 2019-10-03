@@ -22,9 +22,9 @@ import Text.Show (showListWith, showString)
 import GHC.Generics (Generic)
 import Control.DeepSeq (NFData)
 
-import Tezos.V004.Base16ByteString
-import qualified Tezos.V004.Binary as B
-import Tezos.V004.ShortByteString (ShortByteString, toShort, fromShort)
+import Tezos.Common.Base16ByteString
+import qualified Tezos.Common.Binary as B
+import Tezos.Common.ShortByteString (ShortByteString, toShort, fromShort)
 
 
 newtype FitnessF a = FitnessF { unFitnessF :: Seq a }

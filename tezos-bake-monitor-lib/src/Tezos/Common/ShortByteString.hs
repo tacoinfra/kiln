@@ -4,7 +4,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 #endif
 
-module Tezos.V004.ShortByteString (ShortByteString, toShort, fromShort) where
+module Tezos.Common.ShortByteString (ShortByteString, toShort, fromShort) where
 
 #if defined(ghcjs_HOST_OS)
 

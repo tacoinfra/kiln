@@ -12,8 +12,8 @@ import Data.Int (Int32)
 import Data.Typeable
 import GHC.Generics (Generic)
 
-import qualified Tezos.V004.Binary as B
-import Tezos.V004.Json
+import qualified Tezos.Common.Binary as B
+import Tezos.Common.Json
 
 -- Units of blocks, not necessarily absolute level above genesis block
 newtype RawLevel = RawLevel {unRawLevel :: Int32}

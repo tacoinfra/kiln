@@ -18,6 +18,7 @@ import Tezos.V004.Fitness as X
 import Tezos.V004.Json as X (TezosWord64 (..))
 import Tezos.V004.Ledger as X
 import Tezos.V004.Level as X
+import Tezos.V004.NetworkStat as X
 import Tezos.V004.Operation as X (Operation)
 import Tezos.V004.PeriodSequence as X
 import Tezos.V004.ProtocolConstants as X hiding (unsafeAssumptionLevelToCycle, predictFutureTimestamp, unsafeAssumptionFirstLevelInCycle, unsafeAssumptionRightsContextLevel)

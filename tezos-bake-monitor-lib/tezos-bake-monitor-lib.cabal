@@ -14,36 +14,37 @@ cabal-version: >=1.10
 
 library
   exposed-modules:
-    -- Tezos.NodeRPC.Schema
     Data.LCA.Online.Polymorphic
+    Tezos.Common.Base16ByteString
+    Tezos.Common.Base58Check
+    Tezos.Common.Binary
+    Tezos.Common.Chain
+    Tezos.Common.Json
+    Tezos.Common.NodeRPC.Types
+    Tezos.Common.NodeRPC.Sources
+    Tezos.Common.ShortByteString
+    
     Tezos.V004.Account
     Tezos.V004.BalanceUpdate
-    Tezos.V004.Base16ByteString
-    Tezos.V004.Base58Check
-    Tezos.V004.Binary
     Tezos.V004.Block
     Tezos.V004.BlockHeader
-    Tezos.V004.Chain
     Tezos.V004.Checkpoint
     Tezos.V004.Contract
     Tezos.V004.Envelope
     Tezos.V004.Fitness
-    Tezos.V004.Json
     Tezos.V004.Lenses
     Tezos.V004.Ledger
     Tezos.V004.Level
     Tezos.V004.Micheline
     Tezos.V004.Michelson
+    Tezos.V004.NetworkStat
     Tezos.V004.NodeRPC.Class
-    Tezos.V004.NodeRPC.Sources
-    Tezos.V004.NodeRPC.Types
     Tezos.V004.Operation
     Tezos.V004.PeriodSequence
     Tezos.V004.ProtocolConstants
     Tezos.V004.PublicKey
     Tezos.V004.PublicKeyHash
     Tezos.V004.Signature
-    Tezos.V004.ShortByteString
     Tezos.V004.TestChainStatus
     Tezos.V004.Tez
     Tezos.V004.Types
@@ -51,25 +52,19 @@ library
 
     Tezos.V005.Account
     Tezos.V005.BalanceUpdate
-    Tezos.V005.Base16ByteString
-    Tezos.V005.Base58Check
-    Tezos.V005.Binary
     Tezos.V005.Block
     Tezos.V005.BlockHeader
-    Tezos.V005.Chain
     Tezos.V005.Checkpoint
     Tezos.V005.Contract
     Tezos.V005.Envelope
     Tezos.V005.Fitness
-    Tezos.V005.Json
     Tezos.V005.Lenses
     Tezos.V005.Ledger
     Tezos.V005.Level
     Tezos.V005.Micheline
     Tezos.V005.Michelson
+    Tezos.V005.NetworkStat
     Tezos.V005.NodeRPC.Class
-    Tezos.V005.NodeRPC.Sources
-    Tezos.V005.NodeRPC.Types
     Tezos.V005.NodeRPC.CrossCompat
     Tezos.V005.Operation
     Tezos.V005.PeriodSequence
@@ -77,11 +72,11 @@ library
     Tezos.V005.PublicKey
     Tezos.V005.PublicKeyHash
     Tezos.V005.Signature
-    Tezos.V005.ShortByteString
     Tezos.V005.TestChainStatus
     Tezos.V005.Tez
     Tezos.V005.Types
     Tezos.V005.Vote
+
   other-modules:
     Paths_tezos_bake_monitor_lib
   build-depends:

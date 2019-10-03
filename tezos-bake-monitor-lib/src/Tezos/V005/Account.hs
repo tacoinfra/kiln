@@ -19,8 +19,8 @@ import Tezos.V004.Account as Old hiding (Account(..), account_delegate, account_
 {-
 Changes between V005 and V005:
   - Counter is now optional
-  - spendable and manager fields go
-  - delegate.delegatable goes, meaning delegate is now just an optional PKH vs a mandatory sub record
+  - spendable and manager fields are removed
+  - delegate.delegatable are removed, meaning delegate is now just an optional PKH vs a mandatory sub record
 
 Also, this depends on new ContractScript because there is a new Micheline primitive.
 

@@ -10,7 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Tezos.V004.Base58Check where
+module Tezos.Common.Base58Check where
 
 import Control.DeepSeq (NFData)
 import Control.Monad
@@ -42,8 +42,8 @@ import "cryptonite" Crypto.Hash (Digest, SHA256, hash)
 import qualified Data.ByteArray as BA
 #endif
 
-import qualified Tezos.V004.Binary as B
-import Tezos.V004.ShortByteString (ShortByteString, fromShort, toShort)
+import qualified Tezos.Common.Binary as B
+import Tezos.Common.ShortByteString (ShortByteString, fromShort, toShort)
 
 -- see ~/tezos/src/lib_crypto/base58.ml
 type BlockHash = HashedValue 'HashType_BlockHash

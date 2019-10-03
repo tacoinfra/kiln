@@ -2,7 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Tezos.V004.Json where
+module Tezos.Common.Json where
 
 import Control.DeepSeq (NFData)
 import Control.Applicative ((<|>))

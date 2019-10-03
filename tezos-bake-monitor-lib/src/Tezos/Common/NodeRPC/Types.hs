@@ -1,14 +1,8 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 
-module Tezos.V004.NodeRPC.Types where
+module Tezos.Common.NodeRPC.Types where
 
 import Control.Lens (Prism', re, (^.))
-import Control.Lens.TH (makeLenses)
-import Data.Int (Int32)
 #if !(MIN_VERSION_base(4,9,0))
 import Data.Semigroup
 #endif
@@ -17,9 +11,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import Data.Typeable (Typeable)
-
-import Tezos.V004.Json (deriveTezosJson)
-import Tezos.V004.Types
 
 type RpcResponse = Either RpcError
 data RpcError
@@ -43,22 +34,3 @@ rpcResponse_UnexpectedStatus x y = RpcError_UnexpectedStatus x y ^. re asRpcErro
 
 rpcResponse_NonJSON :: (AsRpcError e) => String -> LBS.ByteString -> e
 rpcResponse_NonJSON x y = RpcError_NonJSON x y ^. re asRpcError
-
-data NetworkStat = NetworkStat
-  { _networkStat_totalSent      :: TezosWord64 -- bytes
-  , _networkStat_totalRecv      :: TezosWord64 -- bytes
-  , _networkStat_currentInflow  :: Int32 -- bytes/s
-  , _networkStat_currentOutflow :: Int32 -- bytes/s
-  } deriving (Eq, Ord, Show, Typeable)
-
-newtype BlockPrefix = BlockPrefix Text
-  deriving (Eq, Show, Typeable)
-
-concat <$> traverse deriveTezosJson
-  [ ''NetworkStat
-  ]
-
-concat <$> traverse makeLenses
- [ 'NetworkStat
- ]
-

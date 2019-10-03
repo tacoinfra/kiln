@@ -27,7 +27,6 @@ import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPost)
 
 import Tezos.V005.Chain (ChainTag(ChainTag_Hash))
-import Tezos.V005.NodeRPC.Types (NetworkStat)
 import Tezos.V005.Operation (Ballot)
 import Tezos.V005.Types hiding (Account)
 
