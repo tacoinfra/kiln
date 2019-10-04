@@ -9,8 +9,8 @@ import Data.Sequence (Seq(..))
 import qualified Data.Text as T
 import Prelude hiding (pattern Left, pattern Right)
 
-import Tezos.V005.Base16ByteString (Base16ByteString(..))
-import qualified Tezos.V005.Binary as B
+import Tezos.Common.Base16ByteString (Base16ByteString(..))
+import qualified Tezos.Common.Binary as B
 import Tezos.V005.Micheline (Expression(..), MichelinePrimAp(..), MichelinePrimitive(..))
 
 pattern Prim :: T.Text -> Seq Expression -> Expression

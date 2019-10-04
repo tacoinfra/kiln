@@ -22,7 +22,7 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Request.Class (requestResponseToJSON, requestToJSON)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.V005.Types (ChainId)
+import Tezos.Types (ChainId)
 
 import Backend.CachedNodeRPC (CacheLine (..), NodeDataSource (..), NodeQuery (..))
 import Backend.Common (workerWithDelay)

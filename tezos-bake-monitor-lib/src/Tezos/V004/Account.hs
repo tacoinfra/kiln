@@ -10,7 +10,7 @@ import qualified Data.Sequence as Seq
 
 import Tezos.V004.BlockHeader (Priority(..))
 import Tezos.V004.Contract
-import Tezos.V004.Json
+import Tezos.Common.Json
 import Tezos.V004.Level
 import Tezos.V004.PublicKey
 import Tezos.V004.PublicKeyHash

@@ -30,15 +30,15 @@ import Control.DeepSeq (NFData)
 import qualified Data.Sequence as Seq
 
 import Tezos.V004.BalanceUpdate
-import Tezos.V004.Base16ByteString (Base16ByteString (..))
-import Tezos.V004.Base58Check
+import Tezos.Common.Base16ByteString (Base16ByteString (..))
+import Tezos.Common.Base58Check
 import Tezos.V004.BlockHeader
 import Tezos.V004.Fitness
-import Tezos.V004.Json
+import Tezos.Common.Json
 import Tezos.V004.Level
 import Tezos.V004.Operation
 import Tezos.V004.PublicKeyHash
-import Tezos.V004.ShortByteString (toShort, fromShort)
+import Tezos.Common.ShortByteString (toShort, fromShort)
 import Tezos.V004.Signature (Signature)
 import Tezos.V004.TestChainStatus
 import Tezos.V004.Tez (Tez)

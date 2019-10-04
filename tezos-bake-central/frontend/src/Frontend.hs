@@ -63,10 +63,8 @@ import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.V005.NodeRPC.Sources (PublicNode (..), publicNodeShortName, tzScanUri)
-import Tezos.V005.NodeRPC.Types
-import Tezos.V005.ProtocolConstants (predictFutureTimestamp)
-import Tezos.V005.Types
+import Tezos.NodeRPC hiding (getBlock)
+import Tezos.Types
 
 import Common (humanBytes)
 import Common (unixEpoch, uriHostPortPath)

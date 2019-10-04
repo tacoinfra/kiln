@@ -26,7 +26,7 @@ import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 import Rhyolite.Schema (Id (..))
 
-import Tezos.V005.Types
+import Tezos.Types
 
 import Backend.CachedNodeRPC
 import Backend.Schema

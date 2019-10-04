@@ -112,15 +112,9 @@ import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.History
-import Tezos.NodeRPC.Network
-import Tezos.V005.NodeRPC.Class
-import Tezos.V005.NodeRPC.Types
-import Tezos.V005.Operation (Ballot)
-import Tezos.V005.ProtocolConstants
-import Tezos.V005.PublicKey
-import Tezos.V005.Types
-import qualified Tezos.V005.NodeRPC.CrossCompat as CrossCompat
+import Tezos.NodeRPC
+import Tezos.Types
+import Tezos.Unsafe (unsafeAssumptionRightsContextLevel)
 
 import Backend.Common (timeout')
 import Backend.Schema
@@ -144,7 +138,7 @@ data NodeQuery a where
   NodeQuery_ProtocolIndex   :: !ProtocolHash -> NodeQuery ProtocolIndex
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
-  NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery CrossCompat.Account
+  NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
   NodeQuery_Ballot          :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
   NodeQuery_ProposalVote    :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
@@ -688,7 +682,7 @@ levelAncestor hist lvl ctx = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromInteg
 -- requested level, that is on the correct branch.
 rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> (RawLevel, Maybe BlockHash)
 rightsContext params hist ctx lvl = (ctxLvl, levelAncestor hist ctxLvl ctx)
-  where ctxLvl = Tezos.V005.ProtocolConstants.unsafeAssumptionRightsContextLevel params lvl
+  where ctxLvl = unsafeAssumptionRightsContextLevel params lvl
 
 -- | Round the second argument to the next lower multiple of the first
 floorBy :: Integral a => a -> a -> a

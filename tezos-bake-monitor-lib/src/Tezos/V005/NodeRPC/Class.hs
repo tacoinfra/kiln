@@ -26,9 +26,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPost)
 
-import Tezos.V005.Chain (ChainTag(ChainTag_Hash))
+import Tezos.Common.Chain (ChainTag(ChainTag_Hash))
 import Tezos.V005.Operation (Ballot)
-import Tezos.V005.Types hiding (Account)
+import Tezos.V005.Types
 
 import Tezos.V005.NodeRPC.CrossCompat
 
@@ -49,7 +49,7 @@ class QueryHistory repr where -- blockscale
   rBlockPred :: RawLevel -> ChainId -> BlockHash -> repr (BlockType repr)
 
   rProtoConstants :: ChainId -> BlockHash -> repr ProtoInfo
-  rContract :: ContractId -> ChainType repr -> BlockHash -> repr Account
+  rContract :: ContractId -> ChainType repr -> BlockHash -> repr AccountCrossCompat
 
   rBallots :: ChainId -> BlockHash -> repr Ballots
   rListings :: ChainId -> BlockHash -> repr (Seq VoterDelegate)

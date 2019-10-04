@@ -28,16 +28,17 @@ import GHC.Generics (Generic)
 import Control.DeepSeq (NFData)
 import qualified Data.Sequence as Seq
 
+import Tezos.Common.Base16ByteString (Base16ByteString (..))
+import Tezos.Common.Base58Check
+import Tezos.Common.Json
+import Tezos.Common.ShortByteString (toShort, fromShort)
+
 import Tezos.V005.BalanceUpdate
-import Tezos.V005.Base16ByteString (Base16ByteString (..))
-import Tezos.V005.Base58Check
 import Tezos.V005.BlockHeader
 import Tezos.V005.Fitness
-import Tezos.V005.Json
 import Tezos.V005.Level
 import Tezos.V005.Operation
 import Tezos.V005.PublicKeyHash
-import Tezos.V005.ShortByteString (toShort, fromShort)
 import Tezos.V005.Signature (Signature)
 import Tezos.V005.TestChainStatus
 import Tezos.V005.Tez (Tez)

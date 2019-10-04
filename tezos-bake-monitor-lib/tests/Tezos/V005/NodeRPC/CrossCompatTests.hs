@@ -8,7 +8,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Tezos.TestUtils ((@?~), aesonRoundTripTest)
-import Tezos.V005.NodeRPC.CrossCompat (Account(..), Operation(..))
+import Tezos.V005.NodeRPC.CrossCompat
 import qualified Tezos.V004.Operation as V004
 import qualified Tezos.V004.Micheline as V004
 import qualified Tezos.V004.Types as V004

@@ -15,6 +15,9 @@ cabal-version: >=1.10
 library
   exposed-modules:
     Data.LCA.Online.Polymorphic
+    Tezos.Types
+    Tezos.Unsafe
+
     Tezos.Common.Base16ByteString
     Tezos.Common.Base58Check
     Tezos.Common.Binary
@@ -48,6 +51,7 @@ library
     Tezos.V004.TestChainStatus
     Tezos.V004.Tez
     Tezos.V004.Types
+    Tezos.V004.Unsafe
     Tezos.V004.Vote
 
     Tezos.V005.Account
@@ -75,6 +79,7 @@ library
     Tezos.V005.TestChainStatus
     Tezos.V005.Tez
     Tezos.V005.Types
+    Tezos.V005.Unsafe
     Tezos.V005.Vote
 
   other-modules:

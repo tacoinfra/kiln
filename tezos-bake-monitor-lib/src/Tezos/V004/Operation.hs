@@ -46,13 +46,13 @@ import qualified Data.Vector as Vector
 import Prelude hiding (fail)
 
 import Tezos.V004.BalanceUpdate
-import Tezos.V004.Base16ByteString
-import Tezos.V004.Base58Check
-import qualified Tezos.V004.Binary as B
-import Tezos.V004.Binary ((<**))
+import Tezos.Common.Base16ByteString
+import Tezos.Common.Base58Check
+import qualified Tezos.Common.Binary as B
+import Tezos.Common.Binary ((<**))
 import Tezos.V004.BlockHeader
 import Tezos.V004.Contract
-import Tezos.V004.Json
+import Tezos.Common.Json
 import Tezos.V004.Level
 import Tezos.V004.Micheline
 import Tezos.V004.PublicKey

@@ -17,8 +17,8 @@ import qualified Data.Text.Encoding as T
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
-import Tezos.V004.Base58Check
-import Tezos.V004.Binary as B
+import Tezos.Common.Base58Check
+import Tezos.Common.Binary as B
 
 data Signature
   = Signature_Ed25519 Ed25519Signature -- see lib_crypto/ed25519.ml

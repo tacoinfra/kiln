@@ -22,8 +22,8 @@ import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
 import Numeric.Natural (Natural)
 
-import qualified Tezos.V004.Binary as B
-import Tezos.V004.Json (parseIntegralAsString)
+import qualified Tezos.Common.Binary as B
+import Tezos.Common.Json (parseIntegralAsString)
 
 -- In the json schema this is called mutez and it must be positive (this is the value used as
 -- an account balance).

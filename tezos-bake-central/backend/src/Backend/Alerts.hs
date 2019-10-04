@@ -36,7 +36,7 @@ import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Schema (Id(..), Json (..), IdData)
 import qualified Text.URI as Uri
 
-import Tezos.V005.Types
+import Tezos.Types
 
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
 import Backend.Config (AppConfig(..), HasAppConfig, askAppConfig)

@@ -13,7 +13,7 @@ import Data.Semigroup
 #endif
 import qualified Data.ByteString as BS
 import Data.Word (Word8)
-import Tezos.V004.ShortByteString (fromShort)
+import Tezos.Common.ShortByteString (fromShort)
 import qualified Data.ByteString.Base16 as BS16
 import Data.Hashable (Hashable)
 import Data.String
@@ -24,8 +24,8 @@ import qualified Data.Text.Encoding as T
 import GHC.Generics (Generic)
 import qualified Text.ParserCombinators.ReadPrec as Read
 
-import Tezos.V004.Base58Check
-import qualified Tezos.V004.Binary as B
+import Tezos.Common.Base58Check
+import qualified Tezos.Common.Binary as B
 
 
 data PublicKeyHash

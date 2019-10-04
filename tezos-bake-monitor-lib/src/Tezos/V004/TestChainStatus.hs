@@ -5,8 +5,8 @@ module Tezos.V004.TestChainStatus where
 import Data.Time
 import Data.Typeable
 
-import Tezos.V004.Base58Check
-import Tezos.V004.Json
+import Tezos.Common.Base58Check
+import Tezos.Common.Json
 
 -- | "test_chain_status": {
 data TestChainStatus

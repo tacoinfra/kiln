@@ -26,7 +26,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPost)
 
-import Tezos.V004.Chain (ChainTag(ChainTag_Hash))
+import Tezos.Common.Chain (ChainTag(ChainTag_Hash))
 import Tezos.V004.Operation (Ballot)
 import Tezos.V004.Types
 

@@ -51,15 +51,10 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.V005.Block (toBlockHeader)
-import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
-import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
-                      rMonitorHeads, rNetworkStat, rCheckpoint)
-import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
-import Tezos.V005.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
-import qualified Tezos.V005.ProtocolConstants as ProtocolConstants
-import Tezos.V005.Types
-import qualified Tezos.V005.TestChainStatus as Tezos
+import Tezos.NodeRPC hiding (DataSource, getBlock)
+import Tezos.Types hiding (TestChainStatus(..))
+import qualified Tezos.Types as Tezos
+import qualified Tezos.Unsafe
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -312,7 +307,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
           -> m (Maybe RawLevel, Maybe Cycle)
         updateCheckpoint blk (mSavePointData, mProtoInfo) = do
           let
-            mCurrentCycle = fmap (\protoInfo -> ProtocolConstants.unsafeAssumptionLevelToCycle protoInfo (blk ^. level)) mProtoInfo
+            mCurrentCycle = fmap (\protoInfo -> Tezos.Unsafe.unsafeAssumptionLevelToCycle protoInfo (blk ^. level)) mProtoInfo
             mLastCycle = snd =<< mSavePointData
             mSavePoint = fst =<< mSavePointData
             skipUpdate = isJust mSavePoint && isJust mCurrentCycle && mCurrentCycle == mLastCycle

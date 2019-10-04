@@ -9,7 +9,7 @@ import Control.Lens.TH (makeLenses)
 import Data.Typeable
 import GHC.Generics (Generic)
 
-import Tezos.V004.Json
+import Tezos.Common.Json
 import Tezos.V004.Level
 import Tezos.V004.BlockHeader
 

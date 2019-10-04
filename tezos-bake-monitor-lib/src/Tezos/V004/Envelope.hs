@@ -9,8 +9,8 @@ import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
 
-import Tezos.V004.Base58Check
-import qualified Tezos.V004.Binary as B
+import Tezos.Common.Base58Check
+import qualified Tezos.Common.Binary as B
 import Tezos.V004.BlockHeader
 import Tezos.V004.Operation
 

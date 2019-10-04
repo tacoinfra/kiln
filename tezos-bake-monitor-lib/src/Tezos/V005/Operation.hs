@@ -48,14 +48,14 @@ import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Vector as Vector
 import Prelude hiding (fail)
 
+import Tezos.Common.Base16ByteString
+import Tezos.Common.Base58Check
+import Tezos.Common.Json
 import Tezos.V005.BalanceUpdate
-import Tezos.V005.Base16ByteString
-import Tezos.V005.Base58Check
-import qualified Tezos.V005.Binary as B
-import Tezos.V005.Binary ((<**))
+import qualified Tezos.Common.Binary as B
+import Tezos.Common.Binary ((<**))
 import Tezos.V005.BlockHeader
 import Tezos.V005.Contract
-import Tezos.V005.Json
 import Tezos.V005.Level
 import Tezos.V005.Micheline
 import Tezos.V005.PublicKey

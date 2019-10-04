@@ -23,7 +23,7 @@ import GHC.Generics (Generic)
 
 import Tezos.V004.Tez
 import Tezos.V004.Block
-import Tezos.V004.Json
+import Tezos.Common.Json
 import Tezos.V004.PeriodSequence
 import Tezos.V004.Level
 

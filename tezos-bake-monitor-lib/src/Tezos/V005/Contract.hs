@@ -3,8 +3,8 @@ module Tezos.V005.Contract (module Tezos.V005.Contract, module Old) where
 
 import Data.Typeable (Typeable)
 
-import Tezos.V005.Json (deriveTezosJson)
-import Tezos.V005.Binary as B
+import Tezos.Common.Json (deriveTezosJson)
+import Tezos.Common.Binary as B
 import Tezos.V005.Micheline (Expression)
 
 import Tezos.V004.Contract as Old hiding (ContractScript(..))

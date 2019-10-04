@@ -46,9 +46,9 @@ import qualified Network.HTTP.Types.Status as Http (Status (..))
 
 import Paths_tezos_noderpc (version)
 import Tezos.V005.NodeRPC.Class
-import Tezos.V005.NodeRPC.Sources
-import Tezos.V005.NodeRPC.Types
-import Tezos.V005.Types
+import Tezos.Common.NodeRPC.Sources
+import Tezos.Common.NodeRPC.Types
+import Tezos.Types
 
 nodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e)

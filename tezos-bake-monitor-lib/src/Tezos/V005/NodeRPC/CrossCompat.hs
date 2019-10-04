@@ -26,7 +26,7 @@ import qualified Tezos.V005.Types as V005
 
 -- See the comments at the top of V005.Account to see what changed.
 
-data Account
+data AccountCrossCompat
   = AccountV004 V004.Account
   | AccountV005 V005.Account
   deriving (Eq, Show)
@@ -34,17 +34,17 @@ data Account
 -- The user needs a way to get the delegate PKH out regardless of version.
 -- This forces both accounts to agree on their PKH type. In this case they
 -- currently do agree and this is probably OK for now.
-account_delegatePkh :: Getter Account (Maybe V004.PublicKeyHash)
-account_delegatePkh = to $ \case
+accountCrossCompat_delegatePkh :: Getter AccountCrossCompat (Maybe V004.PublicKeyHash)
+accountCrossCompat_delegatePkh = to $ \case
   AccountV004 a -> a ^. V004.account_delegate . V004.accountDelegate_value
   AccountV005 a -> a ^. V005.account_delegate
 
-instance FromJSON Account where
+instance FromJSON AccountCrossCompat where
   parseJSON jv
     = AccountV005 <$> parseJSON jv
     <|> AccountV004 <$> parseJSON jv
 
-instance ToJSON Account where
+instance ToJSON AccountCrossCompat where
   toJSON a = case a of
     AccountV004 a4 -> toJSON a4
     AccountV005 a5 -> toJSON a5
@@ -52,17 +52,17 @@ instance ToJSON Account where
 -- We don't actually need this cross compat because there is nothing at the
 -- top level RPC that just gets out an operation. I'll delete this when I add
 -- the cross compat block.
-data Operation
+data OperationCrossCompat
   = OperationV004 V004.Operation
   | OperationV005 V005.Operation
   deriving (Eq, Show)
 
-instance FromJSON Operation where
+instance FromJSON OperationCrossCompat where
   parseJSON jv
     = OperationV004 <$> parseJSON jv
     <|> OperationV005 <$> parseJSON jv
 
-instance ToJSON Operation where
+instance ToJSON OperationCrossCompat where
   toJSON a = case a of
     OperationV004 a4 -> toJSON a4
     OperationV005 a5 -> toJSON a5

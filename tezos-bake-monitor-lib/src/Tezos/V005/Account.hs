@@ -9,8 +9,8 @@ module Tezos.V005.Account
 import Control.Lens.TH (makeLenses)
 import Data.Typeable
 
+import Tezos.Common.Json
 import Tezos.V005.Contract
-import Tezos.V005.Json
 import Tezos.V005.PublicKeyHash
 import Tezos.V005.Tez
 

@@ -33,9 +33,7 @@ import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import qualified Data.Time as Time
 
-import Tezos.V005.Operation
-import Tezos.V005.ProtocolConstants (predictFutureTimestamp)
-import Tezos.V005.Types hiding (protocolHash)
+import Tezos.Types hiding (protocolHash)
 
 import Common.Api
 import Common.App

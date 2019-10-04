@@ -7,7 +7,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Tezos.TestUtils ((@?~))
-import qualified Tezos.V005.Binary as B
+import qualified Tezos.Common.Binary as B
 import Tezos.V005.Operation
 import Tezos.V005.Micheline
 import Tezos.V005.Contract

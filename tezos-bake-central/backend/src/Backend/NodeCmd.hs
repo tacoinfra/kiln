@@ -46,8 +46,7 @@ import System.Which (staticWhich)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
-import Tezos.V005.Base58Check (ProtocolHash)
-import Tezos.V005.Chain (NamedChain(..))
+import Tezos.Types (ProtocolHash, NamedChain(..))
 
 import Backend.CachedNodeRPC
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))

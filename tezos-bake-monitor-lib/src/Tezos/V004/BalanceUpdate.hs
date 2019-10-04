@@ -22,7 +22,7 @@ import qualified Data.Map as Map
 import GHC.Generics (Generic)
 
 import Tezos.V004.Contract
-import Tezos.V004.Json
+import Tezos.Common.Json
 import Tezos.V004.Level
 import Tezos.V004.PublicKeyHash
 import Tezos.V004.Tez

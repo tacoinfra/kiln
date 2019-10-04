@@ -20,11 +20,11 @@ import Data.Typeable
 import Data.Word (Word8)
 import GHC.Generics (Generic)
 
-import Tezos.V004.Base58Check
-import qualified Tezos.V004.Binary as B
+import Tezos.Common.Base58Check
+import qualified Tezos.Common.Binary as B
 import Tezos.V004.PublicKeyHash
 import Tezos.V004.Micheline
-import Tezos.V004.Json
+import Tezos.Common.Json
 
 data ContractId
   = Implicit !PublicKeyHash

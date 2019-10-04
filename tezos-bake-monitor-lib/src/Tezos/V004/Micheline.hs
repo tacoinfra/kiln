@@ -20,9 +20,9 @@ import qualified Data.Aeson.Types as Aeson
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Sequence as Seq
 
-import Tezos.V004.Base16ByteString
-import qualified Tezos.V004.Binary as B
-import Tezos.V004.Json
+import Tezos.Common.Base16ByteString
+import qualified Tezos.Common.Binary as B
+import Tezos.Common.Json
 
 newtype MichelinePrimitive = MichelinePrimitive Text
   deriving (Eq, Ord, Show, Typeable, ToJSON, FromJSON)

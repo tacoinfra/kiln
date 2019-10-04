@@ -48,9 +48,8 @@ import Rhyolite.Schema (Id (..))
 import Rhyolite.Schema (Id (..), Json(..))
 import Safe (maximumDef, minimumDef)
 
-import Tezos.V005.Types
-import Tezos.V005.Operation
-import Tezos.V005.NodeRPC.CrossCompat (account_delegatePkh)
+import Tezos.Types
+import Tezos.NodeRPC (accountCrossCompat_delegatePkh)
 
 import Backend.Config (AppConfig (..), HasAppConfig)
 import Backend.Alerts
@@ -341,7 +340,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   -- This is the things that fails. First go look up the account, and see who/if
   -- it is delegated (`NodeQuery_Account`). Only proceed if there is a delegate,
   -- and cache that.
-  delegate <- (^.account_delegatePkh) <$>
+  delegate <- (^.accountCrossCompat_delegatePkh) <$>
     nodeQueryDataSource (NodeQuery_Account headHash (Implicit pkh))
   selfDelegateActions <- case delegate of
     Nothing -> pure []

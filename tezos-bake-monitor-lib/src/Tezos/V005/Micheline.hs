@@ -29,9 +29,9 @@ import qualified Data.Aeson.Types as Aeson
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Sequence as Seq
 
-import Tezos.V005.Base16ByteString
-import qualified Tezos.V005.Binary as B
-import Tezos.V005.Json
+import Tezos.Common.Base16ByteString
+import qualified Tezos.Common.Binary as B
+import Tezos.Common.Json
 
 import Tezos.V004.Micheline as Old (michelsonV1Enum)
 

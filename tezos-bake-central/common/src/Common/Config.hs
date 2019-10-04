@@ -18,9 +18,7 @@ import Data.Version (Version)
 import qualified Network.URI.Encode as UriEncode
 import Text.URI (URI)
 
-import Tezos.V005.Base58Check (HashBase58Error(..))
-import Tezos.V005.PublicKeyHash (tryReadPublicKeyHashText)
-import Tezos.V005.Types (ChainId, NamedChain (..), PublicKeyHash)
+import Tezos.Types (ChainId, NamedChain (..), PublicKeyHash, tryReadPublicKeyHashText, HashBase58Error(..))
 
 import Common (defaultTezosCompatJsonOptions)
 import Common.URI (Port, mkRootUri)

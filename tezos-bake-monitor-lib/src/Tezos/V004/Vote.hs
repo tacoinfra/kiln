@@ -11,8 +11,8 @@ import Data.Aeson
 import Data.Int
 import Data.Typeable
 import GHC.Generics
-import Tezos.V004.Base58Check
-import Tezos.V004.Json
+import Tezos.Common.Base58Check
+import Tezos.Common.Json
 import Tezos.V004.PublicKeyHash
 
 type VotingPeriod = Int32 -- ^ period: Voting_period_repr.t ;

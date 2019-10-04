@@ -17,12 +17,12 @@ import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
 
-import Tezos.V004.Base16ByteString
-import Tezos.V004.Base58Check
-import Tezos.V004.Binary ((<**))
-import qualified Tezos.V004.Binary as B
+import Tezos.Common.Base16ByteString
+import Tezos.Common.Base58Check
+import Tezos.Common.Binary ((<**))
+import qualified Tezos.Common.Binary as B
 import Tezos.V004.Fitness
-import Tezos.V004.Json
+import Tezos.Common.Json
 import Tezos.V004.Level
 import Tezos.V004.Signature
 

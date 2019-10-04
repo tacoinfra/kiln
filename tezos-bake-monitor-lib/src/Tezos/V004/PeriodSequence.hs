@@ -11,7 +11,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 
-import Tezos.V004.Json
+import Tezos.Common.Json
 
 newtype PeriodSequenceF a = PeriodSequence { unPeriodSequence :: NonEmpty a }
   deriving (Eq, Ord, Show, Generic, Typeable, ToJSON, FromJSON, Functor, NFData, Hashable)

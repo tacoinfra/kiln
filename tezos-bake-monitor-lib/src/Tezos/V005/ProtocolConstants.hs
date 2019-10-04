@@ -21,9 +21,9 @@ import qualified Data.Time as Time
 import Data.Word (Word8, Word16)
 import GHC.Generics (Generic)
 
+import Tezos.Common.Json
 import Tezos.V005.Tez
 import Tezos.V005.Block
-import Tezos.V005.Json
 import Tezos.V005.PeriodSequence
 import Tezos.V005.Level
 
