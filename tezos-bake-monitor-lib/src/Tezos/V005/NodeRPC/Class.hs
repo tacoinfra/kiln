@@ -99,7 +99,7 @@ instance QueryChain RpcQuery where
 type instance ChainType RpcQuery = ChainTag
 
 instance QueryBlock RpcQuery where
-  type BlockType RpcQuery = Block
+  type BlockType RpcQuery = BlockCrossCompat
   type BlockHeaderType RpcQuery = BlockHeader
   rHead = chainAPI' "/blocks/head"
   rBlock = blockAPI' ""

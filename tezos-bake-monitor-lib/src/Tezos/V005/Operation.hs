@@ -315,7 +315,7 @@ instance ToJSON Entrypoint where
     EntrypointOther t -> C8.unpack $ unEntrypointName t
 
 instance FromJSON Entrypoint where
-    parseJSON j = parseJSON @String j >>= \case
+  parseJSON j = parseJSON @String j >>= \case
     "default" -> pure EntrypointDefault
     "root" -> pure EntrypointRoot
     "do" -> pure EntrypointDo

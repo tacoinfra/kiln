@@ -52,7 +52,9 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.NodeRPC hiding (DataSource, getBlock)
-import Tezos.Types hiding (TestChainStatus(..))
+import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
+import qualified Tezos.V005.Types as V005
+import qualified Tezos.V004.Types as V004
 import qualified Tezos.Types as Tezos
 import qualified Tezos.Unsafe
 
@@ -550,19 +552,19 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
     -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
     -- (the last block of the period), but /votes/current_period_kind for that block will return
     -- the *next* period kind.
-    votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
-    currentVotingPosition = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
-    isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition)
+    votingPeriod = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriod
+    currentVotingPosition = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition
+    isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition)
     -- The period of the *current* block, not the next one
     currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
-      $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
+      $ latestBlock ^. blockMetadata . blockMetadata_votingPeriodKind
     periodFraction = fromIntegral currentVotingPosition / fromIntegral blocksPerVotingPeriod :: Double
 
     singleVotePeriod pkh periodKindOffset mkVotingState = do
       let blk = latestHead ^.hash
       mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
       -- The voting period of the last proposal period
-      let amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - periodKindOffset
+      let amendmentPeriod = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriod - periodKindOffset
 
       runDb (Identity db) $ case mBallot of
         Nothing -> do
@@ -700,6 +702,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
 
   where
+    toBlockHeader = blockCrossCata V004.toBlockHeader V005.toBlockHeader
 
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
@@ -718,8 +721,8 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
         VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
     updateTo startBlock predBlk blk p = do
-      let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
-          votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
+      let position' = blk ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition
+          votingPeriod = blk ^. blockMetadata . blockMetadata_level . level_votingPeriod
           chainId = _nodeDataSource_chain nds
           amendment = Amendment
             { _amendment_period = p
@@ -756,7 +759,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         VotingPeriodKind_Testing -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
-            let (status, testChainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
+            let (status, testChainId, startBlockHash) = case blk ^. blockMetadata . blockMetadata_testChainStatus of
                   Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
                   Tezos.TestChainStatus_Forking {} -> (TestChainStatus_Forking, Nothing, Nothing)
                   Tezos.TestChainStatus_Running
@@ -816,11 +819,11 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
         getProtocol
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
-      let vp = blk ^. block_metadata . blockMetadata_votingPeriodKind
+      let vp = blk ^. blockMetadata . blockMetadata_votingPeriodKind
       tp <- if vp == VotingPeriodKind_PromotionVote
         then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash)
         else return Nothing
-      return (blk ^. block_metadata . blockMetadata_protocol, tp)
+      return (blk ^. blockMetadata . blockMetadata_protocol, tp)
 
   (mainProto, altProto) <- getProtocol
 

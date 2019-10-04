@@ -29,6 +29,7 @@ import Tezos.V005.PeriodSequence as X
 import Tezos.V005.ProtocolConstants as X hiding (unsafeAssumptionLevelToCycle, unsafeAssumptionFirstLevelInCycle, unsafeAssumptionRightsContextLevel)
 import Tezos.V005.PublicKey as X
 import Tezos.V005.PublicKeyHash as X
+import Tezos.V005.Signature as X
 import Tezos.V005.TestChainStatus as X
 import Tezos.V005.Tez as X
 import Tezos.V005.Vote as X

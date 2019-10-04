@@ -259,6 +259,17 @@ class BlockLike b where
 class HasProtocolHash a where
   protocolHash :: Lens' a ProtocolHash
 
+-- TODO: Can this be in blocklike instead?
+class HasChainId a where
+  -- chainId clashed with a lot of code, so lets avoid that for now
+  chainIdL :: Lens' a ChainId
+
+class HasBlockMetadata a where
+  blockMetadata :: Lens' a BlockMetadata
+  
+class HasBlockHeaderFull a where
+  blockHeaderFull :: Lens' a BlockHeaderFull
+  
 instance BlockLike Block where
   hash = block_hash
   predecessor = block_header . blockHeaderFull_predecessor
@@ -271,6 +282,15 @@ instance HasProtocolHash Block where
 
 instance HasProtocolHash BlockHeader where
   protocolHash = blockHeader_protocol
+
+instance HasBlockHeaderFull Block where
+  blockHeaderFull = block_header
+
+instance HasBlockMetadata Block where
+  blockMetadata = block_metadata
+
+instance HasChainId Block where
+  chainIdL = block_chainId
 
 instance BlockLike BlockHeader where
   hash = blockHeader_hash

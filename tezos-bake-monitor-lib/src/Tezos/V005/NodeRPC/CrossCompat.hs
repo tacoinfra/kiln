@@ -1,11 +1,16 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Tezos.V005.NodeRPC.CrossCompat where
   
-import Control.Lens (Getter, to, (^.))
+import Control.Lens (Getter, to, (^.), lens, (.~), view)
 import Control.Applicative ((<|>))
-import Data.Aeson (FromJSON(parseJSON), ToJSON(toJSON))
+import Control.Monad (mzero)
+import Data.Aeson (FromJSON(parseJSON), ToJSON(toJSON), Value(Object), (.:))
 import qualified Tezos.V004.Types as V004
 import qualified Tezos.V005.Types as V005
+import Tezos.V005.Block (BlockLike(..), HasProtocolHash(..), HasChainId(..), HasBlockHeaderFull(..), HasBlockMetadata(..))
+import Tezos.V005.BalanceUpdate (HasBalanceUpdates(..))
 
 -- These kinds of unions here only work with these specific schema changes
 -- between V004 and V005 don't have a subset relationship. If a version
@@ -49,26 +54,86 @@ instance ToJSON AccountCrossCompat where
     AccountV004 a4 -> toJSON a4
     AccountV005 a5 -> toJSON a5
 
--- We don't actually need this cross compat because there is nothing at the
--- top level RPC that just gets out an operation. I'll delete this when I add
--- the cross compat block.
-data OperationCrossCompat
-  = OperationV004 V004.Operation
-  | OperationV005 V005.Operation
+data BlockCrossCompat
+  = BlockV004 V004.Block
+  | BlockV005 V005.Block
   deriving (Eq, Show)
 
-instance FromJSON OperationCrossCompat where
-  parseJSON jv
-    = OperationV004 <$> parseJSON jv
-    <|> OperationV005 <$> parseJSON jv
+blockCrossCata :: (V004.Block -> a) -> (V005.Block -> a) -> BlockCrossCompat -> a
+blockCrossCata f4 f5 = \case
+  BlockV004 b4 -> f4 b4
+  BlockV005 b5 -> f5 b5
 
-instance ToJSON OperationCrossCompat where
+instance HasProtocolHash BlockCrossCompat where
+  protocolHash = lens
+    (blockCrossCata (view protocolHash) (view protocolHash))
+    (\b ph -> blockCrossCata
+      (BlockV004 . (protocolHash .~ ph))
+      (BlockV005 . (protocolHash .~ ph))
+      b)
+      
+instance HasChainId BlockCrossCompat where
+  chainIdL = lens
+    (blockCrossCata (view chainIdL) (view chainIdL))
+    (\b ph -> blockCrossCata
+      (BlockV004 . (chainIdL .~ ph))
+      (BlockV005 . (chainIdL .~ ph))
+      b)
+
+instance HasBlockMetadata BlockCrossCompat where
+  blockMetadata = lens
+    (blockCrossCata (view blockMetadata) (view blockMetadata))
+    (\b ph -> blockCrossCata
+      (BlockV004 . (blockMetadata .~ ph))
+      (BlockV005 . (blockMetadata .~ ph))
+      b)
+      
+instance HasBlockHeaderFull BlockCrossCompat where
+  blockHeaderFull = lens
+    (blockCrossCata (view blockHeaderFull) (view blockHeaderFull))
+    (\b ph -> blockCrossCata
+      (BlockV004 . (blockHeaderFull .~ ph))
+      (BlockV005 . (blockHeaderFull .~ ph))
+      b)
+      
+instance BlockLike BlockCrossCompat where
+  hash = lens
+    (blockCrossCata (view hash) (view hash))
+    (\b ph -> blockCrossCata (BlockV004 . (hash .~ ph)) (BlockV005 . (hash .~ ph)) b)
+  predecessor = lens
+    (blockCrossCata (view predecessor) (view predecessor))
+    (\b ph -> blockCrossCata (BlockV004 . (predecessor .~ ph)) (BlockV005 . (predecessor .~ ph)) b)
+  level = lens
+    (blockCrossCata (view level) (view level))
+    (\b ph -> blockCrossCata (BlockV004 . (level .~ ph)) (BlockV005 . (level .~ ph)) b)
+  fitness = lens
+    (blockCrossCata (view fitness) (view fitness))
+    (\b ph -> blockCrossCata (BlockV004 . (fitness .~ ph)) (BlockV005 . (fitness .~ ph)) b)
+  timestamp = lens
+    (blockCrossCata (view timestamp) (view timestamp))
+    (\b ph -> blockCrossCata (BlockV004 . (timestamp .~ ph)) (BlockV005 . (timestamp .~ ph)) b)
+
+instance HasBalanceUpdates BlockCrossCompat where
+  balanceUpdates f b = blockCrossCata (fmap BlockV004 . balanceUpdates f) (fmap BlockV005 . balanceUpdates f) b
+      
+instance FromJSON BlockCrossCompat where
+  parseJSON jv@(Object o) = do
+    pv :: String <- o .: "protocol"
+    case pv of
+      -- TODO: This ought to be better.
+      "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU" -> BlockV005 <$> parseJSON jv 
+      "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd" -> BlockV004 <$> parseJSON jv
+      "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP" -> BlockV004 <$> parseJSON jv -- V003
+      "PsYLVpVvgbLhAhoqAkMFUo6gudkJ9weNXhUYCiLDzcUpFpkk8Wt" -> BlockV004 <$> parseJSON jv -- V002
+      "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" -> BlockV004 <$> parseJSON jv -- V001
+      p -> fail $ "Unknown protocol: " <> p
+  parseJSON _ = mzero
+    
+instance ToJSON BlockCrossCompat where
   toJSON a = case a of
-    OperationV004 a4 -> toJSON a4
-    OperationV005 a5 -> toJSON a5
-
--- TODO: Add a cross compat block and add it to the NodeRPC returns
-
+    BlockV004 b4 -> toJSON b4
+    BlockV005 b5 -> toJSON b5
+    
 -- MichelinePrimitive
 -- This added a new primitive "APPLY" into this enum. I've made the executive decision
 -- to just treat all blocks as V005 since the only time we'd care is if we were creating

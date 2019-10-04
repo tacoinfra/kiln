@@ -37,6 +37,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 
 import Tezos.Common.NodeRPC.Types
 import Tezos.V005.NodeRPC.Class
+import Tezos.V005.NodeRPC.CrossCompat
 import Tezos.NodeRPC.Network
 import Tezos.Types
 
@@ -198,17 +199,18 @@ accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistor
       branches = _cachedHistory_branches c
       newPath = LCA.cons blkHash acc $ fromMaybe LCA.empty $ Map.lookup predHash blocks
 
-accumBalance :: MonadState Balances m => Block -> m ()
+accumBalance :: (HasBalanceUpdates b, MonadState Balances m) => b -> m ()
 accumBalance = modify . (<>) . getBalanceChanges
 
 scanBranch ::
   ( MonadIO m, MonadLogger m
   , MonadReader ctx m , HasNodeRPC ctx
   , MonadError e m, AsRpcError e
+  , BlockLike b, HasChainId b
   )
-  => Block -> RawLevel -> RawLevel -> (Block -> m a) -> m ()
+  => b -> RawLevel -> RawLevel -> (BlockCrossCompat -> m a) -> m ()
 scanBranch branch start stop k = do
-  let headLvl = _blockHeaderFull_level $ _block_header branch
+  let headLvl = branch ^. level
   for_ [start .. stop] $ \n -> do
-    blk <- nodeRPC $ rBlockPred (headLvl - n) (_block_chainId branch) (_block_hash branch)
+    blk <- nodeRPC $ rBlockPred (headLvl - n) (branch ^. chainIdL) (branch ^. hash)
     void $ k blk

@@ -131,7 +131,7 @@ snapProposals = runExceptT $ do
 
   asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_Proposals block
 
-snapBlock :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text Block)
+snapBlock :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text BlockCrossCompat)
 snapBlock = runExceptT $ do
   blockBS <- requiredQueryParam "hash"
   block <- either (throwError . T.pack . show) return $ fromBase58 blockBS

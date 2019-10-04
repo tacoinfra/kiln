@@ -381,6 +381,22 @@ testOperationOriginationV005 = V005.Operation
     ]
   }
 
+testBlockV005 = V005.Block
+  "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
+  "NetXKakFj1A7ouL"
+  "BLFoapow3NsnzgixARx5NGnqeukqyotyATbtJHy2qLq6mAdvFWE"
+  (V005.BlockHeaderFull 195065 1 undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined)
+  (V005.BlockMetadata undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined)
+  []
+
+testBlockV004 = V004.Block 
+  ""
+  ""
+  ""
+  (V004.BlockHeaderFull undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined)
+  (V004.BlockMetadata undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined)
+  []
+
 testFilePath :: FilePath -> FilePath
 testFilePath = ("tests/Tezos/V005/NodeRPC/CrossCompatTests/" <>)
  
@@ -390,14 +406,8 @@ tests = testGroup "Tezos.V005.NodeRPC.CrossCompat"
     [ aesonRoundTripTest "V005" (testFilePath "AccountV005.json") (AccountV005 testAccountV005)
     , aesonRoundTripTest "V004" (testFilePath "AccountV004.json") (AccountV004 testAccountV004)
     ]
-  , testGroup "Operation"
-    [ testGroup "Transaction"
-      [ aesonRoundTripTest "V005" (testFilePath "OperationTransactionV005.json") (OperationV005 testOperationTransactionV005)
-      , aesonRoundTripTest "V004" (testFilePath "OperationTransactionV004.json") (OperationV004 testOperationTransactionV004)
-      ]
-    , testGroup "Origination"
-      [ aesonRoundTripTest "V005" (testFilePath "OperationOriginationV005.json") (OperationV005 testOperationOriginationV005)
-      , aesonRoundTripTest "V004" (testFilePath "OperationOriginationV004.json") (OperationV004 testOperationOriginationV004)
-      ]
-    ]
+  --, testGroup "Block"
+  --  [ aesonRoundTripTest "V005" (testFilePath "BlockV005.json") (BlockV005 testBlockV005)
+  --  , aesonRoundTripTest "V004" (testFilePath "BlockV004.json") (BlockV004 testBlockV004)
+  --  ]
   ]
