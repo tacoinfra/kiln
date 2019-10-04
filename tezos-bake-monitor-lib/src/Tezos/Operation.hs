@@ -466,7 +466,7 @@ data InternalOperationContentsTransaction = InternalOperationContentsTransaction
   , _internalOperationContentsTransaction_amount :: !Tez
   , _internalOperationContentsTransaction_destination :: !ContractId
   , _internalOperationContentsTransaction_parameters :: !(Maybe Expression)
-  , _internalOperationContentsTransaction_result :: OperationResultTransaction 
+  , _internalOperationContentsTransaction_result :: !OperationResultTransaction
   }
   deriving (Eq, Ord, Show, Typeable)
 
