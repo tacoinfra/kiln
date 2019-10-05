@@ -325,7 +325,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
-                    <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
+                    <- whenM (elem (_baker_publicKeyHash baker) $ _endorsingRights_delegate <$> endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
       let
@@ -333,7 +333,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
           (^..V004.block_operations . traverse . traverse . V004.operation_contents . traverse . V004._OperationContents_Endorsement . V004.operationContentsEndorsement_metadata . V004.endorsementMetadata_delegate)
           (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
           thisBlock
-        mkAction = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (any (== _baker_publicKeyHash baker) endorserDelegates)
+        mkAction = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (_baker_publicKeyHash baker `elem` endorserDelegates)
         action = mkAction (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
       return $ pure action
 
