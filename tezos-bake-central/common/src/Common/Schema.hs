@@ -73,7 +73,8 @@ import Rhyolite.Schema (Email, HasId (..), Id, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC (PublicNode, RpcError, AsRpcError(asRpcError))
+import Tezos.Common.NodeRPC.Types (RpcError, AsRpcError(asRpcError))
+import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types hiding (TestChainStatus)
 
 import Common (defaultTezosCompatJsonOptions)

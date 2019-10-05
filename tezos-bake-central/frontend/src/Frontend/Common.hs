@@ -47,7 +47,7 @@ import qualified GHCJS.DOM.HTMLTextAreaElement as TextArea
 import qualified GHCJS.DOM.Node as Node
 import qualified GHCJS.DOM.Types as DOM
 
-import Tezos.NodeRPC (tzScanUri)
+import Tezos.Common.NodeRPC.Sources (tzScanUri)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness, fromShort)
 
 import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
