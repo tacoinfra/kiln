@@ -57,12 +57,12 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_endorsementReward :: !Tez -- "endorsement_reward": { "$ref": "#/definitions/mutez" },
   , _protoInfo_costPerByte :: !Tez -- "cost_per_byte": { "$ref": "#/definitions/mutez" },
   , _protoInfo_hardStorageLimitPerOperation :: !TezosWord64 -- "hard_storage_limit_per_operation": { "$ref": "#/definitions/bignum" }
-  , _protoInfo_delayPerMissingEndorsement :: !TezosWord64 -- "delay_per_missing_endorsement": { "$ref": "#/definitions/int64" }
 
   -- These new babylon constants aren't maybes, of course, but we make this structure loose enough to support Athens too.
   -- For better or worse, we do this because this structure actually becomes a DB table in Kiln, so we have to have maybes
   -- so that the old rows don't break. It's just an embedded record in the rhyolite TH, so this is a decent enough kludge for now
   --
+  , _protoInfo_delayPerMissingEndorsement :: !(Maybe TezosWord64) -- "delay_per_missing_endorsement": { "$ref": "#/definitions/int64" }
   -- This definition is slightly off spec as the spec doesn't allow for a value of 0 or 2^16
   , _protoInfo_initialEndorsers :: !(Maybe Word16) -- "initial_endorsers":{ "type": "integer", "minimum": 0, "exclusiveMinimum": true, "maximum": 65535, "exclusiveMaximum": true }
   -- This definition is slightly off spec as the spec doesn't allow for a value of -2^31 or 2^31
