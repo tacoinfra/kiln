@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Frontend.Common where
 
@@ -35,7 +36,7 @@ import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
-import Rhyolite.Api (public)
+import Rhyolite.Api (public, ApiRequest)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
 
@@ -52,16 +53,17 @@ import Tezos.ShortByteString (fromShort)
 import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness)
 
 import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
-import Common.Api (PublicRequest)
+import Common.Api (PublicRequest, PrivateRequest)
 import Common.Alerts (
     ErrorDescription(..),
     standardTimeFormat,
   )
-import Common.App (Bake, BakerSummary(..), NodeSummary,
-                   bakerSummaryIdentification, nodeSummaryIdentification)
+import Common.App
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain, parseBakerAddr)
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
+
+type MonadAppWidget t m = (MonadRhyoliteFrontendWidget (BakeViewSelector SelectedCount) (ApiRequest () PublicRequest PrivateRequest) t m)
 
 data FrontendContext t = FrontendContext
   { _frontendContext_config :: !FrontendConfig
@@ -464,30 +466,30 @@ cancelableModalWithClasses f close = mdo
     divClass "content" (f $ leftmost [domEvent Click closeEl, close])
   pure e
 
-reminderModal :: MonadRhyoliteFrontendWidget app t m
+reminderModal :: MonadAppWidget t m
                   => Text
                   -> Text
                   -> Text
-                  -> (Event t () -> Event t (PublicRequest app ()))
+                  -> (Event t () -> Event t (PublicRequest ()))
                   -> Event t ()
                   -> m (Event t ())
 reminderModal title msg = confirmationModal False title [msg]
 
-warningModal :: MonadRhyoliteFrontendWidget app t m
+warningModal :: (MonadAppWidget t m)
              => Text
              -> [Text]
              -> Text
-             -> (Event t () -> Event t (PublicRequest app ()))
+             -> (Event t () -> Event t (PublicRequest ()))
              -> Event t ()
              -> m (Event t ())
 warningModal = confirmationModal True
 
-confirmationModal :: MonadRhyoliteFrontendWidget app t m
+confirmationModal :: (MonadAppWidget t m)
                   => Bool
                   -> Text
                   -> [Text]
                   -> Text
-                  -> (Event t () -> Event t (PublicRequest app ()))
+                  -> (Event t () -> Event t (PublicRequest ()))
                   -> Event t ()
                   -> m (Event t ())
 confirmationModal isDangerous title msgs btn mkReq = cancelableModalWithClasses $ \close -> do
@@ -585,7 +587,7 @@ zipFieldsWith :: (Applicative m, Reflex t)
 zipFieldsWith = liftA2 . liftA2 . liftA2
 
 formWithReset
-  :: forall a m t. (MonadRhyoliteFrontendWidget Bake t m)
+  :: forall a m t. (MonadAppWidget t m)
   => Text -- ^ Form label
   -> Text -- ^ Submit button tooltip
   -> m () -- ^ Feedback after submit
