@@ -10,7 +10,7 @@ in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
     inherit (obelisk.reflex-platform) hackGet;
-    rhyolite = import (hackGet dep/rhyolite);
+    rhyolite = obelisk;
     nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits.nix {
       inherit pkgs;
       tezos-baking-platform = import (hackGet ../dep/tezos-baking-platform) {};
@@ -52,7 +52,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
     };
 
-    overrides = pkgs.lib.composeExtensions (rhyolite args).haskellOverrides (self: super: with pkgs.haskell.lib; {
+    overrides = pkgs.lib.composeExtensions rhyolite.haskellOverrides (self: super: with pkgs.haskell.lib; {
       common = checkHlint (hsOnly (if distMethod == null
         then super.common
         else enableCabalFlag super.common distMethod));
