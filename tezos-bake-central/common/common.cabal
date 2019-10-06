@@ -64,7 +64,7 @@ library
     , transformers-compat
     , universe
     , universe-base
-    , universe-template
+    , universe-dependent-sum
     , uri-encode
     , witherable
     , writer-cps-mtl

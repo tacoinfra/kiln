@@ -39,12 +39,10 @@ obelisk.project ./. ({ pkgs, ... }@args:
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     # staticFilesImpure = toString ./result-static;
     packages = {
-      backend-db = ./backend-db;
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
       tezos-noderpc = ../tezos-noderpc;
 
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
-      dependent-sum-template = hackGet dep/dependent-sum-template;
       functor-infix = hackGet dep/functor-infix;
       micro-ecc = hackGet ../dep/micro-ecc-haskell;
       named = hackGet dep/named; # TODO: Drop once package set includes 0.3.0.0
@@ -59,11 +57,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
       backend = checkHlint (hsOnly (overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
       })));
-      backend-db = if supportGargoyle
-        then
-          enableCabalFlag (addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
-        else
-          super.backend-db;
       base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
       email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
       extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)

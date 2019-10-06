@@ -46,7 +46,7 @@ library
     , modern-uri
     , monoidal-containers
     , mtl
-    , obelisk-executable-config
+    , obelisk-executable-config-lookup
     , obelisk-frontend
     , obelisk-generated-static
     , obelisk-route
