@@ -17,14 +17,14 @@ import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
 import Database.Groundhog.Postgresql (PersistBackend, get, (&&.), (==.), Cond(..))
+import Database.Id.Class
+import Database.Id.Groundhog
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
-import Rhyolite.Schema (Id (..))
 
 import Tezos.Types
 
@@ -272,7 +272,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
           pure $ flip ifoldMap (_bakeViewSelector_errors aggVS)$ \flt (Compose errorsVS) ->
             let
-              tagKey = This tag
+              tagKey = Some tag
               mErrorsIntervalVS = MMap.lookup tagKey $ unMapSelector errorsVS
               ma = sconcat <$> (NEL.nonEmpty . AppendIMap.elems . unIntervalSelector =<< mErrorsIntervalVS)
               makeBakeView a errorsIntervalVS = if viewSelects errorInterval errorsIntervalVS

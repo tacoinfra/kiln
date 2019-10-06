@@ -47,12 +47,6 @@ import Data.Constraint (Dict(..))
 import Data.Constraint.Extras
 import Data.Constraint.Forall
 import Data.Dependent.Sum (DSum(..))
-import Data.Dependent.Sum (EqTag)
-import Data.Dependent.Sum (OrdTag)
-import Data.Dependent.Sum (ShowTag)
-import Data.Dependent.Sum (compareTagged)
-import Data.Dependent.Sum (eqTagged)
-import Data.Dependent.Sum (showTaggedPrec)
 import Data.Fixed (Fixed (MkFixed), HasResolution)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Compare.TH (deriveGCompare)
@@ -67,7 +61,9 @@ import qualified Data.Text.Lazy as LT
 import Data.Version (Version)
 import qualified Data.Version as Version
 import Data.Word (Word64)
+import Database.Id.Class
 import Database.Groundhog.Core
+import Database.Id.Groundhog
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
@@ -85,8 +81,6 @@ import Language.Haskell.TH (mkName)
 import Language.Haskell.TH (nameBase)
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (HasNotification (..), NotificationType (..), DbNotification (..), getSchemaName, notifyChannel)
-import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 import Rhyolite.Backend.Schema.Class (defaultKeyToKey)
@@ -94,8 +88,7 @@ import Rhyolite.Backend.Schema.Class (HasSingleConstructor)
 import Rhyolite.Backend.Schema.Class (SingleConstructor)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
-import Rhyolite.Schema (Id, Json (..), SchemaName (..))
-import Rhyolite.Schema (IdData)
+import Rhyolite.Schema (Json (..), SchemaName (..))
 import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -1249,27 +1242,6 @@ logAssume = \case
   LogTag_Baker bTag -> bakerLogAssume bTag
   LogTag_BakerNoHeartbeat -> id
 
-instance EqTag LogTag Id where
-  eqTagged t _ = logAssume t (==)
-instance OrdTag LogTag Id where
-  compareTagged t _ = logAssume t compare
-instance ShowTag LogTag Id where
-  showTaggedPrec t = logAssume t showsPrec
-
-instance EqTag NodeLogTag Id where
-  eqTagged t _ = nodeLogAssume t (==)
-instance OrdTag NodeLogTag Id where
-  compareTagged t _ = nodeLogAssume t compare
-instance ShowTag NodeLogTag Id where
-  showTaggedPrec t = nodeLogAssume t showsPrec
-
-instance EqTag BakerLogTag Id where
-  eqTagged t _ = bakerLogAssume t (==)
-instance OrdTag BakerLogTag Id where
-  compareTagged t _ = bakerLogAssume t compare
-instance ShowTag BakerLogTag Id where
-  showTaggedPrec t = bakerLogAssume t showsPrec
-
 data Related b c r where
   Related :: (HasSingleConstructor r, PersistEntity r, PersistField x) => Field b c x -> ForeignKey r x -> Related b c r
 
@@ -1283,13 +1255,13 @@ logDep :: LogTag e -> [Some (Related e (SingleConstructor e))]
 logDep = \case
   LogTag_NetworkUpdate -> []
   LogTag_Node nTag -> bothNodes $ nodeLogDep nTag
-  LogTag_Baker bTag -> pure $ This $ bakerLogDep bTag
+  LogTag_Baker bTag -> pure $ Some $ bakerLogDep bTag
   LogTag_BakerNoHeartbeat -> []
   where
     bothNodes :: forall e. Related e (SingleConstructor e) Node -> [Some (Related e (SingleConstructor e))]
     bothNodes = \case
       Related fld fk -> case fk of
-        ForeignKey_AutoId -> [This (Related fld $ ForeignKey_UniqueIdData @NodeExternal), This (Related fld $ ForeignKey_UniqueIdData @NodeInternal)]
+        ForeignKey_AutoId -> [Some (Related fld $ ForeignKey_UniqueIdData @NodeExternal), Some (Related fld $ ForeignKey_UniqueIdData @NodeInternal)]
         ForeignKey_Field fld2 -> case fld2 of {}
 
 nodeLogDep :: NodeLogTag e -> Related e (SingleConstructor e) Node
@@ -1321,7 +1293,7 @@ embeddedSecretKeyEquals f sk =
   GH.&&. f ~> SecretKey_signingCurveSelector ==. _secretKey_signingCurve sk
   GH.&&. f ~> SecretKey_derivationPathSelector ==. _secretKey_derivationPath sk
 
-instance ArgDict NotifyTag where
+instance ArgDict c NotifyTag where
   type ConstraintsFor NotifyTag c =
     ( c (Id Baker, Maybe BakerData)
     , c BakerDetails

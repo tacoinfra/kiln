@@ -67,6 +67,7 @@ import Database.Groundhog.Generic.Sql (flatten)
 import Database.Groundhog.Generic.Sql (renderChain)
 import Database.Groundhog.Generic.Sql (tableName)
 import Database.Groundhog.Postgresql
+import Database.Id.Class
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -74,7 +75,6 @@ import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
-import Rhyolite.Schema (Id(..))
 import Safe (maximumMay)
 import Safe (minimumByMay)
 
@@ -414,7 +414,7 @@ getErrorLogsImpl flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs 
     -- TODO: make every bakeralert work with the Id Baker column, probably
     runQueries :: Some LogTag -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries ltag window = do
-      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [ltag]
+      leftBiasedUnions <$> traverse (\(Some lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [ltag]
 
     leftBiasedUnions = MMap.unionsWith const
 
@@ -452,7 +452,7 @@ getErrorLogForTag flt lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x)
         sqlFields = foldr (flatten id) [] $ constrParams constrD
         qCond :: [Utf8]
         qCond = flip map related $ \case
-          This r@(Related fld fk) ->
+          Some r@(Related fld fk) ->
             let ctor2 = singleConstructor $ proxify r
                 entityD2 = entityDef pg $ phantomize $ Compose ctor2
                 constrNum2 = entityConstrNum (Compose ctor2) ctor2
@@ -515,7 +515,7 @@ getBakerAlert = do
 
   let everythingWindow = ClosedInterval LowerInfinity UpperInfinity
 
-  allAlerts <- traverse (\(This t) -> getErrorLogForTag AlertsFilter_UnresolvedOnly (LogTag_Baker t) everythingWindow) universe
+  allAlerts <- traverse (\(Some t) -> getErrorLogForTag AlertsFilter_UnresolvedOnly (LogTag_Baker t) everythingWindow) universe
   let
     bakerErrors :: MonoidalMap PublicKeyHash [(ErrorLog, BakerErrorLogView)]
     bakerErrors = MMap.fromListWith (<>)
@@ -559,7 +559,7 @@ getAlertCount
   , PersistBackend m
   )
   => m (DMap LogTag (Const Int))
-getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
+getAlertCount = DMap.fromList . concat <$> traverse (\(Some lTag) -> do
   (x, _) <- runQuery lTag
   pure $ map (\(t, v) -> t :=> Const v) x) universe
   where
@@ -601,7 +601,7 @@ getBakerAddresses
   -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
 getBakerAddresses nds bid = do
   let qCount :: [Utf8]
-      qCount = flip map universe $ \(This bTag) -> logAssume (LogTag_Baker bTag) $ case bakerLogDep bTag of
+      qCount = flip map universe $ \(Some bTag) -> logAssume (LogTag_Baker bTag) $ case bakerLogDep bTag of
         r@(Related fld fk) ->
           let ctor = singleConstructor $ proxify bTag
               entityD = entityDef pg $ phantomize $ Compose ctor
@@ -758,7 +758,7 @@ getNodeAddresses nid = do
       , _processData_backend = backend
       }))
   let qCount :: [Utf8]
-      qCount = flip map universe $ \(This nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of
+      qCount = flip map universe $ \(Some nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of
         r@(Related fld fk) ->
           let ctor = singleConstructor $ proxify nTag
               entityD = entityDef pg $ phantomize $ Compose ctor

@@ -27,13 +27,13 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
 import qualified Data.Text as T
 import Data.Time (getCurrentTime, addUTCTime, NominalDiffTime)
+import Database.Id.Groundhog
 import Database.Groundhog.Postgresql
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
 import System.Posix.Signals (signalProcess, sigKILL)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
 import qualified System.Process as Proc
