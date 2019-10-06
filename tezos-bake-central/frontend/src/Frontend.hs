@@ -26,12 +26,13 @@ import Control.Monad (unless)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
+import Data.Constraint.Extras
 import Data.Default
 import qualified Data.Dependent.Map as DMap
-import Data.Dependent.Sum (DSum(..), EqTag)
+import Data.Dependent.Sum (DSum(..))
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
-import Data.Functor.Sum
+import Data.GADT.Compare
 import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
@@ -40,17 +41,17 @@ import Data.Ord (Down (..))
 import qualified Data.Set as Set
 import Data.String (IsString)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Time as Time
 import Data.Word (Word64)
 import Data.Version
 import Database.Id.Class
-import Database.Id.Groundhog
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Location as Location
 import qualified GHCJS.DOM.File as File
 import GHCJS.DOM.Types (MonadJSM, liftJSM)
 import qualified GHCJS.DOM.Window as Window
-import qualified Obelisk.ExecutableConfig
+import qualified Obelisk.ExecutableConfig.Lookup
 import Obelisk.Frontend (Frontend (..))
 import Obelisk.Generated.Static (static)
 import Obelisk.Route (R)
@@ -59,8 +60,8 @@ import Reflex.Dom.Core
 import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
-import Rhyolite.Schema (Json (..), Id(..))
+import Rhyolite.Frontend.App (AppWebSocket (..), runPrerenderedRhyoliteWidget, functorToWire)
+import Rhyolite.Schema (Json (..))
 import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -110,7 +111,7 @@ type RouteConstraints t r m =
   ( Routed t (R r) m
   , RouteToUrl (R r) m
   , SetRoute t (R r) m
-  , EqTag r Identity
+  , GEq r, Has' Eq r Identity
   )
 
 frontend :: Frontend (R AppRoute)
@@ -120,9 +121,8 @@ frontend = Frontend
   }
 
 frontendBody
-  :: forall m js t x.
+  :: forall m js t.
     ( MonadWidget t m
-    , HasJS x m
     , PrimMonad m
     , RouteConstraints t AppRoute m
     , Prerender js t m
@@ -130,27 +130,28 @@ frontendBody
   => m ()
 frontendBody = void $ do
   wsUri :: Dynamic t Text <- prerender (pure "") $
-    fmap (maybe (error "Invalid WS URL") Uri.render) $ getBackendPath (InL BackendRoute_Listen :/ ()) True
+    fmap (maybe (error "Invalid WS URL") Uri.render) $ getBackendPath (BackendRoute_Listen :/ ()) True
   dyn_ $ ffor wsUri $ \ws -> do
     rec
-      (socketState, _) <- runRhyoliteWidget ws $ do
+      runPrerenderedRhyoliteWidget functorToWire ws $ do
         withFrontendContext $
-          withConnectivityModal socketState $
+          -- withConnectivityModal socketState $
             runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
               appMain
     pure ()
 
-getBackendPath :: MonadJSM m => R (Sum BackendRoute (ObeliskRoute AppRoute)) -> Bool -> m (Maybe URI)
-getBackendPath backendRoute isWebsocket = do
-  let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
-  route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
-    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
+getBackendPath :: MonadJSM m => R BackendRoute -> Bool -> m (Maybe URI)
+getBackendPath (backendRoute :/ a) isWebsocket = do
+  configs <- liftIO Obelisk.ExecutableConfig.Lookup.getConfigs
+  let getExecutableConfig f = Map.lookup f configs
+  route :: URI <- case getExecutableConfig (T.pack Config.route) of
+    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip $ T.decodeUtf8 r
     Nothing ->
       Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
   let
     url = do
-      encoder <- either (const Nothing) Just $ checkEncoder backendRouteEncoder
-      let path = fst $ encode encoder backendRoute
+      encoder <- either (const Nothing) Just $ checkEncoder fullRouteEncoder
+      let path = fst $ encode encoder (FullRoute_Backend backendRoute :/ a)
       pathPiece <- NEL.nonEmpty =<< mapM Uri.mkPathPiece path
       scheme <- if isWebsocket
         then case Uri.uriScheme route of
@@ -1395,7 +1396,8 @@ startNodeWorkflow backWF = Workflow $ do
     liftIO $ putStrLn "starting file upload"
     fileToFormValue f
 
-  mUri <- getBackendPath (InL BackendRoute_SnapshotUpload :/ ()) False
+  mUri <-
+    getBackendPath (BackendRoute_SnapshotUpload :/ ()) False
   let
     formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
   for_ mUri $ \uri -> postForms (Uri.render uri) formUploadEv
@@ -1679,7 +1681,7 @@ nodesTab =
               exportLogsMenu = do
                 isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
                 when isExportAvailable $ do
-                  mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Node :/ ()) False
+                  mUri <- getBackendPath (BackendRoute_ExportLogs :/ ExportLog_Node :/ ()) False
                   for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
                     SemUi.listItem' def $ text "Export Logs"
 
@@ -2190,10 +2192,10 @@ bakersTab =
 
               isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
               when isExportAvailable $ do
-                mBakerUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Baker :/ ()) False
+                mBakerUri <- getBackendPath (BackendRoute_ExportLogs :/ ExportLog_Baker :/ ()) False
                 for_ mBakerUri $ \uri -> elAttr "a" ("download" =: "KilnBaker.log" <> "href" =: Uri.render uri) $
                   SemUi.listItem' def $ text "Export Baker Logs"
-                mEndorserUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Endorser :/ ()) False
+                mEndorserUri <- getBackendPath (BackendRoute_ExportLogs :/ ExportLog_Endorser :/ ()) False
                 for_ mEndorserUri $ \uri -> elAttr "a" ("download" =: "KilnEndorser.log" <> "href" =: Uri.render uri) $
                   SemUi.listItem' def $ text "Export Endorser Logs"
 
