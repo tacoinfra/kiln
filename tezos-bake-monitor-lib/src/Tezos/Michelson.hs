@@ -17,7 +17,7 @@ import qualified Prelude
 import Tezos.Base16ByteString (Base16ByteString(..))
 import qualified Tezos.Binary as B
 import Tezos.Micheline (Expression(..), MichelinePrimAp(..), MichelinePrimitive(..), Annotation(..))
-import Tezos.Contract (ContractScript(..), ContractId, toContractIdText, tryReadContractIdText)
+import Tezos.Contract (ContractScript(..), ContractId, tryReadContractIdText)
 
 pattern Prim :: T.Text -> Seq Expression -> Expression
 pattern Prim p a <- Expression_Prim (MichelinePrimAp (MichelinePrimitive p) a _)
@@ -62,7 +62,7 @@ findInOrTree annot = \case
 wrapEndpointCall :: T.Text -> ContractScript -> Expression -> Maybe Expression
 wrapEndpointCall endpoint ContractScript { _contractScript_code = code } =
   (endpointWrapper <*>) . pure
-  where 
+  where
     endpointWrapper = do
       -- This is assuming that the contract goes [parameter, storage, code] but that seems to currently be valid.
       Expression_Seq codeParts <- pure code
@@ -91,4 +91,4 @@ instance ToMicheline Expression where
   toMicheline = id
 
 instance ToMicheline ContractId where
-  toMicheline = Expression_String . toContractIdText
+  toMicheline = Expression_Bytes . Base16ByteString . B.encode
