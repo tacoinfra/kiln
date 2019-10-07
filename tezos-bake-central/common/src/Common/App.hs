@@ -48,6 +48,8 @@ import Database.Id.Class
 import Reflex (Additive, Group (..))
 import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.Schema (Email)
+import Rhyolite.App (PositivePart (..), standardPositivePart)
+import Data.MonoidMap (MonoidMap (..))
 
 import Tezos.NodeRPC.Sources (PublicNode)
 import Tezos.Types
@@ -300,6 +302,11 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_rightNotificationSettings :: !(RangeSelector RightKind (Deletable RightNotificationLimit) a)
   , _bakeViewSelector_bakerRegistered :: !(RangeSelector' PublicKeyHash Bool a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
+
+instance (Monoid a, Num a, Ord a, Ord k) => PositivePart (BakeViewSelector (MonoidMap k a)) where
+  positivePart x = let v = mapMaybe standardPositivePart x in if v == mempty then Nothing else Just v
+
+instance Additive a => Additive (BakeViewSelector a)
 
 data BakeView a = BakeView
   { _bakeView_config :: !(MaybeView FrontendConfig a)
