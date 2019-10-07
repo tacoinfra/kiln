@@ -23,6 +23,8 @@ yoloV004Pkh = either (error . show) id .  V004.tryReadPublicKeyHashText
 yoloV005Pkh :: Text -> V005.PublicKeyHash
 yoloV005Pkh = either (error . show) id .  V005.tryReadPublicKeyHashText
 
+yoloB16ByteString = V005.Base16ByteString . fst . BS16.decode
+
 testAccountV005 :: V005.Account
 testAccountV005 = V005.Account
   (Just $ yoloV005Pkh "tz1LTKbz4KUTabtxmszTKNPGW89V4mxdrr3E")
@@ -385,8 +387,46 @@ testBlockV005 = V005.Block
   "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
   "NetXKakFj1A7ouL"
   "BLFoapow3NsnzgixARx5NGnqeukqyotyATbtJHy2qLq6mAdvFWE"
-  (V005.BlockHeaderFull 195065 1 undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined)
-  (V005.BlockMetadata undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined)
+  (V005.BlockHeaderFull
+    { V005._blockHeaderFull_level = 195065
+    , V005._blockHeaderFull_proto = 1
+    , V005._blockHeaderFull_predecessor = "BMN5KhRJqsqFkwiQVW1sz64iPrxYcw3xb6AXhvk9HFnKpf6Dj9L"
+    , V005._blockHeaderFull_timestamp = undefined
+    , V005._blockHeaderFull_validationPass = 4
+    , V005._blockHeaderFull_operationsHash = "LLobDQLDmcttWHvKbJf97Q2RdabxE2FHKT5rzAj15HEkU9f2EVEFW"
+    , V005._blockHeaderFull_fitness = V005.toFitness ["01","000000000002f9f8"]
+    , V005._blockHeaderFull_context = "CoVNLLcTdBpGWn2A5JL9SEnNRuXwaConz2vNVojMoD5yT7VEUjSe"
+    , V005._blockHeaderFull_priority = 0
+    , V005._blockHeaderFull_proofOfWorkNonce = yoloB16ByteString "00000003a170d53d"
+    , V005._blockHeaderFull_seedNonceHash = Nothing
+    , V005._blockHeaderFull_signature = Just "sigRnjCxTV8fGdJo5uy2Fqf4mJL1tR6cgLz9KPGG2bQ529zob32SPkMJiA8UFvBxMPzv6PaNvkyrhvuBfvW6ET3KQcTgKXWB"
+    })
+
+  (V005.BlockMetadata
+    { V005._blockMetadata_protocol = "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
+    , V005._blockMetadata_nextProtocol = "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
+    , V005._blockMetadata_testChainStatus = V005.TestChainStatus_NotRunning
+    , V005._blockMetadata_maxOperationsTtl = 60
+    , V005._blockMetadata_maxOperationDataLength = 16384
+    , V005._blockMetadata_maxBlockHeaderLength = 238
+    , V005._blockMetadata_maxOperationListLength = undefined
+    , V005._blockMetadata_baker = "tz1Kz6VSEPNnKPiNvhyio6E1otbSdDhVD9qB"
+    , V005._blockMetadata_level = V005.Level
+      { V005._level_cycle = undefined
+      , V005._level_cyclePosition = undefined
+      , V005._level_expectedCommitment = undefined
+      , V005._level_level = undefined
+      , V005._level_levelPosition = undefined
+      , V005._level_votingPeriod = undefined
+      , V005._level_votingPeriodPosition = undefined
+      }
+    , V005._blockMetadata_votingPeriodKind = V005.VotingPeriodKind_Proposal
+    , V005._blockMetadata_nonceHash = undefined
+    , V005._blockMetadata_consumedGas = undefined
+    , V005._blockMetadata_deactivated = undefined
+    , V005._blockMetadata_balanceUpdates = undefined
+    }
+  )
   []
 
 testBlockV004 = V004.Block 
@@ -406,8 +446,9 @@ tests = testGroup "Tezos.V005.NodeRPC.CrossCompat"
     [ aesonRoundTripTest "V005" (testFilePath "AccountV005.json") (AccountV005 testAccountV005)
     , aesonRoundTripTest "V004" (testFilePath "AccountV004.json") (AccountV004 testAccountV004)
     ]
-  --, testGroup "Block"
-  --  [ aesonRoundTripTest "V005" (testFilePath "BlockV005.json") (BlockV005 testBlockV005)
+  , testGroup "Block"
+    [
+  --    aesonRoundTripTest "V005" (testFilePath "BlockV005.json") (BlockV005 testBlockV005)
   --  , aesonRoundTripTest "V004" (testFilePath "BlockV004.json") (BlockV004 testBlockV004)
-  --  ]
+    ]
   ]
