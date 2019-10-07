@@ -121,12 +121,16 @@ instance FromJSON BlockCrossCompat where
     pv :: String <- o .: "protocol"
     case pv of
       -- TODO: This ought to be better.
-      "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU" -> BlockV005 <$> parseJSON jv 
-      "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd" -> BlockV004 <$> parseJSON jv
+      "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS" -> BlockV005 <$> parseJSON jv -- V005 Bugfix
+      "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU" -> BlockV005 <$> parseJSON jv -- V005 / Babylon
+      "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd" -> BlockV004 <$> parseJSON jv -- V004 / Athens
       "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP" -> BlockV004 <$> parseJSON jv -- V003
       "PsYLVpVvgbLhAhoqAkMFUo6gudkJ9weNXhUYCiLDzcUpFpkk8Wt" -> BlockV004 <$> parseJSON jv -- V002
       "PtCJ7pwoxe8JasnHY8YonnLYjcVHmhiARPJvqcC6VfHT5s8k8sY" -> BlockV004 <$> parseJSON jv -- V001
-      p -> fail $ "Unknown protocol: " <> p
+      -- We parse anything that we don't know on V005. This may catch some weird genesis blocks
+      -- and it'll catch newer protocols if we are too slow to update.
+      _ -> BlockV005 <$> parseJSON jv
+
   parseJSON _ = mzero
     
 instance ToJSON BlockCrossCompat where
