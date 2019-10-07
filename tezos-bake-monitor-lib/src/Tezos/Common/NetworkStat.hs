@@ -2,7 +2,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Tezos.V004.NetworkStat where
+module Tezos.Common.NetworkStat where
+
+{--
+This is kinda weird. This could theoretically change later and need versioning, but
+from what I've been told this is not changed on chain and is just part of the node
+software. So if it does change later it will need versioning, but it's not really
+a Protocol level difference and needs a better home then. Lets hope that any changes
+there are non-breaking and are just additive.
+--}
 
 import Control.Lens.TH (makeLenses)
 import Data.Int (Int32)

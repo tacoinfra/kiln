@@ -12,6 +12,7 @@ import Tezos.Common.Base58Check as X
   Secp256k1PublicKeyHash, Secp256k1SecretKey, Secp256k1Signature, toBase58Text)
 import Tezos.Common.Chain as X
 import Tezos.Common.Json as X (TezosWord64 (..), tezosJsonOptions)
+import Tezos.Common.NetworkStat as X
 
 import Tezos.V004.Account as X
 import Tezos.V004.BalanceUpdate as X
@@ -23,7 +24,6 @@ import Tezos.V004.Envelope as X
 import Tezos.V004.Fitness as X
 import Tezos.V004.Ledger as X
 import Tezos.V004.Level as X
-import Tezos.V004.NetworkStat as X
 import Tezos.V004.Operation as X 
 import Tezos.V004.PeriodSequence as X
 import Tezos.V004.ProtocolConstants as X hiding (unsafeAssumptionLevelToCycle, unsafeAssumptionFirstLevelInCycle, unsafeAssumptionRightsContextLevel)

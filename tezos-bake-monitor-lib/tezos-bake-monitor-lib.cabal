@@ -23,6 +23,7 @@ library
     Tezos.Common.Binary
     Tezos.Common.Chain
     Tezos.Common.Json
+    Tezos.Common.NetworkStat
     Tezos.Common.NodeRPC.Types
     Tezos.Common.NodeRPC.Sources
     Tezos.Common.ShortByteString
@@ -40,7 +41,6 @@ library
     Tezos.V004.Level
     Tezos.V004.Micheline
     Tezos.V004.Michelson
-    Tezos.V004.NetworkStat
     Tezos.V004.NodeRPC.Class
     Tezos.V004.Operation
     Tezos.V004.PeriodSequence
@@ -67,7 +67,6 @@ library
     Tezos.V005.Level
     Tezos.V005.Micheline
     Tezos.V005.Michelson
-    Tezos.V005.NetworkStat
     Tezos.V005.NodeRPC.Class
     Tezos.V005.NodeRPC.CrossCompat
     Tezos.V005.Operation
