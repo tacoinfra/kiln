@@ -8,14 +8,14 @@ let
 
   tezos = (import dep/tezos-baking-platform {}).tezos;
 
-  kilnApiV1 = import (pkgs.fetchFromGitHub {
+  kilnApiV1 = import (pkgs.fetchFromGitLab {
     owner = "obsidian.systems";
     repo = "tezos-bake-monitor";
     rev = "788d9b53f166f7801addb36c778bfc36bc833c15"; # 0.5.3
     sha256 = "0g1fijywb7afqy056v9rfl293fa9hzrz1q1p949blzcxv3iqp0jn";
   }) { system = "x86_64-linux"; };
 
-  kilnApiV2 = import (pkgs.fetchFromGitHub {
+  kilnApiV2 = import (pkgs.fetchFromGitLab {
     owner = "obsidian.systems";
     repo = "tezos-bake-monitor";
     rev = "dbc3775f2c9c28a39ecec1044c0efe6bb6c08a9d"; # 0.6.2
