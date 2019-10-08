@@ -1,7 +1,7 @@
 { pkgs
 , obelisk
 , app
-, opsEmail ? "elliot.cameron@obsidian.systems"
+, opsEmail ? "divam.narula@obsidian.systems"
 , ...
 }:
 let
@@ -13,6 +13,13 @@ let
     repo = "tezos-bake-monitor";
     rev = "788d9b53f166f7801addb36c778bfc36bc833c15"; # 0.5.3
     sha256 = "0g1fijywb7afqy056v9rfl293fa9hzrz1q1p949blzcxv3iqp0jn";
+  }) { system = "x86_64-linux"; };
+
+  kilnApiV2 = import (pkgs.fetchFromGitHub {
+    owner = "obsidian.systems";
+    repo = "tezos-bake-monitor";
+    rev = "dbc3775f2c9c28a39ecec1044c0efe6bb6c08a9d"; # 0.6.2
+    sha256 = "0kgbbfs75ql9vd514nsspapgr3l80vwwwfyslaixj1cfmlzahdxr";
   }) { system = "x86_64-linux"; };
 
   networkConfigOptions = {
@@ -30,8 +37,16 @@ let
           apiPort = 8001;
         }
         {
-          inherit app;
+          app = kilnApiV2;
           apiVersion = 2;
+          apiPort = 8002;
+          extraArgs = [
+            "--enable-obsidian-node=false"
+          ];
+        }
+        {
+          inherit app;
+          apiVersion = 3;
           apiPort = 8000;
           extraArgs = [
             "--enable-obsidian-node=false"
@@ -52,8 +67,16 @@ let
           apiPort = 8001;
         }
         {
-          inherit app;
+          app = kilnApiV2;
           apiVersion = 2;
+          apiPort = 8002;
+          extraArgs = [
+            "--enable-obsidian-node=false"
+          ];
+        }
+        {
+          inherit app;
+          apiVersion = 3;
           apiPort = 8000;
           extraArgs = [
             "--enable-obsidian-node=false"
@@ -74,8 +97,16 @@ let
           apiPort = 8001;
         }
         {
-          inherit app;
+          app = kilnApiV2;
           apiVersion = 2;
+          apiPort = 8002;
+          extraArgs = [
+            "--enable-obsidian-node=false"
+          ];
+        }
+        {
+          inherit app;
+          apiVersion = 3;
           apiPort = 8000;
           extraArgs = [
             "--enable-obsidian-node=false"
@@ -253,6 +284,14 @@ let
         isNormalUser = true;
         openssh.authorizedKeys.keys = [
           "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPsrDJrZRXpa6f5g+dfysfU4R/YSqOKRzu2zR99k9izE elliot@nixos"
+        ];
+        extraGroups = ["wheel"];
+      };
+      "divam.narula" = {
+        description = "Divam";
+        isNormalUser = true;
+        openssh.authorizedKeys.keys = [
+          "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC6vZkH8FD5grlE/qVpYiViVeUwzUzpC1BZmIYrsrAsTbJSDK3h9R9WQx6J9jiyVwcSLV4RKBh6GZzzMmPzdtkaXaZsKYTVNgPq5txiHal62jV4RD+qWQpE0Z0vzd/OMeq9y0FpldITCkrcwCXnM7Tvt4BCwD+mHM2AVJsvIga0mDgc0r7dxRA+yocCbv2qA1rgqXXhFud2Y2DZkjJPK2env46aZzN0VDrdqCRFsDkXMCU/MGWpJUtQCMLjbEa0k0VrOBUw96c3kiboQJDDnEGFE/X3znc2VCff6tmWEVcJZP52U40GpR/4+ROMpu5ISu3dJRVTsDpdAsPZFGzg/6rkJXi6mCPj6WoiEnOKOH88IdpoLn1tD7ErEYdekv/+bwMEWixPtRzvYxBFQ6uqJYjJAS7sf/8IM8k7YAB1WUtuqIyHZ2V8UCpMr4A/ujtABXwH+SW7+UEPsU3+aC8cKPE8QZJ2m8nKq5hbKJXeS3B4gCBx+e3LA5DHi5s/cN4iWCbclm0IMPg9AUbtquz3lRKy8Gl09gPsfjLnboZ8FbwOSKWlV+PqnQBbUSkRhjxWg3On18CEvsai4egI++GK2qOKJSKstgw0pNSQkU1rzGgx/9kYskhKA0kBKwAgCGf9zoPsUJ00mcuyEoYBZuOsMirwR5lZue3qvq5W2noLM+Gofw== dfordivam@gmail.com"
         ];
         extraGroups = ["wheel"];
       };
