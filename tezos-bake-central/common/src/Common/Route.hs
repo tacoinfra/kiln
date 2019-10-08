@@ -51,7 +51,7 @@ data ExportLog :: * -> * where
 fullRouteEncoder
   :: Encoder (Either Text) Identity (R (FullRoute BackendRoute AppRoute)) PageName
 fullRouteEncoder = mkFullRouteEncoder
-  ((FullRoute_Frontend (ObeliskRoute_App AppRoute_Index)) :/ ())
+  (FullRoute_Frontend (ObeliskRoute_App AppRoute_Index) :/ ())
   (\case
       BackendRoute_ExportLogs -> PathSegment "export-logs" $ pathComponentEncoder $ \case
         ExportLog_Node -> PathSegment "node" $ unitEncoder mempty

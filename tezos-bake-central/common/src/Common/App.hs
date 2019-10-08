@@ -46,7 +46,7 @@ import Data.Word (Word16)
 import Data.Witherable (Filterable (mapMaybe))
 import Database.Id.Class
 import Reflex (Additive, Group (..))
-import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
+import Reflex.Query.Class (Query (QueryResult, crop))
 import Rhyolite.Schema (Email)
 import Rhyolite.App (PositivePart (..), standardPositivePart)
 import Data.MonoidMap (MonoidMap (..))
@@ -602,10 +602,8 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     }
 
 
-instance Group (BakeViewSelector SelectedCount) where
+instance Group a => Group (BakeViewSelector a) where
   negateG = fmap negateG
-
-instance Additive (BakeViewSelector SelectedCount)
 
 instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
   mempty = BakeView

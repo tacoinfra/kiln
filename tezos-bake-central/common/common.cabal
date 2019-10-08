@@ -34,6 +34,7 @@ library
     , cryptohash
     , cryptonite
     , data-default
+    , database-id-class
     , dependent-map
     , dependent-sum
     , dependent-sum-aeson-orphans

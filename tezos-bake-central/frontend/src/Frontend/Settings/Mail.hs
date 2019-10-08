@@ -30,7 +30,6 @@ import Reflex.Dom.Form.Widgets (formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Rhyolite.Schema (Email)
 
 import Common.Api

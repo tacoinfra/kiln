@@ -32,7 +32,10 @@ library
     , bytestring
     , common
     , containers
+    , constraints
+    , constraints-extras
     , data-default
+    , database-id-class
     , dependent-map
     , dependent-sum
     , dependent-sum-template
