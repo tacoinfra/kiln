@@ -88,6 +88,10 @@ tezosBinaryPaths =
       , $(staticWhich "zeronet-tezos-baker-005-PsBABY5H")
       , $(staticWhich "zeronet-tezos-endorser-005-PsBABY5H")
       )
+    , ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+      , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
+      , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
+      )
     ]
 
 -- TODO: use postgres for "process-id's"
