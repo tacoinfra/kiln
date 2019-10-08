@@ -28,19 +28,6 @@ let
       histMode = "archive";
       kilns = [
         {
-          app = kilnApiV1;
-          apiVersion = 1;
-          apiPort = 8001;
-        }
-        {
-          app = kilnApiV2;
-          apiVersion = 2;
-          apiPort = 8002;
-          extraArgs = [
-            "--enable-obsidian-node=false"
-          ];
-        }
-        {
           inherit app;
           apiVersion = 3;
           apiPort = 8000;
