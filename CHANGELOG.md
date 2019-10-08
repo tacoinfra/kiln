@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.0
+
+  * Support for Babylon protocol (005_PsBabyM1)
+    * Kiln now has tezos binaries to do baking operations on the new protocol.
+    * Fixes for changes in the format of operations. This is required to properly parse block data in Kiln.
+    * Fixes for changes in RPC. This enables Kiln to properly communicate with tezos-node running on new protocol.
+
+  * Support for varying protocols.
+    * Kiln now understands that various parameters of the blockchain can change over time due to amendement process.
+      This is essential to gather data from blocks of past and current protocols.
+
+  * Bug Fixes
+    * Obsidian Public Node APIs
+    * UI - Baker alerts don't resolve on the tile without a page refresh.
+
+### Known Issues
+
+  * When upgrading Kiln on Ubuntu/Debian, the existing `/etc/kiln/args` file will be over-written.
+
 ## 0.6.2
 
   * Update mainnet tezos binaries. This fixes the problem of 100% cpu usage by the tezos-node (and "updater: COMPILATION ERROR" messages). The tezos-node released with v0.6.1 has problem in compiling the new protocol binaries (PsBABY5HQTSk), and this issue surfaced now because mainnet entered the testing phase of the protocol amendement cycle.
