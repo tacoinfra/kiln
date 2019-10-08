@@ -14,7 +14,7 @@ module Backend.Workers.Baker where
 import Prelude hiding (cycle)
 
 import Control.Arrow ((&&&))
-import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex)
+import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex, (^..))
 import Control.Exception (handle, SomeException)
 import Control.Concurrent.STM (atomically)
 import Control.Monad (guard, mzero)
@@ -49,7 +49,9 @@ import Rhyolite.Schema (Id (..), Json(..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
-import Tezos.Operation
+import qualified Tezos.V004.Types as V004
+import qualified Tezos.V005.Types as V005
+import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 
 import Backend.Config (AppConfig (..), HasAppConfig)
 import Backend.Alerts
@@ -313,7 +315,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
                  <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
-            bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)
+            bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake ((thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker)
               (headBlock ^. fitness)
               RightKind_Baking
               (baker ^. baker_publicKeyHash)
@@ -323,14 +325,16 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
-                    <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
+                    <- whenM (elem (_baker_publicKeyHash baker) $ _endorsingRights_delegate <$> endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
-      let action = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)
-                   (headBlock ^. fitness)
-                   RightKind_Endorsing
-                   (baker ^. baker_publicKeyHash)
-                   (lvl - 1)
+      let
+        endorserDelegates = blockCrossCata
+          (^..V004.block_operations . traverse . traverse . V004.operation_contents . traverse . V004._OperationContents_Endorsement . V004.operationContentsEndorsement_metadata . V004.endorsementMetadata_delegate)
+          (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
+          thisBlock
+        mkAction = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (_baker_publicKeyHash baker `elem` endorserDelegates)
+        action = mkAction (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
       return $ pure action
 
     return $ sequence_ $ bakingAlerts <> endorsingAlerts
@@ -340,7 +344,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   -- This is the things that fails. First go look up the account, and see who/if
   -- it is delegated (`NodeQuery_Account`). Only proceed if there is a delegate,
   -- and cache that.
-  delegate <- (^.account_delegatePkh) <$>
+  delegate <- (^.accountCrossCompat_delegatePkh) <$>
     nodeQueryDataSource (NodeQuery_Account headHash (Implicit pkh))
   selfDelegateActions <- case delegate of
     Nothing -> pure []

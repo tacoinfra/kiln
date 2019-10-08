@@ -100,11 +100,8 @@ import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Base58Check (HashedValue (..), tryFromBase58)
-import Tezos.NodeRPC.Sources (PublicNode (..))
-import Tezos.NodeRPC.Types
-import Tezos.Operation (Ballot)
-import Tezos.Types
+import Tezos.NodeRPC (PublicNode (..))
+import Tezos.Types hiding (TestChainStatus)
 
 import Backend.Version (parseVersion)
 import Common.AppendIntervalMap (WithInfinity(..))

@@ -30,7 +30,7 @@ import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
 import Rhyolite.Schema (Email)
 import Safe (minimumMay)
 
-import Tezos.NodeRPC.Sources (PublicNode)
+import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.Api

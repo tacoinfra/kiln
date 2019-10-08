@@ -45,9 +45,9 @@ import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 import qualified Network.HTTP.Types.Status as Http (Status (..))
 
 import Paths_tezos_noderpc (version)
-import Tezos.NodeRPC.Class
-import Tezos.NodeRPC.Sources
-import Tezos.NodeRPC.Types
+import Tezos.V005.NodeRPC.Class
+import Tezos.Common.NodeRPC.Sources
+import Tezos.Common.NodeRPC.Types
 import Tezos.Types
 
 nodeRPC

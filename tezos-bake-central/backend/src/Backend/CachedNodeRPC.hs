@@ -112,14 +112,9 @@ import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.History
-import Tezos.NodeRPC.Class
-import Tezos.NodeRPC.Network
-import Tezos.NodeRPC.Types
-import Tezos.Operation (Ballot)
-import Tezos.ProtocolConstants
-import Tezos.PublicKey
-import Tezos.Types
+import Tezos.NodeRPC
+import Tezos.Types hiding (Block)
+import Tezos.Unsafe (unsafeAssumptionRightsContextLevel)
 
 import Backend.Common (timeout')
 import Backend.Schema
@@ -143,7 +138,7 @@ data NodeQuery a where
   NodeQuery_ProtocolIndex   :: !ProtocolHash -> NodeQuery ProtocolIndex
   NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
-  NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery Account
+  NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
   NodeQuery_Ballot          :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
   NodeQuery_ProposalVote    :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
@@ -151,7 +146,7 @@ data NodeQuery a where
   NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
   NodeQuery_CurrentProposal :: BlockHash -> NodeQuery (Maybe ProtocolHash)
   NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
-  NodeQuery_Block           :: BlockHash -> NodeQuery Block
+  NodeQuery_Block           :: BlockHash -> NodeQuery BlockCrossCompat
   NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeader
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
@@ -687,7 +682,7 @@ levelAncestor hist lvl ctx = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromInteg
 -- requested level, that is on the correct branch.
 rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> (RawLevel, Maybe BlockHash)
 rightsContext params hist ctx lvl = (ctxLvl, levelAncestor hist ctxLvl ctx)
-  where ctxLvl = Tezos.ProtocolConstants.unsafeAssumptionRightsContextLevel params lvl
+  where ctxLvl = unsafeAssumptionRightsContextLevel params lvl
 
 -- | Round the second argument to the next lower multiple of the first
 floorBy :: Integral a => a -> a -> a
@@ -901,7 +896,7 @@ nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC ChainTag_Hash
 
 nodeQueryImpl
   :: forall a chain repr.
-   ( QueryBlock repr, QueryHistory repr, QueryProtocolIndex repr, BlockType repr ~ Block, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
+   ( QueryBlock repr, QueryHistory repr, QueryProtocolIndex repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
      => repr c -> m c)
@@ -980,7 +975,7 @@ instance QueryChain OsNodeQuery where
   rChain = OsNodeQuery "/v3/chain" []
 
 instance QueryBlock OsNodeQuery where
-  type BlockType OsNodeQuery = Block
+  type BlockType OsNodeQuery = BlockCrossCompat
   type BlockHeaderType OsNodeQuery = BlockHeader
   rHead = chainApi1 "/head"
   rBlock = chainApi2 "/block-full" $ \h -> [("hash", toBase58Text h)]
@@ -1360,14 +1355,14 @@ buildProtocolIndex branch protoHash history = do
           pure ProtocolIndex
             { _protocolIndex_chainId = chainId
             , _protocolIndex_hash = firstBlock ^. protocolHash
-            , _protocolIndex_proto = firstBlock ^. block_header . blockHeaderFull_proto
+            , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
             , _protocolIndex_constants = constants
             , _protocolIndex_firstBlockHash = firstBlock ^. hash
             , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
             , _protocolIndex_firstBlockLevel = firstBlock ^. level
             , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
             , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
-            , _protocolIndex_firstBlockCycle = firstBlock ^. block_metadata . blockMetadata_level . level_cycle
+            , _protocolIndex_firstBlockCycle = firstBlock ^. blockMetadata . blockMetadata_level . level_cycle
             }
 
       for_ protoIndexes $ \protoIndex -> do
@@ -1385,15 +1380,15 @@ buildProtocolIndex branch protoHash history = do
 buildProtocolHistoryUntil
   :: forall m
    . (MonadNodeQuery (NodeQueryT m), MonadMask m)
-  => "predicate" :! (Block -> Bool)
+  => "predicate" :! (BlockCrossCompat -> Bool)
   -> "branch" :! BlockHash
   -> "history" :! CachedHistory'
-  -> NodeQueryT m (Map ProtocolHash Block)
+  -> NodeQueryT m (Map ProtocolHash BlockCrossCompat)
   -- Turns this into table, ProtocolHash 
 buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
   branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
   go ! #currentBlock branchBlock
-     ! #currentProtocol (branchBlock ^. block_protocol)
+     ! #currentProtocol (branchBlock ^. protocolHash)
      ! #protocolHistory mempty
   where
     levelsBefore blk lvls = maybe (nqThrowError CacheError_NotEnoughHistory) pure $
@@ -1402,12 +1397,12 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
       else
         levelAncestor history (max (blk ^. level - lvls) (history ^. cachedHistory_minLevel)) (blk ^. hash)
 
-    votingPeriodPosition = block_metadata . blockMetadata_level . level_votingPeriodPosition
+    votingPeriodPosition = blockMetadata . blockMetadata_level . level_votingPeriodPosition
 
-    go :: "currentBlock" :! Block
+    go :: "currentBlock" :! BlockCrossCompat
        -> "currentProtocol" :! ProtocolHash
-       -> "protocolHistory" :! Map ProtocolHash Block
-       -> NodeQueryT m (Map ProtocolHash Block)
+       -> "protocolHistory" :! Map ProtocolHash BlockCrossCompat
+       -> NodeQueryT m (Map ProtocolHash BlockCrossCompat)
     go (Arg currentBlock) (Arg currentProtocol) (Arg protocolHistory) =
       case currentBlock ^. level == history ^. cachedHistory_minLevel of
         True -> do
@@ -1442,12 +1437,12 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
                             ! #currentProtocol (lastBlockInPreviousProtocol ^. protocolHash)
                             ! #protocolHistory protocolHistory'
 
-    binarySearch :: Block -> Block -> NodeQueryT m (Maybe (Block, Block))
+    binarySearch :: BlockCrossCompat -> BlockCrossCompat -> NodeQueryT m (Maybe (BlockCrossCompat, BlockCrossCompat))
     binarySearch low high = do
       $(logDebug) [i|Protocol binary search between levels ${low ^. level} and ${high ^. level}|]
       binarySearch' low high
 
-    binarySearch' :: Block -> Block -> NodeQueryT m (Maybe (Block, Block))
+    binarySearch' :: BlockCrossCompat -> BlockCrossCompat -> NodeQueryT m (Maybe (BlockCrossCompat, BlockCrossCompat))
     binarySearch' low high
       | low ^. level >= high ^. level = pure Nothing
       | low ^. level == high ^. level - 1 =

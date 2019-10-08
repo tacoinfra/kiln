@@ -55,7 +55,7 @@ import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
 import Rhyolite.App (HasView, View, ViewSelector)
 import Rhyolite.Schema (Email, Id(..), IdData)
 
-import Tezos.NodeRPC.Sources (PublicNode)
+import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common (uriHostPortPath)

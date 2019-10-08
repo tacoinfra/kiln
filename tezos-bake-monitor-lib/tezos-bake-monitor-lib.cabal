@@ -14,40 +14,73 @@ cabal-version: >=1.10
 
 library
   exposed-modules:
-    -- Tezos.NodeRPC.Schema
     Data.LCA.Online.Polymorphic
-    Tezos.Account
-    Tezos.BalanceUpdate
-    Tezos.Base16ByteString
-    Tezos.Base58Check
-    Tezos.Binary
-    Tezos.Block
-    Tezos.BlockHeader
-    Tezos.Chain
-    Tezos.Checkpoint
-    Tezos.Contract
-    Tezos.Envelope
-    Tezos.Fitness
-    Tezos.Json
-    Tezos.Lenses
-    Tezos.Ledger
-    Tezos.Level
-    Tezos.Micheline
-    Tezos.Michelson
-    Tezos.NodeRPC.Class
-    Tezos.NodeRPC.Sources
-    Tezos.NodeRPC.Types
-    Tezos.Operation
-    Tezos.PeriodSequence
-    Tezos.ProtocolConstants
-    Tezos.PublicKey
-    Tezos.PublicKeyHash
-    Tezos.Signature
-    Tezos.ShortByteString
-    Tezos.TestChainStatus
-    Tezos.Tez
     Tezos.Types
-    Tezos.Vote
+    Tezos.Unsafe
+
+    Tezos.Common.Base16ByteString
+    Tezos.Common.Base58Check
+    Tezos.Common.Binary
+    Tezos.Common.Chain
+    Tezos.Common.Json
+    Tezos.Common.NetworkStat
+    Tezos.Common.NodeRPC.Types
+    Tezos.Common.NodeRPC.Sources
+    Tezos.Common.ShortByteString
+    
+    Tezos.V004.Account
+    Tezos.V004.BalanceUpdate
+    Tezos.V004.Block
+    Tezos.V004.BlockHeader
+    Tezos.V004.Checkpoint
+    Tezos.V004.Contract
+    Tezos.V004.Envelope
+    Tezos.V004.Fitness
+    Tezos.V004.Lenses
+    Tezos.V004.Ledger
+    Tezos.V004.Level
+    Tezos.V004.Micheline
+    Tezos.V004.Michelson
+    Tezos.V004.NodeRPC.Class
+    Tezos.V004.Operation
+    Tezos.V004.PeriodSequence
+    Tezos.V004.ProtocolConstants
+    Tezos.V004.PublicKey
+    Tezos.V004.PublicKeyHash
+    Tezos.V004.Signature
+    Tezos.V004.TestChainStatus
+    Tezos.V004.Tez
+    Tezos.V004.Types
+    Tezos.V004.Unsafe
+    Tezos.V004.Vote
+
+    Tezos.V005.Account
+    Tezos.V005.BalanceUpdate
+    Tezos.V005.Block
+    Tezos.V005.BlockHeader
+    Tezos.V005.Checkpoint
+    Tezos.V005.Contract
+    Tezos.V005.Envelope
+    Tezos.V005.Fitness
+    Tezos.V005.Lenses
+    Tezos.V005.Ledger
+    Tezos.V005.Level
+    Tezos.V005.Micheline
+    Tezos.V005.Michelson
+    Tezos.V005.NodeRPC.Class
+    Tezos.V005.NodeRPC.CrossCompat
+    Tezos.V005.Operation
+    Tezos.V005.PeriodSequence
+    Tezos.V005.ProtocolConstants
+    Tezos.V005.PublicKey
+    Tezos.V005.PublicKeyHash
+    Tezos.V005.Signature
+    Tezos.V005.TestChainStatus
+    Tezos.V005.Tez
+    Tezos.V005.Types
+    Tezos.V005.Unsafe
+    Tezos.V005.Vote
+
   other-modules:
     Paths_tezos_bake_monitor_lib
   build-depends:
@@ -87,3 +120,28 @@ library
   hs-source-dirs: src
   default-language: Haskell2010
   ghc-options: -Wall -Werror
+
+test-suite test
+  default-language:
+    Haskell2010
+  type:
+    exitcode-stdio-1.0
+  hs-source-dirs:
+    tests
+  main-is:
+    test.hs
+  build-depends:
+      base >= 4 && < 5
+    , tezos-bake-monitor-lib
+    , aeson
+    , aeson-pretty == 0.8.*
+    , bytestring
+    , base16-bytestring
+    , pretty
+    , pretty-show
+    , Diff
+    , tasty
+    , tasty-hunit
+    , text
+
+  
