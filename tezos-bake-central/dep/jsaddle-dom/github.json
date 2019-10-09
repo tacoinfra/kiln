@@ -1,7 +1,7 @@
 {
-  "owner": "benkolera",
+  "owner": "ghcjs",
   "repo": "jsaddle-dom",
-  "branch": "blk@fix_new_form_data",
-  "rev": "7e09939a0332509363fb1ba6e5dde23663da5a4e",
+  "branch": "master",
+  "rev": "6ce23c5ef5e2bf15531e41f1d0e7ab82e953806e",
   "sha256": "1wpwf025czibkw6770c99zk7r30j6nh7jdzhzqbi2z824qyqzbnw"
 }
