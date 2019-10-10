@@ -1311,7 +1311,9 @@ getProtocolIndex branch protoHash = do
   case headMay [x | x <- existingEntries, isJust $ branchPointPure (x ^. hash) branch history] of
     Just existing -> pure existing
     Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
-      Right p' -> pure p'
+      Right p' -> do
+        insert p'
+        pure p'
       Left _ -> buildProtocolIndex branch protoHash history
 
 buildProtocolIndex
