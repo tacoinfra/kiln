@@ -26,7 +26,7 @@ in {
     # CONFIGURATION
     oldProtoHash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd";
     oldSuffix = "004-${builtins.substring 0 8 oldProtoHash}";
-    newSuffix = "005-PsBABY5H";
+    newSuffix = "005-PsBabyM1";
 
     winningProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
   in pkgs.writeScriptBin "protocol-test" ''
