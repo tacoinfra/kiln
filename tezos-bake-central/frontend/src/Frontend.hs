@@ -1755,7 +1755,7 @@ nodesTab =
                       NodeProcessState_ImportFailed -> ""
                       NodeProcessState_ImportTimeout -> ""
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
-                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
+                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> do
                       ev <- divClass "buttons" $ uiButtonM "" $ do
                         icon "icon-angle-right"
                         text "Start Verification"
