@@ -66,6 +66,7 @@ library
     Tezos.V005.Lenses
     Tezos.V005.Ledger
     Tezos.V005.Level
+    Tezos.V005.Mempool
     Tezos.V005.Micheline
     Tezos.V005.Michelson
     Tezos.V005.NodeRPC.Class
