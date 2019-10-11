@@ -27,9 +27,10 @@ in {
     oldProtoHash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd";
     oldSuffix = "004-${builtins.substring 0 8 oldProtoHash}";
     newSuffix = "005-PsBabyM1";
+    # this should ideally be same as newSuffix, but for 005 the proposal is different from the actual new protocol
+    proposalSuffix = "005-PsBABY5H";
 
-    # winningProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
-    winningProtocolLib = tzMultiProto.tezos-src + "/src/proto_005_PsBABY5H/lib_protocol";
+    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] proposalSuffix}/lib_protocol";
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -62,7 +63,7 @@ in {
     rm -rf "$root_path"
 
     mkdir -p "$kiln_config_dir"
-    ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${winningProtocolLib} \
+    ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${proposalProtocolLib} \
       --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
       --no-daemons-for LBK \
       --add-external 10000 \
