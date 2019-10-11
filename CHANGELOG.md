@@ -2,8 +2,8 @@
 
 ## 0.7.0
 
-  * Support for Babylon protocol (005_PsBabyM1)
-    * Kiln now has tezos binaries to do baking operations on the new protocol.
+  * Support for Babylon protocol (005_PsBabyM1 and 005_PsBABY5H)
+    * Kiln now has tezos binaries to do baking operations on Athens (004) and the new 005 protocols.
     * Fixes for changes in the format of operations. This is required to properly parse block data in Kiln.
     * Fixes for changes in RPC. This enables Kiln to properly communicate with tezos-node running on new protocol.
 
@@ -13,11 +13,8 @@
 
   * Bug Fixes
     * Obsidian Public Node APIs
-    * UI - Baker alerts don't resolve on the tile without a page refresh.
-
-### Known Issues
-
-  * When upgrading Kiln on Ubuntu/Debian, the existing `/etc/kiln/args` file will be over-written.
+    * UI - Baker alerts now resolve on the tile without a page refresh.
+    * Upgrade on Kiln no longer overwrites the /etc/kiln/args file
 
 ## 0.6.2
 
