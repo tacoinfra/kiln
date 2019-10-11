@@ -28,7 +28,8 @@ in {
     oldSuffix = "004-${builtins.substring 0 8 oldProtoHash}";
     newSuffix = "005-PsBabyM1";
 
-    winningProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
+    # winningProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
+    winningProtocolLib = tzMultiProto.tezos-src + "/src/proto_005_PsBABY5H/lib_protocol";
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -73,8 +74,6 @@ in {
       --pause-on-error true \
       --root-path "$root_path" \
       --waiting-attempts 2000 \
-      --extra-dummy-proposals-batch-size 1 \
-      --extra-dummy-proposals-batch-levels "$(seq -s, 5 "$blocks_per_voting_period")" \
       --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
       --protocol-hash ${oldProtoHash} \
       --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \
