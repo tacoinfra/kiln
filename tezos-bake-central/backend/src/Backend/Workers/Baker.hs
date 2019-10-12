@@ -14,7 +14,7 @@ module Backend.Workers.Baker where
 import Prelude hiding (cycle)
 
 import Control.Arrow ((&&&))
-import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex)
+import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex, (^..))
 import Control.Exception (handle, SomeException)
 import Control.Concurrent.STM (atomically)
 import Control.Monad (guard, mzero)
@@ -49,13 +49,16 @@ import Rhyolite.Schema (Id (..), Json(..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
-import Tezos.Operation
+import qualified Tezos.V004.Types as V004
+import qualified Tezos.V005.Types as V005
+import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 
 import Backend.Config (AppConfig (..), HasAppConfig)
 import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (worker')
 import Backend.Config (AppConfig (..))
+import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle, getLatestProtocolConstants)
 import Backend.Schema
 import Backend.STM (atomicallyWith)
 import Backend.Alerts (clearMissedBake, reportMissedBake)
@@ -76,25 +79,20 @@ bakerRightsWorker
   => NodeDataSource
   -> m (IO ())
 bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  (protoInfo, headM) <- liftIO $ atomically $
-    (,) <$> waitForParams nds <*> dataSourceHead nds
+  res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ do
+    (headBlock, protoInfo, cycleHashes) <- runNodeQueryT $ do
+      (headBlock, protoInfo) <- getLatestProtocolConstants
+      cycleHashes <- cycleStartHashes headBlock
+      pure (headBlock, protoInfo, cycleHashes)
 
-  let
-    db = _nodeDataSource_pool nds
-
-    -- the levels returned by cycleStartHashes are the levels in the cycle that
-    -- determines those rights.  the level that those rights are applied to are
-    -- in the future of that.
-    rightsLookAhead :: RawLevel
-    rightsLookAhead = firstLevelInCycle protoInfo (1 + _protoInfo_preservedCycles protoInfo) - 1 -- cycle starts are offset by 1
-
-  res <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> do
     $(logDebug) "Update baker cycle."
     let
+      db = _nodeDataSource_pool nds
       chainId = _nodeDataSource_chain nds
       headHash :: BlockHash = headBlock ^. hash
-    cycleHashes :: [RightsCycleInfo] <- fmap (fromMaybe []) $ atomicallyWith $ cycleStartHashes headHash
+
     let
+      rightsLookAhead = RawLevel $ unCycle ( _protoInfo_preservedCycles protoInfo) * unRawLevel ( _protoInfo_blocksPerCycle protoInfo)
       minCycle = minimumDef 0 $ fmap _rightsCycleInfo_cycle cycleHashes
       maxCycle = maximumDef (-1) $ fmap _rightsCycleInfo_cycle cycleHashes
       -- well just swizzle these around
@@ -123,24 +121,24 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
 
       -- here's what we've got:
       let
-        haveProgress :: MonoidalMap (Cycle,  PublicKeyHash) (Max BakerRightsCycleProgress)
+        haveProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress)
         haveProgress = flip foldMap bakerRightsCycleProgress' $
           \p -> MMap.singleton (_bakerRightsCycleProgress_cycle &&& _bakerRightsCycleProgress_publicKeyHash $ p) (Max p)
 
       -- this is all of the progress we could possibly want.  we indicate that the progress we've made is none by using the level just before the cycle starts.
       return $ (haveProgress <>) $ MMap.fromList $ do
-            pkh <- bakerPKHs
-            cycleHash <- cycleHashes
-            let
-              cycle = _rightsCycleInfo_cycle cycleHash
-              v = BakerRightsCycleProgress
-                { _bakerRightsCycleProgress_chainId = chainId
-                , _bakerRightsCycleProgress_branch = _rightsCycleInfo_branch cycleHash
-                , _bakerRightsCycleProgress_publicKeyHash = pkh
-                , _bakerRightsCycleProgress_cycle = cycle
-                , _bakerRightsCycleProgress_progress = rightsLookAhead + _rightsCycleInfo_minLevel cycleHash - 1
-                }
-            return ((cycle, pkh), Max v)
+        pkh <- bakerPKHs
+        cycleHash <- cycleHashes
+        let
+          cycle = _rightsCycleInfo_cycle cycleHash
+          v = BakerRightsCycleProgress
+            { _bakerRightsCycleProgress_chainId = chainId
+            , _bakerRightsCycleProgress_branch = _rightsCycleInfo_branch cycleHash
+            , _bakerRightsCycleProgress_publicKeyHash = pkh
+            , _bakerRightsCycleProgress_cycle = cycle
+            , _bakerRightsCycleProgress_progress = rightsLookAhead + _rightsCycleInfo_minLevel cycleHash - 1
+            }
+        return ((cycle, pkh), Max v)
 
     let
       pkhs :: Set PublicKeyHash
@@ -152,7 +150,6 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
         -- if we're already at maxLevel, then we're done here.
         guard (_bakerRightsCycleProgress_progress p < rightsLookAhead + _rightsCycleInfo_maxLevel cycle')
         return [p]
-
 
       mNextUnfinished :: Maybe (NonEmpty BakerRightsCycleProgress, RightsCycleInfo) = do
         (cycle, x) <- Map.lookupMin $ MMap.getMonoidalMap unfinished
@@ -240,27 +237,24 @@ bakerWorker
   -> NodeDataSource
   -> m (IO ())
 bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  (protoInfo, headM) :: (ProtoInfo, Maybe VeryBlockLike) <- liftIO $ atomically $ do
-    params <- waitForParams nds
-    dsh <- dataSourceHead nds
-    return (params, dsh)
+  let db = _nodeDataSource_pool nds
 
-  let
-    db = _nodeDataSource_pool nds
-
-  res <- flip runReaderT nds $ runExceptT $ for_ headM $ \headBlock -> do
-    (bakerInt, currentState :: [(Baker, Maybe BakerDetails)]) <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
+  res <- flip runReaderT nds $ runExceptT $ do
+    (bakerInt, protoInfo, headCycle, headBlock, currentState :: [(Baker, Maybe BakerDetails)]) <- runNodeQueryT $ do
+      (headBlock, protoInfo) <- getLatestProtocolConstants
+      headCycle <- levelToCycle $ headBlock ^. level
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
           (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
       details :: Map PublicKeyHash BakerDetails <- Map.fromList <$> project
         (BakerDetails_publicKeyHashField, BakerDetailsConstructor)
         (BakerDetails_publicKeyHashField `in_` Map.keys bakers)
-      return $ (bakerInt,) $ catMaybes $ toList $ alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
+      return $ (bakerInt, protoInfo, headCycle, headBlock,) $ catMaybes $ toList $
+        alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
     wantedActions <- for currentState $ \(baker, details) -> do
       let isInternal = Just (_baker_publicKeyHash baker) == bakerInt
-      res <- (Right <$> getWantedAction protoInfo headBlock baker details isInternal)
+      res <- (Right <$> getWantedAction protoInfo headBlock headCycle baker details isInternal)
         `catchError` (pure . Left)
       case res of
         Right commit -> do
@@ -291,13 +285,12 @@ getWantedAction
   , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare
   , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
   )
-  => ProtoInfo -> blk -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (mCommit ())
-getWantedAction protoInfo headBlock baker details isInternal = do
+  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (mCommit ())
+getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   let
     headHash = headBlock ^. hash
     headPred = headBlock ^. predecessor
     headLvl = headBlock ^. level
-    headCycle = levelToCycle protoInfo headLvl
     pkh = _baker_publicKeyHash baker
     headFitness = headBlock ^. fitness
     -- for each baker; follow the branch it was on previously to the new head
@@ -322,7 +315,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
                  <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
-            bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake (_blockMetadata_baker (_block_metadata thisBlock) == _baker_publicKeyHash baker)
+            bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake ((thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker)
               (headBlock ^. fitness)
               RightKind_Baking
               (baker ^. baker_publicKeyHash)
@@ -332,14 +325,16 @@ getWantedAction protoInfo headBlock baker details isInternal = do
     -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
     endorsingAlerts :: [mCommit ()]
-                    <- whenM (any ((== _baker_publicKeyHash baker) . _endorsingRights_delegate) endorsers) $ do
+                    <- whenM (elem (_baker_publicKeyHash baker) $ _endorsingRights_delegate <$> endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
-      let action = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (anyOf (block_operations . traverse . traverse . operation_contents . traverse . _OperationContents_Endorsement . operationContentsEndorsement_metadata . endorsementMetadata_delegate) (== _baker_publicKeyHash baker) thisBlock)
-                   (headBlock ^. fitness)
-                   RightKind_Endorsing
-                   (baker ^. baker_publicKeyHash)
-                   (lvl - 1)
+      let
+        endorserDelegates = blockCrossCata
+          (^..V004.block_operations . traverse . traverse . V004.operation_contents . traverse . V004._OperationContents_Endorsement . V004.operationContentsEndorsement_metadata . V004.endorsementMetadata_delegate)
+          (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
+          thisBlock
+        mkAction = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (_baker_publicKeyHash baker `elem` endorserDelegates)
+        action = mkAction (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
       return $ pure action
 
     return $ sequence_ $ bakingAlerts <> endorsingAlerts
@@ -349,7 +344,7 @@ getWantedAction protoInfo headBlock baker details isInternal = do
   -- This is the things that fails. First go look up the account, and see who/if
   -- it is delegated (`NodeQuery_Account`). Only proceed if there is a delegate,
   -- and cache that.
-  delegate <- _accountDelegate_value . _account_delegate <$>
+  delegate <- (^.accountCrossCompat_delegatePkh) <$>
     nodeQueryDataSource (NodeQuery_Account headHash (Implicit pkh))
   selfDelegateActions <- case delegate of
     Nothing -> pure []

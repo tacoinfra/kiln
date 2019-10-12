@@ -63,8 +63,7 @@ import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (PublicNode (..), publicNodeShortName, tzScanUri)
-import Tezos.NodeRPC.Types
+import Tezos.Common.NodeRPC.Sources 
 import Tezos.Types
 
 import Common (humanBytes)
@@ -86,11 +85,12 @@ import Common.Alerts (
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
+import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chainId, frontendConfig_chain, frontendConfig_appVersion, frontendConfig_logExportAvailable, FrontendConfig(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
-import Common.Schema hiding (Event)
+import Common.Schema
 import ExtraPrelude
 import Frontend.Amendment
 import Frontend.Common
@@ -369,7 +369,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
   divClass "topbar" $ do
     divClass "ui horizontal list" $ do
-      latestHead <- watchLatestHead
+      (latestHead, knownProto) <- watchHeadWithProtocol
       let infoItem faded title body = divClass "item" $
             elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
               divClass "header" $ text title
@@ -377,10 +377,9 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
       infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-      protoInfo' <- watchProtoInfo
-      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycle protoInfo' $ (fmap.fmap) (view level) latestHead
+      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
       whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
-        text $ tshow $ unCycle c
+        text $ either ("Error: " <>) (tshow . unCycle) c
 
       whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
         text $ tshow (unRawLevel $ b ^. level)
@@ -388,9 +387,9 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         localHumanizedTimestampBasic $ pure $ b ^. timestamp
 
       amendments <- watchAmendment
-      mProtoInfo <- maybeDyn protoInfo'
+      mKnownProto <- maybeDyn knownProto
       mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
-      whenJustDyn (liftA2 . (,,) <$> disconnected <*> mProtoInfo <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
+      whenJustDyn (liftA2 . (,,) <$> disconnected <*> ((fmap . fmap) _protocolIndex_constants <$> mKnownProto) <*> mAmendment) $ \(dc, protoInfo, amendment) -> unless dc $ do
         let amendmentWrapper = elAttr' "div" ("class" =: "item" <> "style" =: "position: relative")
         tooltippedWrapper amendmentWrapper TooltipPos_BottomCenter (amendmentPopup amendment amendments protoInfo) $ divClass "content" $ do
           kind <- holdUniqDyn $ _amendment_period <$> amendment
@@ -761,7 +760,7 @@ liveErrorsWidget = void $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
                 Right _ -> Nothing
-          keys1 <- NEL.nonEmpty $ mapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker bakers
+          keys1 <- NEL.nonEmpty $ fmapMaybe getBaker $ MMap.toList $ MMap.map _bakerSummary_baker bakers
           since <- allNodesDownTime
           let k = SynthError_BakersInformationDown keys1
           pure $ Map.singleton k $ (, k) $
@@ -872,7 +871,7 @@ liveErrorsWidget = void $ do
 
             NodeLogTag_NodeInvalidPeerCount -> do
               let ErrorLogNodeInvalidPeerCount _ _ minPeerCount _ = log
-              header "Too few peers."
+              header "Node has too few peers."
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
@@ -1564,10 +1563,10 @@ nodesTab =
             time t = T.pack $ Time.formatTime Time.defaultTimeLocale timeFormat $ Time.utcToZonedTime tz t
 
             desc = dynText $ ffor dSm $ \sm -> "Your snapshot was successfully imported "
-              <> maybe "" (\t -> "at " <> time t <> ", ") (_snapshotMeta_headBlockBakeTime =<< sm)
+              <> maybe "" (\t -> "at " <> time t <> ", ") (_snapshotMeta_importCompleteTime =<< sm)
               <> "and a Kiln Node has been created. Before starting the node you must verify the snapshot."
             btn = do
-              ev <- divClass "buttons" $ uiButtonM "" $ do
+              ev <- divClass "buttons" $ uiButtonM "primary" $ do
                 icon "icon-angle-right"
                 text "Start Verification"
               dyn_ $ ffor dSm $ traverse $ \sm -> tellModal $ verifySnapshotModal sm <$ ev
@@ -1579,7 +1578,9 @@ nodesTab =
             title = text "Snapshot import failed."
             desc = do
               el "p" $ text "An unknown error has occured and the Kiln Node cannot be started."
-              el "p" $ text "Fix: Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
+              el "p" $ do
+                el "strong" $ text "Fix: "
+                text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
           renderSplashAlert i title Nothing desc
 
       dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case
@@ -1754,7 +1755,7 @@ nodesTab =
                       NodeProcessState_ImportFailed -> ""
                       NodeProcessState_ImportTimeout -> ""
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
-                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
+                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> do
                       ev <- divClass "buttons" $ uiButtonM "" $ do
                         icon "icon-angle-right"
                         text "Start Verification"
@@ -2176,7 +2177,7 @@ bakersTab =
                   False -> do
                     open <- tileMenuEntry "Vote"
                     let amendment = snd <$> periodKind_amendment
-                    mProtoInfo <- maybeDyn =<< watchProtoInfo
+                    mProtoInfo <- maybeDyn =<< watchLatestProtoInfo
                     let baker = ffor (current bakerDyn) $ \summary -> case _bakerSummary_baker summary of
                           Left _ -> Nothing
                           Right b -> Just (pkh, _bakerInternalData_secretKey b)
@@ -2197,7 +2198,7 @@ bakersTab =
               latestHead <- maybeDyn =<< watchLatestHead
               dyn_ $ ffor latestHead $ \case
                 Nothing -> pure () -- no head to set high water mark
-                Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (_veryBlockLike_level <$> bl) sk pkh
+                Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (view level <$> bl) sk pkh
               if _bakerInternalData_running bid
               then do
                 let stopModal = warningModal "Stop Baker?"
@@ -2250,8 +2251,7 @@ bakersTab =
         divClass "divider" blank
 
         el "dl" $ do
-          latestHead <- watchLatestHead
-          dparameters <- watchProtoInfo
+          (latestHead, knownProto) <- watchHeadWithProtocol
           el "div" $ do
             el "dt" (text "Next")
             el "dd" $ dyn_ $ ffor nextRightsTxt $ \case
@@ -2262,7 +2262,7 @@ bakersTab =
                   RightKind_Endorsing -> "Endorse block "
                 text $ tshow $ unRawLevel l
                 let eventDyn = constDyn (r, l)
-                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view protocolIndex_constants) knownProto) <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
@@ -2372,7 +2372,7 @@ withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadRhyoliteFron
                      => RawLevel -> (Dynamic t Time.NominalDiffTime -> m ()) -> m ()
 withAmendmentPeriodProgress expectedVotingPeriod w = do
   currentTime <- asks (^. timer)
-  mProtoInfo <- maybeDyn =<< watchProtoInfo
+  mProtoInfo <- maybeDyn =<< watchLatestProtoInfo
   amendments <- watchAmendment
   mAmendment <- maybeDyn $ fmap snd . Map.lookupMax <$> amendments
   dyn_ $ ffor ((liftA2 . liftA2) (,) mProtoInfo mAmendment) $ \case

@@ -35,7 +35,9 @@ import GHC.Generics (Generic)
 
 import qualified Data.LCA.Online.Polymorphic as LCA
 
-import Tezos.NodeRPC
+import Tezos.Common.NodeRPC.Types
+import Tezos.V005.NodeRPC.Class
+import Tezos.V005.NodeRPC.CrossCompat
 import Tezos.NodeRPC.Network
 import Tezos.Types
 
@@ -43,7 +45,7 @@ data CachedHistory a = CachedHistory
   -- what i really need here is a cover tree (or some other metric index)
   -- a plausible alternative is to only keep the fittest n branches
   -- investigate: https://github.com/mikeizbicki/HLearn/blob/master/src/HLearn/Data/SpaceTree/CoverTree.hs
-  { _cachedHistory_branches :: !(Map BlockHash VeryBlockLike)
+  { _cachedHistory_branches :: !(Map BlockHash (WithProtocolHash VeryBlockLike))
   , _cachedHistory_blocks :: !(Map BlockHash (LCA.Path BlockHash a))
   , _cachedHistory_minLevel :: !RawLevel
   } deriving (Show, Typeable, Generic)
@@ -122,7 +124,7 @@ getHistoryIncremental askHistory maxBatch chainId blk numLevels branches
 -- be mempty
 accumHistory
   :: forall a b e r m.
-    ( BlockLike b
+    ( BlockLike b, HasProtocolHash b
     , MonadIO m, MonadLogger m
     , MonadReader r m, Monoid a, HasCachedHistory TVar r r a a, HasPublicNodeContext r
     , MonadError e m, AsPublicNodeError e
@@ -175,13 +177,13 @@ accumHistory chainId f blk = do
     writeTVar historyVar newHist
     pure a
 
-
-
-exposeBranch :: BlockLike b => b -> CachedHistory a -> CachedHistory a
-exposeBranch blk c = c { _cachedHistory_branches
-  = Map.delete (blk ^. predecessor)
-  $ Map.insert (blk ^. hash) (mkVeryBlockLike blk)
-  $ _cachedHistory_branches c }
+exposeBranch :: (HasProtocolHash b, BlockLike b) => b -> CachedHistory a -> CachedHistory a
+exposeBranch blk c = c
+  { _cachedHistory_branches
+      = Map.delete (blk ^. predecessor)
+      $ Map.insert (blk ^. hash) (WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash))
+      $ _cachedHistory_branches c
+  }
 
 accumHistoryImpl
   :: Monoid a => BlockHash -> BlockHash -> a -> CachedHistory a -> CachedHistory a
@@ -197,17 +199,18 @@ accumHistoryImpl blkHash predHash acc c = case Map.lookup blkHash (_cachedHistor
       branches = _cachedHistory_branches c
       newPath = LCA.cons blkHash acc $ fromMaybe LCA.empty $ Map.lookup predHash blocks
 
-accumBalance :: MonadState Balances m => Block -> m ()
+accumBalance :: (HasBalanceUpdates b, MonadState Balances m) => b -> m ()
 accumBalance = modify . (<>) . getBalanceChanges
 
 scanBranch ::
   ( MonadIO m, MonadLogger m
   , MonadReader ctx m , HasNodeRPC ctx
   , MonadError e m, AsRpcError e
+  , BlockLike b, HasChainId b
   )
-  => Block -> RawLevel -> RawLevel -> (Block -> m a) -> m ()
+  => b -> RawLevel -> RawLevel -> (BlockCrossCompat -> m a) -> m ()
 scanBranch branch start stop k = do
-  let headLvl = _blockHeader_level $ _block_header branch
+  let headLvl = branch ^. level
   for_ [start .. stop] $ \n -> do
-    blk <- nodeRPC $ rBlockPred (headLvl - n) (_block_chainId branch) (_block_hash branch)
+    blk <- nodeRPC $ rBlockPred (headLvl - n) (branch ^. chainIdL) (branch ^. hash)
     void $ k blk

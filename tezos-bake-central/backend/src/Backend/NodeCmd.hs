@@ -46,8 +46,7 @@ import System.Which (staticWhich)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
-import Tezos.Base58Check (ProtocolHash)
-import Tezos.Chain (NamedChain(..))
+import Tezos.Types (ProtocolHash, NamedChain(..))
 
 import Backend.CachedNodeRPC
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
@@ -88,6 +87,10 @@ tezosBinaryPaths =
     [ ( "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
       , $(staticWhich "zeronet-tezos-baker-005-PsBABY5H")
       , $(staticWhich "zeronet-tezos-endorser-005-PsBABY5H")
+      )
+    , ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+      , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
+      , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
       )
     ]
 

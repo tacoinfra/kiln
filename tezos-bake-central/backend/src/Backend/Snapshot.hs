@@ -36,11 +36,9 @@ import System.Directory
 import System.Exit (ExitCode(..))
 import qualified System.Process as Process
 
-import Tezos.Base58Check
-import Tezos.Block (VeryBlockLike (..))
-import Tezos.History
-import Tezos.ShortByteString (toShort)
+import Tezos.NodeRPC (_cachedHistory_blocks)
 import Tezos.Types
+import Tezos.Common.Base58Check
 
 import Backend.CachedNodeRPC
 import Backend.Common
@@ -99,6 +97,7 @@ handleSnapshotUpload appConfig nds chain lockMVar = do
                 , _snapshotMeta_storePath = T.pack storePath
                 , _snapshotMeta_uploadTime = now
                 , _snapshotMeta_importError = Nothing
+                , _snapshotMeta_importCompleteTime = Nothing
                 , _snapshotMeta_headBlock = Nothing
                 , _snapshotMeta_headBlockPrefix = Nothing
                 , _snapshotMeta_headBlockLevel = Nothing
@@ -199,10 +198,9 @@ importSnapshotData appConfig nds chain sm smId = do
             mBlkHash = completeBlockHash blkHashPrefix hist
 
           mBlk <- for mBlkHash $ \blkHash -> flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
-            header <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
-            pure $ mkVeryBlockLike (blkHash, header)
+            nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
           let
-            blkDetails :: (# Text | BlockHash | VeryBlockLike #)
+            blkDetails :: (# Text | BlockHash | BlockHeader #)
             blkDetails = case either (const Nothing) Just =<< mBlk of
               Just blk -> (# | | blk #)
               Nothing -> case mBlkHash of
@@ -214,22 +212,28 @@ importSnapshotData appConfig nds chain sm smId = do
     ExitFailure _ -> inDb $ importFailed $ "importSnapshotData failed: " <> stderr
 
 updateSnapshotMeta
-  :: (PersistBackend m)
-  => (# Text | BlockHash | VeryBlockLike #)
+  :: (PersistBackend m, BlockLike blk)
+  => (# Text | BlockHash | blk #)
   -> Key SnapshotMeta BackendSpecific
   -> m ()
 updateSnapshotMeta blkDetails smId = do
+  now <- getTime
   case blkDetails of
     (# hashPrefix | | #) -> update
-      [ SnapshotMeta_headBlockPrefixField =. Just hashPrefix ]
+      [ SnapshotMeta_headBlockPrefixField =. Just hashPrefix
+      , SnapshotMeta_importCompleteTimeField =. Just now
+      ]
       (AutoKeyField ==. smId)
     (# | blkHash | #) -> update
-      [ SnapshotMeta_headBlockField =. Just blkHash ]
+      [ SnapshotMeta_headBlockField =. Just blkHash
+      , SnapshotMeta_importCompleteTimeField =. Just now
+      ]
       (AutoKeyField ==. smId)
     (# | | blk #) -> update
       [ SnapshotMeta_headBlockField =. (Just $ blk ^. hash)
       , SnapshotMeta_headBlockLevelField =. (Just $ blk ^. level)
       , SnapshotMeta_headBlockBakeTimeField =. (Just $ blk ^. timestamp)
+      , SnapshotMeta_importCompleteTimeField =. Just now
       ]
       (AutoKeyField ==. smId)
   traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
@@ -249,7 +253,7 @@ completeBlockHash prefix' history = (checkBlockHash =<< fst =<< mHashes)
     blks = _cachedHistory_blocks history
     mPrefix :: Maybe BlockHash
     mPrefix = HashedValue . toShort . BS.drop prefixDropLen <$> decodeBase58 bitcoinAlphabet (T.encodeUtf8 appendedPrefix)
-    prefixDropLen = BS.length $ Tezos.Base58Check.prefix (Proxy @'HashType_BlockHash)
+    prefixDropLen = BS.length $ Tezos.Common.Base58Check.prefix (Proxy @'HashType_BlockHash)
     blkHashLength = 51 :: Int
     appendedPrefix = prefix' <> T.replicate (blkHashLength - T.length prefix') "1"
 

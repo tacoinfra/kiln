@@ -15,7 +15,7 @@
 module Backend where
 
 import Control.Concurrent.MVar (MVar, newEmptyMVar)
-import Control.Concurrent.STM (atomically, readTQueue, newTQueueIO, newTVarIO)
+import Control.Concurrent.STM (atomically, readTQueue, newTVarIO, newTQueueIO)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
@@ -70,10 +70,7 @@ import Text.URI (URI)
 import qualified Text.URI as URI
 
 import Backend.Db (gargoyleSupported, withDb)
-import Tezos.Chain (mainnetChainId)
-import Tezos.History (emptyCache)
-import Tezos.NodeRPC
-import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
+import Tezos.NodeRPC hiding (DataSource)
 import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource(..))
@@ -91,13 +88,13 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
 import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
-import Backend.WebApi (v2PublicApi)
+import Backend.WebApi (v3PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
-import Backend.Workers.TezosClient
+import Backend.Workers.TezosClient (tezosClientWorker)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
@@ -357,13 +354,10 @@ backendImpl cfg serve = do
             , PublicNodeConfig_updatedField =. now
             ]
 
-    params <- runLoggingEnv logger $ runDb (Identity db) $
-      listToMaybe <$> project Parameters_protoInfoField (Parameters_chainField ==. chainId)
     let
       minLevel :: RawLevel
-      minLevel = case maybeNamedChain of
-        Just NamedChain_Zeronet -> 3 -- Due to the current zeronet genesis block messup
-        _ -> 2
+      minLevel = 2
+
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
@@ -378,16 +372,12 @@ backendImpl cfg serve = do
     dataSrc <- liftIO $ do
       hist <- newTVarIO $ emptyCache minLevel
       cache <- newTVarIO mempty
-      protoInfoVar <- newTVarIO params
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
-
-      -- If the user disables the OS node from command line and only monitors it then we wont use it for CacheRPC.
-      pure NodeDataSource
+      return NodeDataSource
         { _nodeDataSource_history = hist
         , _nodeDataSource_cache = cache
         , _nodeDataSource_chain = chainId
-        , _nodeDataSource_parameters = protoInfoVar
         , _nodeDataSource_httpMgr = httpMgr
         , _nodeDataSource_pool = db
         , _nodeDataSource_latestHead = latestHead
@@ -395,6 +385,7 @@ backendImpl cfg serve = do
         , _nodeDataSource_ioQueue = ioQueue
         , _nodeDataSource_osPublicNode = if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
+        , _nodeDataSource_nodeForQuery = Nothing
         }
 
     withTermination $ \addFinalizer -> do
@@ -403,7 +394,6 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
       addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
-
       let
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
@@ -445,7 +435,7 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
-      addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig db
+      addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
       addFinalizer =<< amendmentProcessWorker appConfig dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
         -- Square roots of rationals are the most effective for this because number theory.
@@ -465,7 +455,7 @@ backendImpl cfg serve = do
         BackendRoute_Listen :=> _ -> handleListen
         BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc chain snapshotUploadLock
         BackendRoute_PublicCacheApi :=> _
-          | serveNodeCache -> v2PublicApi dataSrc
+          | serveNodeCache -> v3PublicApi dataSrc
           | otherwise -> return ()
         BackendRoute_ExportLogs :=> Identity lType -> when logExportAvailable $ handleExportLogs dataSrc lType
 

@@ -28,8 +28,7 @@ import qualified Text.URI.QQ as Uri
 import Common.Config (defaultKilnNodeRpcPort)
 import Common.URI (Port)
 import ExtraPrelude
-import Tezos.Base58Check (toBase58Text, ChainId, ProtocolHash)
-import Tezos.Json
+import Tezos.Types (toBase58Text, ChainId, ProtocolHash, tezosJsonOptions)
 
 data AppConfig = AppConfig
   { _appConfig_emailFromAddress :: Address

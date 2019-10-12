@@ -18,8 +18,9 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
-import Control.Monad.Except (ExceptT, runExceptT, unless)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logErrorSH, logInfo, logInfoSH, logWarnSH)
+import Control.Monad.Catch (MonadMask)
+import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
@@ -33,6 +34,7 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import qualified Data.Set as S
+import Data.String.Here.Interpolated (i)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog.Core
@@ -42,20 +44,19 @@ import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
-import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema (toId, fromId)
 import Rhyolite.Schema (Id (..))
 import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.History (AccumHistoryContext (..), CachedHistory (..), accumHistory)
-import Tezos.NodeRPC (NodeRPCContext (..), PlainNodeStream, RpcError(..), RpcQuery, rChain, rConnections,
-                      rMonitorHeads, rNetworkStat, rCheckpoint)
-import Tezos.NodeRPC.Network (PublicNodeContext (..), getCurrentHead, nodeRPC, nodeRPCChunked)
-import Tezos.NodeRPC.Sources (PublicNode (..), PublicNodeError (..))
-import Tezos.Types
-import qualified Tezos.TestChainStatus as Tezos
+import Tezos.NodeRPC hiding (DataSource, getBlock)
+import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
+import qualified Tezos.V005.Types as V005
+import qualified Tezos.V004.Types as V004
+import qualified Tezos.Types as Tezos
+import qualified Tezos.Unsafe
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -64,6 +65,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
 import Backend.CachedNodeRPC
 import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
+import Backend.IndexQueries
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (atomicallyWith)
@@ -76,38 +78,54 @@ import ExtraPrelude
 -- branch from, so we insist that we bootstrap from it (rather than using a
 -- pool of nodes)
 
-haveNewHead :: (MonadIO m, BlockLike blk) => NodeDataSource -> Maybe PublicNode -> URI -> blk -> m ()
+haveNewHead
+  :: (MonadIO m, BlockLike blk)
+  => NodeDataSource
+  -> Maybe PublicNode
+  -> URI
+  -> blk
+  -> m ()
 haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let
     httpMgr = _nodeDataSource_httpMgr nds
     chainId = _nodeDataSource_chain nds
     historyVar = _nodeDataSource_history nds
+  $(logInfo) [i|Node reported new head: ${headBlockInfo ^. hash}, level ${headBlockInfo ^. level}|]
   (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
-  newBlock <- do
-    let newBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
-    newStateRsp :: Either PublicNodeError () <- runExceptT $
-      flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
-        accumHistory chainId (const ()) headBlockInfo
-        $(logInfoSH) (if newBlock then "new block" else "known block" :: Text, pn, Uri.render nodeAddr, mkVeryBlockLike headBlockInfo)
+  res <- do
+    -- TODO: Why do we accumHistory if it's not a new block?
+    let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
+    newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
+      headBlockHeader <- withExceptT Right $ do
+        flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
+          nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
+
+      withExceptT Left $
+        flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
+          accumHistory chainId (const ()) headBlockHeader
+          $(logInfo) [i|${if isNewBlock then "New" else "Known" :: Text} block from ${pn}, URI ${Uri.render nodeAddr}, ${mkVeryBlockLike headBlockInfo}|]
+
+      pure headBlockHeader
 
     case newStateRsp of
-      Left e -> $(logWarnSH) e $> Left e
-      Right () -> pure $ Right newBlock
+      Left e -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left e
+      Right headBlockHeader -> pure $ Right (isNewBlock, headBlockHeader)
 
-  when ((newBlock == Right True) && (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness)) $ do
-    updatedLevel <- liftIO $ atomically $ do
-      let latestHeadTVar = _nodeDataSource_latestHead nds
-      latestHead <- readTVar latestHeadTVar
-      if Just (headBlockInfo ^. fitness) > latestHead ^? _Just . fitness
-        then do
-          writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockInfo
-          pure $ Just $ headBlockInfo ^. level
-        else
-          pure Nothing
-    for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
+  for_ res $ \(isNewBlock, headBlockHeader) ->
+    when (isNewBlock && Just (headBlockHeader ^. fitness) > oldHead ^? _Just . fitness) $ do
+      updatedLevel <- liftIO $ atomically $ do
+        let latestHeadTVar = _nodeDataSource_latestHead nds
+        latestHead <- readTVar latestHeadTVar
+        if Just (headBlockHeader ^. fitness) > latestHead ^? _Just . fitness
+          then do
+            writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockHeader
+            pure $ Just $ headBlockHeader ^. level
+          else
+            pure Nothing
+      for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> Maybe RawLevel -> IO ()
-nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
+nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> IO ()
+nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
     -- This isn't very nuanced: old, stale nodes, even if they are catching
@@ -133,7 +151,8 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
           , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
           , _nodeDetailsData_updated = Just now
           , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
-          , _nodeDetailsData_savePoint = mSp
+          , _nodeDetailsData_savePoint = fst mSpData
+          , _nodeDetailsData_savePointUpdated = snd mSpData
           }
         }
       (_:_) -> update
@@ -143,7 +162,10 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSp = do
         , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
         , p NodeDetailsData_updatedSelector =. Just now
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-        ] <> maybe [] (\sp -> [p NodeDetailsData_savePointSelector =. Just sp]) mSp)
+        ] <> maybe [] (\sp -> [ p NodeDetailsData_savePointSelector =. Just sp
+                              , p NodeDetailsData_savePointUpdatedSelector =. snd mSpData
+                              ]) (fst mSpData)
+        )
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
@@ -247,7 +269,7 @@ nodeWorker
 nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ withTermination $ \addFinalizer -> do
   nodePool :: MVar (Map URI (IO ())) <- newMVar mempty
   let httpMgr = _nodeDataSource_httpMgr nds
-  workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
+  workerWithDelay (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
     $(logDebug) "Update node cycle."
 
     -- read the persistent list of nodes
@@ -259,10 +281,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         Left _e -> inDb $ reportInaccessibleNodeError nodeId
         Right () -> pure () -- We'll rely on the block monitor to clear this error
 
-    let theseNodes = Map.fromList $ fmap (\(i, (_, nE, _)) -> (nodeData_address appConfig nE, (i, nodeData_alias nE))) $ Map.toList theseNodeRecords
-
-    -- we may need to bootstrap our parameters.  if the cache.parameters var is empty, lets try to fill it with the nodes we currently have
-    _ <- liftIO $ initParams nds $ (,) <$> pure Nothing <*> Map.keys theseNodes
+    let theseNodes = Map.fromList $ fmap (\(id_, (_, nE, _)) -> (nodeData_address appConfig nE, (id_, nodeData_alias nE))) $ Map.toList theseNodeRecords
 
     thoseNodes <- liftIO $ readMVar nodePool
     let newNodes = theseNodes `Map.difference` thoseNodes
@@ -284,37 +303,37 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ())
         chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-        updateCheckpoint :: (BlockLike blk, MonadIO m, MonadLogger m) => blk -> Maybe RawLevel -> m (Maybe RawLevel)
-        updateCheckpoint blk mSp = do
-          mParams <- liftIO $ readTVarIO $ _nodeDataSource_parameters nds
+        updateCheckpoint :: (MonadIO m, MonadLogger m)
+          => MonitorBlock
+          -> (Maybe (Maybe RawLevel, Maybe Cycle), Maybe ProtoInfo)
+          -> m (Maybe RawLevel, Maybe Cycle)
+        updateCheckpoint blk (mSavePointData, mProtoInfo) = do
           let
-            shouldUpdate = maybe True checkCycle mParams
-            checkCycle protoInfo = mSp == Nothing || thisCycle /= predCycle
-              where
-                thisCycle = levelToCycle protoInfo (blk ^. level)
-                predCycle = levelToCycle protoInfo $ pred (blk ^. level)
+            mCurrentCycle = fmap (\protoInfo -> Tezos.Unsafe.unsafeAssumptionLevelToCycle protoInfo (blk ^. level)) mProtoInfo
+            mLastCycle = snd =<< mSavePointData
+            mSavePoint = fst =<< mSavePointData
+            skipUpdate = isJust mSavePoint && isJust mCurrentCycle && mCurrentCycle == mLastCycle
 
-          if not shouldUpdate
-            then pure Nothing
+          if skipUpdate
+            then pure (Nothing, Nothing)
             else do
-              $(logDebugSH) ("nodeWorker: fetching checkpoint for Node: "::Text, nodeAddr)
+              $(logInfo) [i|nodeWorker: fetching checkpoint for Node: ${nodeAddr}|]
               liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
-                Left e ->
-                  case e of
-                    RpcError_UnexpectedStatus 404 _ -> pure $ Just 0
-                    _ -> Nothing <$ $(logErrorSH) ("nodeWorker: could not fetch checkpoint for Node: "::Text, nodeAddr, e)
-                Right checkpoint ->
-                  pure $ Just $ _checkpoint_savePoint checkpoint
+                Left (RpcError_UnexpectedStatus 404 _) -> pure (Just 0, mCurrentCycle)
+                Right checkpoint -> pure (Just $ _checkpoint_savePoint checkpoint, mCurrentCycle)
+                _ -> (Nothing, Nothing) <$ $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr}|]
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
           -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
           mNewSp <- runLoggingEnv (_nodeDataSource_logger nds) $ do
-            mOldSp <- inDb $ do
+            mSavePointAndProto <- inDb $ do
               clearInaccessibleNodeError nodeId
               clearNodeWrongChainError nodeId
-              project1 (NodeDetails_dataField ~> NodeDetailsData_savePointSelector) (NodeDetails_idField `in_` [nodeId])
-            updateCheckpoint block $ join mOldSp
+              mSavePoint <- project1 (NodeDetails_dataField ~> NodeDetailsData_savePointSelector, NodeDetails_dataField ~> NodeDetailsData_savePointUpdatedSelector) (NodeDetails_idField `in_` [nodeId])
+              mProto <- project1 ProtocolIndex_constantsField (ProtocolIndex_protoField ==. _monitorBlock_proto block &&. ProtocolIndex_chainIdField ==. chainId)
+              pure (mSavePoint, mProto)
+            updateCheckpoint block mSavePointAndProto
 
           nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
 
@@ -348,18 +367,25 @@ publicNodesWorker nds = foldMap workerForSource
     workerForSource source = worker' $ do
       let (pn, chain, _) = source
       updateDataSource nds source
-      (now, mLastBlock) <- runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $ do
-        now <- getTime
-        mLastBlock <- project1 PublicNodeHead_headBlockField $
-          PublicNodeHead_sourceField ==. pn &&. PublicNodeHead_chainField ==. NamedChainOrChainId chain
-        pure (now, mLastBlock)
-      timeBetweenBlocks <- maybe 60 calcTimeBetweenBlocks <$> readTVarIO (_nodeDataSource_parameters $ nds ^. nodeDataSource)
-      let secsSinceLastBlock = maybe 0 (\v -> _veryBlockLike_timestamp v `diffUTCTime` now) mLastBlock
-          secsTillNextBlock = case secsSinceLastBlock + timeBetweenBlocks of
-              -- if the next expected block is in the past, the node is probably quite laggy and we give it a little more delay
-            x | x <= 0 -> timeBetweenBlocks / 2
-              | otherwise -> x
-      _ <- timeout' secsTillNextBlock (waitForNewHead nds)
+
+      secsTillNextBlock :: Either CacheError (Maybe NominalDiffTime) <-
+        runLoggingEnv (_nodeDataSource_logger nds) $ flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
+          mLastBlock <- project1 PublicNodeHead_headBlockField $
+            PublicNodeHead_sourceField ==. pn &&. PublicNodeHead_chainField ==. NamedChainOrChainId chain
+          for mLastBlock $ \lastBlock -> do
+            protoConstants <- getProtocolConstants $ Left $ lastBlock ^. hash
+            now <- getTime
+            let
+              timeBetweenBlocks = calcTimeBetweenBlocks protoConstants
+
+              secsSinceLastBlock = _veryBlockLike_timestamp lastBlock `diffUTCTime` now
+              secsTillNextBlock = case secsSinceLastBlock + timeBetweenBlocks of
+                    -- if the next expected block is in the past, the node is probably quite laggy and we give it a little more delay
+                  x | x <= 0 -> timeBetweenBlocks / 2
+                    | otherwise -> x
+            pure secsTillNextBlock
+
+      _ <- timeout' (fromMaybe 5 $ secsTillNextBlock ^? _Right . _Just) (waitForNewHead nds)
       threadDelay' 5 -- always give a little extra delay to make it more likely the public node reports the new block
 
 updateDataSource
@@ -367,10 +393,7 @@ updateDataSource
   => NodeDataSource -> DataSource -> m ()
 updateDataSource nds (pn, chain, uri) = do
   enabled <- publicNodeEnabled
-  -- TODO: prefer to get this from the database, or from private nodes before
-  when enabled $ do
-    _ <- liftIO $ initParams nds (Identity (Just pn, uri))
-    updatePublicNodeInDb
+  when enabled updatePublicNodeInDb
 
   where
     db = _nodeDataSource_pool nds
@@ -383,7 +406,7 @@ updateDataSource nds (pn, chain, uri) = do
       runReaderT k $
         PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
 
-    getHeadFromSource :: m (Either PublicNodeError VeryBlockLike)
+    getHeadFromSource :: m (Either PublicNodeError (WithProtocolHash VeryBlockLike))
     getHeadFromSource = queryPublicNode $ runLoggingEnv (_nodeDataSource_logger nds) $ getCurrentHead chainId
 
     publicNodeEnabled :: m Bool
@@ -414,13 +437,15 @@ updateDataSource nds (pn, chain, uri) = do
                 pnh = PublicNodeHead
                   { _publicNodeHead_source = pn
                   , _publicNodeHead_chain = chainField
-                  , _publicNodeHead_headBlock = b
+                  , _publicNodeHead_headBlock = b ^. withProtocolHash_value
+                  , _publicNodeHead_protocolHash = b ^. protocolHash
                   , _publicNodeHead_updated = now
                   }
               notify NotifyTag_PublicNodeHead . (, Just pnh) =<< insert' pnh
             Just eid -> do
               updateId eid
-                [ PublicNodeHead_headBlockField =. b
+                [ PublicNodeHead_headBlockField =. b ^. withProtocolHash_value
+                , PublicNodeHead_protocolHashField =. b ^. protocolHash
                 , PublicNodeHead_updatedField =. now
                 ]
               notify NotifyTag_PublicNodeHead . (eid,) =<< getId eid
@@ -440,7 +465,7 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
-      nodeHead <- (,) nodeHeadHash <$> nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
+      nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
       lcaBlock' <- atomicallyWith $ branchPoint nodeHeadHash (latestHead ^. hash)
       let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
           good = clearBadNodeHeadError nodeId
@@ -460,8 +485,8 @@ nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead 
                  history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
                  let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ Map.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
                      uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ Map.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
-                 latestParent <- (,) parentHash <$> nodeQueryDataSource (NodeQuery_BlockHeader parentHash)
-                 latestUncle <- (,) uncleHash <$> nodeQueryDataSource (NodeQuery_BlockHeader uncleHash)
+                 latestParent <- nodeQueryDataSource (NodeQuery_BlockHeader parentHash)
+                 latestUncle <- nodeQueryDataSource (NodeQuery_BlockHeader uncleHash)
                  if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
@@ -514,10 +539,12 @@ amendmentProcessWorker
   -> Pool Postgresql
   -> IO (IO ())
 amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
-  (history, protoInfo) <- liftIO $ atomically $ liftA2 (,) (readTVar $ _nodeDataSource_history nds) (waitForParams nds)
-  latestBlock <- throwing $ getBlock (latestHead ^. hash)
+  (latestBlock, protoInfo) <- throwing $ runNodeQueryT $ liftA2 (,)
+    (nodeQueryDataSourceSafe $ NodeQuery_Block (latestHead ^. hash))
+    (getProtocolConstants $ Left $ latestHead ^. hash)
+  history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
   let
-    blocksPerVotingPeriod = protoInfo ^. protoInfo_blocksPerVotingPeriod
+    blocksPerVotingPeriod = _protoInfo_blocksPerVotingPeriod protoInfo
     chainId = _nodeDataSource_chain nds
     minLevel = _cachedHistory_minLevel history
 
@@ -525,19 +552,19 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
     -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
     -- (the last block of the period), but /votes/current_period_kind for that block will return
     -- the *next* period kind.
-    votingPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod
-    currentVotingPosition = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
-    isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition)
+    votingPeriod = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriod
+    currentVotingPosition = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition
+    isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition)
     -- The period of the *current* block, not the next one
     currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
-      $ latestBlock ^. block_metadata . blockMetadata_votingPeriodKind
+      $ latestBlock ^. blockMetadata . blockMetadata_votingPeriodKind
     periodFraction = fromIntegral currentVotingPosition / fromIntegral blocksPerVotingPeriod :: Double
 
     singleVotePeriod pkh periodKindOffset mkVotingState = do
       let blk = latestHead ^.hash
       mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
       -- The voting period of the last proposal period
-      let amendmentPeriod = latestBlock ^. block_metadata . blockMetadata_level . level_votingPeriod - periodKindOffset
+      let amendmentPeriod = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriod - periodKindOffset
 
       runDb (Identity db) $ case mBallot of
         Nothing -> do
@@ -663,7 +690,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlockHeader $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
-        else pure (latestBlock ^. hash, _block_header latestBlock)
+        else pure (toBlockHeader latestBlock)
       updateTo startBlock predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p
@@ -675,9 +702,10 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
 
   where
+    toBlockHeader = blockCrossCata V004.toBlockHeader V005.toBlockHeader
 
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
-    getBlockHeader hash' = nodeQueryDataSource (NodeQuery_BlockHeader hash') >>= pure . (hash',)
+    getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
 
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
     throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
@@ -693,8 +721,8 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
         VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
     updateTo startBlock predBlk blk p = do
-      let position' = blk ^. block_metadata . blockMetadata_level . level_votingPeriodPosition
-          votingPeriod = blk ^. block_metadata . blockMetadata_level . level_votingPeriod
+      let position' = blk ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition
+          votingPeriod = blk ^. blockMetadata . blockMetadata_level . level_votingPeriod
           chainId = _nodeDataSource_chain nds
           amendment = Amendment
             { _amendment_period = p
@@ -731,7 +759,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
         VotingPeriodKind_Testing -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
-            let (status, testChainId, startBlockHash) = case blk ^. block_metadata . blockMetadata_testChainStatus of
+            let (status, testChainId, startBlockHash) = case blk ^. blockMetadata . blockMetadata_testChainStatus of
                   Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
                   Tezos.TestChainStatus_Forking {} -> (TestChainStatus_Forking, Nothing, Nothing)
                   Tezos.TestChainStatus_Running
@@ -791,11 +819,11 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
         getProtocol
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
-      let vp = blk ^. block_metadata . blockMetadata_votingPeriodKind
+      let vp = blk ^. blockMetadata . blockMetadata_votingPeriodKind
       tp <- if vp == VotingPeriodKind_PromotionVote
         then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash)
         else return Nothing
-      return (blk ^. block_metadata . blockMetadata_protocol, tp)
+      return (blk ^. blockMetadata . blockMetadata_protocol, tp)
 
   (mainProto, altProto) <- getProtocol
 
@@ -854,17 +882,21 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
 
   -- Wait till the end of this cycle
   $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text)
-  waitTillNextCycle nds
+  waitTillEndOfCycle nds latestHead
 
-waitTillNextCycle :: MonadIO m => NodeDataSource -> m ()
-waitTillNextCycle nds = liftIO $ do
-  v <- atomically $ (liftA2 . liftA2) (,)
-    (readTVar $ _nodeDataSource_latestHead nds)
-    (readTVar $ _nodeDataSource_parameters nds)
-  for_ v $ \(blk, protoInfo) -> do
-    let
-      nextCycle = 1 + levelToCycle protoInfo (blk ^. level)
-      nextCycleLvl = firstLevelInCycle protoInfo nextCycle
-    atomically $ do
+waitTillEndOfCycle
+  :: ( MonadIO m
+     , MonadLogger m
+     , BlockLike blk
+     , MonadBaseNoPureAborts IO m
+     , MonadMask m
+     )
+  => NodeDataSource -> blk -> m ()
+waitTillEndOfCycle nds blk = do
+  lastLevel :: Either CacheError RawLevel <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
+    c <- levelToCycle $ blk ^. level
+    lastLevelInCycle (blk ^. hash) c
+  for_ lastLevel $ \lvl -> do
+    liftIO $ atomically $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
-      when (newHead ^. level < pred nextCycleLvl) retry
+      when (newHead ^. level < lvl) retry

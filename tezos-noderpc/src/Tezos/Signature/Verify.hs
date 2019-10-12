@@ -9,10 +9,10 @@ import qualified Crypto.MicroECC as U
 import qualified Crypto.PubKey.Ed25519 as Ed25519
 import qualified Crypto.Hash as H
 
-import Tezos.Base58Check
-import Tezos.PublicKey
-import Tezos.ShortByteString (fromShort)
-import Tezos.Signature
+import Tezos.Common.Base58Check
+import Tezos.V005.PublicKey
+import Tezos.Common.ShortByteString (fromShort)
+import Tezos.V005.Signature
 
 check :: PublicKey -> Signature -> BS.ByteString -> Bool
 check pk sig msg = verify pk sig digest
