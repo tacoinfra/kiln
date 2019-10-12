@@ -14,7 +14,12 @@
   * Bug Fixes
     * Obsidian Public Node APIs
     * UI - Baker alerts now resolve on the tile without a page refresh.
-    * Upgrade on Kiln no longer overwrites the /etc/kiln/args file
+
+  * Supported networks
+    * alphanet, mainnet, zeronet (babylonnet is not supported)
+
+### Known Issues
+    * Upgrading Kiln on Ubuntu/Debian overwrites the /etc/kiln/args file
 
 ## 0.6.2
 
