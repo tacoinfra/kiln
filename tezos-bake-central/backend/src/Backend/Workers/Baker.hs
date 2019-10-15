@@ -163,7 +163,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
           (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvl)
         let
           pri1baker :: Maybe BakingRights
-          pri1baker = fmap NonEmpty.head . nonEmpty . filter (\br -> ((flip Set.member pkhs . _bakingRights_delegate) br) && (((== 0) . _bakingRights_priority) br)) $ toList reqBakers
+          pri1baker = fmap NonEmpty.head . nonEmpty . filter (\br -> (flip Set.member pkhs . _bakingRights_delegate) br && ((== 0) . _bakingRights_priority) br) $ toList reqBakers
           endorsers :: Seq EndorsingRights
           endorsers = Seq.filter (flip Set.member pkhs . _endorsingRights_delegate) reqEndorsers
           branch :: BlockHash

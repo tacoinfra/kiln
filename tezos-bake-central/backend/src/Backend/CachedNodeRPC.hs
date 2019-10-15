@@ -73,7 +73,7 @@ import Control.Monad.Trans.Reader (ReaderT (..))
 import qualified Data.Aeson as Aeson
 import Data.Aeson (ToJSON, FromJSON)
 import Data.Aeson.Encoding (emptyObject_)
-import Data.Aeson.GADT.TH (deriveJSONGADT)
+import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)

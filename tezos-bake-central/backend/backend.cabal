@@ -27,6 +27,8 @@ library
     , constraints-extras
     , containers
     , data-default
+    , database-id-class
+    , database-id-groundhog
     , dependent-map
     , dependent-sum
     , dependent-sum-template
