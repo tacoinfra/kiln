@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1
+
+  * Support for Babylon protocol (005_PsBabyM1)
+    * This release has a fix to force-run the PsBabyM1 baker/endorser binaries.
+      This is required to avoid missing the bake/endorse opportunity for the first block of the new protocol.
+
+    * With 0.7.0 users can miss bake/endorse opportunities for first couple of blocks in the new protocol.
+      It is recommended to upgrade to 0.7.1 before the start of Babylon protocol.
+
+  * This removes the BABY5H baker/endorser, so kiln will not work on zeronet.
+
+### Known Issues
+    * Upgrading Kiln on Ubuntu/Debian overwrites the /etc/kiln/args file
+
 ## 0.7.0
 
   * Support for Babylon protocol (005_PsBabyM1 and 005_PsBABY5H)

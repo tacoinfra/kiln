@@ -817,11 +817,18 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
         $(logWarnSH) ("protocolMonitorWorker: cannot fetch protocol"::Text, e)
         threadDelay' 1
         getProtocol
+
+    -- There is a hardfork for babylon where if our node sees BABY5H promoted it'll get upgraded to BabyM1.
+    -- So if we see BABY5H about to be promoted, we actually want to start the PsBabyM1 alt baker instead.
+    babyHax :: ProtocolHash -> ProtocolHash
+    babyHax "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU" = "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+    babyHax ph = ph
+    
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. blockMetadata . blockMetadata_votingPeriodKind
       tp <- if vp == VotingPeriodKind_PromotionVote
-        then nodeQueryDataSource $ NodeQuery_CurrentProposal (latestHead ^. hash)
+        then fmap babyHax <$> nodeQueryDataSource (NodeQuery_CurrentProposal (latestHead ^. hash))
         else return Nothing
       return (blk ^. blockMetadata . blockMetadata_protocol, tp)
 
