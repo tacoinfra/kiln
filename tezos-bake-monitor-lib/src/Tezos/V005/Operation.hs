@@ -1095,7 +1095,7 @@ instance FromJSON (DSum OpsKindTag ProtoOp) where
 
 instance ToJSON (DSum OpsKindTag PendingOp) where
   toJSON = \case
-    tag :=> prop -> object $
+    tag :=> prop -> object
       [ "hash" .= _pendingOp_hash prop
       , "branch" .= _pendingOp_branch prop
       , "contents" .= (tag :=> _pendingOp_contents prop)
@@ -1113,7 +1113,7 @@ instance FromJSON (DSum OpsKindTag PendingOp) where
 
 instance ToJSON (DSum OpsKindTag ErroredOp) where
   toJSON = \case
-    tag :=> op -> object $
+    tag :=> op -> object
       [ "protocol" .= _erroredOp_protocol op
       , "branch" .= _erroredOp_branch op
       , "contents" .= (tag :=> _erroredOp_contents op)
