@@ -24,6 +24,7 @@ import Tezos.V005.Envelope as X
 import Tezos.V005.Fitness as X
 import Tezos.V005.Ledger as X
 import Tezos.V005.Level as X
+import Tezos.V005.Mempool as X
 import Tezos.V005.Operation as X 
 import Tezos.V005.PeriodSequence as X
 import Tezos.V005.ProtocolConstants as X hiding (unsafeAssumptionLevelToCycle, unsafeAssumptionFirstLevelInCycle, unsafeAssumptionRightsContextLevel)

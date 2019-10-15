@@ -7,6 +7,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -124,6 +125,24 @@ data Op (a :: OpKind) = Op
   }
   deriving (Eq, Ord, Show, Typeable)
 
+-- | next_operation:
+-- { "protocol": "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd",
+--   "branch": $block_hash,
+--   "contents": [ $operation.alpha.contents ... ],
+--   "signature": $Signature }
+--
+-- Like Op but with a protocol hash added. Used in preapply.
+data ProtoOp (a :: OpKind) = ProtoOp
+  { _protoOp_protocol :: !ProtocolHash
+  , _protoOp_branch :: !BlockHash
+  , _protoOp_contents :: !(OpContentsList a)
+  , _protoOp_signature :: !(Maybe Signature)
+  } deriving (Eq, Ord, Show, Typeable)
+
+stripOpProtocol :: ProtoOp a -> Op a
+stripOpProtocol ProtoOp { _protoOp_protocol, _protoOp_branch, _protoOp_contents, _protoOp_signature }
+  = Op _protoOp_branch _protoOp_contents _protoOp_signature
+
 data EmptyMetadata = EmptyMetadata
   deriving (Eq, Ord, Show, Typeable)
 
@@ -134,17 +153,40 @@ instance ToJSON EmptyMetadata where
   toJSON _ = Object mempty
   toEncoding _ = pairs mempty
 
--- | operation.alpha.operation_with_metadata
+-- | operation.alpha.operation_with_metadata:
 -- { "contents": [ $operation.alpha.operation_contents_and_result ... ],
+--   "signature"?: $Signature }
+-- || { "contents": [ $operation.alpha.contents ... ],
 --      "signature"?: $Signature }
---    || { "contents": [ $operation.alpha.contents ... ],
---         "signature"?: $Signature }
 --
--- This is the return value of the run_operation RPC.
+-- This is the return type of the run_operation RPC.
+-- RPC reference: POST /chains/<chain_id>/blocks/<block_id>/helpers/scripts/run_operation
 data NoContextOperation = NoContextOperation
   { _noContextOperation_contents :: !(Seq OperationContents)
   , _noContextOperation_signature :: !(Maybe Signature)
   } deriving (Eq, Ord, Show, Typeable)
+
+stripOperationContext :: Operation -> NoContextOperation
+stripOperationContext Operation { _operation_contents, _operation_signature }
+  = NoContextOperation _operation_contents _operation_signature
+
+-- | Like Op but with its own hash. Used in the mempool.
+data PendingOp (a :: OpKind) = PendingOp
+  { _pendingOp_hash :: !OperationHash
+  , _pendingOp_branch :: !BlockHash
+  , _pendingOp_contents :: !(OpContentsList a)
+  , _pendingOp_signature :: !Signature
+  } deriving (Eq, Ord, Show, Typeable)
+
+-- | This is also used in the mempool for operations that will not be
+-- applied for one reason or another.
+data ErroredOp (a :: OpKind) = ErroredOp
+  { _erroredOp_protocol :: !ProtocolHash
+  , _erroredOp_branch :: !BlockHash
+  , _erroredOp_contents :: !(OpContentsList a)
+  , _erroredOp_signature :: !Signature
+  , _erroredOp_error :: !Value
+  } deriving (Eq, Show, Typeable)
 
 -- | "operation.alpha.operation_contents_and_result": {
 data OperationContents
@@ -977,6 +1019,61 @@ instance FromJSON (DSum OpsKindTag Op) where
     case taggedContents of
       t :=> ops -> pure $ t :=> Op { _op_branch = branch, _op_contents = ops , _op_signature = signature }
 
+instance ToJSON (DSum OpsKindTag ProtoOp) where
+  toJSON = \case
+    tag :=> prop -> object $
+      [ "protocol" .= _protoOp_protocol prop
+      , "branch" .= _protoOp_branch prop
+      , "contents" .= (tag :=> _protoOp_contents prop)
+      ] <> toList (("signature" .=) <$> _protoOp_signature prop)
+
+instance FromJSON (DSum OpsKindTag ProtoOp) where
+  parseJSON = withObject "operation" $ \o -> do
+    protocol <- o .: "protocol"
+    branch <- o .: "branch"
+    taggedContents <- o .: "contents"
+    signature <- o .:? "signature"
+    case taggedContents of
+      t :=> ops -> pure $ t :=> ProtoOp { _protoOp_protocol = protocol, _protoOp_branch = branch, _protoOp_contents = ops , _protoOp_signature = signature }
+
+instance ToJSON (DSum OpsKindTag PendingOp) where
+  toJSON = \case
+    tag :=> prop -> object
+      [ "hash" .= _pendingOp_hash prop
+      , "branch" .= _pendingOp_branch prop
+      , "contents" .= (tag :=> _pendingOp_contents prop)
+      , "signature" .= _pendingOp_signature prop
+      ]
+
+instance FromJSON (DSum OpsKindTag PendingOp) where
+  parseJSON = withObject "operation" $ \o -> do
+    hash <- o .: "hash"
+    branch <- o .: "branch"
+    taggedContents <- o .: "contents"
+    signature <- o .: "signature"
+    case taggedContents of
+      t :=> ops -> pure $ t :=> PendingOp { _pendingOp_hash = hash, _pendingOp_branch = branch, _pendingOp_contents = ops , _pendingOp_signature = signature }
+
+instance ToJSON (DSum OpsKindTag ErroredOp) where
+  toJSON = \case
+    tag :=> op -> object
+      [ "protocol" .= _erroredOp_protocol op
+      , "branch" .= _erroredOp_branch op
+      , "contents" .= (tag :=> _erroredOp_contents op)
+      , "signature" .= _erroredOp_signature op
+      , "error" .= _erroredOp_error op
+      ]
+
+instance FromJSON (DSum OpsKindTag ErroredOp) where
+  parseJSON = withObject "operation" $ \o -> do
+    protocol <- o .: "protocol"
+    branch <- o .: "branch"
+    taggedContents <- o .: "contents"
+    signature <- o .: "signature"
+    errorV <- o .: "error"
+    case taggedContents of
+      t :=> ops -> pure $ t :=> ErroredOp { _erroredOp_protocol = protocol, _erroredOp_branch = branch, _erroredOp_contents = ops , _erroredOp_signature = signature, _erroredOp_error = errorV }
+
 instance B.TezosUnsignedBinary (DSum OpsKindTag Op) where
   putUnsigned (tag :=> op) =
       shellHeaderEncoding op *>
@@ -1046,6 +1143,8 @@ fmap concat $ sequence
   , concat <$> traverse makeLenses
     [ 'Operation
     , 'NoContextOperation
+    , 'PendingOp
+    , 'ErroredOp
     , 'ActivateMetadata
     , 'DoubleBakingEvidenceMetadata
     , 'DoubleEndorsementEvidenceMetadata
@@ -1114,6 +1213,10 @@ mkSignedOp branch contents = mkOp branch contents . Just
 
 mkUnsignedOp :: BlockHash -> DSum OpsKindTag OpContentsList -> DSum OpsKindTag Op
 mkUnsignedOp branch contents = mkOp branch contents Nothing
+
+mkProtoOp :: ProtocolHash -> DSum OpsKindTag Op -> DSum OpsKindTag ProtoOp
+mkProtoOp proto (ts :=> Op { _op_branch, _op_contents, _op_signature })
+  = ts :=> ProtoOp proto _op_branch _op_contents _op_signature
 
 batchOperations :: NonEmpty (DSum BatchableOp OpContents) -> DSum OpsKindTag OpContentsList
 batchOperations (x :| xs) = go x xs & \(Compose t :=> Compose l) -> t :=> l
