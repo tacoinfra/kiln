@@ -59,8 +59,8 @@ import Prelude hiding (log)
 import Reflex.Dom.Core
 import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
-import Rhyolite.Api (public, ApiRequest)
-import Rhyolite.Frontend.App (AppWebSocket (..), {- runPrerenderedRhyoliteWidget,-} functorToWire)
+import Rhyolite.Api (public)
+import Rhyolite.Frontend.App (AppWebSocket (..), runRhyoliteWidget, functorToWire)
 import Rhyolite.Schema (Json (..))
 import Safe (headMay)
 import Text.URI (URI)
@@ -107,15 +107,6 @@ import Frontend.Watch
 
 import Obelisk.Route.Frontend
 
-import Data.Aeson (ToJSON(..), FromJSON(..), Result(..), fromJSON)
-import qualified Data.Aeson as Aeson
-import Rhyolite.Frontend.App
--- import Rhyolite.App
-import Rhyolite.WebSocket
-import Data.Some
-import Data.Bifunctor
-import Data.Constraint.Forall
-
 type RouteConstraints t r m =
   ( Routed t (R r) m
   , RouteToUrl (R r) m
@@ -128,60 +119,6 @@ frontend = Frontend
   { _frontend_head = headTag
   , _frontend_body = prerender_ blank frontendBody
   }
-
-runKilnRhyoliteWidget
-  :: (PerformEvent t m, MonadHold t m, MonadFix m, Prerender x t m)
-  => QueryMorphism (BakeViewSelector SelectedCount) (BakeViewSelector ())
-  -> Text
-  -> RhyoliteWidget (BakeViewSelector SelectedCount) (ApiRequest () PublicRequest PrivateRequest) t m b
-  -> m b
-runKilnRhyoliteWidget = runRhyoliteWidget'
-
-runRhyoliteWidget'
-   :: forall qFrontend qWire req m t b x.
-      ( PerformEvent t m
-      , MonadHold t m
-      , MonadFix m
-      , Prerender x t m
-      , Has ToJSON req
-      , Has FromJSON req
-      , FromJSON (Some req)
-      , ForallF ToJSON req
-      , Query qFrontend
-      , Group qFrontend
-      , Additive qFrontend
-      , Eq qWire
-      , FromJSON (QueryResult qWire)
-      , ToJSON qWire
-      )
-   => QueryMorphism qFrontend qWire
-   -> Text
-   -> RhyoliteWidget qFrontend req t m b
-   -> m b
-runRhyoliteWidget' toWire url child = do
-  rec (notification :: Event t (QueryResult qWire), response) <- fmap (bimap (switch . current) (switch . current) . splitDynPure) $
-        prerender (return (never, never)) $ do
-          (appWebSocket :: AppWebSocket t q) <- openWebSocket' url request'' nubbedVs
-          return ( _appWebSocket_notification appWebSocket
-                 , _appWebSocket_response appWebSocket
-                 )
-      (request', response') <- matchResponsesWithRequests reqEncoder request $ ffor response $ \(TaggedResponse t v) -> (t, v)
-      let request'' = fmap (Map.elems . Map.mapMaybeWithKey (\t v -> case fromJSON v of
-            Success (v' :: (Some req)) -> Just $ TaggedRequest t v'
-            _ -> Nothing)) request'
-      ((a, vs), request) <- flip runRequesterT (fmapMaybe (traverseRequesterData (fmap Identity)) response') $ runQueryT (unRhyoliteWidget child) view
-      let (vsDyn :: Dynamic t qFrontend) = incrementalToDynamic (vs :: Incremental t (AdditivePatch qFrontend))
-      nubbedVs <- holdUniqDyn (_queryMorphism_mapQuery toWire <$> vsDyn)
-      view <- fmap join $ prerender (pure mempty) $ fromNotifications vsDyn $ _queryMorphism_mapQueryResult toWire <$> notification
-  return a
-  where
-    reqEncoder :: forall a. req a -> (Aeson.Value, Aeson.Value -> Maybe a)
-    reqEncoder r =
-      ( whichever @ToJSON @req @a $ Aeson.toJSON r
-      , \x -> case has @FromJSON r $ Aeson.fromJSON x of
-        Success s-> Just s
-        _ -> Nothing
-      )
 
 frontendBody
   :: forall m js t.
@@ -196,10 +133,9 @@ frontendBody = void $ do
     fmap (maybe (error "Invalid WS URL") Uri.render) $ getBackendPath (BackendRoute_Listen :/ ()) True
   dyn_ $ ffor wsUri $ \ws -> do
     rec
-      runKilnRhyoliteWidget functorToWire ws $ do
-        (withFrontendContext :: ReaderT (FrontendContext t) (RhyoliteWidget (BakeViewSelector SelectedCount) (ApiRequest () PublicRequest PrivateRequest) t m) ()
-                                -> RhyoliteWidget (BakeViewSelector SelectedCount) (ApiRequest () PublicRequest PrivateRequest) t m ()) $
-          -- withConnectivityModal socketState $
+      (socketState, _) <- runRhyoliteWidget functorToWire ws $ do
+        withFrontendContext $
+          withConnectivityModal socketState $
             runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
               appMain
     pure ()
@@ -231,9 +167,9 @@ getBackendPath (backendRoute :/ a) isWebsocket = do
 
 withConnectivityModal
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, Prerender js t m)
-  => AppWebSocket t app -> m () -> m ()
+  => Dynamic t (AppWebSocket t app) -> m () -> m ()
 withConnectivityModal socketState f = do
-  connectionChanged <- updatedWithInit =<< holdUniqDyn (_appWebSocket_connected socketState)
+  connectionChanged <- updatedWithInit =<< holdUniqDyn (_appWebSocket_connected =<< socketState)
   let
     wsConnected = ffilter id connectionChanged
     wsDisconnected = ffilter not connectionChanged
