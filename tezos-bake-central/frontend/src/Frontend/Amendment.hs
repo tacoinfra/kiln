@@ -31,14 +31,12 @@ import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import qualified Data.Time as Time
 
-import Tezos.Operation
-import Tezos.ProtocolConstants (predictFutureTimestamp)
 import Tezos.Types hiding (protocolHash)
 
 import Common.Api
 import Common.App
 import Common.Config
-import Common.Schema hiding (Event)
+import Common.Schema
 import ExtraPrelude
 import Frontend.Common
 import Frontend.Watch

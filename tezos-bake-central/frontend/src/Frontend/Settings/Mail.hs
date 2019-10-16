@@ -34,7 +34,7 @@ import Rhyolite.Schema (Email)
 
 import Common.Api
 import Common.App
-import Common.Schema hiding (Event)
+import Common.Schema
 import ExtraPrelude
 import Frontend.Common
 

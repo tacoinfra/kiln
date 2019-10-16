@@ -72,7 +72,7 @@ import qualified Text.URI as URI
 
 import Tezos.Chain (mainnetChainId)
 import Tezos.History (emptyCache)
-import Tezos.NodeRPC
+import Tezos.NodeRPC hiding (DataSource)
 import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
@@ -91,7 +91,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
 import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
-import Backend.WebApi (v2PublicApi)
+import Backend.WebApi (v3PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
@@ -355,9 +355,8 @@ backendImpl cfg serve = do
 
     let
       minLevel :: RawLevel
-      minLevel = case maybeNamedChain of
-        Just NamedChain_Zeronet -> 3 -- Due to the current zeronet genesis block messup
-        _ -> 2
+      minLevel = 2
+
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
@@ -455,7 +454,7 @@ backendImpl cfg serve = do
         BackendRoute_Listen :=> _ -> handleListen
         BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc chain snapshotUploadLock
         BackendRoute_PublicCacheApi :=> _
-          | serveNodeCache -> v2PublicApi dataSrc
+          | serveNodeCache -> v3PublicApi dataSrc
           | otherwise -> return ()
         BackendRoute_ExportLogs :=> Identity lType -> when logExportAvailable $ handleExportLogs dataSrc lType
 

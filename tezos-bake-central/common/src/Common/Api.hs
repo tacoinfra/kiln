@@ -22,8 +22,7 @@ import Database.Id.Class
 import Rhyolite.Schema (Email)
 import Text.URI (URI)
 
-import Tezos.NodeRPC.Sources (PublicNode)
-import Tezos.Operation(Ballot)
+import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, MailServerView, WorkerType)

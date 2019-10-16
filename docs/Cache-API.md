@@ -26,7 +26,7 @@ Most endpoints require that Kiln is successfully connected to at least one non-p
 
 Retrieve the *chain ID* of the chain/network being monitored/cached. This will never be a name like `mainnet` or `alphanet`.
 
-> `GET /api/v2/chain HTTP/1.1`
+> `GET /api/v3/chain HTTP/1.1`
 
 ```json
 "NetXdQprcVkpaWU"
@@ -36,9 +36,9 @@ Retrieve the *chain ID* of the chain/network being monitored/cached. This will n
 
 Retrieve network parameter state at the time the cache was started. Note that this will have meaningless values for baking rewards/deposits.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v3/chain`.
 
-> `GET /api/v2/NetXdQprcVkpaWU/params HTTP/1.1`
+> `GET /api/v3/NetXdQprcVkpaWU/params HTTP/1.1`
 
 ```json
 {
@@ -76,9 +76,9 @@ Retrieve network parameter state at the time the cache was started. Note that th
 
 Retrieve the latest (a.k.a. head) block of all nodes being monitored.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v3/chain`.
 
-> `GET /api/v2/NetXdQprcVkpaWU/head HTTP/1.1`
+> `GET /api/v3/NetXdQprcVkpaWU/head HTTP/1.1`
 
 ```json
 {
@@ -97,11 +97,11 @@ Retrieve the latest (a.k.a. head) block of all nodes being monitored.
 
 Retrieve block data for the most recent common ancestor of two blocks. This can be useful for exploring branches. For technical reasons, some included data may not be accurate (in particular, fitness and timestamp will not be known for blocks older than the time the cache started).
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v3/chain`.
   * Replace `BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv` with a block hash.
   * Replace `BMYJmRePKt8Y6KizS65fC89hkSFhp25jQbP2JXv1V4FnALkNpJE` with a block hash.
 
-> `GET /api/v2/NetXdQprcVkpaWU/lca?block=BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv&block=BMYJmRePKt8Y6KizS65fC89hkSFhp25jQbP2JXv1V4FnALkNpJE HTTP/1.1`
+> `GET /api/v3/NetXdQprcVkpaWU/lca?block=BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv&block=BMYJmRePKt8Y6KizS65fC89hkSFhp25jQbP2JXv1V4FnALkNpJE HTTP/1.1`
 
 ```json
 {
@@ -117,11 +117,11 @@ Retrieve block data for the most recent common ancestor of two blocks. This can 
 
 Retrieve a list of ordered block hashes from a starting block and some number of levels backward.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v3/chain`.
   * Replace `BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv` with some block hash.
   * Replace `10` with the number of levels backward from the given block.
 
-> `GET /api/v2/NetXdQprcVkpaWU/ancestors?branch=BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv&level=10 HTTP/1.1`
+> `GET /api/v3/NetXdQprcVkpaWU/ancestors?branch=BLZv4orW3TXDeZPdgnaKLJCLAmXWGBEbuNP5Yy4mWFCK4nnNnZv&level=10 HTTP/1.1`
 
 ```json
 [
@@ -142,11 +142,11 @@ Retrieve a list of ordered block hashes from a starting block and some number of
 
 Retrieve the all baking rights at a specific level as seen by a given branch.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v3/chain`.
   * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
   * Replace `151128` with the level for desired baking rights data.
 
-> `GET /api/v2/NetXdQprcVkpaWU/baking-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
+> `GET /api/v3/NetXdQprcVkpaWU/baking-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
 
 ```json
 [
@@ -181,11 +181,11 @@ Retrieve the all baking rights at a specific level as seen by a given branch.
 
 Retrieve the all endorsing rights at a specific level as seen by a given branch.
 
-  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v2/chain`.
+  * Replace `NetXdQprcVkpaWU` with the chain ID from `/api/v3/chain`.
   * Replace `BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b` with a block hash.
   * Replace `151128` with the level for desired endorsing rights data.
 
-> `GET /api/v2/NetXdQprcVkpaWU/endorsing-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
+> `GET /api/v3/NetXdQprcVkpaWU/endorsing-rights?branch=BLVMcy2gt5Znt2f1j4AmiygsK3aRPEADPR1De5DHnpcmRb4Gq4b&level=151128 HTTP/1.1`
 
 ```json
 [

@@ -26,7 +26,7 @@ import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.IndexQueries (levelToCycle)
-import Common.Schema hiding (blockLevel)
+import Common.Schema
 import ExtraPrelude
 
 accusationWorker

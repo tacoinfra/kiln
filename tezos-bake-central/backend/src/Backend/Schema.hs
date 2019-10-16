@@ -93,11 +93,8 @@ import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Base58Check (HashedValue (..), tryFromBase58)
-import Tezos.NodeRPC.Sources (PublicNode (..))
-import Tezos.NodeRPC.Types
-import Tezos.Operation (Ballot)
-import Tezos.Types
+import Tezos.NodeRPC (PublicNode (..))
+import Tezos.Types hiding (TestChainStatus)
 
 import Backend.Version (parseVersion)
 import Common.AppendIntervalMap (WithInfinity(..))
@@ -439,7 +436,6 @@ instance PrimitivePersistField PeriodSequence where
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
 
 instance NeverNull (HashedValue a)
-instance NeverNull (Json BakedEvent)
 -- instance NeverNull (Json BlockInfo)
 instance NeverNull Cycle
 instance NeverNull Fitness

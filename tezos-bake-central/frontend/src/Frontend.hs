@@ -66,9 +66,7 @@ import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (PublicNode (..), publicNodeShortName, tzScanUri)
-import Tezos.NodeRPC.Types
-import Tezos.ProtocolConstants (predictFutureTimestamp)
+import Tezos.Common.NodeRPC.Sources 
 import Tezos.Types
 
 import Common (humanBytes)
@@ -95,7 +93,7 @@ import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chainId
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
-import Common.Schema hiding (Event)
+import Common.Schema
 import ExtraPrelude
 import Frontend.Amendment
 import Frontend.Common
@@ -1761,7 +1759,7 @@ nodesTab =
                       NodeProcessState_ImportFailed -> ""
                       NodeProcessState_ImportTimeout -> ""
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
-                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> for (_snapshotMeta_headBlock sm) $ \_ -> do
+                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> do
                       ev <- divClass "buttons" $ uiButtonM "" $ do
                         icon "icon-angle-right"
                         text "Start Verification"

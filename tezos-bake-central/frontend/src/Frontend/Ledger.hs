@@ -45,7 +45,7 @@ import Tezos.Types
 
 import Common.Api
 import Common.App
-import Common.Schema hiding (Event)
+import Common.Schema
 import ExtraPrelude
 import Frontend.Common
 import Frontend.Watch

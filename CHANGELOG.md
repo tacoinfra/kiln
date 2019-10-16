@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.7.1
+
+  * Support for Babylon protocol (005_PsBabyM1)
+    * This release has a fix to force-run the PsBabyM1 baker/endorser binaries.
+      This is required to avoid missing the bake/endorse opportunity for the first block of the new protocol.
+
+    * With 0.7.0 users can miss bake/endorse opportunities for first couple of blocks in the new protocol.
+      It is recommended to upgrade to 0.7.1 before the start of Babylon protocol.
+
+  * This removes the BABY5H baker/endorser, so kiln will not work on zeronet.
+
+### Known Issues
+    * Upgrading Kiln on Ubuntu/Debian overwrites the /etc/kiln/args file
+
+## 0.7.0
+
+  * Support for Babylon protocol (005_PsBabyM1 and 005_PsBABY5H)
+    * Kiln now has tezos binaries to do baking operations on Athens (004) and the new 005 protocols.
+    * Fixes for changes in the format of operations. This is required to properly parse block data in Kiln.
+    * Fixes for changes in RPC. This enables Kiln to properly communicate with tezos-node running on new protocol.
+
+  * Support for varying protocols.
+    * Kiln now understands that various parameters of the blockchain can change over time due to amendement process.
+      This is essential to gather data from blocks of past and current protocols.
+
+  * Bug Fixes
+    * Obsidian Public Node APIs
+    * UI - Baker alerts now resolve on the tile without a page refresh.
+
+  * Supported networks
+    * alphanet, mainnet, zeronet (babylonnet is not supported)
+
+### Known Issues
+    * Upgrading Kiln on Ubuntu/Debian overwrites the /etc/kiln/args file
+
+## 0.6.2
+
+  * Update mainnet tezos binaries. This fixes the problem of 100% cpu usage by the tezos-node (and "updater: COMPILATION ERROR" messages). The tezos-node released with v0.6.1 has problem in compiling the new protocol binaries (PsBABY5HQTSk), and this issue surfaced now because mainnet entered the testing phase of the protocol amendement cycle.
+
 ## 0.6.1
 
   * Export logs for Kiln node, baker, and endorser via UI on Ubuntu/Debian.

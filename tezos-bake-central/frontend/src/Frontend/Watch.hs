@@ -30,7 +30,7 @@ import Rhyolite.Frontend.App (watchViewSelector)
 import Rhyolite.Schema (Email)
 import Safe (minimumMay)
 
-import Tezos.NodeRPC.Sources (PublicNode)
+import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.Api
@@ -38,7 +38,7 @@ import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Config (FrontendConfig(..))
-import Common.Schema hiding (Event)
+import Common.Schema
 import Common.Vassal
 import Common.Alerts (AlertsFilter(..))
 import ExtraPrelude
@@ -218,7 +218,7 @@ watchBakerAlerts = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerAlerts = viewRangeAll 1
     }
-  return $ ffor theView $ \v' ->  getRangeView' (_bakeView_bakerAlerts v')
+  return $ ffor theView $ \v' -> MMap.mapMaybe getFirst $ getRangeView' (_bakeView_bakerAlerts v')
 
 data CollectiveNodesFailure
   = CollectiveNodesFailure_NoNodes

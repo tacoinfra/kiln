@@ -41,7 +41,7 @@ import Backend.Version (parseVersion)
 import Common.Schema
 import Common.Alerts
 import ExtraPrelude
-import Tezos.Chain
+import Tezos.Types
 
 upgradeCheckWorker
   :: MonadIO m

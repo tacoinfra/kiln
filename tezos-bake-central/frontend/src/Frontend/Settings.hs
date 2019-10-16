@@ -33,7 +33,7 @@ import Common.App
 import Common.Distribution
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
                       frontendConfig_upgradeBranch)
-import Common.Schema hiding (Event)
+import Common.Schema
 import ExtraPrelude
 import Frontend.Common
 import Frontend.Modal.Class (HasModal (ModalM, tellModal))

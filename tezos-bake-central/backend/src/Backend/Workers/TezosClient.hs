@@ -46,7 +46,6 @@ import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as TE
 import qualified System.Process as Process
 
-import Tezos.Operation (Ballot(..))
 import Tezos.Types
 
 import Backend.CachedNodeRPC
