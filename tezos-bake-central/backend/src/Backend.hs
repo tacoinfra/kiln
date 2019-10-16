@@ -70,10 +70,10 @@ import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI as URI
 
-import Tezos.Chain (mainnetChainId)
+import Tezos.Common.Chain (mainnetChainId)
 import Tezos.History (emptyCache)
 import Tezos.NodeRPC hiding (DataSource)
-import Tezos.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
+import Tezos.Common.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource(..))
