@@ -21,6 +21,7 @@ data NamedChain
   = NamedChain_Mainnet
   | NamedChain_Alphanet
   | NamedChain_Zeronet
+  | NamedChain_Babylonnet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
 instance FromJSON NamedChain
 instance ToJSON NamedChain
@@ -30,6 +31,7 @@ showNamedChain = \case
   NamedChain_Zeronet -> "zeronet"
   NamedChain_Alphanet -> "alphanet"
   NamedChain_Mainnet -> "mainnet"
+  NamedChain_Babylonnet -> "babylonnet"
 
 parseNamedChain :: Text -> Maybe NamedChain
 parseNamedChain x = case T.toLower x of
@@ -37,6 +39,7 @@ parseNamedChain x = case T.toLower x of
   "alphanet" -> Just NamedChain_Alphanet
   "betanet" -> Just NamedChain_Mainnet
   "mainnet" -> Just NamedChain_Mainnet
+  "babylonnet" -> Just NamedChain_Babylonnet
   _ -> Nothing
 
 showChain :: Either NamedChain ChainId -> Text
