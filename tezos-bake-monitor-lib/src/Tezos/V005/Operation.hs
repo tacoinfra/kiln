@@ -172,7 +172,7 @@ data PendingOp (a :: OpKind) = PendingOp
   , _pendingOp_signature :: !Signature
   } deriving (Eq, Ord, Show, Typeable)
 
--- | Some is also used in the mempool for operations that will not be
+-- | This is also used in the mempool for operations that will not be
 -- applied for one reason or another.
 data ErroredOp (a :: OpKind) = ErroredOp
   { _erroredOp_protocol :: !ProtocolHash
@@ -198,7 +198,7 @@ instance ToJSON EmptyMetadata where
 --    || { "contents": [ $operation.alpha.contents ... ],
 --         "signature"?: $Signature }
 --
--- Some is the return value of the run_operation RPC.
+-- This is the return value of the run_operation RPC.
 data NoContextOperation = NoContextOperation
   { _noContextOperation_contents :: !(Seq OperationContents)
   , _noContextOperation_signature :: !(Maybe Signature)
@@ -330,7 +330,7 @@ data OpContentsReveal = OpContentsReveal
   }
   deriving (Eq, Ord, Show, Typeable)
 
--- Some should only be ascii, so ByteString.C8 actually makes sense
+-- This should only be ascii, so ByteString.C8 actually makes sense
 newtype EntrypointName = EntrypointName { unEntrypointName :: C8.ByteString }
   deriving (Eq, Ord, Show, Typeable)
 
