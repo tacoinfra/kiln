@@ -7,13 +7,13 @@ import qualified Data.ByteString as BS
 import Data.Maybe (fromMaybe)
 
 import Crypto.Error (onCryptoFailure)
+import qualified Crypto.Hash as H
 import qualified Crypto.MicroECC as U
 import qualified Crypto.PubKey.Ed25519 as Ed25519
-import qualified Crypto.Hash as H
 
 import Tezos.Common.Base58Check
-import Tezos.V005.PublicKey
 import Tezos.Common.ShortByteString (ShortByteString, fromShort, toShort)
+import Tezos.V005.PublicKey
 import Tezos.V005.Signature
 
 data SecretKeyInMemory
