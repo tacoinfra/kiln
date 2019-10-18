@@ -91,4 +91,4 @@ instance ToMicheline Expression where
   toMicheline = id
 
 instance ToMicheline ContractId where
-  toMicheline = Expression_Bytes . Base16ByteString . B.encode
+  toMicheline = AsBytes

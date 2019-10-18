@@ -9,6 +9,7 @@
 module Tezos.V005.NodeRPC.Class where
 
 import Control.Lens (uncons)
+import Data.Dependent.Sum
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Semigroup ((<>))
@@ -76,6 +77,9 @@ class QueryNode repr where -- my node
 
 class MonitorHeads repr where
   rMonitorHeads :: ChainId -> repr MonitorBlock
+
+class Injection repr where
+  rInjectOperation :: DSum OpsKindTag Op -> repr OperationHash
 
 data RpcQuery a = RpcQuery
   { _RpcQuery_decoder :: LBS.ByteString -> Either String a

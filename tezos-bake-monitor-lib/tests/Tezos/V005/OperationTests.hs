@@ -29,7 +29,7 @@ testOperationOrigination= Operation
     [ OperationContents_Reveal
       OperationContentsReveal
         { _operationContentsReveal_metadata = ManagerOperationMetadata
-          { _managerOperationMetadata_balanceUpdates = 
+          { _managerOperationMetadata_balanceUpdates =
             [ BalanceUpdate_Contract $
               ContractUpdate
                 { _contractUpdate_contract = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
@@ -77,7 +77,7 @@ testOperationOrigination= Operation
             { _operationResult_status = OperationResultStatus_Applied
             , _operationResult_errors = Nothing
             , _operationResult_content = Just $ OperationResultOrigination
-              { _operationResultOrigination_balanceUpdates = 
+              { _operationResultOrigination_balanceUpdates =
                 [ BalanceUpdate_Contract $ ContractUpdate
                     { _contractUpdate_contract = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
                     , _contractUpdate_change = -1.014000
@@ -115,28 +115,28 @@ testOperationOrigination= Operation
               (MichelinePrimitive "parameter")
               [ Expression_Prim $ MichelinePrimAp
                 (MichelinePrimitive "pair")
-                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") []
+                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] []
                 , Expression_Prim $ MichelinePrimAp
                   (MichelinePrimitive "option")
-                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") [] ]
-                ]
-              ]
+                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") [] [] ] []
+                ] []
+              ] []
             , Expression_Prim $ MichelinePrimAp
               (MichelinePrimitive "storage")
               [ Expression_Prim $ MichelinePrimAp
                 (MichelinePrimitive "pair")
-                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") []
+                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] []
                 , Expression_Prim $ MichelinePrimAp
                   (MichelinePrimitive "pair")
-                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") []
+                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] []
                   , Expression_Prim $ MichelinePrimAp
                     (MichelinePrimitive "list")
-                    [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key") [] ]
-                  ]
-                ]
-              ]
+                    [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key") [] [] ] []
+                  ] []
+                ] []
+              ] []
             , Expression_Prim $ MichelinePrimAp
-               (MichelinePrimitive "code") [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "UNIT") [] ]
+               (MichelinePrimitive "code") [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "UNIT") [] [] ] []
             ]
           , _contractScript_storage = Expression_Prim $ MichelinePrimAp
             (MichelinePrimitive "Pair")
@@ -149,8 +149,8 @@ testOperationOrigination= Operation
                 , Expression_String "edpkudQarx27avpEsMKGKXevZKb2Maa1voyfi7uJazcbxgCFd4Nufh"
                 , Expression_String "edpkutw9BqRcChuVFLZ7rpAj59gQgjzm3ihdGj5iFmQwCcdwhRFCqm"
                 ]
-              ]
-            ]
+              ] []
+            ] []
           }
         }
     ]
@@ -204,22 +204,22 @@ testOperationTransaction = Operation
         , _operationContentsTransaction_parameters = Just $ OpParameters
           { _opParameters_entrypoint = EntrypointDo
           , _opParameters_value = Expression_Seq
-            [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "DROP") []
+            [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "DROP") [] []
             , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "NIL")
-              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "operation") []
-              ]
+              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "operation") [] []
+              ] []
             , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "PUSH")
-              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") []
+              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") [] []
               , Expression_String "tz1M7RpncdPVx19rtZda42UNDWon4NE5kmGu"
-              ]
-            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "IMPLICIT_ACCOUNT") []
+              ] []
+            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "IMPLICIT_ACCOUNT") [] []
             , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "PUSH")
-              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "mutez") []
+              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "mutez") [] []
               , Expression_Int 2000
-              ]
-            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "UNIT") []
-            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "TRANSFER_TOKENS") []
-            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "CONS") []
+              ] []
+            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "UNIT") [] []
+            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "TRANSFER_TOKENS") [] []
+            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "CONS") [] []
             ]
           }
         }
@@ -239,7 +239,7 @@ tests = testGroup "OperationTests"
       ]
     , binaryRoundTripTest "OpParameters" $ OpParameters
       (EntrypointOther (EntrypointName "foo"))
-      (Expression_Prim (MichelinePrimAp (MichelinePrimitive "UNIT") []))
+      (Expression_Prim (MichelinePrimAp (MichelinePrimitive "UNIT") [] []))
     ]
   , testGroup "JSON"
     [ aesonRoundTripTest "Origination" "tests/Tezos/V005/OperationTests/OperationOriginationV005.json" testOperationOrigination

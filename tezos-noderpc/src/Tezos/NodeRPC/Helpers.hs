@@ -39,12 +39,10 @@ import Tezos.Common.Chain
 import Tezos.Common.NetworkStat (NetworkStat)
 import Tezos.Common.NodeRPC.Types
 import Tezos.NodeRPC.Network (HasNodeRPC, nodeRPC)
-import Tezos.V004.Michelson (FromMicheline, ToMicheline, wrapEndpointCall, toMicheline, fromMicheline)
 import Tezos.V005.Micheline
 import Tezos.V005.Michelson
 import Tezos.V005.NodeRPC.Class
 import Tezos.V004.Operation (OperationWithMetadata)
-import qualified Tezos.V004.Types as V004
 import qualified Tezos.V005.Types as V005
 import qualified Tezos.V005.ProtocolConstants as V005
 import qualified Tezos.V005.NodeRPC.CrossCompat as V005
@@ -65,7 +63,7 @@ dryRunEndpoint
   -> a
   -> m OperationWithMetadata
 dryRunEndpoint chain block account contract endpoint argument = do
-  error "dryRunEndpoint not yet implemented for Babylon"
+  error "dryRunEndpoint not implemented for Babylon"
   {--
   protocolConstants <- nodeRPC $ rProtoConstants chain block
   let gas_max = V005._protoInfo_hardGasLimitPerOperation protocolConstants
@@ -108,7 +106,7 @@ callViewEndpoint
   -> a
   -> m (Either String b)
 callViewEndpoint chain block account contract tgtContract endpoint argument = do
-  error "callViewEndpoint not yet implemented for Babylon"
+  error "callViewEndpoint not implemented for Babylon"
   {--
   let finalArgument = Pair (toMicheline argument) $ toMicheline $ tgtContract
   result <- dryRunEndpoint chain block account contract endpoint finalArgument

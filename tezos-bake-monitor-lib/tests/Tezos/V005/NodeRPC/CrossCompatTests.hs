@@ -89,22 +89,22 @@ testOperationTransactionV005 = V005.Operation
         , V005._operationContentsTransaction_parameters = Just $ V005.OpParameters
           { V005._opParameters_entrypoint = V005.EntrypointDo
           , V005._opParameters_value = V005.Expression_Seq
-            [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "DROP") []
+            [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "DROP") [] []
             , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "NIL")
-              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "operation") []
-              ]
+              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "operation") [] []
+              ] []
             , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "PUSH")
-              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key_hash") []
+              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key_hash") [] []
               , V005.Expression_String "tz1M7RpncdPVx19rtZda42UNDWon4NE5kmGu"
-              ]
-            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "IMPLICIT_ACCOUNT") []
+              ] []
+            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "IMPLICIT_ACCOUNT") [] []
             , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "PUSH")
-              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "mutez") []
+              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "mutez") [] []
               , V005.Expression_Int 2000
-              ]
-            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "UNIT") []
-            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "TRANSFER_TOKENS") []
-            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "CONS") []
+              ] []
+            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "UNIT") [] []
+            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "TRANSFER_TOKENS") [] []
+            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "CONS") [] []
             ]
           }
         }
@@ -345,28 +345,28 @@ testOperationOriginationV005 = V005.Operation
               (V005.MichelinePrimitive "parameter")
               [ V005.Expression_Prim $ V005.MichelinePrimAp
                 (V005.MichelinePrimitive "pair")
-                [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") []
+                [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") [] []
                 , V005.Expression_Prim $ V005.MichelinePrimAp
                   (V005.MichelinePrimitive "option")
-                  [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key_hash") [] ]
-                ]
-              ]
+                  [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key_hash") [] [] ] []
+                ] []
+              ] []
             , V005.Expression_Prim $ V005.MichelinePrimAp
               (V005.MichelinePrimitive "storage")
               [ V005.Expression_Prim $ V005.MichelinePrimAp
                 (V005.MichelinePrimitive "pair")
-                [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") []
+                [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") [] []
                 , V005.Expression_Prim $ V005.MichelinePrimAp
                   (V005.MichelinePrimitive "pair")
-                  [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") []
+                  [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") [] []
                   , V005.Expression_Prim $ V005.MichelinePrimAp
                     (V005.MichelinePrimitive "list")
-                    [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key") [] ]
-                  ]
-                ]
-              ]
+                    [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key") [] [] ] []
+                  ] []
+                ] []
+              ] []
             , V005.Expression_Prim $ V005.MichelinePrimAp
-               (V005.MichelinePrimitive "code") [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "UNIT") [] ]
+               (V005.MichelinePrimitive "code") [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "UNIT") [] [] ] []
             ]
           , V005._contractScript_storage = V005.Expression_Prim $ V005.MichelinePrimAp
             (V005.MichelinePrimitive "Pair")
@@ -379,8 +379,8 @@ testOperationOriginationV005 = V005.Operation
                 , V005.Expression_String "edpkudQarx27avpEsMKGKXevZKb2Maa1voyfi7uJazcbxgCFd4Nufh"
                 , V005.Expression_String "edpkutw9BqRcChuVFLZ7rpAj59gQgjzm3ihdGj5iFmQwCcdwhRFCqm"
                 ]
-              ]
-            ]
+              ] []
+            ] []
           }
         }
     ]
