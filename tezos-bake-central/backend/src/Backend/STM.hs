@@ -14,6 +14,7 @@ import Control.Monad.Except (ExceptT)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Reader (MonadReader, ReaderT (runReaderT), ask)
 import Control.Monad.Trans (MonadTrans (lift))
+import Control.Monad.Trans.Maybe (MaybeT)
 import Data.Time (UTCTime, getCurrentTime)
 
 class Monad m => MonadSTM m where
@@ -26,6 +27,7 @@ instance MonadSTM STM where
 
 instance MonadSTM m => MonadSTM (ReaderT r m)
 instance MonadSTM m => MonadSTM (ExceptT e m)
+instance MonadSTM m => MonadSTM (MaybeT m)
 
 class HasTimestamp r where
   timestamp :: Lens' r UTCTime

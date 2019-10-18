@@ -951,6 +951,10 @@ img.credits-obsidian {
   margin-left: @7px;
 }
 
+i.ui.icon-letter.icon {
+  font-size: 18px;
+}
+
 .notifications-subsection {
   > .ui.header > .ui.toggle label {
     > .icon {
@@ -971,6 +975,17 @@ img.credits-obsidian {
   }
   margin-top: @30px;
   margin-bottom: @30px;
+
+  .ui.header {
+    > .ui.icon-letter.icon {
+      font-size: 18px;
+      vertical-align: -10%;
+      }
+    > .ui.icon-telegram.icon {
+      font-size: 16px;
+      vertical-align: -3%;
+      }
+    }
 
   .small.ui.header + .notification-settings-description {
     margin-top: @10px;

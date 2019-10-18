@@ -46,6 +46,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
       dependent-sum-template = hackGet dep/dependent-sum-template;
       functor-infix = hackGet dep/functor-infix;
+      jsaddle-dom = hackGet dep/jsaddle-dom;
       micro-ecc = hackGet ../dep/micro-ecc-haskell;
       named = hackGet dep/named; # TODO: Drop once package set includes 0.3.0.0
       reflex-dom-forms = hackGet dep/reflex-dom-forms;

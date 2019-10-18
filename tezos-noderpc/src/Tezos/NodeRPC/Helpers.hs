@@ -9,13 +9,13 @@
 
 module Tezos.NodeRPC.Helpers where
 
-import Control.Lens (uncons, folded, each)
-import Control.Lens.Operators
+import Control.Lens (each, folded, uncons)
 import Control.Lens.Combinators
+import Control.Lens.Operators
+import Control.Monad.Except
 import Control.Monad.Logger
 import Control.Monad.Reader
-import Control.Monad.Except
-import Data.Dependent.Sum (DSum(..))
+import Data.Dependent.Sum (DSum (..))
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Semigroup ((<>))
@@ -29,20 +29,27 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Encoding (emptyObject_)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPost)
 
-import Tezos.Chain (ChainTag(ChainTag_Hash))
-import Tezos.NodeRPC.Types (NetworkStat)
-import Tezos.NodeRPC
-import Tezos.Operation
-import Tezos.Types
-import Tezos.Micheline
-import Tezos.Michelson
-import Tezos.Account
+import Tezos.Common.Chain
+import Tezos.Common.NetworkStat (NetworkStat)
+import Tezos.Common.NodeRPC.Types
+import Tezos.NodeRPC.Network (HasNodeRPC, nodeRPC)
+import Tezos.V004.Michelson (FromMicheline, ToMicheline, wrapEndpointCall, toMicheline, fromMicheline)
+import Tezos.V005.Micheline
+import Tezos.V005.Michelson
+import Tezos.V005.NodeRPC.Class
+import Tezos.V004.Operation (OperationWithMetadata)
+import qualified Tezos.V004.Types as V004
+import qualified Tezos.V005.Types as V005
+import qualified Tezos.V005.ProtocolConstants as V005
+import qualified Tezos.V005.NodeRPC.CrossCompat as V005
 
+{--
 dryRunEndpoint
   :: (MonadIO m
     , MonadError e m
@@ -51,28 +58,33 @@ dryRunEndpoint
     , HasNodeRPC s
     , MonadLogger m
     , ToMicheline a)
-  => ChainId
-  -> BlockHash
-  -> ContractId
-  -> ContractId
+  => V005.ChainId
+  -> V005.BlockHash
+  -> V005.ContractId
+  -> V005.ContractId
   -> Text
   -> a
   -> m OperationWithMetadata
 dryRunEndpoint chain block account contract endpoint argument = do
   protocolConstants <- nodeRPC $ rProtoConstants chain block
-  let gas_max = _protoInfo_hardGasLimitPerOperation protocolConstants
-  let storage_max = _protoInfo_hardStorageLimitPerOperation protocolConstants
+  let gas_max = V005._protoInfo_hardGasLimitPerOperation protocolConstants
+  let storage_max = V005._protoInfo_hardStorageLimitPerOperation protocolConstants
   callingAccount <- nodeRPC $ rContract account ChainTag_Main block
-  let counter = succ $ _account_counter callingAccount
+  let counter = succ $ case callingAccount of
+         V005.AccountV004 acc -> V004._account_counter acc
+         V005.AccountV005 acc -> fromMaybe 0 $ V005._account_counter acc
   contractAccount <- nodeRPC $ rContract contract ChainTag_Main block
-  case flip (wrapEndpointCall endpoint) (toMicheline argument) =<< _account_script contractAccount of
+  let script = case contractAccount of
+        V005.AccountV004 acc -> V004._account_script acc
+        V005.AccountV005 acc -> V005._account_script acc
+  case flip (wrapEndpointCall endpoint) (toMicheline argument) =<< script of
     Nothing -> error "Could not find endpoint"
     Just contractParameter -> do
-      let opTransfer = OpContentsTransaction 0 contract $ Just contractParameter
-          opContents = OpContentsList_Single $ OpContents_Transaction $ OpContentsManager account 10 counter gas_max storage_max opTransfer
+      let opTransfer = V005.OpContentsTransaction 0 contract $ Just contractParameter
+          opContents = V005.OpContentsList_Single $ V005.OpContents_Transaction $ V005.OpContentsManager account 10 counter gas_max storage_max opTransfer
       -- This needs to fit the format of a valid signature, but is never looked at past that.
           dummySignature = Just "edsigtXomBKi5CTRf5cjATJWSyaRvhfYNHqSUGrn4SdbYRcGwQrUGjzEfQDTuqHhuA8b2d8NarZjz8TRf65WkpQmo423BtomS8Q"
-          op = (OpsKindTag_Single (OpKindTag_Manager OpKindManagerTag_Transaction)) :=> Op { _op_branch = block, _op_contents = opContents, _op_signature = dummySignature }
+          op = (V005.OpsKindTag_Single (V005.OpKindTag_Manager V005.OpKindManagerTag_Transaction)) :=> V005.Op { V005._op_branch = block, V005._op_contents = opContents, V005._op_signature = dummySignature }
       nodeRPC $ rRunOperation chain block op
 
 
@@ -85,11 +97,11 @@ callViewEndpoint
      , MonadLogger m
      , ToMicheline a
      , FromMicheline b)
-  => ChainId
-  -> BlockHash
-  -> ContractId
-  -> ContractId
-  -> ContractId
+  => V005.ChainId
+  -> V005.BlockHash
+  -> V005.ContractId
+  -> V005.ContractId
+  -> V005.ContractId
   -> Text
   -> a
   -> m (Either String b)
@@ -112,3 +124,4 @@ callViewEndpoint chain block account contract tgtContract endpoint argument = do
       . internalOperationContentsTransaction_result
       . operationResultTransaction_storage
       . _Just
+--}

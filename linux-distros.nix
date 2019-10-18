@@ -74,9 +74,6 @@ let
           echo 'kernel.unprivileged_userns_clone=1' > $DEBDIR/etc/sysctl.d/10-kiln-userns.conf
           cp ${udevRules}  $DEBDIR/etc/udev/rules.d/20-kiln-ledger.rules
 
-          # User can modify this to specify optional args like --network, --port
-          echo "KILNARGS=" > $DEBDIR/etc/${pkgName}/args
-
           # copy nix closure
           storePaths=$(${pkgs.perl}/bin/perl ${pkgs.pathsFromGraph} closure)
           mkdir -p $DEBDIR/${nix-store-root}/nix/store
@@ -111,6 +108,11 @@ let
          udevadm trigger
          udevadm control --reload-rules
     esac
+    if [ ! -e /etc/kiln/args ]; then
+        # User can modify this to specify optional args like --network, --port
+        mkdir -p /etc/kiln
+        echo "KILNARGS=" > /etc/kiln/args
+    fi
     if [ -d /run/systemd/system ]; then
         systemctl --system daemon-reload >/dev/null
         systemctl enable kiln.service >/dev/null
