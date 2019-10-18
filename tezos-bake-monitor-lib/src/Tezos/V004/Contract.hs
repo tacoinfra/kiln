@@ -29,7 +29,7 @@ import Tezos.Common.Json
 data ContractId
   = Implicit !PublicKeyHash
   | Originated !ContractHash
-  deriving (Eq, Ord, Read, Generic, Typeable)
+  deriving (Eq, Ord, Generic, Typeable)
 instance Hashable ContractId
 instance NFData ContractId
 
