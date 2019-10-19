@@ -2,7 +2,7 @@
 
 ## 0.7.2
 
-  * Include the tezos-node containing the hotfix: Mempool: remove parsing exceptions (a7d357bb)
+  * Include the tezos-node containing: Mempool: remove parsing exceptions (a7d357bb)
 
     https://gitlab.com/tezos/tezos/commit/a7d357bb290eab43c92ec2245811e9af959d1d4c
 
