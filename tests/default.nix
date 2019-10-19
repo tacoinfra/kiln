@@ -27,10 +27,8 @@ in {
     oldProtoHash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd";
     oldSuffix = "004-${builtins.substring 0 8 oldProtoHash}";
     newSuffix = "005-PsBabyM1";
-    # this should ideally be same as newSuffix, but for 005 the proposal is different from the actual new protocol
-    proposalSuffix = "005-PsBABY5H";
 
-    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] proposalSuffix}/lib_protocol";
+    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
