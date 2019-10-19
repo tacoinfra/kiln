@@ -221,7 +221,7 @@ authorizeLedger (sk, pkh) = do
   pure $ leftmost [Left <$> err, ffor isRegEv $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where
     explanation = do
-      text "Some allows the Ledger Device to sign blocks and endorsements for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or endorsements it may have already signed."
+      text "This allows the Ledger Device to sign blocks and endorsements for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or endorsements it may have already signed."
       pure $ pure $ Just $ PublicRequest_SetupLedgerToBake sk
     prompt = "Setup Baking? Address: " <> toPublicKeyHashText pkh
     handleStep ss
