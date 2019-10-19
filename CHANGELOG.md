@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.2
+
+  * Include the tezos-node containing the hotfix: Mempool: remove parsing exceptions (a7d357bb)
+
+    https://gitlab.com/tezos/tezos/commit/a7d357bb290eab43c92ec2245811e9af959d1d4c
+
+### Known Issues
+    * Upgrading Kiln from v0.6.* on Ubuntu/Debian overwrites the /etc/kiln/args file
+    * Kiln will not work on zeronet.
+
 ## 0.7.1
 
   * Support for Babylon protocol (005_PsBabyM1)
