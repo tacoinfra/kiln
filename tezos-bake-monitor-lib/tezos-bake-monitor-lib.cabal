@@ -145,5 +145,6 @@ test-suite test
     , tasty
     , tasty-hunit
     , text
+    , time
 
   
