@@ -146,6 +146,11 @@ data Op (a :: OpKind) = Op
   }
   deriving (Eq, Ord, Show, Typeable)
 
+data OpWithChain a = OpWithChain
+  { _opWithChain_operation :: !a
+  , _opWithChain_chain_id :: !ChainId
+  }
+
 -- | next_operation:
 -- { "protocol": "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd",
 --   "branch": $block_hash,
@@ -316,7 +321,7 @@ data OpContentsBallot = OpContentsBallot
   deriving (Eq, Ord, Show, Typeable)
 
 data OpContentsManager op = OpContentsManager
-  { _opContentsManager_source :: !ContractId
+  { _opContentsManager_source :: !PublicKeyHash
   , _opContentsManager_fee :: !Tez
   , _opContentsManager_counter :: !TezosWord64
   , _opContentsManager_gasLimit :: !TezosWord64
@@ -542,13 +547,52 @@ data OperationContentsBallot = OperationContentsBallot
 data ManagerOperationMetadata a = ManagerOperationMetadata
   { _managerOperationMetadata_balanceUpdates :: !(Seq BalanceUpdate) --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" }
   , _managerOperationMetadata_operationResult :: !(OperationResult a) --  "operation_result": { "$ref": "#/definitions/operation.alpha.operation_result.reveal" },
-  -- I don't see these in the output from the nodes, seems redundant,  i'll skip them for now.
-  -- , _managerOperationMetadata_Results :: !(Seq InternalOperationResult) --  "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
+  , _managerOperationMetadata_internalOperationResults :: !(Maybe (Seq InternalOperationResult)) --  "internal_operation_results": { "type": "array", "items": { "$ref": "#/definitions/operation.alpha.internal_operation_result" } }
 -- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:500:           (dft "internal_operation_results"
 -- src/proto_002_PsYLVpVv/lib_protocol/src/apply_results.ml:501:              (list internal_operation_result_encoding) [])) ;
   }
   deriving (Eq, Ord, Show, Typeable)
 
+data InternalOperationResult
+  = InternalOperationResult_Reveal !InternalOperationContentsReveal
+  | InternalOperationResult_Transaction !InternalOperationContentsTransaction
+  | InternalOperationResult_Origination !InternalOperationContentsOrigination
+  | InternalOperationResult_Delegation !InternalOperationContentsDelegation
+  deriving (Eq, Ord, Show, Typeable)
+
+instance FromJSON InternalOperationResult where
+  parseJSON = withObject "Operation" $ \v -> do
+    kind :: Text <- v .: "kind"
+    case kind of
+      "reveal"                      -> InternalOperationResult_Reveal                    <$> parseJSON (Object v)
+      "transaction"                 -> InternalOperationResult_Transaction               <$> parseJSON (Object v)
+      "origination"                 -> InternalOperationResult_Origination               <$> parseJSON (Object v)
+      "delegation"                  -> InternalOperationResult_Delegation                <$> parseJSON (Object v)
+      bad -> fail $ "wrong kind:" <> show bad
+
+instance ToJSON InternalOperationResult where
+  toJSON (InternalOperationResult_Reveal                    x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "reveal"                      ; _ -> error "toJSON did not return an object" }
+  toJSON (InternalOperationResult_Transaction               x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "transaction"                 ; _ -> error "toJSON did not return an object" }
+  toJSON (InternalOperationResult_Origination               x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "origination"                 ; _ -> error "toJSON did not return an object" }
+  toJSON (InternalOperationResult_Delegation                x) = case toJSON x of { Object xs -> Object $ xs <> HashMap.singleton "kind" "delegation"                  ; _ -> error "toJSON did not return an object" }
+
+data InternalOperationContentsReveal = InternalOperationContentsReveal
+  deriving (Eq, Ord, Show, Typeable)
+  -- FIXME: don't drop this one on the floor.
+data InternalOperationContentsTransaction = InternalOperationContentsTransaction
+  { _internalOperationContentsTransaction_source :: !ContractId
+  , _internalOperationContentsTransaction_nonce :: !Word16
+  , _internalOperationContentsTransaction_amount :: !Tez
+  , _internalOperationContentsTransaction_destination :: !ContractId
+  , _internalOperationContentsTransaction_parameters :: !(Maybe OpParameters)
+  , _internalOperationContentsTransaction_result :: !OperationResultTransaction
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
+data InternalOperationContentsOrigination = InternalOperationContentsOrigination
+  deriving (Eq, Ord, Show, Typeable)
+data InternalOperationContentsDelegation = InternalOperationContentsDelegation
+  deriving (Eq, Ord, Show, Typeable)
 data OperationResultStatus
   =  OperationResultStatus_Applied     --  no errors, have result
   |  OperationResultStatus_Failed      --  have errors no result
@@ -850,7 +894,7 @@ instance B.TezosBinary Entrypoint where
 
 instance B.TezosBinary OpParameters where
   put = B.puts _opParameters_entrypoint
-    <** B.puts _opParameters_value
+    <** B.puts (B.DynamicSize . _opParameters_value)
   get = OpParameters
     <$> B.get
     <*> B.get
@@ -858,7 +902,7 @@ instance B.TezosBinary OpParameters where
 instance B.TezosBinary OpContentsTransaction where
   put = B.puts _opContentsTransaction_amount
     <** B.puts _opContentsTransaction_destination
-    <** B.puts (fmap B.DynamicSize . _opContentsTransaction_parameters)
+    <** B.puts _opContentsTransaction_parameters
   get = pure OpContentsTransaction
     <*> B.get
     <*> B.get
@@ -1172,9 +1216,14 @@ concat <$> traverse deriveTezosJson
   , ''OperationContentsProposals
   , ''OperationContentsBallot , ''Ballot
   , ''OperationResultStatus
+  , ''InternalOperationContentsReveal
+  , ''InternalOperationContentsTransaction
+  , ''InternalOperationContentsOrigination
+  , ''InternalOperationContentsDelegation
   , ''OperationContentsReveal , ''OperationResultReveal
   , ''OperationContentsTransaction
   , ''OperationContentsOrigination
+  , ''OperationWithMetadata
   , ''OpContentsOrigination
   , ''OperationContentsDelegation, ''OperationResultDelegation
   , ''OpContentsEndorsement
@@ -1188,6 +1237,7 @@ concat <$> traverse deriveTezosJson
   , ''OpContentsTransaction
   , ''OpContentsDelegation
   , ''OpParameters
+  , ''OpWithChain
   ]
 
 
@@ -1206,6 +1256,9 @@ fmap concat $ sequence
   , concat <$> traverse makePrisms
     [ ''OperationContents
     , ''Entrypoint
+    , ''InternalOperationResult
+    , ''OpContentsList
+    , ''OperationResultStatus
     ]
   , concat <$> traverse makeLenses
     [ 'Operation
@@ -1216,6 +1269,10 @@ fmap concat $ sequence
     , 'EndorsementMetadata
     , 'InlinedEndorsement
     , 'InlinedEndorsementContents
+    , 'InternalOperationContentsReveal
+    , 'InternalOperationContentsTransaction
+    , 'InternalOperationContentsOrigination
+    , 'InternalOperationContentsDelegation
     , 'ManagerOperationMetadata
     , 'OperationContentsActivateAccount
     , 'OperationContentsBallot
@@ -1233,7 +1290,10 @@ fmap concat $ sequence
     , 'OperationResultOrigination
     , 'OperationResultReveal
     , 'OperationResultTransaction
+    , 'OperationWithMetadata
+    , 'Op
     , 'OpContentsEndorsement
+    , 'OpContentsManager
     , 'OpContentsTransaction
     , 'OpContentsOrigination
     , 'SeedNonceRevelationMetadata
