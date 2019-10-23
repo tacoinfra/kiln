@@ -9,9 +9,6 @@ in pkgs.runCommand "scoped-tzkits" {} ''
   for bin in $(ls ${tz.babylonnet.kit}/bin) ; do
     ln -s ${tz.babylonnet.kit}/bin/$bin $out/bin/babylonnet-$bin
   done
-  for bin in $(ls ${tz.alphanet.kit}/bin) ; do
-    ln -s ${tz.alphanet.kit}/bin/$bin $out/bin/alphanet-$bin
-  done
   for bin in $(ls ${tz.zeronet.kit}/bin) ; do
     ln -s ${tz.zeronet.kit}/bin/$bin $out/bin/zeronet-$bin
   done
