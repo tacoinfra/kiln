@@ -92,7 +92,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
       headHash :: BlockHash = headBlock ^. hash
 
     let
-      rightsLookAhead = RawLevel $ unCycle ( _protoInfo_preservedCycles protoInfo) * unRawLevel ( _protoInfo_blocksPerCycle protoInfo)
+      rightsLookAhead = RawLevel $ (unCycle ( _protoInfo_preservedCycles protoInfo) + 1) * unRawLevel ( _protoInfo_blocksPerCycle protoInfo)
       minCycle = minimumDef 0 $ fmap _rightsCycleInfo_cycle cycleHashes
       maxCycle = maximumDef (-1) $ fmap _rightsCycleInfo_cycle cycleHashes
       -- well just swizzle these around
