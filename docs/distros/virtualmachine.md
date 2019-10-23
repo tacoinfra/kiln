@@ -65,7 +65,7 @@ For example to run zeronet
 
 ```
 mkdir -p /home/kiln/app/config
-echo “zeronet” > /home/kiln/app/config/network
+echo zeronet > /home/kiln/app/config/network
 sudo systemctl restart kiln
 ```
 

@@ -22,10 +22,8 @@ import System.Environment
 
 import Tezos.History
 import Tezos.NodeRPC.Network
-import Tezos.NodeRPC.Types
-import Tezos.NodeRPC.Class
+import Tezos.NodeRPC
 import Tezos.Types
-import Tezos.NodeRPC.Sources
 
 onRPCError :: PublicNodeError -> a
 onRPCError = \case
@@ -34,7 +32,7 @@ onRPCError = \case
   PublicNodeError_RpcError (RpcError_UnexpectedStatus code bad) -> error $ ("\n" <>) (show code <> show bad)
   PublicNodeError_RpcError (RpcError_NonJSON clue bad) ->          error $ ("\n" <>) (clue <> "\n" <> show bad)
 
-accum :: ChainId -> Block -> ExceptT PublicNodeError (ReaderT (AccumHistoryContext TVar Fitness) (LoggingT IO)) Fitness
+accum :: ChainId -> BlockCrossCompat -> ExceptT PublicNodeError (ReaderT (AccumHistoryContext TVar Fitness) (LoggingT IO)) Fitness
 accum chainId = accumHistory chainId (^. fitness)
 
 main :: IO ()
@@ -54,7 +52,7 @@ main = do
 
   runTest ctx $ do
     chainId <- nodeRPC rChain
-    headBlk <- nodeRPC $ rHead (ChainTag_Hash chainId)
+    headBlk :: BlockCrossCompat <- nodeRPC $ rHead (ChainTag_Hash chainId)
 
     scanBranch headBlk 50000 50001 $ \blk -> do
       accum chainId blk
@@ -62,14 +60,14 @@ main = do
 
     let (xHash, xPath):_ = Map.toList $ _cachedHistory_blocks b
     let xLevel :: Int = 2000 + fromIntegral (length xPath)
-    xBlk <- nodeRPC $ rBlock (ChainTag_Hash chainId) xHash
-    liftIO $ print [toBase58Text xHash, T.pack $ show xLevel, T.pack $ show $ _blockHeader_level $ _block_header xBlk]
+    xBlk :: BlockCrossCompat <- nodeRPC $ rBlock (ChainTag_Hash chainId) xHash
+    liftIO $ print [toBase58Text xHash, T.pack $ show xLevel, T.pack $ show $ xBlk ^. level ]
     -- let tfBaker5 = "tz3UoffC7FG7zfpmvmjUmUeAaHvzdcUvAj6r"
     -- liftIO $ putStrLn "bake5"
     -- step (RContract (branch 100) tfBaker5) >>= liftIO . print
 
     liftIO $ putStrLn "constants"
-    void $ nodeRPC $ rProtoConstants chainId (_block_hash headBlk)
+    void $ nodeRPC $ rProtoConstants chainId (headBlk ^. hash)
 
 runTest :: AccumHistoryContext TVar Fitness -> ExceptT PublicNodeError (ReaderT (AccumHistoryContext TVar Fitness) (LoggingT IO)) () -> IO ()
 runTest ctx action = runStderrLoggingT $ either onRPCError id <$> runReaderT (runExceptT action) ctx
