@@ -36,6 +36,7 @@ import Data.Pool (Pool)
 import qualified Data.Set as S
 import Data.String.Here.Interpolated (i)
 import Data.These
+import qualified Data.Text as T
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
@@ -128,6 +129,16 @@ nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> 
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
+    $(logDebug) $ fold
+      [ "Updating node "
+      , tshow nodeId
+      , " details "
+      , Uri.render nodeAddr
+      , " at block "
+      , tshow headBlockInfo
+      , " savepoint "
+      , tshow mSpData
+      ]
     -- This isn't very nuanced: old, stale nodes, even if they are catching
     -- up, will churn a lot here.  Maybe we could improve this to filter
     -- out "new" blocks that are already on the branch of `oldHead`?
@@ -811,10 +822,14 @@ protocolMonitorWorker
 protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
+    prettyNodes (uri, reason)  = "(" <> (Uri.render uri) <> "," <> (tshow reason) <> ")"
+    prettyCacheError (CacheError_NoSuitableNode q nodes) =
+      "No suitable nodes found for query " <> q <> ". Nodes: (" <> (T.intercalate "," . fmap prettyNodes $ nodes ) <> ")"
+    prettyCacheError e = tshow e 
     getProtocol = getProtocol' >>= \case
       Right p -> return p
       Left e -> do
-        $(logWarnSH) ("protocolMonitorWorker: cannot fetch protocol"::Text, e)
+        $(logWarnSH) ("protocolMonitorWorker: cannot fetch protocol"::Text, prettyCacheError e)
         threadDelay' 1
         getProtocol
 

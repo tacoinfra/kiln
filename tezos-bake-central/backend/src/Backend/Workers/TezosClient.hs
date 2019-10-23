@@ -256,7 +256,6 @@ clientPath :: Either NamedChain BinaryPaths -> FilePath
 clientPath = \case
   Right (BinaryPaths _ c _) -> c
   Left NamedChain_Mainnet -> $(staticWhich "mainnet-tezos-client")
-  Left NamedChain_Alphanet -> $(staticWhich "alphanet-tezos-client")
   Left NamedChain_Zeronet -> $(staticWhich "zeronet-tezos-client")
   Left NamedChain_Babylonnet -> $(staticWhich "babylonnet-tezos-client")
 
