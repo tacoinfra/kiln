@@ -822,7 +822,7 @@ protocolMonitorWorker
 protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
-    prettyNodes (uri, reason)  = "(" <> (Uri.render uri) <> "," <> (tshow reason) <> ")"
+    prettyNodes (uri, reason)  = "(" <> Uri.render uri <> "," <> tshow reason <> ")"
     prettyCacheError (CacheError_NoSuitableNode q nodes) =
       "No suitable nodes found for query " <> q <> ". Nodes: (" <> (T.intercalate "," . fmap prettyNodes $ nodes ) <> ")"
     prettyCacheError e = tshow e 
