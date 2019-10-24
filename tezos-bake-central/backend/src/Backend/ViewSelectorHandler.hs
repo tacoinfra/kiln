@@ -591,7 +591,7 @@ getAlertCount chainId = DMap.fromList . concat <$> traverse (\(Some lTag) -> do
           \ FROM \"ErrorLog\" el \
           \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
           \ WHERE el.stopped IS NULL"
-          <> " AND el.\"chainId\" = " <> (renderChainId chainId)
+          <> " AND el.\"chainId\" = " <> renderChainId chainId
       $(logDebugSH) ("queryAlert" :: Text, sqlTable)
       v <- traceQuery qBase id build
       pure (v, Proxy @b)
