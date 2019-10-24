@@ -284,10 +284,8 @@ instance MonadNodeQuery NodeQueryQueued where
     $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: Branch ${qBranch}: ${tshow q}|]
     dsrc <- askNodeDataSource
     (mNodesToTry, badCandidates) <- case _nodeDataSource_nodeForQuery dsrc of
-      -- If we have the nodeForQuery override set, just push it through assuming that it's good and don't
-      -- load any other candidates.
-      -- TODO: Is this OK? In what cases is this override set? Should we have something about the override
-      -- being set if things error out?
+      -- If we have the nodeForQuery override set, just push it through assuming that the overrider is responsible for
+      -- making sure that it's good and don't load any other candidates.
       Just n -> pure ([n], [])
       Nothing -> do
         nodes <- nqInDB $ getActiveNodeDetails $ _nodeDataSource_kilnNodeUri dsrc
@@ -308,6 +306,7 @@ instance MonadNodeQuery NodeQueryQueued where
         Just uri ->
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
+          -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
           in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
       -- But if we have candidate nodes, try them until we succeed
       -- TODO: Why isn't there a public node call as the last attempt here?
