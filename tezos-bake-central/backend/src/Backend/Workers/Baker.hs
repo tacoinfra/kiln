@@ -39,13 +39,14 @@ import Data.Sequence (Seq())
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Database.Groundhog.Postgresql
+import Database.Id.Class
+import Database.Id.Groundhog
 import Reflex (fforMaybe, fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, In(..))
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Schema (Id (..))
-import Rhyolite.Schema (Id (..), Json(..))
+import Rhyolite.Schema (Json(..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
@@ -68,9 +69,6 @@ import ExtraPrelude
 
 import Data.Align
 import Data.These (These(..), these)
-import Algebra.Lattice ((/\))
-
-import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 
 -- TODO: This only loops through one cycle at a time, per block;  we don't need to wait that long (although it may still end up doing the right thing eventually)
 
@@ -167,7 +165,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
           (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvl)
         let
           pri1baker :: Maybe BakingRights
-          pri1baker = fmap NonEmpty.head . nonEmpty . filter ((flip Set.member pkhs . _bakingRights_delegate) /\ (== 0) . _bakingRights_priority) $ toList reqBakers
+          pri1baker = fmap NonEmpty.head . nonEmpty . filter (\br -> (flip Set.member pkhs . _bakingRights_delegate) br && ((== 0) . _bakingRights_priority) br) $ toList reqBakers
           endorsers :: Seq EndorsingRights
           endorsers = Seq.filter (flip Set.member pkhs . _endorsingRights_delegate) reqEndorsers
           branch :: BlockHash
@@ -312,7 +310,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   bakingEndorsingAlerts :: [mCommit ()] <- for headBranch $ \(lvl, thisHash) -> do
     bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
     bakingAlerts :: [mCommit ()]
-                 <- whenM (any ((== 0) . _bakingRights_priority /\ (== _baker_publicKeyHash baker) . _bakingRights_delegate) bakingRights) $ do
+                 <- whenM (any (\br -> ((== 0) . _bakingRights_priority) br && ((== _baker_publicKeyHash baker) . _bakingRights_delegate) br) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
             bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake ((thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker)

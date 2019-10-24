@@ -9,7 +9,6 @@ module Backend.Workers.Cache where
 import Control.Concurrent.STM (TVar, atomically, orElse)
 import Control.Monad.Logger (logDebug)
 import qualified Data.Aeson as Aeson
-import Data.Constraint (withDict)
 import Data.Dependent.Map (DSum (..))
 import qualified Data.Dependent.Map as DMap
 import Data.Either (partitionEithers)
@@ -19,7 +18,6 @@ import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeMany)
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Request.Class (requestResponseToJSON, requestToJSON)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Types (ChainId)
@@ -43,8 +41,8 @@ classifyCacheEntry chainId expireTime (q :=> Compose cx) =
         Nothing ->
           Just $ Left GenericCacheEntry
             { _genericCacheEntry_chainId = chainId
-            , _genericCacheEntry_key = Json (requestToJSON q)
-            , _genericCacheEntry_value = Json (requestResponseToJSON q `withDict` Aeson.toJSON value)
+            , _genericCacheEntry_key = Json (Aeson.toJSON q)
+            , _genericCacheEntry_value = Json (Aeson.toJSON value)
             }
         Just _ -> Nothing
     else

@@ -40,14 +40,14 @@ import qualified Data.Text as T
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
+import Database.Id.Class
+import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Backend.Schema (toId, fromId)
-import Rhyolite.Schema (Id (..))
 import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri

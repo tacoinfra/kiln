@@ -48,9 +48,9 @@ import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Aeson.GADT (deriveJSONGADT)
-import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
-import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
-import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
+import Data.GADT.Compare.TH (deriveGEq)
+import Data.GADT.Compare.TH (deriveGCompare)
+import Data.GADT.Show.TH (deriveGShow)
 import Data.Dependent.Sum.Orphans ()
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -64,12 +64,13 @@ import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
 import Data.Universe
 import Data.Universe.Helpers (universeDef)
-import Data.Universe.TH (deriveSomeUniverse)
+import Data.Universe.Some
 import Data.Version (Version)
 import Data.Word
+import Database.Id.Class
 import GHC.Generics (Generic)
 import Language.Haskell.TH (Name)
-import Rhyolite.Schema (Email, HasId (..), Id, Json)
+import Rhyolite.Schema (Email, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -1022,9 +1023,6 @@ fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
   , deriveGEq t
   , deriveGCompare t
   , deriveGShow t
-  , deriveEqTagIdentity t
-  , deriveOrdTagIdentity t
-  , deriveShowTagIdentity t
   ]
 
 -- Do this is second because it is downstream
@@ -1034,17 +1032,29 @@ fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
   , deriveGEq t
   , deriveGCompare t
   , deriveGShow t
-  , deriveEqTagIdentity t
-  , deriveOrdTagIdentity t
-  , deriveShowTagIdentity t
   ]
 
-deriveSomeUniverse ''NodeLogTag
-deriveSomeUniverse ''BakerLogTag
+instance UniverseSome NodeLogTag where
+  universeSome =
+    [ Some NodeLogTag_InaccessibleNode
+    , Some NodeLogTag_NodeWrongChain
+    , Some NodeLogTag_NodeInvalidPeerCount
+    , Some NodeLogTag_BadNodeHead
+    ]
+
+instance UniverseSome BakerLogTag where
+  universeSome =
+    [ Some BakerLogTag_BakerMissed
+    , Some BakerLogTag_BakerDeactivated
+    , Some BakerLogTag_BakerDeactivationRisk
+    , Some BakerLogTag_BakerAccused
+    , Some BakerLogTag_InsufficientFunds
+    , Some BakerLogTag_VotingReminder
+    ]
 -- need Cale to fix this
 -- deriveSomeUniverse ''LogTag
-instance Universe (Some LogTag) where
-  universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
+instance UniverseSome LogTag where
+  universeSome = [Some LogTag_NetworkUpdate] <> fmap (\(Some x) -> Some (LogTag_Node x)) universe <> fmap (\(Some x) -> Some (LogTag_Baker x)) universe <> [Some LogTag_BakerNoHeartbeat]
 
 instance BlockLike PublicNodeHead where
   hash = publicNodeHead_headBlock . hash

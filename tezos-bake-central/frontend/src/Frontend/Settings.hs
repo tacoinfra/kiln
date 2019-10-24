@@ -26,7 +26,6 @@ import Prelude hiding (log)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Text.Read (readMaybe)
 
 import Common.Api
@@ -73,11 +72,11 @@ data SettingsRoute t cfg
 
 settingsTab
   :: forall r t m.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadAppWidget t m
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
-    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , HasModal t m, MonadAppWidget  t (ModalM m)
     )
   => m ()
 settingsTab = do

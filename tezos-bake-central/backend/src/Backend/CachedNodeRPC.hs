@@ -73,9 +73,10 @@ import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import qualified Data.Aeson as Aeson
+import Data.Aeson (ToJSON, FromJSON)
 import Data.Aeson.Encoding (emptyObject_)
 import Data.Bifunctor (bimap, first)
-import Data.Constraint (Dict (..))
+import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Either (partitionEithers)
@@ -96,6 +97,7 @@ import qualified Data.Set as Set
 import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Vector as V
+import Database.Id.Class
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple.LargeObjects as PG
@@ -108,9 +110,7 @@ import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
-import Rhyolite.Request.TH (makeRequestForData)
-import Rhyolite.Schema (Json (..), LargeObjectId (..), Id(..))
+import Rhyolite.Schema (Json (..), LargeObjectId (..))
 import Safe (headMay, minimumMay)
 import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
@@ -183,11 +183,12 @@ data CachedBlockInfo = CachedBlockInfo
 type CachedHistory' = CachedHistory ()
 type DirtyBit = Maybe (Id GenericCacheEntry)
 
-data CacheLine a = CacheLine
-  { _cacheLine_value :: !a
-  , _cacheLine_used :: !UTCTime
-  , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
-  }
+data CacheLine a where
+  CacheLine :: (ToJSON a, FromJSON a) =>
+    { _cacheLine_value :: !a
+    , _cacheLine_used :: !UTCTime
+    , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
+    } -> CacheLine a
 
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(TVar CachedHistory')
@@ -224,7 +225,7 @@ class MonadLogger m => MonadNodeQuery m where
   nqAtomicallyWithTime action = liftIO $ atomicallyWithTime action
   answerImmediate :: ReaderT UTCTime STM (Maybe (Either CacheError a)) -> STM (m (AnswerM m a))
   withFinishWith :: NodeDataSource -> (forall r. (Either CacheError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
-  nodeRPCOrBust :: BlockHash -> NodeQuery a -> m a
+  nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m a
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
@@ -348,7 +349,7 @@ instance MonadNodeQuery NodeQueryImmediate where
 
 data NodeQueryTResult a where
   NodeQueryTResult_Done :: a -> NodeQueryTResult a
-  NodeQueryTResult_Query :: forall a b. BlockHash -> NodeQuery a -> NodeQueryTResult b
+  NodeQueryTResult_Query :: forall a b. (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> NodeQueryTResult b
 
 deriving instance Functor NodeQueryTResult
 
@@ -750,6 +751,7 @@ nodeQueryDataSource
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsCacheError e
+    , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m a
 nodeQueryDataSource q = do
@@ -772,6 +774,8 @@ nodeQueryDataSourceSafe
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
     )
   => NodeQuery a -> NodeQueryT m a
 nodeQueryDataSourceSafe q = unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw q
@@ -783,6 +787,8 @@ nodeQueryDataSourceImmediate
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsCacheError e
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m a
 nodeQueryDataSourceImmediate q = runNodeQueryQueued $
@@ -792,6 +798,8 @@ nodeQueryDataSourceRaw
   :: forall m a.
     ( MonadNodeQuery m
     , MonadMask m
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m (AnswerM m a)
 nodeQueryDataSourceRaw q = do
@@ -804,7 +812,7 @@ nodeQueryDataSourceRaw q = do
 -- Returns the raw cache value (if found) and an action that will wait on the cache
 -- regardless of whether it was found or required a new request to be queued.
 nodeQueryDataSourceSTM
-  :: forall n a m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n)
+  :: forall n a m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
   => nds -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n a))
 nodeQueryDataSourceSTM nds qBranch q = do
   cache <- readTVar' cacheVar
@@ -1256,11 +1264,11 @@ calculateBakeEfficiency branch len baker = do
 
 -}
 tryFetchFromCache
-  :: forall m a. MonadNodeQuery m
+  :: forall m a. (MonadNodeQuery m, FromJSON a, ToJSON (NodeQuery a))
   => ChainId -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
 tryFetchFromCache chainId q = do
   let
-    qJson = Json $ requestToJSON q
+    qJson = Json $ Aeson.toJSON q
   -- although this is within the grasp of groundhog, this table is very hot,
   -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
   -- terrible:
@@ -1273,12 +1281,11 @@ tryFetchFromCache chainId q = do
     |] <&> fmap (\(id_, c, k, v) -> (id_, GenericCacheEntry c k v))
   case nonEmpty resultM of
     Nothing -> return Nothing
-    Just ((rid, result) :| _) -> case requestResponseFromJSON q of
-      Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
-        Aeson.Success v -> return $ Just (v, rid)
-        Aeson.Error bad -> do
-          $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
-          return Nothing
+    Just ((rid, result) :| _) -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
+      Aeson.Success v -> return $ Just (v, rid)
+      Aeson.Error bad -> do
+        $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
+        return Nothing
 
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
@@ -1498,12 +1505,12 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
 deriveGShow ''NodeQuery
-makeRequestForData ''NodeQuery
+deriveJSONGADT ''NodeQuery
 
 deriveGEq ''NodeQueryIx
 deriveGCompare ''NodeQueryIx
 deriveGShow ''NodeQueryIx
-makeRequestForData ''NodeQueryIx
+deriveJSONGADT ''NodeQueryIx
 
-instance Hashable (NodeQuery a) where
-  hashWithSalt s = hashWithSalt s . requestToJSON
+instance (ToJSON (NodeQuery a)) => Hashable (NodeQuery a) where
+  hashWithSalt s = hashWithSalt s . Aeson.toJSON

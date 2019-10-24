@@ -2,13 +2,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
 
 module Common.Route where
@@ -17,7 +17,6 @@ import Prelude hiding (id, (.))
 import Control.Category
 import Control.Monad.Except
 import Data.Functor.Identity
-import Data.Functor.Sum
 import Data.Text (Text)
 import Obelisk.Route
 import Obelisk.Route.TH
@@ -48,11 +47,11 @@ data ExportLog :: * -> * where
   ExportLog_Baker :: ExportLog ()
   ExportLog_Endorser :: ExportLog ()
 
-backendRouteEncoder
-  :: Encoder (Either Text) Identity (R (Sum BackendRoute (ObeliskRoute AppRoute))) PageName
-backendRouteEncoder = handleEncoder (const (InR (ObeliskRoute_App AppRoute_Index) :/ ())) $
-  pathComponentEncoder $ \case
-    InL backendRoute -> case backendRoute of
+fullRouteEncoder
+  :: Encoder (Either Text) Identity (R (FullRoute BackendRoute AppRoute)) PageName
+fullRouteEncoder = mkFullRouteEncoder
+  (FullRoute_Frontend (ObeliskRoute_App AppRoute_Index) :/ ())
+  (\case
       BackendRoute_ExportLogs -> PathSegment "export-logs" $ pathComponentEncoder $ \case
         ExportLog_Node -> PathSegment "node" $ unitEncoder mempty
         ExportLog_Baker -> PathSegment "baker" $ unitEncoder mempty
@@ -61,7 +60,8 @@ backendRouteEncoder = handleEncoder (const (InR (ObeliskRoute_App AppRoute_Index
       BackendRoute_Missing -> PathSegment "missing" $ unitEncoder mempty
       BackendRoute_PublicCacheApi -> PathSegment "api" id
       BackendRoute_SnapshotUpload -> PathSegment "snapshot-upload" $ unitEncoder mempty
-    InR obeliskRoute -> obeliskRouteSegment obeliskRoute appRouteSegment
+  )
+  appRouteSegment
 
 concat <$> mapM deriveRouteComponent
   [ ''BackendRoute
