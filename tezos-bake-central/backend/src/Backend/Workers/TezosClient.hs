@@ -280,6 +280,19 @@ defaultTimeout = Just (5, ClientError_Timeout)
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
 
+-- Clears any notion of us waiting for us to do an action on this ledger. Call this when kiln boots
+-- just in case it was in any kind of ledger action prior to the restart
+resetLedgerQueue :: (MonadIO m)  => LoggingEnv -> Pool Postgresql ->  m ()
+resetLedgerQueue logger db =  liftIO $ runLoggingEnv logger $ runDb (Identity db) $ update
+  [ LedgerAccount_shouldImportField =. False
+  , LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)
+  , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: Maybe Ballot)
+  , LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe (Id PeriodProposal))
+  , LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)
+  , LedgerAccount_shouldSetupToBakeField =. False
+  ]
+  CondEmpty
+
 getConnectedLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
 getConnectedLedger appConfig chain = runExceptT $ do
   stdout <- runClientCommand appConfig chain defaultTimeout ["list", "connected", "ledgers"] $ \_warnings errors -> if

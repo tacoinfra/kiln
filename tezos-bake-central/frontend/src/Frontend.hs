@@ -1034,8 +1034,9 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
           Just (nid, pd) -> (fmap . fmap . fmap) (nid, pd,) $ watchNodeDetails nid
         let isBootstrapLevel = (< 2)
             nodeNotReady = handleClientErrorWorkflow splash ClientError_NodeNotReady
-            f Nothing _ = launchNode -- With no internal node, we prompt the user to launch a kiln node
-            f (Just (nid, pd, nd)) es
+            f Nothing _ _ = launchNode -- With no internal node, we prompt the user to launch a kiln node
+            f _ Nothing _ = nodeNotReady
+            f _ (Just (nid, pd, nd)) es
               -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
               | MMap.member nid es = nodeNotReady
               | ProcessControl_Stop == _processData_control pd = nodeNotReady
@@ -1045,7 +1046,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
                 result <- ledgerSetupSteps
                 let (err, done) = fanEither result
                 pure ((["ledger-setup-steps"], close <> done), handleClientErrorWorkflow splash <$> err)
-            afterDisclaimer = tag $ current (liftA2 f nodeDetails ebn)
+            afterDisclaimer = tag $ current (liftA3 f node nodeDetails ebn)
         pure (([], close'), disclaimer afterDisclaimer <$ start)
 
     startBaking = divClass "start-baking column" $ do

@@ -256,7 +256,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
             { _bakeView_bakerAddresses = toRangeView bakerAddressesVS newBakerCounts
             }
       newCount <- whenM (viewSelects () alertCountVS) $ do
-        alertCount <- getAlertCount
+        alertCount <- getAlertCount (_nodeDataSource_chain nds)
         pure mempty
           { _bakeView_alertCount = toMaybeView alertCountVS (Just alertCount)
           }
@@ -288,7 +288,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
         let bakerAlertsVS = _bakeViewSelector_bakerAlerts aggVS
         whenM (viewSelects (Bounded logBakerId) bakerAlertsVS) $ do
           -- This could be further optimized to only fetch logBakerId' alerts
-          allAlerts <- getBakerAlert
+          allAlerts <- getBakerAlert (_nodeDataSource_chain nds)
           pure mempty
             { _bakeView_bakerAlerts = toRangeView1 bakerAlertsVS (Bounded logBakerId) (Just $ First $ Prelude.lookup logBakerId allAlerts)
             }

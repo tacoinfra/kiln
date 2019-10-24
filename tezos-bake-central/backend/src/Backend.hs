@@ -97,7 +97,7 @@ import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
-import Backend.Workers.TezosClient (tezosClientWorker)
+import Backend.Workers.TezosClient (tezosClientWorker, resetLedgerQueue)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
@@ -352,6 +352,8 @@ backendImpl cfg serve = do
             , PublicNodeConfig_enabledField =. enabled
             , PublicNodeConfig_updatedField =. now
             ]
+
+    resetLedgerQueue logger db
 
     let
       minLevel :: RawLevel
