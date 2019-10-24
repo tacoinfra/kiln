@@ -36,6 +36,7 @@ library
     -- , diagrams-core
     -- , diagrams-lib
     -- , diagrams-svg
+    , errors
     , exceptions
     , filepath
     , formatting

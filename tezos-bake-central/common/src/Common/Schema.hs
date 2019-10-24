@@ -98,9 +98,20 @@ instance Aeson.FromJSON ClientError
 requiredTezosBakingAppVersion :: Text
 requiredTezosBakingAppVersion = "2.0.0"
 
+data UnsuitableNodeReason
+  = UnsuitableNodeReason_QueryBeforeSavepoint RawLevel RawLevel
+  | UnsuitableNodeReason_MissingBlockInfo
+  | UnsuitableNodeReason_MissingSavePoint
+  | UnsuitableNodeReason_QueryFailed Text -- TODO This should be CacheError but we've got a cycle that doesn't play ball with TH
+  | UnsuitableNodeReason_BranchNotContained BlockHash
+  | UnsuitableNodeReason_ProtocolIndex -- Only the public node can do rProtocolIndex
+  deriving (Show, Generic, Typeable)
+makePrisms ''UnsuitableNodeReason
+
+
 data CacheError
   = CacheError_RpcError !RpcError
-  | CacheError_NoSuitableNode
+  | CacheError_NoSuitableNode Text [(URI,UnsuitableNodeReason)]
   | CacheError_NotEnoughHistory
   | CacheError_Timeout !NominalDiffTime
   | CacheError_SomeException !SomeException

@@ -19,8 +19,8 @@ import Tezos.Common.Base58Check (ChainId, HashBase58Error, fromBase58, toBase58T
 
 data NamedChain
   = NamedChain_Mainnet
-  | NamedChain_Alphanet
   | NamedChain_Zeronet
+  | NamedChain_Babylonnet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
 instance FromJSON NamedChain
 instance ToJSON NamedChain
@@ -28,15 +28,15 @@ instance ToJSON NamedChain
 showNamedChain :: NamedChain -> Text
 showNamedChain = \case
   NamedChain_Zeronet -> "zeronet"
-  NamedChain_Alphanet -> "alphanet"
   NamedChain_Mainnet -> "mainnet"
+  NamedChain_Babylonnet -> "babylonnet"
 
 parseNamedChain :: Text -> Maybe NamedChain
 parseNamedChain x = case T.toLower x of
   "zeronet" -> Just NamedChain_Zeronet
-  "alphanet" -> Just NamedChain_Alphanet
   "betanet" -> Just NamedChain_Mainnet
   "mainnet" -> Just NamedChain_Mainnet
+  "babylonnet" -> Just NamedChain_Babylonnet
   _ -> Nothing
 
 showChain :: Either NamedChain ChainId -> Text
