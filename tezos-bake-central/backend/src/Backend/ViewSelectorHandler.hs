@@ -43,7 +43,6 @@ import Data.Pool (Pool)
 import Data.Semigroup (Max(..), sconcat)
 import Data.Some (Some(..))
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (UTCTime)
 import Data.These (these)
@@ -366,6 +365,9 @@ phantomize = error "tried to touch a phantom"
 renderQualifiedField :: Utf8 -> FieldChain -> [Utf8]
 renderQualifiedField q fld = renderChain (RenderConfig $ \x -> q <> ".\"" <> x <> "\"") fld []
 
+renderChainId :: ChainId -> Utf8
+renderChainId = Utf8 . ("'\\x" <>) . (<>"'") .BS.byteString . B16.encode . fromShort . unHashedValue
+
 traceQuery :: (MonadLogger f, PersistBackend f) => Utf8 -> ([PersistValue] -> [PersistValue]) -> ([PersistValue] -> f r) -> f [r]
 traceQuery sql params f = do
   $(logDebugS) "SQL" (tshow sql)
@@ -483,7 +485,7 @@ getErrorLogForTag chainId flt lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Ide
           \ WHERE (("
           <> bool (mconcat $ intersperse " OR " qCond) "TRUE" (null related)
           <> " AND COALESCE(el.started != el.stopped, true))"
-          <> " AND el.\"chainId\" = '\\x" <> (Utf8 . BS.byteString . B16.encode . fromShort . unHashedValue $ chainId) <> "'"
+          <> " AND el.\"chainId\" = " <> renderChainId chainId
           <> ")"
           <> qFlt
         qFlt = case flt of
@@ -589,7 +591,7 @@ getAlertCount chainId = DMap.fromList . concat <$> traverse (\(Some lTag) -> do
           \ FROM \"ErrorLog\" el \
           \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
           \ WHERE el.stopped IS NULL"
-          <> " AND el.\"chainId\" = '" <> (Utf8 $ BS.byteString $ T.encodeUtf8 $ toBase58Text chainId) <> "'"
+          <> " AND el.\"chainId\" = " <> renderChainId chainId
       $(logDebugSH) ("queryAlert" :: Text, sqlTable)
       v <- traceQuery qBase id build
       pure (v, Proxy @b)
