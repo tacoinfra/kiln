@@ -89,7 +89,8 @@ let
         sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
       '';
 
-  kilnVMConfig = (import (pkgs.path + /nixos) {
+  kilnVMPkgs = import dep/kiln-vm-nixpkgs {};
+  kilnVMConfig = (import (kilnVMPkgs.path + /nixos) {
     configuration = {
       imports = [
         ./virtualbox-image.nix
