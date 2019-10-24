@@ -42,7 +42,8 @@ instance ToJSON DerivationPath
 instance FromJSON DerivationPath
 
 data SigningCurve
-  = SigningCurve_Ed25519
+  = SigningCurve_Bip25519
+  | SigningCurve_Ed25519
   | SigningCurve_Secp256k1
   | SigningCurve_P256
   deriving (Show, Read, Eq, Ord, Generic, Typeable, Enum, Bounded)
@@ -55,6 +56,7 @@ toSigningCurveText = \case
   SigningCurve_Ed25519 -> "ed25519"
   SigningCurve_Secp256k1 -> "secp256k1"
   SigningCurve_P256 -> "p256"
+  SigningCurve_Bip25519 -> "bip25519"
 
 concat <$> traverse deriveTezosJson
   [ ''SecretKey
