@@ -25,10 +25,12 @@ import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
-import Data.Some (Some(This))
+import Data.Some (Some(..))
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
+import Database.Id.Class
+import Database.Id.Groundhog
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
@@ -37,8 +39,7 @@ import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Email, Id (..), IdData)
+import Rhyolite.Schema (Email)
 import System.Directory (removeDirectoryRecursive)
 import Tezos.Types (Tez, PublicKeyHash)
 
@@ -63,7 +64,7 @@ requestHandler
   -> Address
   -> NodeDataSource
   -> [DataSource]
-  -> RequestHandler Bake m
+  -> RequestHandler (ApiRequest () PublicRequest PrivateRequest) m
 requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
@@ -238,7 +239,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                 pure ids
 
               onTag :: Some NodeLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
-              onTag (This tag) = case tag of
+              onTag (Some tag) = case tag of
                 NodeLogTag_InaccessibleNode -> deleteLogs tag ErrorLogInaccessibleNode_nodeField
                 NodeLogTag_NodeWrongChain -> deleteLogs tag ErrorLogNodeWrongChain_nodeField
                 NodeLogTag_BadNodeHead -> deleteLogs tag ErrorLogBadNodeHead_nodeField
@@ -300,7 +301,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                 pure ids
 
               onTag :: Some BakerLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
-              onTag (This tag) = case tag of
+              onTag (Some tag) = case tag of
                 BakerLogTag_BakerMissed -> deleteLogsId tag ErrorLogBakerMissed_bakerField
                 BakerLogTag_BakerDeactivated -> deleteLogsPkh tag ErrorLogBakerDeactivated_publicKeyHashField
                 BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField

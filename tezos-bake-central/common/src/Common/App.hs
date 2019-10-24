@@ -32,28 +32,24 @@ module Common.App
   ) where
 
 import Control.Lens.TH (makeLenses)
-import Data.Aeson
-import Data.Constraint.Forall
-import Data.Constraint.Extras
 import Data.Some (Some)
-import qualified Data.Some as Some
 import Data.Dependent.Sum
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
-import Data.Align (Align (alignWith, nil))
 import Data.Dependent.Sum.Orphans ()
 import Data.Dependent.Map (DMap)
 import Data.Functor.Compose (Compose (..))
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
-import Data.These (These (..), these)
 import Data.Time (UTCTime, diffUTCTime)
 import qualified Data.Time as Time
 import Data.Word (Word16)
 import Data.Witherable (Filterable (mapMaybe))
+import Database.Id.Class
 import Reflex (Additive, Group (..))
-import Reflex.Query.Class (Query (QueryResult, crop), SelectedCount)
-import Rhyolite.App (HasView, View, ViewSelector)
-import Rhyolite.Schema (Email, Id(..), IdData)
+import Reflex.Query.Class (Query (QueryResult, crop))
+import Rhyolite.Schema (Email)
+import Rhyolite.App (PositivePart (..), standardPositivePart)
+import Data.MonoidMap (MonoidMap (..))
 
 import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
@@ -65,8 +61,6 @@ import Common.Config (FrontendConfig)
 import Common.Schema
 import Common.Vassal
 import ExtraPrelude
-
-data Bake = Bake
 
 type ErrorInfo = (ErrorLog, ErrorLogView)
 
@@ -275,9 +269,6 @@ instance ToJSONKey (DSum LogTag (Const ()))
 instance FromJSONKey (Some LogTag)
 instance ToJSONKey (Some LogTag)
 
-instance (ForallF ToJSON f) => ToJSON (Some f) where
- toJSON (Some.This (tag :: f a)) = whichever @ToJSON @f @a (toJSON tag)
-
 data BakeViewSelector a = BakeViewSelector
   { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
   , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
@@ -311,6 +302,11 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_rightNotificationSettings :: !(RangeSelector RightKind (Deletable RightNotificationLimit) a)
   , _bakeViewSelector_bakerRegistered :: !(RangeSelector' PublicKeyHash Bool a)
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
+
+instance (Monoid a, Num a, Ord a, Ord k) => PositivePart (BakeViewSelector (MonoidMap k a)) where
+  positivePart x = let v = mapMaybe standardPositivePart x in if v == mempty then Nothing else Just v
+
+instance Additive a => Additive (BakeViewSelector a)
 
 data BakeView a = BakeView
   { _bakeView_config :: !(MaybeView FrontendConfig a)
@@ -498,77 +494,6 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_bakerRegistered = mapMaybe f $ _bakeViewSelector_bakerRegistered a
     }
 
-instance Align BakeViewSelector where
-  nil = BakeViewSelector
-    { _bakeViewSelector_config = nil
-    , _bakeViewSelector_parameters = nil
-    , _bakeViewSelector_publicNodeConfig = nil
-    , _bakeViewSelector_publicNodeHeads = nil
-    , _bakeViewSelector_nodeDetails = nil
-    , _bakeViewSelector_bakerAddresses = nil
-    , _bakeViewSelector_bakerAlerts = nil
-    , _bakeViewSelector_bakerDetails = nil
-    , _bakeViewSelector_bakerStats = nil
-    , _bakeViewSelector_mailServer = nil
-    , _bakeViewSelector_nodeAddresses = nil
-    , _bakeViewSelector_errors = nil
-    , _bakeViewSelector_latestHead = nil
-    , _bakeViewSelector_amendment = nil
-    , _bakeViewSelector_proposals = nil
-    , _bakeViewSelector_bakerVote = nil
-    , _bakeViewSelector_periodTestingVote = nil
-    , _bakeViewSelector_periodTesting = nil
-    , _bakeViewSelector_periodPromotionVote = nil
-    , _bakeViewSelector_upstreamVersion = nil
-    , _bakeViewSelector_telegramConfig = nil
-    , _bakeViewSelector_telegramRecipients = nil
-    , _bakeViewSelector_alertCount = nil
-    , _bakeViewSelector_snapshotMeta = nil
-    , _bakeViewSelector_connectedLedger = nil
-    , _bakeViewSelector_showLedger = nil
-    , _bakeViewSelector_prompting = nil
-    , _bakeViewSelector_votePrompting = nil
-    , _bakeViewSelector_rightNotificationSettings = nil
-    , _bakeViewSelector_bakerRegistered = nil
-    }
-
-  alignWith :: forall a b c. (These a b -> c) -> BakeViewSelector a -> BakeViewSelector b -> BakeViewSelector c
-  alignWith f xs ys = BakeViewSelector
-    { _bakeViewSelector_config = f' _bakeViewSelector_config
-    , _bakeViewSelector_parameters = f' _bakeViewSelector_parameters
-    , _bakeViewSelector_publicNodeConfig = f' _bakeViewSelector_publicNodeConfig
-    , _bakeViewSelector_publicNodeHeads = f' _bakeViewSelector_publicNodeHeads
-    , _bakeViewSelector_nodeDetails = f' _bakeViewSelector_nodeDetails
-    , _bakeViewSelector_bakerAddresses = f' _bakeViewSelector_bakerAddresses
-    , _bakeViewSelector_bakerAlerts = f' _bakeViewSelector_bakerAlerts
-    , _bakeViewSelector_bakerDetails = f' _bakeViewSelector_bakerDetails
-    , _bakeViewSelector_bakerStats = f' _bakeViewSelector_bakerStats
-    , _bakeViewSelector_mailServer = f' _bakeViewSelector_mailServer
-    , _bakeViewSelector_nodeAddresses = f' _bakeViewSelector_nodeAddresses
-    , _bakeViewSelector_errors = alignWith (these (fmap $ f . This) (fmap $ f . That) (alignWith f)) (_bakeViewSelector_errors xs) (_bakeViewSelector_errors ys)
-    , _bakeViewSelector_latestHead = f' _bakeViewSelector_latestHead
-    , _bakeViewSelector_amendment = f' _bakeViewSelector_amendment
-    , _bakeViewSelector_proposals = f' _bakeViewSelector_proposals
-    , _bakeViewSelector_bakerVote = f' _bakeViewSelector_bakerVote
-    , _bakeViewSelector_periodTestingVote = f' _bakeViewSelector_periodTestingVote
-    , _bakeViewSelector_periodTesting = f' _bakeViewSelector_periodTesting
-    , _bakeViewSelector_periodPromotionVote = f' _bakeViewSelector_periodPromotionVote
-    , _bakeViewSelector_upstreamVersion = f' _bakeViewSelector_upstreamVersion
-    , _bakeViewSelector_telegramConfig = f' _bakeViewSelector_telegramConfig
-    , _bakeViewSelector_telegramRecipients = f' _bakeViewSelector_telegramRecipients
-    , _bakeViewSelector_alertCount = f' _bakeViewSelector_alertCount
-    , _bakeViewSelector_snapshotMeta = f' _bakeViewSelector_snapshotMeta
-    , _bakeViewSelector_connectedLedger = f' _bakeViewSelector_connectedLedger
-    , _bakeViewSelector_showLedger = f' _bakeViewSelector_showLedger
-    , _bakeViewSelector_prompting = f' _bakeViewSelector_prompting
-    , _bakeViewSelector_votePrompting = f' _bakeViewSelector_votePrompting
-    , _bakeViewSelector_rightNotificationSettings = f' _bakeViewSelector_rightNotificationSettings
-    , _bakeViewSelector_bakerRegistered = f' _bakeViewSelector_bakerRegistered
-    }
-    where
-      f' :: forall f. Align f => (forall x. BakeViewSelector x -> f x) -> f c
-      f' p = alignWith f (p xs) (p ys)
-
 instance Filterable BakeView where
   mapMaybe f a = BakeView
     { _bakeView_config = mapMaybe f $ _bakeView_config a
@@ -607,9 +532,6 @@ mapMaybeSnd :: Filterable f => (a -> Maybe b) -> f (e, a) -> f (e, b)
 mapMaybeSnd f = mapMaybe $ \(e, a) -> case f a of
   Nothing -> Nothing
   Just b -> Just (e, b)
-
-alignTheseWith :: Align f => (These a b -> c) -> These (f a) (f b) -> f c
-alignTheseWith f = these (fmap (f . This)) (fmap (f . That)) (alignWith f)
 
 instance Semigroup a => Semigroup (BakeViewSelector a) where
   u <> v = BakeViewSelector
@@ -680,10 +602,8 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     }
 
 
-instance Group (BakeViewSelector SelectedCount) where
+instance Group a => Group (BakeViewSelector a) where
   negateG = fmap negateG
-
-instance Additive (BakeViewSelector SelectedCount)
 
 instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
   mempty = BakeView
@@ -766,54 +686,6 @@ instance (Semigroup a, FromJSON a) => FromJSON (BakeView a)
 
 instance ToJSON a => ToJSON (BakeViewSelector a)
 instance (Semigroup a, ToJSON a) => ToJSON (BakeView a)
-
-instance HasView Bake where
-  type View Bake = BakeView
-  type ViewSelector Bake = BakeViewSelector
-
-instance (Eq a) => EqTag LogTag (Const a) where
-  eqTagged t _ = logAssumeConst t (==)
-instance (Ord a) => OrdTag LogTag (Const a) where
-  compareTagged t _ = logAssumeConst t compare
-instance (Show a) => ShowTag LogTag (Const a) where
-  showTaggedPrec t = logAssumeConst t showsPrec
-
-instance (Eq a) => EqTag NodeLogTag (Const a) where
-  eqTagged t _ = nodeLogAssumeConst t (==)
-instance (Ord a) => OrdTag NodeLogTag (Const a) where
-  compareTagged t _ = nodeLogAssumeConst t compare
-instance (Show a) => ShowTag NodeLogTag (Const a) where
-  showTaggedPrec t = nodeLogAssumeConst t showsPrec
-
-instance (Eq a) => EqTag BakerLogTag (Const a) where
-  eqTagged t _ = bakerLogAssumeConst t (==)
-instance (Ord a) => OrdTag BakerLogTag (Const a) where
-  compareTagged t _ = bakerLogAssumeConst t compare
-instance (Show a) => ShowTag BakerLogTag (Const a) where
-  showTaggedPrec t = bakerLogAssumeConst t showsPrec
-
-nodeLogAssumeConst :: NodeLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
-nodeLogAssumeConst = \case
-  NodeLogTag_InaccessibleNode -> id
-  NodeLogTag_NodeWrongChain -> id
-  NodeLogTag_NodeInvalidPeerCount -> id
-  NodeLogTag_BadNodeHead -> id
-
-bakerLogAssumeConst :: BakerLogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
-bakerLogAssumeConst = \case
-  BakerLogTag_BakerMissed -> id
-  BakerLogTag_BakerDeactivated -> id
-  BakerLogTag_BakerDeactivationRisk -> id
-  BakerLogTag_BakerAccused -> id
-  BakerLogTag_InsufficientFunds -> id
-  BakerLogTag_VotingReminder -> id
-
-logAssumeConst :: LogTag e -> ((Eq (Const Int e), Ord (Const Int e), Show (Const Int e)) => x) -> x
-logAssumeConst = \case
-  LogTag_NetworkUpdate -> id
-  LogTag_Node nTag -> nodeLogAssumeConst nTag
-  LogTag_Baker bTag -> bakerLogAssumeConst bTag
-  LogTag_BakerNoHeartbeat -> id
 
 fmap concat $ sequence $ concat
   [ map makeLenses

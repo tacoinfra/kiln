@@ -14,7 +14,6 @@ library
   build-depends:
       aeson
     , async
-    , backend-db
     , base
     , base16-bytestring
     , base58-bytestring
@@ -28,6 +27,8 @@ library
     , constraints-extras
     , containers
     , data-default
+    , database-id-class
+    , database-id-groundhog
     , dependent-map
     , dependent-sum
     , dependent-sum-template
@@ -41,6 +42,7 @@ library
     , frontend
     , functor-infix
     , generic-deriving
+    , gargoyle-postgresql-connect
     , groundhog
     , groundhog-postgresql
     , groundhog-th
@@ -52,7 +54,6 @@ library
     , http-types
     , io-streams
     , IntervalMap
-    , lattices
     , lens
     , lens-aeson
     , mime-mail
