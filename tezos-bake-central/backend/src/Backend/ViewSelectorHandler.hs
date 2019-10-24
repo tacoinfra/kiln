@@ -485,7 +485,7 @@ getErrorLogForTag chainId flt lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Ide
           \ WHERE (("
           <> bool (mconcat $ intersperse " OR " qCond) "TRUE" (null related)
           <> " AND COALESCE(el.started != el.stopped, true))"
-          <> " AND el.\"chainId\" = " <> (renderChainId chainId) <> ""
+          <> " AND el.\"chainId\" = " <> renderChainId chainId
           <> ")"
           <> qFlt
         qFlt = case flt of
