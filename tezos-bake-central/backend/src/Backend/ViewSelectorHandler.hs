@@ -26,6 +26,7 @@ import Control.Monad.Trans.State (modify)
 import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
 import qualified Data.ByteString.Builder as BS
+import qualified Data.ByteString.Base16 as B16
 import Data.Functor.Identity (Identity (..))
 import Data.Functor.Apply (liftF2)
 import Data.Dependent.Map (DMap)
@@ -482,7 +483,7 @@ getErrorLogForTag chainId flt lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Ide
           \ WHERE (("
           <> bool (mconcat $ intersperse " OR " qCond) "TRUE" (null related)
           <> " AND COALESCE(el.started != el.stopped, true))"
-          <> " AND el.\"chainId\" = '" <> (Utf8 $ BS.byteString $ T.encodeUtf8 $ toBase58Text chainId) <> "'"
+          <> " AND el.\"chainId\" = '\\x" <> (Utf8 . BS.byteString . B16.encode . fromShort . unHashedValue $ chainId) <> "'"
           <> ")"
           <> qFlt
         qFlt = case flt of
