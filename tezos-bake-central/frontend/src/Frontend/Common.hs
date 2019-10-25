@@ -182,7 +182,7 @@ defaultWrapper
   => forall b. m b
   -> m (Element EventResult (DomBuilderSpace m) t, b)
 defaultWrapper =
-  (elAttr' "span" ("style" =: "position:relative")) 
+  elAttr' "span" ("style" =: "position:relative")
 
 tooltipped
   :: SemUi.UI t m
@@ -205,7 +205,7 @@ tooltippedWithConfig
   -> m ()
   -> m a
   -> m a
-tooltippedWithConfig (TooltipConfig { .. }) wrapper tip w = mdo
+tooltippedWithConfig TooltipConfig { .. } wrapper tip w = mdo
   let (cls, x, y, transform) = case _tooltipConfig_pos of
         TooltipPos_TopLeft -> ("top left", "left: 0", "top: 0", "(0, -110%)")
         TooltipPos_TopCenter -> ("top center", "left: 50%", "top: 0", "(-50%, -110%)")
