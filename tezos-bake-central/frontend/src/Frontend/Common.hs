@@ -7,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
@@ -121,6 +122,131 @@ fancyTez t = let (w, p, tz) = tezPadded t in elClass "span" "fancy-tez" $ do
   text $ w <> p
   elClass "span" "tez" $ text tz
 
+-- | Clickable copy-to-clipboard icon
+copyButton
+  :: (SemUi.UI t m, MonadJSM (Performable m))
+  => Behavior t Text -- ^ Text to copy to clipboard
+  -> m ()
+copyButton content = mdo
+  let conf = ffor state $ ("class" =:) . \case
+        Nothing -> "blue icon-copy link icon"
+        Just True -> "green icon-check icon"
+        Just False -> "red icon-x icon"
+  copy <- fmap fst $ elDynAttr' "i" conf blank
+  result <- copyToClipboard $ tag content $ domEvent Click copy
+  delayed <- delay 1 result
+  state <- holdDyn Nothing $ leftmost [Just <$> result, Nothing <$ delayed]
+  pure ()
+
+-- | Copy the given text to the clipboard
+copyToClipboard
+  :: (MonadJSM (Performable m), PerformEvent t m)
+  => Event t Text
+  -- ^ Text to copy to clipboard. Event must come directly from user
+  -- interaction (e.g. domEvent Click), or the copy will not take place.
+  -> m (Event t Bool)
+  -- ^ Did the copy take place successfully?
+copyToClipboard copy = performEvent $ ffor copy $ \t -> do
+  doc <- DOM.currentDocumentUnchecked
+  ta <- DOM.uncheckedCastTo TextArea.HTMLTextAreaElement <$> Document.createElement doc ("textarea" :: Text)
+  TextArea.setValue ta t
+  body <- Document.getBodyUnchecked doc
+  _ <- Node.appendChild body ta
+  HTMLElement.focus ta
+  TextArea.select ta
+  success <- Document.execCommand doc ("copy" :: Text) False (Nothing :: Maybe Text)
+  _ <- Node.removeChild body ta
+  pure success
+
+data TooltipPos
+  = TooltipPos_TopLeft
+  | TooltipPos_TopCenter
+  | TooltipPos_TopRight
+  | TooltipPos_CenterRight
+  | TooltipPos_CenterLeft
+  | TooltipPos_BottomLeft
+  | TooltipPos_BottomCenter
+  | TooltipPos_BottomRight
+
+data TooltipConfig = TooltipConfig
+  { _tooltipConfig_pos :: TooltipPos
+  }
+makeLenses ''TooltipConfig
+
+defaultTooltipConfig :: TooltipConfig 
+defaultTooltipConfig = TooltipConfig 
+  TooltipPos_TopCenter
+
+defaultWrapper
+  :: DomBuilder t m
+  => forall b. m b
+  -> m (Element EventResult (DomBuilderSpace m) t, b)
+defaultWrapper =
+  (elAttr' "span" ("style" =: "position:relative")) 
+
+tooltipped
+  :: SemUi.UI t m
+  => TooltipPos -> m () -> m a -> m a
+tooltipped pos = tooltippedWrapper defaultWrapper pos
+
+tooltippedWrapper
+  :: SemUi.UI t m
+  => (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
+  -- ^ Wrapper (used to determine mouse events)
+  -> TooltipPos -> m () -> m a -> m a
+tooltippedWrapper wrapper pos = tooltippedWithConfig c wrapper
+  where
+    c = defaultTooltipConfig & tooltipConfig_pos .~ pos
+
+tooltippedWithConfig
+  :: SemUi.UI t m
+  => TooltipConfig
+  -> (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
+  -> m ()
+  -> m a
+  -> m a
+tooltippedWithConfig (TooltipConfig { .. }) wrapper tip w = mdo
+  let (cls, x, y, transform) = case _tooltipConfig_pos of
+        TooltipPos_TopLeft -> ("top left", "left: 0", "top: 0", "(0, -110%)")
+        TooltipPos_TopCenter -> ("top center", "left: 50%", "top: 0", "(-50%, -110%)")
+        TooltipPos_TopRight -> ("top right", "right: 0", "top: 0", "(0, -110%)")
+        TooltipPos_CenterLeft -> ("center left", "left: -10px", "top: 50%", "(-100%, -50%)")
+        TooltipPos_CenterRight -> ("center right", "left: 100%", "top: 50%", "(0, -50%)")
+        TooltipPos_BottomLeft -> ("bottom left", "left: 0", "top:100%", "(0,0)")
+        TooltipPos_BottomCenter -> ("bottom center", "left:50%", "top:100%", "(-50%, 0)")
+        TooltipPos_BottomRight -> ("bottom right", "right: 0", "top:100%", "(0,0)")
+
+  (wEl, a) <- wrapper $ do
+    a' <- w
+    let mouseenter = True <$ domEvent Mouseenter wEl
+        mouseleave = False <$ domEvent Mouseleave wEl
+    hovered' <- throttle 0.75 $ leftmost [mouseenter, mouseleave]
+    hovered <- fmap updated . holdUniqDyn <=< holdDyn False $ leftmost [mouseenter, hovered']
+    open <- transitionEvent (\wasHovering isHovering -> guard $ not wasHovering && isHovering) False hovered
+    close <- transitionEvent (\wasHovering isHovering -> guard $ wasHovering && not isHovering) False hovered
+    let changeEvent = leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
+    _ <- SemUi.ui "span" (def
+      & SemUi.classes .~ ("ui popup" <> cls)
+      & SemUi.style .~ fromString (intercalate "; "
+                           [ "width: max-content"
+                           , "max-width: unset"
+                           , x
+                           , y
+                           , "transform: translate" <> transform
+                           ])
+      & SemUi.action .~ Just def
+        { SemUi._action_initialDirection = SemUi.Out
+        , SemUi._action_transition = ffor changeEvent $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0 }) -- oddly, the above "transform: translate" is visibly re-applied during a non-instant transition in the 'disconnected' tooltip
+        , SemUi._action_transitionStateClasses = SemUi.forceVisible
+        }) tip
+    pure a'
+  pure a
+
+whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
+whenJustDyn d f = dyn_ . ffor d $ \case
+  Nothing -> blank
+  Just x -> f x
+
 localTimestamp :: (DomBuilder t m, MonadReader r m, HasTimeZone r) => Time.UTCTime -> m ()
 localTimestamp t = do
   tz <- asks (^. timeZone)
@@ -175,104 +301,6 @@ localHumanizedTimestampBasicWithoutTZ
   => Dynamic t Time.UTCTime
   -> m ()
 localHumanizedTimestampBasicWithoutTZ tsDyn = localHumanizedTimestampBasicGen humanizeTimestampWithoutTZ tsDyn
-
--- | Clickable copy-to-clipboard icon
-copyButton
-  :: (SemUi.UI t m, MonadJSM (Performable m))
-  => Behavior t Text -- ^ Text to copy to clipboard
-  -> m ()
-copyButton content = mdo
-  let conf = ffor state $ ("class" =:) . \case
-        Nothing -> "blue icon-copy link icon"
-        Just True -> "green icon-check icon"
-        Just False -> "red icon-x icon"
-  copy <- fmap fst $ elDynAttr' "i" conf blank
-  result <- copyToClipboard $ tag content $ domEvent Click copy
-  delayed <- delay 1 result
-  state <- holdDyn Nothing $ leftmost [Just <$> result, Nothing <$ delayed]
-  pure ()
-
--- | Copy the given text to the clipboard
-copyToClipboard
-  :: (MonadJSM (Performable m), PerformEvent t m)
-  => Event t Text
-  -- ^ Text to copy to clipboard. Event must come directly from user
-  -- interaction (e.g. domEvent Click), or the copy will not take place.
-  -> m (Event t Bool)
-  -- ^ Did the copy take place successfully?
-copyToClipboard copy = performEvent $ ffor copy $ \t -> do
-  doc <- DOM.currentDocumentUnchecked
-  ta <- DOM.uncheckedCastTo TextArea.HTMLTextAreaElement <$> Document.createElement doc ("textarea" :: Text)
-  TextArea.setValue ta t
-  body <- Document.getBodyUnchecked doc
-  _ <- Node.appendChild body ta
-  HTMLElement.focus ta
-  TextArea.select ta
-  success <- Document.execCommand doc ("copy" :: Text) False (Nothing :: Maybe Text)
-  _ <- Node.removeChild body ta
-  pure success
-
-data TooltipPos
-  = TooltipPos_TopLeft
-  | TooltipPos_TopCenter
-  | TooltipPos_TopRight
-  | TooltipPos_CenterRight
-  | TooltipPos_CenterLeft
-  | TooltipPos_BottomLeft
-  | TooltipPos_BottomCenter
-  | TooltipPos_BottomRight
-
-tooltipped
-  :: SemUi.UI t m
-  => TooltipPos -> m () -> m a -> m a
-tooltipped = tooltippedWrapper $ elAttr' "span" ("style" =: "position:relative")
-
-tooltippedWrapper
-  :: SemUi.UI t m
-  => (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
-  -- ^ Wrapper (used to determine mouse events)
-  -> TooltipPos -> m () -> m a -> m a
-tooltippedWrapper wrapper pos tip w = mdo
-  let (cls, x, y, transform) = case pos of
-        TooltipPos_TopLeft -> ("top left", "left: 0", "top: 0", "(0, -110%)")
-        TooltipPos_TopCenter -> ("top center", "left: 50%", "top: 0", "(-50%, -110%)")
-        TooltipPos_TopRight -> ("top right", "right: 0", "top: 0", "(0, -110%)")
-        TooltipPos_CenterLeft -> ("center left", "left: -10px", "top: 50%", "(-100%, -50%)")
-        TooltipPos_CenterRight -> ("center right", "left: 100%", "top: 50%", "(0, -50%)")
-        TooltipPos_BottomLeft -> ("bottom left", "left: 0", "top:100%", "(0,0)")
-        TooltipPos_BottomCenter -> ("bottom center", "left:50%", "top:100%", "(-50%, 0)")
-        TooltipPos_BottomRight -> ("bottom right", "right: 0", "top:100%", "(0,0)")
-
-  (wEl, a) <- wrapper $ do
-    a' <- w
-    let mouseenter = True <$ domEvent Mouseenter wEl
-        mouseleave = False <$ domEvent Mouseleave wEl
-    hovered' <- debounce 0.75 $ leftmost [mouseenter, mouseleave]
-    hovered <- fmap updated . holdUniqDyn <=< holdDyn False $ leftmost [mouseenter, hovered']
-    open <- transitionEvent (\wasHovering isHovering -> guard $ not wasHovering && isHovering) False hovered
-    close <- transitionEvent (\wasHovering isHovering -> guard $ wasHovering && not isHovering) False hovered
-    let changeEvent = leftmost [ SemUi.In <$ open, SemUi.Out <$ close ]
-    _ <- SemUi.ui "span" (def
-      & SemUi.classes .~ ("ui popup" <> cls)
-      & SemUi.style .~ fromString (intercalate "; "
-                           [ "width: max-content"
-                           , "max-width: unset"
-                           , x
-                           , y
-                           , "transform: translate" <> transform
-                           ])
-      & SemUi.action .~ Just def
-        { SemUi._action_initialDirection = SemUi.Out
-        , SemUi._action_transition = ffor changeEvent $ \transition -> SemUi.Transition SemUi.Drop (Just transition) (def { SemUi._transitionConfig_duration = 0 }) -- oddly, the above "transform: translate" is visibly re-applied during a non-instant transition in the 'disconnected' tooltip
-        , SemUi._action_transitionStateClasses = SemUi.forceVisible
-        }) tip
-    pure a'
-  pure a
-
-whenJustDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t (Maybe a) -> (a -> m ()) -> m ()
-whenJustDyn d f = dyn_ . ffor d $ \case
-  Nothing -> blank
-  Just x -> f x
 
 
 uiButton :: DomBuilder t m => Text -> Text -> m (Event t ())
