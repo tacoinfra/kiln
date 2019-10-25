@@ -141,11 +141,13 @@ in {
     fileSystems = { "/" = {
          device = "/dev/disk/by-label/nixos";
          autoResize = true;
+         fsType = "ext4";
        };
     } // (if cfg.extraDisk == null then {} else {
       ${cfg.extraDisk.mountPoint} = {
         device = "/dev/disk/by-label/" + cfg.extraDisk.label;
         autoResize = true;
+        fsType = "ext4";
       };
     });
 

@@ -17,14 +17,14 @@ import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
 import Database.Groundhog.Postgresql (PersistBackend, get, (&&.), (==.), Cond(..))
+import Database.Id.Class
+import Database.Id.Groundhog
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
 import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
-import Rhyolite.Schema (Id (..))
 
 import Tezos.Types
 
@@ -256,7 +256,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
             { _bakeView_bakerAddresses = toRangeView bakerAddressesVS newBakerCounts
             }
       newCount <- whenM (viewSelects () alertCountVS) $ do
-        alertCount <- getAlertCount
+        alertCount <- getAlertCount (_nodeDataSource_chain nds)
         pure mempty
           { _bakeView_alertCount = toMaybeView alertCountVS (Just alertCount)
           }
@@ -272,7 +272,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
           pure $ flip ifoldMap (_bakeViewSelector_errors aggVS)$ \flt (Compose errorsVS) ->
             let
-              tagKey = This tag
+              tagKey = Some tag
               mErrorsIntervalVS = MMap.lookup tagKey $ unMapSelector errorsVS
               ma = sconcat <$> (NEL.nonEmpty . AppendIMap.elems . unIntervalSelector =<< mErrorsIntervalVS)
               makeBakeView a errorsIntervalVS = if viewSelects errorInterval errorsIntervalVS
@@ -288,7 +288,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
         let bakerAlertsVS = _bakeViewSelector_bakerAlerts aggVS
         whenM (viewSelects (Bounded logBakerId) bakerAlertsVS) $ do
           -- This could be further optimized to only fetch logBakerId' alerts
-          allAlerts <- getBakerAlert
+          allAlerts <- getBakerAlert (_nodeDataSource_chain nds)
           pure mempty
             { _bakeView_bakerAlerts = toRangeView1 bakerAlertsVS (Bounded logBakerId) (Just $ First $ Prelude.lookup logBakerId allAlerts)
             }

@@ -23,13 +23,14 @@ import Data.Text.Encoding (decodeUtf8)
 import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql
+import Database.Id.Class
+import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
-import Rhyolite.Backend.Schema
 
 import Backend.Alerts
 import Backend.Alerts.Common
@@ -38,10 +39,9 @@ import Backend.Common (workerWithDelay)
 import Backend.Schema
 import Backend.Version (parseVersion)
 import Common.Schema
-import Rhyolite.Schema (Id(..))
 import Common.Alerts
 import ExtraPrelude
-import Tezos.Chain
+import Tezos.Types
 
 upgradeCheckWorker
   :: MonadIO m

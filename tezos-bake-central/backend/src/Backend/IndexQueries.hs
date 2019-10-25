@@ -17,9 +17,10 @@ import Control.Monad.Catch (MonadMask)
 import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.Map as Map
 import Database.Groundhog.Postgresql (PersistBackend)
-import Tezos.History
-import qualified Tezos.ProtocolConstants
+
+import Tezos.NodeRPC
 import Tezos.Types
+import qualified Tezos.Unsafe
 
 import Backend.CachedNodeRPC
   ( MonadNodeQuery (asksNodeDataSource, nqAtomically, nqThrowError)
@@ -51,7 +52,7 @@ levelToCycle
 levelToCycle lvl = do
   (_, protoIx) <- getLatestProtocolConstants
   -- XXX We cheat here, as we dont expect the blocks/cycle to change
-  pure $ Tezos.ProtocolConstants.unsafeAssumptionLevelToCycle protoIx lvl
+  pure $ Tezos.Unsafe.unsafeAssumptionLevelToCycle protoIx lvl
 
 firstLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
@@ -61,7 +62,7 @@ firstLevelInCycle
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
 firstLevelInCycle _branch c = do
   (_, protoIx) <- getLatestProtocolConstants
-  pure $ Tezos.ProtocolConstants.unsafeAssumptionFirstLevelInCycle protoIx c
+  pure $ Tezos.Unsafe.unsafeAssumptionFirstLevelInCycle protoIx c
 
 lastLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
@@ -79,7 +80,7 @@ rightsContextLevel
   => BlockHash -> RawLevel -> NodeQueryT m RawLevel
 rightsContextLevel ctx lvl = do
   protoInfo <- getProtocolConstants $ Left ctx
-  pure $ Tezos.ProtocolConstants.unsafeAssumptionRightsContextLevel protoInfo lvl
+  pure $ Tezos.Unsafe.unsafeAssumptionRightsContextLevel protoInfo lvl
 
 data RightsCycleInfo = RightsCycleInfo
   { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in some cycle
@@ -104,15 +105,14 @@ cycleStartHashes branchBlock = do
   branchProtocolConstants <- getProtocolConstants $ Left branchBlockHash
   cycle' <- levelToCycle $ branchBlock ^. level
   let
-    lvl0 = _cachedHistory_levelZero history
+    minLvl = _cachedHistory_minLevel history
     preservedCycles = branchProtocolConstants ^. protoInfo_preservedCycles
     cycles = [max 0 (cycle' - (1 + preservedCycles)) .. cycle' - 1] -- ignore the unconfirmed "current" cycle.
   (minLevels, maxLevels) <- fmap unzip $ for cycles $ \c -> liftA2 (,)
     (firstLevelInCycle branchBlockHash c)
     (pred <$> firstLevelInCycle branchBlockHash (succ c))
   let
-    -- TODO: factor this into Tezos.History
-    branches = maybe [] (\branch -> fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract lvl0 <$> minLevels) mbranch
+    branches = maybe [] (\branch -> fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels) mbranch
     mbranch = branchBlockHash `Map.lookup` _cachedHistory_blocks history
   return $ getZipList $ RightsCycleInfo
     <$> ZipList branches

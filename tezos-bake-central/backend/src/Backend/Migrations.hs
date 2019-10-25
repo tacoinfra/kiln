@@ -29,7 +29,7 @@ convQN :: QualifiedIdentifier -> QualifiedName
 convQN (QualifiedIdentifier a b) = (T.unpack <$> a, T.unpack b)
 
 migrateKiln :: Migrate m => ChainId -> m ()
-migrateKiln chainId = (getTableAnalysis >>= preMigrate chainId >>= autoMigrate) *> postMigrate
+migrateKiln chainId = (getTableAnalysis >>= preMigrate chainId >>= autoMigrate) *> extraIndexes
 
 autoMigrate :: Migrate m => TableAnalysis m -> m ()
 autoMigrate tableAnalysis = runMigration $ do
@@ -80,11 +80,6 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "CachedProtocolConstants")
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "Parameters")
   >=> migrateErrorLogBakerMissedTimestamp
-
-postMigrate :: Migrate m => m ()
-postMigrate = do
-  extraIndexes
-  createFunctionBlockShellAncestors
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -185,7 +180,6 @@ extraIndexes = do
   createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "id"] "_errorLog_idWhereStarted_idx" (Just "\"stopped\" IS NULL")
   createIndex (QualifiedIdentifier Nothing "Baker") [Right "publicKeyHash"] "_baker_publicKeyHashWhereNotDeleted_idx" (Just "NOT \"data#deleted\"")
   createIndex (QualifiedIdentifier Nothing "BlockTodo") [Right "level"] "_blockTodo_levelWhereNotParsed_idx" (Just "NOT \"parsedParent\" OR NOT \"parsedAccusations\"")
-  createIndex (QualifiedIdentifier Nothing "BlockShellIndex") [Right "chainId", Right "level"] "_blockShellIndex_level_idx" Nothing
 
 createIndex
   :: Migrate m
@@ -485,40 +479,3 @@ migrateErrorLogBakerMissedTimestamp ta = do
             |]
           getTableAnalysis
     _ -> pure ta
-
-createFunctionBlockShellAncestors :: Migrate m => m ()
-createFunctionBlockShellAncestors = do
-  void [traceExecuteQ|
-    CREATE OR REPLACE FUNCTION "blockShellAncestors"
-    ( "blockHash" bytea
-    ) RETURNS SETOF "BlockShellIndex" AS $$
-    DECLARE
-      blockshell "BlockShellIndex";
-    BEGIN
-      LOOP
-        SELECT INTO blockshell * FROM "BlockShellIndex" WHERE hash = "blockHash";
-        EXIT WHEN NOT FOUND;
-        RETURN NEXT blockshell;
-        "blockHash" := blockshell.predecessor;
-      END LOOP;
-    END;
-    $$ LANGUAGE 'plpgsql' STABLE;
-  |]
-
-  void [traceExecuteQ|
-    CREATE OR REPLACE FUNCTION "blockShellAncestors"
-    ( "blockHash" bytea
-    , "numLevels" integer
-    ) RETURNS SETOF "BlockShellIndex" AS $$
-    DECLARE
-      blockshell "BlockShellIndex";
-    BEGIN
-      FOR i IN 1.."numLevels" LOOP
-        SELECT INTO blockshell * FROM "BlockShellIndex" WHERE hash = "blockHash";
-        EXIT WHEN NOT FOUND;
-        RETURN NEXT blockshell;
-        "blockHash" := blockshell.predecessor;
-      END LOOP;
-    END;
-    $$ LANGUAGE 'plpgsql' STABLE;
-  |]

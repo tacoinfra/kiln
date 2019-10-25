@@ -34,6 +34,7 @@ library
     , cryptohash
     , cryptonite
     , data-default
+    , database-id-class
     , dependent-map
     , dependent-sum
     , dependent-sum-aeson-orphans
@@ -64,7 +65,7 @@ library
     , transformers-compat
     , universe
     , universe-base
-    , universe-template
+    , universe-dependent-sum
     , uri-encode
     , witherable
     , writer-cps-mtl
