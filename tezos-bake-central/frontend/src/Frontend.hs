@@ -1590,6 +1590,7 @@ nodesTab =
 
       dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case
         ProcessState_Node NodeProcessState_ImportComplete -> verifySnapshotAlert
+        ProcessState_Node NodeProcessState_ImportCanceled -> pure ()
         ProcessState_Node NodeProcessState_ImportFailed -> snapshotImportFailedAlert
         ProcessState_Node NodeProcessState_ImportTimeout -> snapshotImportFailedAlert
         ProcessState_Node NodeProcessState_ImportingSnapshot -> pure ()
@@ -1707,6 +1708,7 @@ nodesTab =
                     ProcessState_Node s -> case s of
                       NodeProcessState_ImportingSnapshot -> "SETUP"
                       NodeProcessState_ImportComplete -> "SETUP"
+                      NodeProcessState_ImportCanceled -> "SETUP"
                       NodeProcessState_ImportFailed -> "FAILED"
                       NodeProcessState_ImportTimeout -> "FAILED"
                       NodeProcessState_GeneratingIdentity -> "STARTING"
@@ -1751,12 +1753,14 @@ nodesTab =
                     divClass "ui row" $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> subHeader "Importing snapshot"
                       NodeProcessState_ImportComplete -> subHeader "Verify snapshot"
+                      NodeProcessState_ImportCanceled -> subHeader "Snapshot import canceled"
                       NodeProcessState_ImportFailed -> errorMessage "Snapshot import failed"
                       NodeProcessState_ImportTimeout -> errorMessage "Snapshot import failed"
                       NodeProcessState_GeneratingIdentity -> subHeader "Generating identity"
                     divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> "Depending on your hardware, importing a snapshot may take up to a few hours."
                       NodeProcessState_ImportComplete -> "You must verify this snapshot before starting the node."
+                      NodeProcessState_ImportCanceled -> ""
                       NodeProcessState_ImportFailed -> ""
                       NodeProcessState_ImportTimeout -> ""
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
@@ -1768,7 +1772,8 @@ nodesTab =
                 ]
                 where
                   menu = case nodeState of
-                    NodeProcessState_ImportingSnapshot -> Nothing -- no way to cancel this
+                    NodeProcessState_ImportingSnapshot -> Nothing -- TODO
+                    NodeProcessState_ImportCanceled -> Nothing
                     NodeProcessState_ImportComplete -> Just $ do
                       mapM_ verifyAndStartMenu mSnapshotMeta
                       removeNodeMenu

@@ -25,6 +25,8 @@ import qualified Data.ByteString as BS
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Text.IO as T
+import Data.Time.Clock (NominalDiffTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, (=.), (==.))
 import Rhyolite.Backend.DB (getTime, runDb, project1, MonadBaseNoPureAborts)
@@ -35,6 +37,7 @@ import Snap.Util.FileUploads
 import System.Directory
 import System.Exit (ExitCode(..))
 import qualified System.Process as Process
+import System.Posix.Signals (signalProcess, sigKILL)
 
 import Tezos.NodeRPC (_cachedHistory_blocks)
 import Tezos.Types
@@ -102,6 +105,7 @@ handleSnapshotUpload appConfig nds chain lockMVar = do
                 , _snapshotMeta_headBlockPrefix = Nothing
                 , _snapshotMeta_headBlockLevel = Nothing
                 , _snapshotMeta_headBlockBakeTime = Nothing
+                , _snapshotMeta_control = ProcessControl_Run
                 }
             deleteAll sm
             k <- insert sm
@@ -131,6 +135,15 @@ cleanupDir dir = do
   liftIO (createDirectoryIfMissing True dir)
     `catch` \(e :: IOException) -> $(logWarn) ("Make dir failed: " <> tshow dir <> ": " <> tshow e)
 
+-- Example output on success
+-- stderr:
+-- Jul  6 19:39:08 - shell.snapshots: Importing data from snapshot file ./.kiln/snapshots/main.snapshot
+-- Jul  6 19:39:08 - shell.snapshots: You may consider using the --block <block_hash> argument to verify that the block imported is the one you expect
+-- Jul  6 19:39:08 - shell.snapshots: Retrieving and validating data. This can take a while, please bear with us
+-- Jul  6 19:45:44 - shell.snapshots: Setting current head to block BLWxHkBhZfaj
+-- Jul  6 19:45:45 - shell.snapshots: Setting history-mode to full
+-- Jul  6 19:45:46 - shell.snapshots: Successful import from file ./.kiln/snapshots/main.snapshot
+
 importSnapshotData
   :: (MonadLogger m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
   => AppConfig
@@ -141,6 +154,7 @@ importSnapshotData
   -> m ()
 importSnapshotData appConfig nds chain sm smId = do
   let
+    logger = _nodeDataSource_logger nds
     nodePath = either nodePaths (const $ nodePaths NamedChain_Mainnet) chain
     dataDir = nodeDataDir appConfig
     storePath = T.unpack $ _snapshotMeta_storePath sm
@@ -162,54 +176,75 @@ importSnapshotData appConfig nds chain sm smId = do
     pure nodePPid
 
   let
+    updateState :: (MonadLogger m1, PersistBackend m1, MonadIO m1) => NodeProcessState -> m1 ()
     updateState = updateState' nodePPid
-    procSpec = Process.proc nodePath ["snapshot", "import", storePath, "--data-dir", dataDir]
-  $(logDebug) "importSnapshotData: starting import"
-  (exitCode, _stdout, stderr) <- readCreateProcessWithExitCodeWithLogging procSpec ""
 
--- Example output on success
--- stderr:
--- Jul  6 19:39:08 - shell.snapshots: Importing data from snapshot file ./.kiln/snapshots/main.snapshot
--- Jul  6 19:39:08 - shell.snapshots: You may consider using the --block <block_hash> argument to verify that the block imported is the one you expect
--- Jul  6 19:39:08 - shell.snapshots: Retrieving and validating data. This can take a while, please bear with us
--- Jul  6 19:45:44 - shell.snapshots: Setting current head to block BLWxHkBhZfaj
--- Jul  6 19:45:45 - shell.snapshots: Setting history-mode to full
--- Jul  6 19:45:46 - shell.snapshots: Successful import from file ./.kiln/snapshots/main.snapshot
-
-  let
-    importFailed msg = do
+    importFailed msg stderr = do
       $(logError) msg
       update [ SnapshotMeta_importErrorField =. Just stderr ] (AutoKeyField ==. smId)
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
       updateState NodeProcessState_ImportFailed
 
-  removeFileLogging storePath
-  case exitCode of
-    ExitSuccess -> void $ do
-      $(logDebug) $ "importSnapshotData success: stderr: " <> stderr
-      let
-        prefixStr = "Setting current head to block "
-        mBlkHashPrefix = headMay =<< T.words <$> T.stripPrefix prefixStr (snd $ T.breakOn prefixStr stderr)
-      case mBlkHashPrefix of
-        Nothing -> inDb $ importFailed $ "importSnapshotData failed: could not parse blk blkHash" <> stderr
-        Just blkHashPrefix -> void $ do
-          hist <- liftIO $ readTVarIO $ _nodeDataSource_history nds
-          let
-            mBlkHash = completeBlockHash blkHashPrefix hist
+    procSpec = (Process.proc nodePath ["snapshot", "import", storePath, "--data-dir", dataDir])
+      { Process.std_out = Process.CreatePipe
+      , Process.std_err = Process.CreatePipe
+      }
+    procMonitor _hStdin _hStdout hStderr ph = runLoggingEnv logger $ go (Nothing :: Maybe Int)
+      where
+        {-# INLINE go #-}
+        go mCount = do
+          let getPC = \case
+                [] -> ProcessControl_Stop
+                (c:_) -> c
+          procControl <- inDb (getPC <$> project SnapshotMeta_controlField (AutoKeyField ==. smId))
+          liftIO (Process.getProcessExitCode ph) >>= \case
+            Nothing -> do
+              inDb $ updateState NodeProcessState_ImportingSnapshot
+              let
+                stop = procControl /= ProcessControl_Run
+                timeoutInSec = 60 :: Int
+                delayInSec = 1 :: NominalDiffTime
+              when stop $ do
+                inDb $ updateState NodeProcessState_ImportCanceled
+                liftIO $ if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
+                  then Process.terminateProcess ph
+                  else Process.getPid ph >>= traverse_ (signalProcess sigKILL)
+              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)
+            Just exitCode -> do
+              stderr <- case hStderr of
+                Nothing -> $(logError) "hStderr is Nothing" >> pure ""
+                Just h -> liftIO $ T.hGetContents h `catch` \(_ :: IOError) -> runLoggingEnv logger ($(logError) "Failed to get stderr" >> pure "")
+              case exitCode of
+                ExitSuccess -> void $ do
+                  $(logDebug) $ "importSnapshotData success: stderr: " <> stderr
+                  let
+                    prefixStr = "Setting current head to block "
+                    mBlkHashPrefix = headMay =<< T.words <$> T.stripPrefix prefixStr (snd $ T.breakOn prefixStr stderr)
+                  case mBlkHashPrefix of
+                    Nothing -> inDb $ importFailed "importSnapshotData failed: could not parse blk blkHash" stderr
+                    Just blkHashPrefix -> void $ do
+                      hist <- liftIO $ readTVarIO $ _nodeDataSource_history nds
+                      let
+                        mBlkHash = completeBlockHash blkHashPrefix hist
 
-          mBlk <- for mBlkHash $ \blkHash -> flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
-            nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
-          let
-            blkDetails :: (# Text | BlockHash | BlockHeader #)
-            blkDetails = case either (const Nothing) Just =<< mBlk of
-              Just blk -> (# | | blk #)
-              Nothing -> case mBlkHash of
-                Just blkHash -> (# | blkHash | #)
-                Nothing -> (# blkHashPrefix | | #)
-          inDb $ do
-            updateSnapshotMeta blkDetails smId
-            updateState NodeProcessState_ImportComplete
-    ExitFailure _ -> inDb $ importFailed $ "importSnapshotData failed: " <> stderr
+                      mBlk <- for mBlkHash $ \blkHash -> flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+                        nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
+                      let
+                        blkDetails :: (# Text | BlockHash | BlockHeader #)
+                        blkDetails = case either (const Nothing) Just =<< mBlk of
+                          Just blk -> (# | | blk #)
+                          Nothing -> case mBlkHash of
+                            Just blkHash -> (# | blkHash | #)
+                            Nothing -> (# blkHashPrefix | | #)
+                      inDb $ do
+                        updateSnapshotMeta blkDetails smId
+                        updateState NodeProcessState_ImportComplete
+                ExitFailure _ -> inDb $ importFailed "importSnapshotData failed: " stderr
+
+  runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec)
+  liftIO $ Process.withCreateProcess procSpec procMonitor
+
+  removeFileLogging storePath
 
 updateSnapshotMeta
   :: (PersistBackend m, BlockLike blk)
