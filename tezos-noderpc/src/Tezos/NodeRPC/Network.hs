@@ -226,7 +226,6 @@ getNodeChain :: forall e r m.
 getNodeChain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
     Nothing                    -> nodeRPC rChain
     Just PublicNode_Blockscale -> nodeRPC rChain
-    Just PublicNode_TzScan     -> nodeRPC $ _tzScanBlock_network <$> plainNodeRequest Http.methodGet "/v3/head/"
     Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet "/v3/chain"
 
 getCurrentHead :: forall e r m.
@@ -238,7 +237,6 @@ getCurrentHead :: forall e r m.
 getCurrentHead chain = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> nodeRPC $ mk <$> rHead (ChainTag_Hash chain)
   Just PublicNode_Blockscale -> nodeRPC $ mk <$> rHead (ChainTag_Hash chain)
-  Just PublicNode_TzScan     -> nodeRPC $ mk @ TzScanBlock <$> plainNodeRequest Http.methodGet "/v3/head/"
   Just PublicNode_Obsidian   -> nodeRPC $                                   plainNodeRequest Http.methodGet $ "/v3/" <> toBase58Text chain <> "/head"
   where
     mk :: (HasProtocolHash blk, BlockLike blk) => blk -> WithProtocolHash VeryBlockLike
@@ -250,7 +248,6 @@ getCurrentHead chain = asks (view (publicNodeContext . publicNodeContext_api)) >
 canGetHistory :: PublicNode -> Bool
 canGetHistory PublicNode_Blockscale = True
 canGetHistory PublicNode_Obsidian = True
-canGetHistory PublicNode_TzScan = False
 
 obsidianLCA :: (BlockLike blk, Foldable f) => ChainId -> blk -> f BlockHash -> RpcQuery VeryBlockLike
 obsidianLCA chain blk branches = plainNodeRequest Http.methodGet $
@@ -271,10 +268,6 @@ getHistory :: forall blk e r m.
 getHistory chain blk levels branches = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> theNormalWay
   Just PublicNode_Blockscale -> theNormalWay
-  Just PublicNode_TzScan
-    | levels == 1 -> pure $ pure $ blk ^. predecessor
-    | levels == 0 -> pure mempty
-    | otherwise -> throwFeatureNotSupported
   Just PublicNode_Obsidian   -> do
     levels' <-
       if null branches
@@ -297,7 +290,6 @@ getBlock ::
 getBlock chainId blockHash = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case
   Nothing                    -> nodeRPC $ mk <$> rBlockHeader (ChainTag_Hash chainId) blockHash
   Just PublicNode_Blockscale -> nodeRPC $ mk <$> rBlockHeader (ChainTag_Hash chainId) blockHash
-  Just PublicNode_TzScan     -> nodeRPC $ mk @TzScanBlock <$> plainNodeRequest Http.methodGet ("/v3/block/" <> toBase58Text blockHash <> "/header")
 
   Just PublicNode_Obsidian   -> nodeRPC $ plainNodeRequest Http.methodGet
     ("/v3/" <> toBase58Text chainId <> "/block-header/?hash=" <> toBase58Text blockHash)
