@@ -189,10 +189,10 @@ importSnapshotData appConfig nds chain sm smId = do
       { Process.std_out = Process.CreatePipe
       , Process.std_err = Process.CreatePipe
       }
-    procMonitor _hStdin _hStdout hStderr ph = runLoggingEnv logger $ go (Nothing :: Maybe Int)
+    procMonitor _hStdin _hStdout hStderr ph = runLoggingEnv logger $ go
       where
         {-# INLINE go #-}
-        go mCount = do
+        go = do
           let getPC = \case
                 [] -> ProcessControl_Stop
                 (c:_) -> c
@@ -202,14 +202,11 @@ importSnapshotData appConfig nds chain sm smId = do
               inDb $ updateState NodeProcessState_ImportingSnapshot
               let
                 stop = procControl /= ProcessControl_Run
-                timeoutInSec = 60 :: Int
                 delayInSec = 1 :: NominalDiffTime
               when stop $ do
                 inDb $ updateState NodeProcessState_ImportCanceled
-                liftIO $ if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
-                  then Process.terminateProcess ph
-                  else Process.getPid ph >>= traverse_ (signalProcess sigKILL)
-              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)
+                liftIO $ Process.getPid ph >>= traverse_ (signalProcess sigKILL)
+              threadDelay' delayInSec *> go
             Just exitCode -> do
               stderr <- case hStderr of
                 Nothing -> $(logError) "hStderr is Nothing" >> pure ""
