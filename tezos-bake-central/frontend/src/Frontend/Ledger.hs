@@ -98,7 +98,7 @@ instance GCompare (PromptResult m) where
 
 ledgerSetupSteps :: forall t m. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
-  connectedLedger <- watchConnectedLedger
+  connectedLedger <- watchConnectedLedgerForced
   ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
   let disconnect = ffilter isNothing $ updated ledgerIdentifier
   divClass "progress" $ do
