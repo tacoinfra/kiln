@@ -47,36 +47,30 @@ import Data.Constraint (Dict(..))
 import Data.Constraint.Extras
 import Data.Constraint.Forall
 import Data.Dependent.Sum (DSum(..))
-import Data.Dependent.Sum (EqTag)
-import Data.Dependent.Sum (OrdTag)
-import Data.Dependent.Sum (ShowTag)
-import Data.Dependent.Sum (compareTagged)
-import Data.Dependent.Sum (eqTagged)
-import Data.Dependent.Sum (showTaggedPrec)
 import Data.Fixed (Fixed (MkFixed), HasResolution)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Compare.TH (deriveGCompare)
 import Data.GADT.Show.TH (deriveGShow)
-import Data.Int (Int64, Int32)
+import Data.Int (Int64)
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
 import Data.Some (Some(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
-import Data.Time (localTimeToUTC, utc)
 import Data.Version (Version)
 import qualified Data.Version as Version
-import Data.Word (Word64, Word8)
+import Data.Word (Word64)
+import Database.Id.Class
 import Database.Groundhog.Core
+import Database.Id.Groundhog
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
 import Database.Groundhog.Postgresql (AutoKeyField (..), PersistBackend, executeRaw, get, update, (==.))
 import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
-import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..))
-import Database.PostgreSQL.Simple.FromRow (FromRow(..), field)
+import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
 import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
 import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
@@ -87,8 +81,6 @@ import Language.Haskell.TH (mkName)
 import Language.Haskell.TH (nameBase)
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (HasNotification (..), NotificationType (..), DbNotification (..), getSchemaName, notifyChannel)
-import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 import Rhyolite.Backend.Schema.Class (defaultKeyToKey)
@@ -96,17 +88,13 @@ import Rhyolite.Backend.Schema.Class (HasSingleConstructor)
 import Rhyolite.Backend.Schema.Class (SingleConstructor)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
-import Rhyolite.Schema (Id, Json (..), SchemaName (..))
-import Rhyolite.Schema (IdData)
+import Rhyolite.Schema (Json (..), SchemaName (..))
 import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Base58Check (HashedValue (..), tryFromBase58)
-import Tezos.NodeRPC.Sources (PublicNode (..))
-import Tezos.NodeRPC.Types
-import Tezos.Operation (Ballot)
-import Tezos.Types
+import Tezos.NodeRPC (PublicNode (..))
+import Tezos.Types hiding (TestChainStatus)
 
 import Backend.Version (parseVersion)
 import Common.AppendIntervalMap (WithInfinity(..))
@@ -345,6 +333,7 @@ data CacheEndorsingRights = CacheEndorsingRights
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
+-- TODO: Move all of this into postgresql-simple
 instance ToField (Fixed a) where
   toField (MkFixed x) = toField x
 
@@ -432,20 +421,6 @@ instance FromField VotingPeriodKind where
 
 instance ToField VotingPeriodKind where
   toField v = toField (show v)
-
--- FIXME: we need to cope with the mismatch between this FromRow instance and
--- groundhog migrations, somehow.
-instance FromRow BlockShellIndex where
-  fromRow = BlockShellIndex
-              <$> field
-              <*> field
-              <*> field
-              <*> field
-              <*> field
-              <*> ((fmap (localTimeToUTC utc) <$> field) <|> field)
-              <*> fmap (fmap toWord8) field
-    where toWord8 :: Int32 -> Word8
-          toWord8 = fromIntegral
 
 instance PersistField Tez where
   persistName _ = "Tez"
@@ -1142,14 +1117,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: CacheEndorsingRights_context
             type: primary
             fields: [_cacheEndorsingRights_context, _cacheEndorsingRights_level]
-  - entity: BlockShellIndex
-    autoKey: null
-    constructors:
-      - name: BlockShellIndex
-        uniques:
-          - name: BlockShellIndexId
-            type: primary
-            fields: [_blockShellIndex_hash]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
@@ -1295,27 +1262,6 @@ logAssume = \case
   LogTag_Baker bTag -> bakerLogAssume bTag
   LogTag_BakerNoHeartbeat -> id
 
-instance EqTag LogTag Id where
-  eqTagged t _ = logAssume t (==)
-instance OrdTag LogTag Id where
-  compareTagged t _ = logAssume t compare
-instance ShowTag LogTag Id where
-  showTaggedPrec t = logAssume t showsPrec
-
-instance EqTag NodeLogTag Id where
-  eqTagged t _ = nodeLogAssume t (==)
-instance OrdTag NodeLogTag Id where
-  compareTagged t _ = nodeLogAssume t compare
-instance ShowTag NodeLogTag Id where
-  showTaggedPrec t = nodeLogAssume t showsPrec
-
-instance EqTag BakerLogTag Id where
-  eqTagged t _ = bakerLogAssume t (==)
-instance OrdTag BakerLogTag Id where
-  compareTagged t _ = bakerLogAssume t compare
-instance ShowTag BakerLogTag Id where
-  showTaggedPrec t = bakerLogAssume t showsPrec
-
 data Related b c r where
   Related :: (HasSingleConstructor r, PersistEntity r, PersistField x) => Field b c x -> ForeignKey r x -> Related b c r
 
@@ -1329,13 +1275,13 @@ logDep :: LogTag e -> [Some (Related e (SingleConstructor e))]
 logDep = \case
   LogTag_NetworkUpdate -> []
   LogTag_Node nTag -> bothNodes $ nodeLogDep nTag
-  LogTag_Baker bTag -> pure $ This $ bakerLogDep bTag
+  LogTag_Baker bTag -> pure $ Some $ bakerLogDep bTag
   LogTag_BakerNoHeartbeat -> []
   where
     bothNodes :: forall e. Related e (SingleConstructor e) Node -> [Some (Related e (SingleConstructor e))]
     bothNodes = \case
       Related fld fk -> case fk of
-        ForeignKey_AutoId -> [This (Related fld $ ForeignKey_UniqueIdData @NodeExternal), This (Related fld $ ForeignKey_UniqueIdData @NodeInternal)]
+        ForeignKey_AutoId -> [Some (Related fld $ ForeignKey_UniqueIdData @NodeExternal), Some (Related fld $ ForeignKey_UniqueIdData @NodeInternal)]
         ForeignKey_Field fld2 -> case fld2 of {}
 
 nodeLogDep :: NodeLogTag e -> Related e (SingleConstructor e) Node
@@ -1368,7 +1314,7 @@ embeddedSecretKeyEquals f sk =
   GH.&&. f ~> SecretKey_signingCurveSelector ==. _secretKey_signingCurve sk
   GH.&&. f ~> SecretKey_derivationPathSelector ==. _secretKey_derivationPath sk
 
-instance ArgDict NotifyTag where
+instance ArgDict c NotifyTag where
   type ConstraintsFor NotifyTag c =
     ( c (Id Baker, Maybe BakerData)
     , c BakerDetails

@@ -26,9 +26,9 @@ in {
     # CONFIGURATION
     oldProtoHash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd";
     oldSuffix = "004-${builtins.substring 0 8 oldProtoHash}";
-    newSuffix = "005-PsBABY5H";
+    newSuffix = "005-PsBabyM1";
 
-    winningProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
+    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -61,7 +61,7 @@ in {
     rm -rf "$root_path"
 
     mkdir -p "$kiln_config_dir"
-    ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${winningProtocolLib} \
+    ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${proposalProtocolLib} \
       --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
       --no-daemons-for LBK \
       --add-external 10000 \
@@ -73,8 +73,6 @@ in {
       --pause-on-error true \
       --root-path "$root_path" \
       --waiting-attempts 2000 \
-      --extra-dummy-proposals-batch-size 1 \
-      --extra-dummy-proposals-batch-levels "$(seq -s, 5 "$blocks_per_voting_period")" \
       --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
       --protocol-hash ${oldProtoHash} \
       --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \

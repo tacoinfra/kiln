@@ -48,9 +48,9 @@ import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Aeson.GADT (deriveJSONGADT)
-import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
-import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
-import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
+import Data.GADT.Compare.TH (deriveGEq)
+import Data.GADT.Compare.TH (deriveGCompare)
+import Data.GADT.Show.TH (deriveGShow)
 import Data.Dependent.Sum.Orphans ()
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -64,19 +64,19 @@ import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
 import Data.Universe
 import Data.Universe.Helpers (universeDef)
-import Data.Universe.TH (deriveSomeUniverse)
+import Data.Universe.Some
 import Data.Version (Version)
 import Data.Word
+import Database.Id.Class
 import GHC.Generics (Generic)
 import Language.Haskell.TH (Name)
-import Rhyolite.Schema (Email, HasId (..), Id, Json)
+import Rhyolite.Schema (Email, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC.Sources (PublicNode)
-import Tezos.NodeRPC.Types (NetworkStat (..), RpcError, AsRpcError (asRpcError))
-import Tezos.Operation
-import Tezos.Types
+import Tezos.Common.NodeRPC.Types (RpcError, AsRpcError(asRpcError))
+import Tezos.Common.NodeRPC.Sources (PublicNode)
+import Tezos.Types hiding (TestChainStatus)
 
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
@@ -98,9 +98,20 @@ instance Aeson.FromJSON ClientError
 requiredTezosBakingAppVersion :: Text
 requiredTezosBakingAppVersion = "2.0.0"
 
+data UnsuitableNodeReason
+  = UnsuitableNodeReason_QueryBeforeSavepoint RawLevel RawLevel
+  | UnsuitableNodeReason_MissingBlockInfo
+  | UnsuitableNodeReason_MissingSavePoint
+  | UnsuitableNodeReason_QueryFailed Text -- TODO This should be CacheError but we've got a cycle that doesn't play ball with TH
+  | UnsuitableNodeReason_BranchNotContained BlockHash
+  | UnsuitableNodeReason_ProtocolIndex -- Only the public node can do rProtocolIndex
+  deriving (Show, Generic, Typeable)
+makePrisms ''UnsuitableNodeReason
+
+
 data CacheError
   = CacheError_RpcError !RpcError
-  | CacheError_NoSuitableNode
+  | CacheError_NoSuitableNode Text [(URI,UnsuitableNodeReason)]
   | CacheError_NotEnoughHistory
   | CacheError_Timeout !NominalDiffTime
   | CacheError_SomeException !SomeException
@@ -125,12 +136,13 @@ instance Aeson.ToJSON Uri.URI where
 instance Aeson.FromJSON Uri.URI where
   parseJSON x = maybe (fail "Invalid URI") pure . Uri.mkURI =<< Aeson.parseJSON x
 
-sumFees :: PublicKeyHash -> Operation -> Tez
+sumFees :: PublicKeyHash -> Operation -> TezDelta
 sumFees baker = getSum . views balanceUpdates getFee
   where
-    getFee :: BalanceUpdate -> Sum Tez
+    getFee :: BalanceUpdate -> Sum TezDelta
     getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == baker = Sum (_freezerUpdate_change x)
     getFee _ = Sum 0
+
 
 data Error = Error
   { _error_time :: !UTCTime
@@ -899,17 +911,6 @@ deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
 deriving instance Show (BakerLogTag a)
 
-data BlockShellIndex = BlockShellIndex
-  { _blockShellIndex_hash :: !BlockHash
-  , _blockShellIndex_predecessor :: !BlockHash
-  , _blockShellIndex_chainId :: !ChainId
-  , _blockShellIndex_level :: !RawLevel
-  , _blockShellIndex_fitness :: !(Maybe Fitness)
-  , _blockShellIndex_timestamp :: !(Maybe UTCTime)
-  , _blockShellIndex_proto :: !(Maybe Word8)
-  } deriving (Eq, Generic, Ord, Show, Typeable)
-instance HasId BlockShellIndex
-
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
   , ''Amendment
@@ -926,7 +927,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerVote
   , ''BlockBaker
   , ''BlockTodo
-  , ''BlockShellIndex
   , ''CacheDelegateInfo
   , ''DeletableRow
   , ''ErrorLog
@@ -985,7 +985,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRightsCycleProgress
   , 'BlockBaker
   , 'BlockTodo
-  , 'BlockShellIndex
   , 'DeletableRow
   , 'Error
   , 'ErrorLog
@@ -1035,9 +1034,6 @@ fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
   , deriveGEq t
   , deriveGCompare t
   , deriveGShow t
-  , deriveEqTagIdentity t
-  , deriveOrdTagIdentity t
-  , deriveShowTagIdentity t
   ]
 
 -- Do this is second because it is downstream
@@ -1047,42 +1043,45 @@ fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
   , deriveGEq t
   , deriveGCompare t
   , deriveGShow t
-  , deriveEqTagIdentity t
-  , deriveOrdTagIdentity t
-  , deriveShowTagIdentity t
   ]
 
-deriveSomeUniverse ''NodeLogTag
-deriveSomeUniverse ''BakerLogTag
+instance UniverseSome NodeLogTag where
+  universeSome =
+    [ Some NodeLogTag_InaccessibleNode
+    , Some NodeLogTag_NodeWrongChain
+    , Some NodeLogTag_NodeInvalidPeerCount
+    , Some NodeLogTag_BadNodeHead
+    ]
+
+instance UniverseSome BakerLogTag where
+  universeSome =
+    [ Some BakerLogTag_BakerMissed
+    , Some BakerLogTag_BakerDeactivated
+    , Some BakerLogTag_BakerDeactivationRisk
+    , Some BakerLogTag_BakerAccused
+    , Some BakerLogTag_InsufficientFunds
+    , Some BakerLogTag_VotingReminder
+    ]
 -- need Cale to fix this
 -- deriveSomeUniverse ''LogTag
-instance Universe (Some LogTag) where
-  universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
-
-instance BlockSpineLike PublicNodeHead where
-  hash = publicNodeHead_headBlock . hash
-  predecessor = publicNodeHead_headBlock . predecessor
-  level = publicNodeHead_headBlock . level
+instance UniverseSome LogTag where
+  universeSome = [Some LogTag_NetworkUpdate] <> fmap (\(Some x) -> Some (LogTag_Node x)) universe <> fmap (\(Some x) -> Some (LogTag_Baker x)) universe <> [Some LogTag_BakerNoHeartbeat]
 
 instance BlockLike PublicNodeHead where
+  hash = publicNodeHead_headBlock . hash
+  predecessor = publicNodeHead_headBlock . predecessor
   fitness = publicNodeHead_headBlock . fitness
+  level = publicNodeHead_headBlock . level
   timestamp = publicNodeHead_headBlock . timestamp
-
-instance BlockSpineLike BlockShellIndex where
-  hash = blockShellIndex_hash
-  predecessor = blockShellIndex_predecessor
-  level = blockShellIndex_level
 
 instance HasProtocolHash PublicNodeHead where
   protocolHash = publicNodeHead_protocolHash
 
-instance BlockSpineLike ProtocolIndex where
+instance BlockLike ProtocolIndex where
   hash = protocolIndex_firstBlockHash
   predecessor = protocolIndex_firstBlockPredecessor
-  level = protocolIndex_firstBlockLevel
-
-instance BlockLike ProtocolIndex where
   fitness = protocolIndex_firstBlockFitness
+  level = protocolIndex_firstBlockLevel
   timestamp = protocolIndex_firstBlockTimestamp
 
 instance HasProtocolHash ProtocolIndex where

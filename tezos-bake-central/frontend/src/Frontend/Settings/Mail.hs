@@ -30,7 +30,6 @@ import Reflex.Dom.Form.Widgets (formItem', validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Rhyolite.Schema (Email)
 
 import Common.Api
@@ -46,7 +45,7 @@ renderProto = \case
   SmtpProtocol_Starttls -> "STARTTLS"
 
 viewCfg
-  :: MonadRhyoliteFrontendWidget Bake t m
+  :: MonadAppWidget t m
   => Dynamic t MailServerView
   -> m (Event t ())
 viewCfg dMsv = do --never <$ text "TODO Email View"
@@ -78,7 +77,7 @@ viewCfg dMsv = do --never <$ text "TODO Email View"
   return $ domEvent Click reopener
 
 editCfg
-  :: ( MonadRhyoliteFrontendWidget Bake t m
+  :: (MonadAppWidget t m
      , MonadJSM m
      , MonadJSM (Performable m)
      )
@@ -97,7 +96,7 @@ abstractPassword :: Text
 abstractPassword = "••••••••••••"
 
 mailServerForm
-  :: ( MonadRhyoliteFrontendWidget Bake t m
+  :: ( MonadAppWidget t m
      , MonadJSM m
      , MonadJSM (Performable m)
      )

@@ -45,9 +45,9 @@ import qualified Network.HTTP.Types.Method as Http (Method, methodGet)
 import qualified Network.HTTP.Types.Status as Http (Status (..))
 
 import Paths_tezos_noderpc (version)
-import Tezos.NodeRPC.Class
-import Tezos.NodeRPC.Sources
-import Tezos.NodeRPC.Types
+import Tezos.V005.NodeRPC.Class
+import Tezos.Common.NodeRPC.Sources
+import Tezos.Common.NodeRPC.Types
 import Tezos.Types
 
 nodeRPC
@@ -252,7 +252,7 @@ canGetHistory PublicNode_Blockscale = True
 canGetHistory PublicNode_Obsidian = True
 canGetHistory PublicNode_TzScan = False
 
-obsidianLCA :: (BlockSpineLike blk, Foldable f) => ChainId -> blk -> f BlockHash -> RpcQuery VeryBlockLike
+obsidianLCA :: (BlockLike blk, Foldable f) => ChainId -> blk -> f BlockHash -> RpcQuery VeryBlockLike
 obsidianLCA chain blk branches = plainNodeRequest Http.methodGet $
   "/v3/" <> toBase58Text chain <> "/lca?block=" <> toBase58Text (blk ^. hash) <> foldMap (\b' -> "&block=" <> toBase58Text b') branches
 
@@ -265,7 +265,7 @@ getHistory :: forall blk e r m.
   ( MonadIO m, MonadLogger m
   , MonadError e m , AsPublicNodeError e
   , MonadReader r m, HasPublicNodeContext r
-  , BlockSpineLike blk
+  , BlockLike blk
   )
   => ChainId -> blk -> RawLevel -> Set BlockHash -> m (Seq BlockHash)
 getHistory chain blk levels branches = asks (view (publicNodeContext . publicNodeContext_api)) >>= \case

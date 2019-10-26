@@ -29,12 +29,12 @@ import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
+import Database.Id.Class
+import Database.Id.Groundhog
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id (..))
 import Safe
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
@@ -48,7 +48,6 @@ import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as TE
 import qualified System.Process as Process
 
-import Tezos.Operation (Ballot(..))
 import Tezos.Types
 
 import Backend.Alerts
@@ -235,18 +234,18 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
             _ -> pure () -- shouldn't happen
 
         if _connectedLedger_forceConnectivityCheck cl
-        -- If we want to immediately do the connectivity check
-        then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-        -- Otherwise, we might want to do the connectivity check because some time has passed
-        else case _connectedLedger_updated cl of
-          Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-          Just upd -> when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
-            dsh <- liftIO $ atomically $ dataSourceHead nds
-            doCheck <- for dsh $ \blk -> checkNextBakeOpportunity appConfig nds blk >>= \case
-              -- Avoid sending commands to the ledger within two blocks of baking rights
-              Just (_, lvl) -> pure (blk ^. level < lvl - 2 || blk ^. level > lvl + 2)
-              _ -> pure False
-            when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+          -- If we want to immediately do the connectivity check
+          then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+          -- Otherwise, we might want to do the connectivity check because some time has passed
+          else case _connectedLedger_updated cl of
+            Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+            Just upd -> when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
+              dsh <- liftIO $ atomically $ dataSourceHead nds
+              doCheck <- for dsh $ \blk -> checkNextBakeOpportunity appConfig nds blk >>= \case
+                -- Avoid sending commands to the ledger within two blocks of baking rights
+                Just (_, lvl) -> pure (blk ^. level < lvl - 2 || blk ^. level > lvl + 2)
+                _ -> pure False
+              when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
 
       _ -> pure ()
     where
@@ -264,14 +263,22 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
     Left err -> do
       $(logError) (tshow err)
       reportLedgerDisconnection db appConfig
+      updateConnectedLedger Nothing
     Right mliv -> do
       case mliv of
         Nothing -> do
           reportLedgerDisconnection db appConfig
           $(logDebug) "The connectedledger is Nothing"
+
         Just _ -> do
           clearLedgerDisconnection db appConfig
 
+      updateConnectedLedger mliv
+
+  where
+    -- TODO: Because this deletes and re-adds, we will only have the walletAppVersion or the bakerAppVersion
+    -- is this what we want?
+    updateConnectedLedger mliv = do
       withDbAndConfig db appConfig $ do
         $(logDebug) ("Updating connectedledger: " <> tshow mliv)
         now <- getTime
@@ -305,8 +312,8 @@ clientPath :: Either NamedChain BinaryPaths -> FilePath
 clientPath = \case
   Right (BinaryPaths _ c _) -> c
   Left NamedChain_Mainnet -> $(staticWhich "mainnet-tezos-client")
-  Left NamedChain_Alphanet -> $(staticWhich "alphanet-tezos-client")
   Left NamedChain_Zeronet -> $(staticWhich "zeronet-tezos-client")
+  Left NamedChain_Babylonnet -> $(staticWhich "babylonnet-tezos-client")
 
 
 {- Example output from `list connected ledgers`
@@ -328,6 +335,19 @@ defaultTimeout = Just (5, ClientError_Timeout)
 
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
+
+-- Clears any notion of us waiting for us to do an action on this ledger. Call this when kiln boots
+-- just in case it was in any kind of ledger action prior to the restart
+resetLedgerQueue :: (MonadIO m)  => LoggingEnv -> Pool Postgresql ->  m ()
+resetLedgerQueue logger db =  liftIO $ runLoggingEnv logger $ runDb (Identity db) $ update
+  [ LedgerAccount_shouldImportField =. False
+  , LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)
+  , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: Maybe Ballot)
+  , LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe (Id PeriodProposal))
+  , LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)
+  , LedgerAccount_shouldSetupToBakeField =. False
+  ]
+  CondEmpty
 
 getConnectedLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
 getConnectedLedger appConfig chain = runExceptT $ do

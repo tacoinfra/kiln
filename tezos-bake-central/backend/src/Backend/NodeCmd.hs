@@ -46,8 +46,7 @@ import System.Which (staticWhich)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
-import Tezos.Base58Check (ProtocolHash)
-import Tezos.Chain (NamedChain(..))
+import Tezos.Types (ProtocolHash, NamedChain(..))
 
 import Backend.CachedNodeRPC
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
@@ -62,8 +61,8 @@ hasHistoryModes = (>= Version [0,0,3] [])
 
 nodePaths :: NamedChain -> FilePath
 nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
-nodePaths NamedChain_Alphanet = $(staticWhich "alphanet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
+nodePaths NamedChain_Babylonnet = $(staticWhich "babylonnet-tezos-node")
 
 bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)
@@ -79,15 +78,24 @@ getPath f paths = \case
     where
       e = error ("tezos-baker/endorser not available for the given protocol: " <> show p)
 
-tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
-tezosBinaryPaths =
+-- You cannot use a mainnet binary against a babylonnet node because the mainnet
+-- binary expects a .tezos-node/<chain_id>/protocol dir
+-- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
+tezosBinaryPaths :: NamedChain -> NonEmpty (ProtocolHash, FilePath, FilePath)
+tezosBinaryPaths NamedChain_Babylonnet  =
+  ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+  , $(staticWhich "babylonnet-tezos-baker-005-PsBabyM1")
+  , $(staticWhich "babylonnet-tezos-endorser-005-PsBabyM1")
+  ) :|
+    []
+tezosBinaryPaths _ =
   ( "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
   , $(staticWhich "mainnet-tezos-baker-004-Pt24m4xi")
   , $(staticWhich "mainnet-tezos-endorser-004-Pt24m4xi")
   ) :|
-    [ ( "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
-      , $(staticWhich "zeronet-tezos-baker-005-PsBABY5H")
-      , $(staticWhich "zeronet-tezos-endorser-005-PsBABY5H")
+    [ ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+      , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
+      , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
       )
     ]
 
@@ -281,7 +289,7 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
       ! #mkNotify Nothing
     bakerPw = pw (bakerPath paths, bakerArgs) ! #logNamespace "kiln-baker"
     endorserPw = pw (endorserPath paths, endorserArgs) ! #logNamespace "kiln-endorser"
-    paths = either (const tezosBinaryPaths) _binaryPaths_bakerEndorserPaths namedChainOrPaths
+    paths = either tezosBinaryPaths _binaryPaths_bakerEndorserPaths namedChainOrPaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.

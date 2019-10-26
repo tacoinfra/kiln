@@ -28,12 +28,13 @@ import Data.Word
 import Database.Groundhog
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
+import Database.Id.Class
+import Database.Id.Groundhog
 import Database.PostgreSQL.Simple.Types (Identifier(..))
 import Rhyolite.Backend.DB (getTime, selectSingle, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
-import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id(..), Json (..), IdData)
+import Rhyolite.Schema (Json (..))
 import qualified Text.URI as Uri
 
 import Tezos.Types
