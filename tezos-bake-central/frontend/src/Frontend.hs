@@ -1685,6 +1685,13 @@ nodesTab =
                   for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
                     SemUi.listItem' def $ text "Export Logs"
 
+              cancelSnapshotModal = warningModal "Cancel Node Setup?"
+                [ "This will exit the snapshot import and remove the Kiln Node. You may create a new Kiln Node at any time." ]
+                "Cancel Setup"
+                (PublicRequest_CancelSnapshotImport <$)
+              cancelSnapshotMenu = do
+                tileMenuEntryModal "Cancel Setup" cancelSnapshotModal
+
               removeNodeMenu = do
                 let
                   epilogue = "All data for this node will be deleted from Kiln."
@@ -1773,14 +1780,11 @@ nodesTab =
                       text "Taking too Long? "
                       (e, _) <- el' "a" $ text "Cancel import"
                       let ev = domEvent Click e
-                      tellModal $ (ev $>) $ warningModal "Cancel Node Setup?"
-                        [ "This will exit the snapshot import and remove the Kiln Node. You may create a new Kiln Node at any time." ]
-                        "Cancel Setup"
-                        (PublicRequest_CancelSnapshotImport <$)
+                      tellModal $ (ev $>) cancelSnapshotModal
                 ]
                 where
                   menu = case nodeState of
-                    NodeProcessState_ImportingSnapshot -> Nothing -- TODO
+                    NodeProcessState_ImportingSnapshot -> Just cancelSnapshotMenu
                     NodeProcessState_ImportCanceled -> Nothing
                     NodeProcessState_ImportComplete -> Just $ do
                       mapM_ verifyAndStartMenu mSnapshotMeta
