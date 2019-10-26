@@ -244,10 +244,13 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
               doCheck <- for dsh $ \blk -> checkNextBakeOpportunity appConfig nds blk >>= \case
                 -- Avoid sending commands to the ledger within two blocks of baking rights
                 Just (_, lvl) -> pure (blk ^. level < lvl - 2 || blk ^. level > lvl + 2)
-                _ -> pure False
+                _ -> pure True
               when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
 
-      _ -> pure ()
+      _ -> do
+        -- If there is no row in the DB, this is our first time running and we should check it
+        updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+        pure ()
     where
       inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
