@@ -1468,13 +1468,11 @@ publicNodeOptions = do
     publicNodesInOrder =
       [ PublicNode_Obsidian
       , PublicNode_Blockscale
-      , PublicNode_TzScan
       ]
 
     describePublicNode = \case
       PublicNode_Obsidian -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
       PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
-      PublicNode_TzScan -> text "API provided by tzscan.io, the block explorer by OCamlPro."
 
   pncDyn <- watchPublicNodeConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
@@ -1786,11 +1784,8 @@ nodesTab =
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
-            chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
             let
-              title = dyn_ $ ffor2 source chain $ \n c -> text (publicNodeShortName n) & case (n,c) of
-                (PublicNode_TzScan, Left namedChain) -> urlLink (tzScanUri namedChain)
-                _ -> id
+              title = dyn_ $ ffor source $ \n -> text (publicNodeShortName n)
 
               publicNodeMenu :: m ()
               publicNodeMenu = do

@@ -14,6 +14,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module Frontend.Common where
 
@@ -39,6 +40,7 @@ import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public, ApiRequest)
 import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import qualified Text.URI as Uri
+import Text.URI.QQ (uri)
 
 import GHCJS.DOM.Types (MonadJSM)
 import qualified GHCJS.DOM as DOM
@@ -48,8 +50,7 @@ import qualified GHCJS.DOM.HTMLTextAreaElement as TextArea
 import qualified GHCJS.DOM.Node as Node
 import qualified GHCJS.DOM.Types as DOM
 
-import Tezos.Common.NodeRPC.Sources (tzScanUri)
-import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness, fromShort)
+import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness, fromShort, NamedChain(..))
 
 import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
 import Common.Api (PublicRequest, PrivateRequest)
@@ -375,13 +376,22 @@ validateBakerAddr = Validator.Validator
   parseBakerAddr
   id
 
+tzStatsBlockUri :: NamedChain -> Text -> Maybe Uri.URI
+tzStatsBlockUri chain path = (`appendPaths` [path]) $ case chain of
+  NamedChain_Babylonnet -> [uri|http://babylonnet.tzstats.com/|]
+  NamedChain_Zeronet -> [uri|http://zeronet.tzstats.com/|]
+  NamedChain_Mainnet -> [uri|http://tzstats.com/|]
+
 blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t Text -> m a -> m a
 blockExplorerLink dPath f = do
   chain <- asks (^. frontendConfig . frontendConfig_chain)
   case chain of
     Right _chainId -> f
     Left namedChain ->
-      elDynAttr "a" (ffor dPath $ \path -> "href"=:maybe "" Uri.render (tzScanUri namedChain `appendPaths` [path]) <> "target"=:"_blank") f
+      elDynAttr "a"
+        (ffor dPath $ \path ->
+          "href"=:maybe "" Uri.render (tzStatsBlockUri namedChain path) <> "target"=:"_blank")
+        f
 
 blockHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t BlockHash -> m ()
 blockHashLink blockHash = blockHashLinkAs blockHash (dynText $ T.take 14 . toBase58Text <$> blockHash)

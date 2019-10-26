@@ -17,11 +17,10 @@ module Tezos.Common.NodeRPC.Sources where
 import Control.Lens.TH (makePrisms)
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Maybe (fromJust)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
-import Text.URI (URI, mkURI)
+import Text.URI (URI)
 import qualified Text.URI.QQ as Uri
 
 import Tezos.Common.NodeRPC.Types
@@ -32,7 +31,6 @@ type DataSource = (PublicNode, Either NamedChain ChainId, NonEmpty URI)
 
 data PublicNode
   = PublicNode_Blockscale
-  | PublicNode_TzScan
   | PublicNode_Obsidian
   deriving (Eq, Ord, Show, Read, Enum, Bounded, Generic, Typeable)
 
@@ -44,14 +42,12 @@ instance FromJSONKey PublicNode
 
 canFetchHistory :: PublicNode -> Bool
 canFetchHistory PublicNode_Blockscale = True
-canFetchHistory PublicNode_TzScan = False
 canFetchHistory PublicNode_Obsidian = True
 
 publicNodeShortName :: PublicNode -> T.Text
 publicNodeShortName = \case
   PublicNode_Obsidian -> "Obsidian Systems"
   PublicNode_Blockscale -> "Tezos Foundation"
-  PublicNode_TzScan -> "tzscan.io"
 
 getPublicNodeUri :: PublicNode -> NamedChain -> NonEmpty URI
 getPublicNodeUri PublicNode_Obsidian NamedChain_Zeronet      = pure [Uri.uri|https://zeronet-tezos-api.obsidian.systems/api|]
@@ -60,15 +56,6 @@ getPublicNodeUri PublicNode_Obsidian NamedChain_Mainnet      = pure [Uri.uri|htt
 getPublicNodeUri PublicNode_Blockscale NamedChain_Zeronet    = pure [Uri.uri|https://rpczero.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Babylonnet = pure [Uri.uri|https://rpctest.tzbeta.net|]
 getPublicNodeUri PublicNode_Blockscale NamedChain_Mainnet    = pure [Uri.uri|https://rpc.tzbeta.net|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Zeronet        = pure [Uri.uri|https://api.zeronet.tzscan.io|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Babylonnet     = pure [Uri.uri|https://api.alphanet.tzscan.io|]
-getPublicNodeUri PublicNode_TzScan NamedChain_Mainnet        = fromJust . mkURI . ("https://api" <>) . (<> ".tzscan.io") . T.pack . show <$> ((1 :: Int) :| [2..6])
-
-tzScanUri :: NamedChain -> URI
-tzScanUri = \case
-  NamedChain_Zeronet    -> [Uri.uri|https://zeronet.tzscan.io|]
-  NamedChain_Babylonnet -> [Uri.uri|https://alphanet.tzscan.io|]
-  NamedChain_Mainnet    -> [Uri.uri|https://tzscan.io|]
 
 data PublicNodeError
   = PublicNodeError_RpcError RpcError
