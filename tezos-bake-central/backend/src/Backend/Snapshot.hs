@@ -47,6 +47,7 @@ import Backend.CachedNodeRPC
 import Backend.Common
 import Backend.Config
 import Backend.NodeCmd
+import Backend.RequestHandler
 import Backend.Schema
 import Backend.Workers.Process
 import Common.Schema
@@ -242,6 +243,14 @@ importSnapshotData appConfig nds chain sm smId = do
   liftIO $ Process.withCreateProcess procSpec procMonitor
 
   removeFileLogging storePath
+
+  -- Do cleanup after cancel import
+  procControl <- inDb $ project SnapshotMeta_controlField (AutoKeyField ==. smId)
+  case headMay procControl of
+    Just ProcessControl_Stop -> do
+      inDb $ removeNodeDbImpl (Right ())
+      liftIO $ removeDirectoryRecursive dataDir
+    _ -> pure ()
 
 updateSnapshotMeta
   :: (PersistBackend m, BlockLike blk)

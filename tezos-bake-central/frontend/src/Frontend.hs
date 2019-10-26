@@ -1769,6 +1769,14 @@ nodesTab =
                         icon "icon-angle-right"
                         text "Start Verification"
                       tellModal $ ev $> verifySnapshotModal sm
+                    when (nodeState == NodeProcessState_ImportingSnapshot) $ elClass "p" "explanation" $ do
+                      text "Taking too Long? "
+                      (e, _) <- el' "a" $ text "Cancel import"
+                      let ev = domEvent Click e
+                      tellModal $ (ev $>) $ warningModal "Cancel Node Setup?"
+                        [ "This will exit the snapshot import and remove the Kiln Node. You may create a new Kiln Node at any time." ]
+                        "Cancel Setup"
+                        (PublicRequest_CancelSnapshotImport <$)
                 ]
                 where
                   menu = case nodeState of
