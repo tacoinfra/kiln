@@ -263,14 +263,22 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
     Left err -> do
       $(logError) (tshow err)
       reportLedgerDisconnection db appConfig
+      updateConnectedLedger Nothing
     Right mliv -> do
       case mliv of
         Nothing -> do
           reportLedgerDisconnection db appConfig
           $(logDebug) "The connectedledger is Nothing"
+
         Just _ -> do
           clearLedgerDisconnection db appConfig
 
+      updateConnectedLedger mliv
+
+  where
+    -- TODO: Because this deletes and re-adds, we will only have the walletAppVersion or the bakerAppVersion
+    -- is this what we want?
+    updateConnectedLedger mliv = do
       withDbAndConfig db appConfig $ do
         $(logDebug) ("Updating connectedledger: " <> tshow mliv)
         now <- getTime

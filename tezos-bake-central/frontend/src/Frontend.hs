@@ -416,7 +416,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
             dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
       elAttr "div" ("class" =: "item" <> "style" =: "position: relative") $ divClass "content" $ do
         dCl <- watchConnectedLedger
-        let dIsLedgerConnected = isJust . join . (fmap _connectedLedger_ledgerIdentifier) <$> dCl
+        let dIsLedgerConnected = isJust . (_connectedLedger_ledgerIdentifier =<<) <$> dCl
         divClass "header" $ do
           iconDyn $ ffor dIsLedgerConnected $ bool "red x" "green check"
           elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
