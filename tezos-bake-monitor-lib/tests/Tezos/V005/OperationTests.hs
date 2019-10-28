@@ -271,7 +271,7 @@ tests = testGroup "OperationTests"
       ]
     , binaryRoundTripTest "OpParameters" $ OpParameters
       (EntrypointOther (EntrypointName "foo"))
-      (Expression_Prim (MichelinePrimAp (MichelinePrimitive "UNIT") [] []))
+      (Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "stored_counter" ])
     ]
   , testGroup "JSON"
     [ aesonRoundTripTest "Origination" "tests/Tezos/V005/OperationTests/OperationOriginationV005.json" testOperationOrigination

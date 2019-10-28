@@ -897,7 +897,7 @@ instance B.TezosBinary OpParameters where
     <** B.puts (B.DynamicSize . _opParameters_value)
   get = OpParameters
     <$> B.get
-    <*> B.get
+    <*> fmap B.unDynamicSize B.get
 
 instance B.TezosBinary OpContentsTransaction where
   put = B.puts _opContentsTransaction_amount
