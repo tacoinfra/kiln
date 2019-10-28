@@ -29,11 +29,11 @@ import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
+import Database.Id.Class
+import Database.Id.Groundhog
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id (..))
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
 import System.IO (hIsEOF)
@@ -256,8 +256,8 @@ clientPath :: Either NamedChain BinaryPaths -> FilePath
 clientPath = \case
   Right (BinaryPaths _ c _) -> c
   Left NamedChain_Mainnet -> $(staticWhich "mainnet-tezos-client")
-  Left NamedChain_Alphanet -> $(staticWhich "alphanet-tezos-client")
   Left NamedChain_Zeronet -> $(staticWhich "zeronet-tezos-client")
+  Left NamedChain_Babylonnet -> $(staticWhich "babylonnet-tezos-client")
 
 
 {- Example output from `list connected ledgers`
@@ -279,6 +279,19 @@ defaultTimeout = Just (5, ClientError_Timeout)
 
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
+
+-- Clears any notion of us waiting for us to do an action on this ledger. Call this when kiln boots
+-- just in case it was in any kind of ledger action prior to the restart
+resetLedgerQueue :: (MonadIO m)  => LoggingEnv -> Pool Postgresql ->  m ()
+resetLedgerQueue logger db =  liftIO $ runLoggingEnv logger $ runDb (Identity db) $ update
+  [ LedgerAccount_shouldImportField =. False
+  , LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)
+  , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: Maybe Ballot)
+  , LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe (Id PeriodProposal))
+  , LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)
+  , LedgerAccount_shouldSetupToBakeField =. False
+  ]
+  CondEmpty
 
 getConnectedLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
 getConnectedLedger appConfig chain = runExceptT $ do

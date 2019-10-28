@@ -9,28 +9,20 @@
 
 module Tezos.V004.Block where
 
-import Control.Applicative ((<|>))
-import Control.Lens (Lens', coerced, (^.))
+import Control.Lens (Lens', (^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (parseJSON), ToJSON)
 import qualified Data.Aeson as Aeson
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Base16 as BS16
 import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HashMap
-import Data.Foldable (toList)
 import Data.Sequence (Seq)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import Data.Time
 import Data.Typeable (Typeable)
 import Data.Word
 import GHC.Generics (Generic)
 import Control.DeepSeq (NFData)
-import qualified Data.Sequence as Seq
 
 import Tezos.V004.BalanceUpdate
-import Tezos.Common.Base16ByteString (Base16ByteString (..))
 import Tezos.Common.Base58Check
 import Tezos.V004.BlockHeader
 import Tezos.V004.Fitness
@@ -38,10 +30,7 @@ import Tezos.Common.Json
 import Tezos.V004.Level
 import Tezos.V004.Operation
 import Tezos.V004.PublicKeyHash
-import Tezos.Common.ShortByteString (toShort, fromShort)
-import Tezos.V004.Signature (Signature)
 import Tezos.V004.TestChainStatus
-import Tezos.V004.Tez (Tez)
 
 -- | "description": "All the information about a block.",
 data Block = Block
@@ -107,64 +96,6 @@ data MonitorBlock = MonitorBlock
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance NFData MonitorBlock
 
-data TzScanBlock = TzScanBlock
-  { _tzScanBlock_hash :: !BlockHash
-  , _tzScanBlock_predecessorHash :: !BlockHash
-  , _tzScanBlock_fitness :: !TzScanFitness
-  , _tzScanBlock_timestamp :: !UTCTime
-  , _tzScanBlock_validationPass :: !Word8
-  -- , _tzScanBlock_operations :: Seq (Seq Operation)
-  , _tzScanBlock_protocol :: !TzScanProtocol
-  , _tzScanBlock_testProtocol :: !TzScanProtocol
-  , _tzScanBlock_network :: !ChainId
-  -- , _tzScanBlock_testNetwork_ :: !Text
-  -- , _tzScanBlock_testNetworkExpiration" :: !Text
-  , _tzScanBlock_baker :: !TzScanBaker
-  , _tzScanBlock_nbOperations :: !(Maybe Word64)
-  , _tzScanBlock_priority :: !Int
-  , _tzScanBlock_level :: !RawLevel
-  , _tzScanBlock_commitedNonceHash :: !TzScanNonceHash
-  , _tzScanBlock_pow_nonce :: !(Base16ByteString ByteString)
-  , _tzScanBlock_proto :: !Word8
-  --, _tzScanBlock_data :: !Operation -- TODO: Not sure how to parse this
-  , _tzScanBlock_signature :: !(Maybe Signature)
-  -- , _tzScanBlock_volume :: !Integer -- TODO: unkown type
-  , _tzScanBlock_fees :: !Tez
-  -- , _tzScanBlock_distanceLevel :: !Integer -- TODO: unknown type
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance NFData TzScanBlock
-
-newtype TzScanFitness = TzScanFitness Fitness
-  deriving (Eq, Ord, Show, Generic, Typeable)
-instance Hashable TzScanFitness
-instance NFData TzScanFitness
-instance FromJSON TzScanFitness where
-  parseJSON = Aeson.withText "block fitness string" $ \txt -> pure $ TzScanFitness $ FitnessF $ Seq.fromList
-    (Base16ByteString . toShort . fst . BS16.decode . T.encodeUtf8 <$> T.splitOn " " txt)
-instance ToJSON TzScanFitness where
-  toJSON (TzScanFitness (FitnessF xs)) = Aeson.toJSON $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . fromShort . unbase16ByteString <$> xs
-  toEncoding (TzScanFitness (FitnessF xs)) = Aeson.toEncoding $ T.intercalate " " $ toList $ T.decodeUtf8 . BS16.encode . fromShort . unbase16ByteString <$> xs
-
-newtype TzScanProtocol = TzScanProtocol
-  { -- _tzScanProtocol_name :: !Text -- TODO: What even is this?
-  _tzScanProtocol_hash :: ProtocolHash
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance Hashable TzScanProtocol
-instance NFData TzScanProtocol
-
-newtype TzScanBaker = TzScanBaker
-  { _tzScanBaker_tz :: PublicKeyHash
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance Hashable TzScanBaker
-instance NFData TzScanBaker
-
-newtype TzScanNonceHash = TzScanNonceHash (Maybe NonceHash)
-  deriving (Eq, Ord, Show, Generic, Typeable, ToJSON)
-instance Hashable TzScanNonceHash
-instance NFData TzScanNonceHash
-instance FromJSON TzScanNonceHash where
-  parseJSON v = TzScanNonceHash <$> (parseJSON v <|> pure Nothing)
-
 data VeryBlockLike = VeryBlockLike
   { _veryBlockLike_hash :: !BlockHash
   , _veryBlockLike_predecessor :: !BlockHash
@@ -229,9 +160,6 @@ concat <$> traverse deriveTezosJson
   , ''BlockMetadata
   , ''MaxOperationListLength
   , ''MonitorBlock
-  , ''TzScanBaker
-  , ''TzScanBlock
-  , ''TzScanProtocol
   , ''VotingPeriodKind
   , ''VeryBlockLike
   ]
@@ -241,9 +169,6 @@ concat <$> traverse makeLenses
   , 'BlockMetadata
   , 'MaxOperationListLength --  "max_operation_list_length": {
   , 'MonitorBlock
-  , 'TzScanBaker
-  , 'TzScanBlock
-  , 'TzScanProtocol
   , 'VeryBlockLike
   , 'WithProtocolHash
   ]
@@ -305,15 +230,6 @@ instance BlockLike MonitorBlock where
   level = monitorBlock_level
   fitness = monitorBlock_fitness
   timestamp = monitorBlock_timestamp
-
-instance BlockLike TzScanBlock where
-  hash = tzScanBlock_hash
-  predecessor = tzScanBlock_predecessorHash
-  level = tzScanBlock_level
-  fitness = tzScanBlock_fitness . coerced
-  timestamp = tzScanBlock_timestamp
-instance HasProtocolHash TzScanBlock where
-  protocolHash = tzScanBlock_protocol . coerced
 
 instance BlockLike VeryBlockLike where
   hash = veryBlockLike_hash

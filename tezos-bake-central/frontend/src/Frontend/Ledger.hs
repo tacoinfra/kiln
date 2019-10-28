@@ -40,7 +40,6 @@ import qualified Reflex.Dom.TextField as Txt
 import Reflex.Dom.Form.Widgets (formItem')
 import Reflex.Dom.Form.Widgets (validatedInput)
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Text.Read (readMaybe)
 import Tezos.Types
 
@@ -97,7 +96,7 @@ instance GCompare (PromptResult m) where
   gcompare PromptResult_Success PromptResult_Success = GEQ
   gcompare PromptResult_Success _ = GGT
 
-ledgerSetupSteps :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
+ledgerSetupSteps :: forall t m. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedger
   ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
@@ -106,18 +105,18 @@ ledgerSetupSteps = mdo
     elClass "h4" "ui header" $ do
       kilnLogo
       text "Start Baking"
-    let steps = [This LSS_ConnectLedger, This LSS_SelectAddress, This LSS_ImportAddress, This LSS_AuthorizeLedger, This LSS_RegisterDelegate]
+    let steps = [Some LSS_ConnectLedger, Some LSS_SelectAddress, Some LSS_ImportAddress, Some LSS_AuthorizeLedger, Some LSS_RegisterDelegate]
     el "ol" $ for_ steps $ \step -> do
-      let attrs = ffor currentStep $ \(s :=> _) -> "class" =: case compare step (This s) of
+      let attrs = ffor currentStep $ \(s :=> _) -> "class" =: case compare step (Some s) of
             LT -> "done"
             EQ -> "current"
             GT -> ""
       elDynAttr "li" attrs $ do
         text $ withSome step toLSSText
-        when (step == This LSS_ConnectLedger) $ dyn_ $ ffor ledgerIdentifier $ traverse_ $ \li -> divClass "extra" $ do
+        when (step == Some LSS_ConnectLedger) $ dyn_ $ ffor ledgerIdentifier $ traverse_ $ \li -> divClass "extra" $ do
           elAttr "img" ("src" =: static @"images/ledger.svg") blank
           text $ unLedgerIdentifier li
-        when (step == This LSS_SelectAddress) $ divClass "extra" $ do
+        when (step == Some LSS_SelectAddress) $ divClass "extra" $ do
           dynText $ ffor currentStep $ maybe "" toPublicKeyHashText . \case
             LSS_ImportAddress :=> Identity (_, pkh) -> Just pkh
             LSS_AuthorizeLedger :=> Identity (_, pkh) -> Just pkh
@@ -141,10 +140,10 @@ ledgerSetupSteps = mdo
     ]
 
 doPrompt
-  :: MonadRhyoliteFrontendWidget Bake t m
+  :: MonadAppWidget t m
   => Text
   -- ^ Title
-  -> m (Behavior t (Maybe (PublicRequest Bake ())))
+  -> m (Behavior t (Maybe (PublicRequest ())))
   -- ^ Widget placed before the continue button
   -- ^ Returns request to start the prompt
   -> Text
@@ -193,7 +192,7 @@ respondToPrompt prompt = do
   elClass "h6" "ui header prompt-text" prompt
 
 importSecretKey
-  :: forall t m. MonadRhyoliteFrontendWidget Bake t m
+  :: forall t m. MonadAppWidget t m
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError ()))
 importSecretKey (sk, pkh) = doPrompt "Import address to Kiln." explanation prompt sk handleStep
   where
@@ -211,7 +210,7 @@ importSecretKey (sk, pkh) = doPrompt "Import address to Kiln." explanation promp
       | otherwise = Nothing
 
 authorizeLedger
-  :: forall t m. MonadRhyoliteFrontendWidget Bake t m
+  :: forall t m. MonadAppWidget t m
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError (DSum LSS Identity)))
 authorizeLedger (sk, pkh) = do
   e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
@@ -238,7 +237,7 @@ authorizeLedger (sk, pkh) = do
       | otherwise = Nothing
 
 registerDelegate
-  :: forall t m. MonadRhyoliteFrontendWidget Bake t m
+  :: forall t m. MonadAppWidget t m
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError ()))
 registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanation prompt sk handleStep
   where
@@ -286,7 +285,7 @@ registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanat
       pure $ ffor fee $ \t -> PublicRequest_RegisterKeyAsDelegate sk . Tez <$> readMaybe (T.unpack t)
 
 connectLedger
-  :: MonadRhyoliteFrontendWidget Bake t m
+  :: MonadAppWidget t m
   => Dynamic t (Maybe ConnectedLedger) -> m (Event t LedgerIdentifier)
 connectLedger connectedLedger = divClass "central" $ do
   elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
@@ -322,7 +321,7 @@ connectLedger connectedLedger = divClass "central" $ do
   pure ledgerChoice
 
 selectAddress
-  :: forall t m. (MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m), MonadJSM m)
+  :: forall t m. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m)
   => LedgerIdentifier -> m (Event t (SecretKey, PublicKeyHash))
 selectAddress ledger = divClass "select-address" $ mdo
   let curves = [minBound .. maxBound] :: [SigningCurve]
@@ -345,10 +344,20 @@ selectAddress ledger = divClass "select-address" $ mdo
               Nothing -> do
                 divClass "ui active tiny inline blue loader" blank
                 text "Importing PKH..."
-              Just (pkh, tz) -> do
-                SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
-                text $ toPublicKeyHashText pkh
-                fancyTez tz
+              Just (pkh, tz) ->
+                let
+                  tooltipContent = el "dl" $ do
+                     el "div" $ do
+                       el "dt" $ text "Signing Curve"
+                       el "dd" $ text $ toSigningCurveText sc
+                     el "div" $ do
+                       el "dt" $ text "Derivation Path"
+                       el "dd" $ text $ unDerivationPath dp
+
+                in tooltipped TooltipPos_TopCenter tooltipContent $ do
+                  SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
+                  text $ toPublicKeyHashText pkh
+                  fancyTez tz
           let f mpkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) mpkh
           pure $ attachWithMaybe f (current dynPkhTez) (domEvent Click e)
 
@@ -430,7 +439,7 @@ isValidBIP32 t
         Nothing -> errFormat
 
 setupComplete
-  :: MonadRhyoliteFrontendWidget Bake t m
+  :: MonadAppWidget t m
   => (SecretKey, PublicKeyHash)
   -> m (Event t ())
 setupComplete (_sk, pkh) = divClass "central" $ do

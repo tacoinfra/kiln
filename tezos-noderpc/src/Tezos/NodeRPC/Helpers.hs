@@ -1,10 +1,7 @@
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Tezos.NodeRPC.Helpers where
@@ -78,7 +75,7 @@ dryRunEndpoint chain block account contract endpoint argument = do
       opContents = V005.OpContentsList_Single $ V005.OpContents_Transaction $ V005.OpContentsManager account 10 counter gas_max storage_max opTransfer
       -- This needs to fit the format of a valid signature, but is never looked at past that.
       dummySignature = Just "edsigtXomBKi5CTRf5cjATJWSyaRvhfYNHqSUGrn4SdbYRcGwQrUGjzEfQDTuqHhuA8b2d8NarZjz8TRf65WkpQmo423BtomS8Q"
-      op = (V005.OpsKindTag_Single (V005.OpKindTag_Manager V005.OpKindManagerTag_Transaction)) :=> V005.Op { V005._op_branch = block, V005._op_contents = opContents, V005._op_signature = dummySignature }
+      op = V005.OpsKindTag_Single (V005.OpKindTag_Manager V005.OpKindManagerTag_Transaction) :=> V005.Op { V005._op_branch = block, V005._op_contents = opContents, V005._op_signature = dummySignature }
   nodeRPC $ rRunOperation chain block $ OpWithChain op chain
 
 callViewEndpoint
@@ -99,7 +96,7 @@ callViewEndpoint
   -> a
   -> m (Either String b)
 callViewEndpoint chain block account contract tgtContract endpoint argument = do
-  let finalArgument = Pair (toMicheline argument) $ toMicheline $ tgtContract
+  let finalArgument = Pair (toMicheline argument) $ toMicheline tgtContract
   result <- dryRunEndpoint chain block account contract endpoint finalArgument
   case result ^? valueFromResult of
     Just expr -> return $ fromMicheline expr

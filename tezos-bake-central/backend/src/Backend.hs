@@ -35,6 +35,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
+import Gargoyle.PostgreSQL.Connect (withDb)
 import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
 import Network.Mail.Mime (Address (..))
@@ -69,8 +70,10 @@ import System.IO.Error (isDoesNotExistError)
 import Text.URI (URI)
 import qualified Text.URI as URI
 
-import Backend.Db (gargoyleSupported, withDb)
+import Tezos.Common.Chain (mainnetChainId)
+import Tezos.History (emptyCache)
 import Tezos.NodeRPC hiding (DataSource)
+import Tezos.Common.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource(..))
@@ -94,11 +97,11 @@ import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
-import Backend.Workers.TezosClient (tezosClientWorker)
+import Backend.Workers.TezosClient (tezosClientWorker, resetLedgerQueue)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
-import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
+import Common.Route (AppRoute, BackendRoute (..), fullRouteEncoder)
 import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
@@ -206,11 +209,6 @@ backendImpl cfg serve = do
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
     firstOption = coerce . fold . (fmap.fmap) (Option . fmap First)
 
-  !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
-    [ pure $ getOption $  _opts_tzscanApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.tzscanApiUri
-    , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
-    ]
   !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_blockscaleApiUri cfg
     , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
@@ -233,18 +231,13 @@ backendImpl cfg serve = do
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
     publicDataSources' = catMaybes
-      [ (,,) <$> pure PublicNode_TzScan <*> pure chain <*> tzscanApi
-      , (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
+      [ (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
       , (,,) <$> pure PublicNode_Obsidian <*> pure chain <*> obsidianApi
       ]
 
   publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
 
-  let
-    defaultDbSpec = if gargoyleSupported
-      then Left Config.db
-      else error "Please specify a PostgreSQL connection string"
-  !dbSpec <- pure $ maybe defaultDbSpec Right pgConnString
+  let !dbSpec = maybe Config.db T.unpack pgConnString
 
   httpMgr <- Http.newManager Https.tlsManagerSettings
 
@@ -354,6 +347,8 @@ backendImpl cfg serve = do
             , PublicNodeConfig_updatedField =. now
             ]
 
+    resetLedgerQueue logger db
+
     let
       minLevel :: RawLevel
       minLevel = 2
@@ -421,7 +416,7 @@ backendImpl cfg serve = do
       _ <- Telegram.initState addFinalizer httpMgr logger db
 
       let withWs = RhyoliteWs.withWebsocketsConnectionLogging @Snap.Snap (\str e -> runLoggingEnv logger $ $logError $ T.pack $ "Websocket error: " <> str <> " " <> show e)
-      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs db
+      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs "v3" RhyoliteApp.functorFromWire db
         (requestHandler appConfig upgradeBranch emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
@@ -465,7 +460,7 @@ backend = backend' mempty
 backend' :: Opts -> Backend BackendRoute AppRoute
 backend' cfg = Backend
   { _backend_run = backendImpl cfg
-  , _backend_routeEncoder = backendRouteEncoder
+  , _backend_routeEncoder = fullRouteEncoder
   }
 
 clearMailQueueWithDynamicEmailEnv
@@ -657,7 +652,7 @@ backendMain k = do
         !staticHead = do
           let injectIt config = injectPure (T.pack $ "config/" <> config)
           headTag
-          for_ route $ injectIt Config.route . URI.render
+          for_ route $ injectIt Config.route . T.encodeUtf8 . URI.render
 
       for_ route $ \r -> putStrLn $ "Using route " <> T.unpack (URI.render r)
       withArgs rest $ k (backend' cfg) (frontend { _frontend_head = staticHead })

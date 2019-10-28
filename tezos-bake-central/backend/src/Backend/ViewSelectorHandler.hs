@@ -25,6 +25,8 @@ import Control.Monad.Trans.State (evalStateT)
 import Control.Monad.Trans.State (modify)
 import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
+import qualified Data.ByteString.Builder as BS
+import qualified Data.ByteString.Base16 as B16
 import Data.Functor.Identity (Identity (..))
 import Data.Functor.Apply (liftF2)
 import Data.Dependent.Map (DMap)
@@ -51,7 +53,7 @@ import Database.Groundhog.Core (EntityConstr)
 import Database.Groundhog.Core (FieldChain)
 import Database.Groundhog.Core (PersistEntity)
 import Database.Groundhog.Core (PersistValue)
-import Database.Groundhog.Core (Utf8)
+import Database.Groundhog.Core (Utf8(..))
 import Database.Groundhog.Core (constrParams)
 import Database.Groundhog.Core (constructors)
 import Database.Groundhog.Core (entityConstrNum)
@@ -67,6 +69,7 @@ import Database.Groundhog.Generic.Sql (flatten)
 import Database.Groundhog.Generic.Sql (renderChain)
 import Database.Groundhog.Generic.Sql (tableName)
 import Database.Groundhog.Postgresql
+import Database.Id.Class
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -74,7 +77,6 @@ import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
-import Rhyolite.Schema (Id(..))
 import Safe (maximumMay)
 import Safe (minimumByMay)
 
@@ -108,13 +110,14 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       -> m' (View (MaybeSelector v) a)
     maybeViewHandler getVS xs = whenM (not $ null $ getVS vs) $
       toMaybeView (getVS vs) <$> xs
+    chainId = _nodeDataSource_chain nds
 
   let paramsVS = _bakeViewSelector_parameters vs
   parameters <- whenM (not $ null paramsVS) $ do
     let selectedProtocols :: [ProtocolHash] = MMap.keys $ unMapSelector paramsVS
     protocols :: [ProtocolIndex] <- select
       ( ProtocolIndex_hashField `in_` selectedProtocols &&.
-        ProtocolIndex_chainIdField ==. _nodeDataSource_chain nds)
+        ProtocolIndex_chainIdField ==. chainId)
     let findProtocol k a = fmap (\v -> (First v, a)) $ Prelude.lookup k $ map (\p -> (_protocolIndex_hash p, p)) protocols
     pure $ MapView $ MMap.mapMaybeWithKey (\k a -> findProtocol k a ) $ unMapSelector paramsVS
 
@@ -151,7 +154,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let bakerAlertsVS = _bakeViewSelector_bakerAlerts vs
   bakerAlerts <- whenM (not $ null bakerAlertsVS) $
-    toRangeView bakerAlertsVS . fmap (\(pkh, v) -> (Bounded pkh, First $ Just v)) <$> getBakerAlert
+    toRangeView bakerAlertsVS . fmap (\(pkh, v) -> (Bounded pkh, First $ Just v)) <$> getBakerAlert chainId
 
   -- maybeCurrentHead <- runReaderT dataSourceHead nds
 
@@ -168,7 +171,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle CondEmpty
 
   let errorsVS = _bakeViewSelector_errors vs
-  errors <- itraverse getErrorLogs errorsVS
+  errors <- itraverse (getErrorLogs chainId) errorsVS
 
   upgrade <- maybeViewHandler _bakeViewSelector_upstreamVersion $ selectSingle CondEmpty
 
@@ -189,7 +192,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
       pure (telegramConfig, telegramRecipients)
 
-  alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount
+  alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount chainId
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
 
@@ -197,7 +200,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   let amendmentVS = _bakeViewSelector_amendment vs
   amendment <- whenM (not $ null amendmentVS) $ do
-    as <- select $ Amendment_chainIdField ==. _nodeDataSource_chain nds
+    as <- select $ Amendment_chainIdField ==. chainId
     pure $ toRangeView amendmentVS $ flip fmap as $ \a -> (_amendment_period a, First $ Just a)
 
   let periodProposalsVS = _bakeViewSelector_proposals vs
@@ -205,7 +208,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     toRangeView periodProposalsVS . fmap (bimap Bounded (First . Just)) <$> getProposals
 
   bakerVote <- maybeViewHandler _bakeViewSelector_bakerVote $ Just <$> do
-    let chainId = _nodeDataSource_chain nds
     results <- [queryQ|
       SELECT v.pkh, v.proposal, v.ballot, v.included, v.attempted
       FROM "BakerVote" v
@@ -222,7 +224,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       }
 
   periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> do
-    let chainId = _nodeDataSource_chain nds
     results <- [queryQ|
       SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalRolls"
       FROM "PeriodTestingVote" v
@@ -244,7 +245,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       }
 
   periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$> do
-    let chainId = _nodeDataSource_chain nds
     results <- [queryQ|
       SELECT t.proposal, t."testChainId", t."startingLevel", t.status
       FROM "PeriodTesting" t
@@ -260,7 +260,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
       }
 
   periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$> do
-    let chainId = _nodeDataSource_chain nds
     results <- [queryQ|
       SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalRolls"
       FROM "PeriodPromotionVote" v
@@ -366,6 +365,9 @@ phantomize = error "tried to touch a phantom"
 renderQualifiedField :: Utf8 -> FieldChain -> [Utf8]
 renderQualifiedField q fld = renderChain (RenderConfig $ \x -> q <> ".\"" <> x <> "\"") fld []
 
+renderChainId :: ChainId -> Utf8
+renderChainId = Utf8 . ("'\\x" <>) . (<>"'") .BS.byteString . B16.encode . fromShort . unHashedValue
+
 traceQuery :: (MonadLogger f, PersistBackend f) => Utf8 -> ([PersistValue] -> [PersistValue]) -> ([PersistValue] -> f r) -> f [r]
 traceQuery sql params f = do
   $(logDebugS) "SQL" (tshow sql)
@@ -378,11 +380,12 @@ getErrorLogs
   , PersistBackend m
   , Semigroup a
   )
-  => AlertsFilter
+  => ChainId
+  -> AlertsFilter
   ->          Compose (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a
   -> m (View (Compose (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a)
-getErrorLogs flt sel = do
-  vals <- getErrorLogsImpl flt $ getCompose sel
+getErrorLogs chainId flt sel = do
+  vals <- getErrorLogsImpl chainId flt $ getCompose sel
   let
     l :: Compose (MonoidalMap (Some LogTag)) (View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo))) a
     l = Compose $ MMap.fromList $ map (\(k, v, _) -> (k, v)) vals
@@ -397,10 +400,11 @@ getErrorLogsImpl
   , PersistBackend m
   , Semigroup a
   )
-  => AlertsFilter
+  => ChainId
+  -> AlertsFilter
   -> MapSelector (Some LogTag) () (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo) a)
   -> m [(Some LogTag, View (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a, a)]
-getErrorLogsImpl flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs logTags) $ \(lTag, IntervalSelector intervalMap) -> do
+getErrorLogsImpl chainId flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs logTags) $ \(lTag, IntervalSelector intervalMap) -> do
   let flattenedIntervalMap = AppendIMap.flattenWithClosedInterval (<>) intervalMap
   $(logDebugSH) ("getErrorLogs" :: Text, void flattenedIntervalMap)
 
@@ -413,7 +417,7 @@ getErrorLogsImpl flt (MapSelector logTags) = (catMaybes <$>) $ for (MMap.assocs 
     -- TODO: make every bakeralert work with the Id Baker column, probably
     runQueries :: Some LogTag -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
     runQueries ltag window = do
-      leftBiasedUnions <$> traverse (\(This lTag) -> do { x <- getErrorLogForTag flt lTag window; $(logDebugSH) x; pure x }) [ltag]
+      leftBiasedUnions <$> traverse (\(Some lTag) -> do { x <- getErrorLogForTag chainId flt lTag window; $(logDebugSH) x; pure x }) [ltag]
 
     leftBiasedUnions = MMap.unionsWith const
 
@@ -423,8 +427,8 @@ getErrorLogForTag
   ( MonadLogger m
   , PersistBackend m
   )
-  => AlertsFilter -> LogTag e -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
-getErrorLogForTag flt lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x) $
+  => ChainId -> AlertsFilter -> LogTag e -> ClosedInterval (WithInfinity UTCTime) -> m (MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView))
+getErrorLogForTag chainId flt lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x) $
       logAssume lTag (queryAlert (singleConstructor $ proxify lTag) (logDep lTag) window)
   where
     {-# INLINE queryAlert #-}
@@ -451,7 +455,7 @@ getErrorLogForTag flt lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x)
         sqlFields = foldr (flatten id) [] $ constrParams constrD
         qCond :: [Utf8]
         qCond = flip map related $ \case
-          This r@(Related fld fk) ->
+          Some r@(Related fld fk) ->
             let ctor2 = singleConstructor $ proxify r
                 entityD2 = entityDef pg $ phantomize $ Compose ctor2
                 constrNum2 = entityConstrNum (Compose ctor2) ctor2
@@ -478,9 +482,10 @@ getErrorLogForTag flt lTag window = (fmap.fmap.fmap) (\x -> lTag :=> Identity x)
           \   " <> foldMap (\fld -> ", t.\"" <> fld <> "\"") sqlFields <> " \
           \ FROM \"ErrorLog\" el \
           \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
-          \ WHERE ("
+          \ WHERE (("
           <> bool (mconcat $ intersperse " OR " qCond) "TRUE" (null related)
-          <> " AND COALESCE(el.started != el.stopped, true)"
+          <> " AND COALESCE(el.started != el.stopped, true))"
+          <> " AND el.\"chainId\" = " <> renderChainId chainId
           <> ")"
           <> qFlt
         qFlt = case flt of
@@ -509,12 +514,13 @@ getBakerAlert
   ( MonadLogger m
   , PersistBackend m
   )
-  => m [(PublicKeyHash, NonEmpty BakerAlert)]
-getBakerAlert = do
+  => ChainId
+  -> m [(PublicKeyHash, NonEmpty BakerAlert)]
+getBakerAlert chainId = do
 
   let everythingWindow = ClosedInterval LowerInfinity UpperInfinity
 
-  allAlerts <- traverse (\(This t) -> getErrorLogForTag AlertsFilter_UnresolvedOnly (LogTag_Baker t) everythingWindow) universe
+  allAlerts <- traverse (\(Some t) -> getErrorLogForTag chainId AlertsFilter_UnresolvedOnly (LogTag_Baker t) everythingWindow) universe
   let
     bakerErrors :: MonoidalMap PublicKeyHash [(ErrorLog, BakerErrorLogView)]
     bakerErrors = MMap.fromListWith (<>)
@@ -557,8 +563,9 @@ getAlertCount
   ( MonadLogger m
   , PersistBackend m
   )
-  => m (DMap LogTag (Const Int))
-getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
+  => ChainId
+  -> m (DMap LogTag (Const Int))
+getAlertCount chainId = DMap.fromList . concat <$> traverse (\(Some lTag) -> do
   (x, _) <- runQuery lTag
   pure $ map (\(t, v) -> t :=> Const v) x) universe
   where
@@ -584,6 +591,7 @@ getAlertCount = DMap.fromList . concat <$> traverse (\(This lTag) -> do
           \ FROM \"ErrorLog\" el \
           \ JOIN \"" <> sqlTable <> "\" t ON t.log = el.id \
           \ WHERE el.stopped IS NULL"
+          <> " AND el.\"chainId\" = " <> renderChainId chainId
       $(logDebugSH) ("queryAlert" :: Text, sqlTable)
       v <- traceQuery qBase id build
       pure (v, Proxy @b)
@@ -599,8 +607,9 @@ getBakerAddresses
   -> Maybe PublicKeyHash
   -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
 getBakerAddresses nds bid = do
-  let qCount :: [Utf8]
-      qCount = flip map universe $ \(This bTag) -> logAssume (LogTag_Baker bTag) $ case bakerLogDep bTag of
+  let chainId = _nodeDataSource_chain nds
+      qCount :: [Utf8]
+      qCount = flip map universe $ \(Some bTag) -> logAssume (LogTag_Baker bTag) $ case bakerLogDep bTag of
         r@(Related fld fk) ->
           let ctor = singleConstructor $ proxify bTag
               entityD = entityDef pg $ phantomize $ Compose ctor
@@ -636,12 +645,13 @@ getBakerAddresses nds bid = do
   int :: Map.Map PublicKeyHash (Bool, SecretKey, (Int, Bool)) <- [queryQ|
       SELECT b."data#data#publicKeyHash", b."data#data#insufficientFunds", p."control",
         la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
-        ( SELECT COUNT(e.id)
-          FROM "ErrorLog" e
+        ( SELECT COUNT(el.id)
+          FROM "ErrorLog" el
           JOIN "ErrorLogBakerMissed" elbm
-            ON elbm.log = e.id
-          WHERE e.stopped IS NULL
+            ON elbm.log = el.id
+          WHERE el.stopped IS NULL
             AND elbm."baker#publicKeyHash" = b."data#data#publicKeyHash"
+            AND el."chainId" = ?chainId
         )
       FROM "BakerDaemonInternal" b
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
@@ -683,7 +693,6 @@ getBakerAddresses nds bid = do
     -- Insert pkh from Internal if present
     bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
       fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
-    chainId = _nodeDataSource_chain nds
 
   nextBakeRightsL <- case latestHead' ^? _Just . level of
     Nothing -> pure []
@@ -757,7 +766,7 @@ getNodeAddresses nid = do
       , _processData_backend = backend
       }))
   let qCount :: [Utf8]
-      qCount = flip map universe $ \(This nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of
+      qCount = flip map universe $ \(Some nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of
         r@(Related fld fk) ->
           let ctor = singleConstructor $ proxify nTag
               entityD = entityDef pg $ phantomize $ Compose ctor

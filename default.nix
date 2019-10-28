@@ -89,7 +89,8 @@ let
         sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
       '';
 
-  kilnVMConfig = (import (pkgs.path + /nixos) {
+  kilnVMPkgs = import dep/kiln-vm-nixpkgs {};
+  kilnVMConfig = (import (kilnVMPkgs.path + /nixos) {
     configuration = {
       imports = [
         ./virtualbox-image.nix
@@ -206,6 +207,6 @@ in (obApp distroMethods.source) // {
     obApp = obAppGargoyle distroMethods.linuxPackage;
     nodeKit = tezosScopedKit;
     pkgName = "kiln";
-    version = "0.7.1"; # TODO: Calculate this
+    version = "0.7.2"; # TODO: Calculate this
   }).kiln-debian;
 }

@@ -10,7 +10,7 @@ in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
     inherit (obelisk.reflex-platform) hackGet;
-    rhyolite = import (hackGet dep/rhyolite);
+    rhyolite = obelisk;
     nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits.nix {
       inherit pkgs;
       tezos-baking-platform = import (hackGet ../dep/tezos-baking-platform) {};
@@ -39,12 +39,10 @@ obelisk.project ./. ({ pkgs, ... }@args:
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     # staticFilesImpure = toString ./result-static;
     packages = {
-      backend-db = ./backend-db;
       tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
       tezos-noderpc = ../tezos-noderpc;
 
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
-      dependent-sum-template = hackGet dep/dependent-sum-template;
       functor-infix = hackGet dep/functor-infix;
       jsaddle-dom = hackGet dep/jsaddle-dom;
       micro-ecc = hackGet ../dep/micro-ecc-haskell;
@@ -53,18 +51,13 @@ obelisk.project ./. ({ pkgs, ... }@args:
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
     };
 
-    overrides = pkgs.lib.composeExtensions (rhyolite args).haskellOverrides (self: super: with pkgs.haskell.lib; {
+    overrides = pkgs.lib.composeExtensions rhyolite.haskellOverrides (self: super: with pkgs.haskell.lib; {
       common = checkHlint (hsOnly (if distMethod == null
         then super.common
         else enableCabalFlag super.common distMethod));
       backend = checkHlint (hsOnly (overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
       })));
-      backend-db = if supportGargoyle
-        then
-          enableCabalFlag (addBuildDepend super.backend-db self.rhyolite-backend-db-gargoyle) "support-gargoyle"
-        else
-          super.backend-db;
       base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
       email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
       extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)

@@ -4,6 +4,7 @@ module Tezos.V005.NodeRPC.CrossCompatTests where
 
 import qualified Data.ByteString.Base16 as BS16
 import Data.Text (Text)
+import Data.Time (UTCTime(UTCTime), fromGregorian)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -17,6 +18,8 @@ import qualified Tezos.V005.Operation as V005
 import qualified Tezos.V005.Micheline as V005
 import qualified Tezos.V005.Types as V005
 
+import qualified Tezos.Common.ShortByteString as Common
+
 yoloV004Pkh :: Text -> V004.PublicKeyHash
 yoloV004Pkh = either (error . show) id .  V004.tryReadPublicKeyHashText
 
@@ -24,6 +27,7 @@ yoloV005Pkh :: Text -> V005.PublicKeyHash
 yoloV005Pkh = either (error . show) id .  V005.tryReadPublicKeyHashText
 
 yoloB16ByteString = V005.Base16ByteString . fst . BS16.decode
+yoloShortByteString = Common.toShort . fst . BS16.decode
 
 testAccountV005 :: V005.Account
 testAccountV005 = V005.Account
@@ -78,6 +82,7 @@ testOperationTransactionV005 = V005.Operation
               , V005._operationResultTransaction_originatedContracts = [ ]
               }
             }
+          , V005._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V005._operationContentsTransaction_source = "tz1NF7b38uQ43N4nmTHvDKpr1Qo5LF9iYawk"
         , V005._operationContentsTransaction_fee = 0.002954
@@ -278,6 +283,7 @@ testOperationOriginationV005 = V005.Operation
             , V005._operationResult_errors = Nothing
             , V005._operationResult_content = Nothing
             }
+          , V005._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V005._operationContentsReveal_source = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
         , V005._operationContentsReveal_fee = 0.001259
@@ -331,6 +337,7 @@ testOperationOriginationV005 = V005.Operation
               , V005._operationResultOrigination_paidStorageSizeDiff = 1014
               }
             }
+          , V005._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V005._operationContentsOrigination_fee = 0.004585
         , V005._operationContentsOrigination_counter = 437655
@@ -394,10 +401,10 @@ testBlockV005 = V005.Block
     { V005._blockHeaderFull_level = 195065
     , V005._blockHeaderFull_proto = 1
     , V005._blockHeaderFull_predecessor = "BMN5KhRJqsqFkwiQVW1sz64iPrxYcw3xb6AXhvk9HFnKpf6Dj9L"
-    , V005._blockHeaderFull_timestamp = undefined
+    , V005._blockHeaderFull_timestamp = UTCTime (fromGregorian 2019 9 23) (19*60*60 + 58*60 + 33)
     , V005._blockHeaderFull_validationPass = 4
     , V005._blockHeaderFull_operationsHash = "LLobDQLDmcttWHvKbJf97Q2RdabxE2FHKT5rzAj15HEkU9f2EVEFW"
-    , V005._blockHeaderFull_fitness = undefined -- V005.toFitness ["01","000000000002f9f8"] shortbytestring is missing an instance in js? weird
+    , V005._blockHeaderFull_fitness = V005.toFitness [yoloShortByteString "01", yoloShortByteString "000000000002f9f8"]
     , V005._blockHeaderFull_context = "CoVNLLcTdBpGWn2A5JL9SEnNRuXwaConz2vNVojMoD5yT7VEUjSe"
     , V005._blockHeaderFull_priority = 0
     , V005._blockHeaderFull_proofOfWorkNonce = yoloB16ByteString "00000003a170d53d"
@@ -412,33 +419,183 @@ testBlockV005 = V005.Block
     , V005._blockMetadata_maxOperationsTtl = 60
     , V005._blockMetadata_maxOperationDataLength = 16384
     , V005._blockMetadata_maxBlockHeaderLength = 238
-    , V005._blockMetadata_maxOperationListLength = undefined
+    , V005._blockMetadata_maxOperationListLength =
+      [ V005.MaxOperationListLength 32768 (Just 32) 
+      , V005.MaxOperationListLength 32768 Nothing
+      , V005.MaxOperationListLength 135168 (Just 132)
+      , V005.MaxOperationListLength 524288 Nothing
+      ]
     , V005._blockMetadata_baker = "tz1Kz6VSEPNnKPiNvhyio6E1otbSdDhVD9qB"
     , V005._blockMetadata_level = V005.Level
-      { V005._level_cycle = undefined
-      , V005._level_cyclePosition = undefined
-      , V005._level_expectedCommitment = undefined
-      , V005._level_level = undefined
-      , V005._level_levelPosition = undefined
-      , V005._level_votingPeriod = undefined
-      , V005._level_votingPeriodPosition = undefined
+      { V005._level_cycle = 1523
+      , V005._level_cyclePosition = 120
+      , V005._level_expectedCommitment = False
+      , V005._level_level = 195065
+      , V005._level_levelPosition = 195064
+      , V005._level_votingPeriod = 69
+      , V005._level_votingPeriodPosition = 760
       }
     , V005._blockMetadata_votingPeriodKind = V005.VotingPeriodKind_Proposal
-    , V005._blockMetadata_nonceHash = undefined
-    , V005._blockMetadata_consumedGas = undefined
-    , V005._blockMetadata_deactivated = undefined
-    , V005._blockMetadata_balanceUpdates = undefined
+    , V005._blockMetadata_nonceHash = Nothing
+    , V005._blockMetadata_consumedGas = 0
+    , V005._blockMetadata_deactivated = []
+    , V005._blockMetadata_balanceUpdates =
+      [ V005.BalanceUpdate_Contract $ V005.ContractUpdate
+        { V005._contractUpdate_contract = "tz1Kz6VSEPNnKPiNvhyio6E1otbSdDhVD9qB"
+        , V005._contractUpdate_change = -512
+        }
+      , V005.BalanceUpdate_Freezer $ V005.FreezerUpdate
+        { V005._freezerUpdate_category = V005.FreezerCategory_Deposits
+        , V005._freezerUpdate_delegate = "tz1Kz6VSEPNnKPiNvhyio6E1otbSdDhVD9qB"
+        , V005._freezerUpdate_cycle = 1523 
+        , V005._freezerUpdate_change = 512
+        }
+      , V005.BalanceUpdate_Freezer $ V005.FreezerUpdate
+        { V005._freezerUpdate_category = V005.FreezerCategory_Rewards
+        , V005._freezerUpdate_delegate = "tz1Kz6VSEPNnKPiNvhyio6E1otbSdDhVD9qB"
+        , V005._freezerUpdate_cycle = 1523
+        , V005._freezerUpdate_change = 16
+        }
+      ]
     }
   )
-  []
+  [ [ V005.Operation
+      { V005._operation_protocol = "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU"
+      , V005._operation_chainId = "NetXKakFj1A7ouL"
+      , V005._operation_hash = "ooduiNVDtPcaXPBuhtwpks5eXsTpyFkFRtTTXkiiFosYTt5Q25T"
+      , V005._operation_branch = "BMN5KhRJqsqFkwiQVW1sz64iPrxYcw3xb6AXhvk9HFnKpf6Dj9L"
+      , V005._operation_signature = Just "siguVYNSB4qudBTiQ6SHDpVWjeZT5uhM331EKbBisuG1dPWent6MyRBcozm5sMbNrLUA9vuXZeBvx5zrTYmYNXAs9SDJLLZ7"
+      , V005._operation_contents = 
+        [ V005.OperationContents_Endorsement $ V005.OperationContentsEndorsement
+          { V005._operationContentsEndorsement_metadata = V005.EndorsementMetadata
+            { V005._endorsementMetadata_balanceUpdates =
+              [ V005.BalanceUpdate_Contract $ V005.ContractUpdate
+                { V005._contractUpdate_contract = "tz1aWXP237BLwNHJcCD4b3DutCevhqq2T1Z9"
+                , V005._contractUpdate_change = -256
+                }
+             , V005.BalanceUpdate_Freezer $ V005.FreezerUpdate
+               { V005._freezerUpdate_category = V005.FreezerCategory_Deposits
+               , V005._freezerUpdate_delegate = "tz1aWXP237BLwNHJcCD4b3DutCevhqq2T1Z9"
+               , V005._freezerUpdate_cycle = 1523
+               , V005._freezerUpdate_change = 256
+               }
+             , V005.BalanceUpdate_Freezer $ V005.FreezerUpdate
+               { V005._freezerUpdate_category = V005.FreezerCategory_Rewards
+               , V005._freezerUpdate_delegate = "tz1aWXP237BLwNHJcCD4b3DutCevhqq2T1Z9"
+               , V005._freezerUpdate_cycle = 1523
+               , V005._freezerUpdate_change = 8
+               }
+            ]
+          , V005._endorsementMetadata_delegate = "tz1aWXP237BLwNHJcCD4b3DutCevhqq2T1Z9"
+          , V005._endorsementMetadata_slots = [29, 19, 9, 3]
+          }
+        , V005._operationContentsEndorsement_level = 195064
+        }
+      ]
+    }], [], [], []
+  ]
 
-testBlockV004 = V004.Block
-  ""
-  ""
-  ""
-  (V004.BlockHeaderFull undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined)
-  (V004.BlockMetadata undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined)
-  []
+testBlockV004 = V004.Block 
+  "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+  "NetXgtSLGNJvNye"
+  "BLpSg6w9hrm3bmx7yrnNDT2fgfvtBAfxvrHZbPdRhoo9n11v16B"
+  (V004.BlockHeaderFull
+    { V004._blockHeaderFull_level = 681656
+    , V004._blockHeaderFull_proto = 2
+    , V004._blockHeaderFull_predecessor = "BLfMs3wwL7rAZN1v4YsX35F4wfzz3shYbjp3hWrP3fRkiPwBTnG"
+    , V004._blockHeaderFull_timestamp = UTCTime (fromGregorian 2019 9 24) (3*60*60 + 45*60 + 36)
+    , V004._blockHeaderFull_validationPass = 4
+    , V004._blockHeaderFull_operationsHash = "LLoZNzRWtTVkzNMSe9YsUUNpqZi4T2KNcQk9Ahn47Jsra1yJpjQSZ"
+    , V004._blockHeaderFull_fitness = V004.toFitness [yoloShortByteString "00", yoloShortByteString "00000000013aa275"]
+    , V004._blockHeaderFull_context = "CoV3cidqukDYmpPDyGQEM9XhBq82gj14amZX3zbkzs76v8zgQQFN"
+    , V004._blockHeaderFull_priority = 0
+    , V004._blockHeaderFull_proofOfWorkNonce = yoloB16ByteString "000000036d00b628"
+    , V004._blockHeaderFull_seedNonceHash = Nothing
+    , V004._blockHeaderFull_signature = Just "siga6MwX3zFJ2ig4e726WWEDmiyQTwgkQSZnbndX7AzJQWnRXjWKEzrcF44r6GsnUwWe5sP36AV8sv4VsbqbziG41g2jcsbW"
+    })
+
+  (V004.BlockMetadata
+    { V004._blockMetadata_protocol = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+    , V004._blockMetadata_nextProtocol = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+    , V004._blockMetadata_testChainStatus = V004.TestChainStatus_NotRunning
+    , V004._blockMetadata_maxOperationsTtl = 60
+    , V004._blockMetadata_maxOperationDataLength = 16384
+    , V004._blockMetadata_maxBlockHeaderLength = 238
+    , V004._blockMetadata_maxOperationListLength =
+      [ V004.MaxOperationListLength 32768 (Just 32) 
+      , V004.MaxOperationListLength 32768 Nothing
+      , V004.MaxOperationListLength 135168 (Just 132)
+      , V004.MaxOperationListLength 524288 Nothing
+      ]
+    , V004._blockMetadata_baker = "tz3gN8NTLNLJg5KRsUU47NHNVHbdhcFXjjaB"
+    , V004._blockMetadata_level = V004.Level
+      { V004._level_cycle = 332
+      , V004._level_cyclePosition = 1719
+      , V004._level_expectedCommitment = False
+      , V004._level_level = 681656
+      , V004._level_levelPosition = 681655
+      , V004._level_votingPeriod = 83
+      , V004._level_votingPeriodPosition = 1719
+      }
+    , V004._blockMetadata_votingPeriodKind = V004.VotingPeriodKind_Proposal
+    , V004._blockMetadata_nonceHash = Nothing
+    , V004._blockMetadata_consumedGas = 0
+    , V004._blockMetadata_deactivated = []
+    , V004._blockMetadata_balanceUpdates =
+      [ V004.BalanceUpdate_Contract $ V004.ContractUpdate
+        { V004._contractUpdate_contract = "tz3gN8NTLNLJg5KRsUU47NHNVHbdhcFXjjaB"
+        , V004._contractUpdate_change = -512
+        }
+      , V004.BalanceUpdate_Freezer $ V004.FreezerUpdate
+        { V004._freezerUpdate_category = V004.FreezerCategory_Deposits
+        , V004._freezerUpdate_delegate = "tz3gN8NTLNLJg5KRsUU47NHNVHbdhcFXjjaB"
+        , V004._freezerUpdate_cycle = 332
+        , V004._freezerUpdate_change = 512
+        }
+      , V004.BalanceUpdate_Freezer $ V004.FreezerUpdate
+        { V004._freezerUpdate_category = V004.FreezerCategory_Rewards
+        , V004._freezerUpdate_delegate = "tz3gN8NTLNLJg5KRsUU47NHNVHbdhcFXjjaB"
+        , V004._freezerUpdate_cycle = 332
+        , V004._freezerUpdate_change = 16
+        }
+      ]
+    }
+  )
+  [ [ V004.Operation
+      { V004._operation_protocol = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+      , V004._operation_chainId = "NetXgtSLGNJvNye"
+      , V004._operation_hash = "oodBLVMMphPw266cpSeUR48X25sp3wFzXKrXPa4VRQCBMMEKSRx"
+      , V004._operation_branch = "BLfMs3wwL7rAZN1v4YsX35F4wfzz3shYbjp3hWrP3fRkiPwBTnG"
+      , V004._operation_signature = Just "sigN1o64SRJ145uwkQgtFe5z2jDYE92ksEnVjdujuHooCMBBRUveNavjs2DMyFNYsMAEsfrrjLw3fQe63KyXDpEb2ugAWfAT"
+      , V004._operation_contents = 
+        [ V004.OperationContents_Endorsement $ V004.OperationContentsEndorsement
+          { V004._operationContentsEndorsement_metadata = V004.EndorsementMetadata
+            { V004._endorsementMetadata_balanceUpdates =
+              [ V004.BalanceUpdate_Contract $ V004.ContractUpdate
+                { V004._contractUpdate_contract = "tz3gN8NTLNLJg5KRsUU47NHNVHbdhcFXjjaB"
+                , V004._contractUpdate_change = -768
+                }
+             , V004.BalanceUpdate_Freezer $ V004.FreezerUpdate
+               { V004._freezerUpdate_category = V004.FreezerCategory_Deposits
+               , V004._freezerUpdate_delegate = "tz3gN8NTLNLJg5KRsUU47NHNVHbdhcFXjjaB"
+               , V004._freezerUpdate_cycle = 332
+               , V004._freezerUpdate_change = 768
+               }
+             , V004.BalanceUpdate_Freezer $ V004.FreezerUpdate
+               { V004._freezerUpdate_category = V004.FreezerCategory_Rewards
+               , V004._freezerUpdate_delegate = "tz3gN8NTLNLJg5KRsUU47NHNVHbdhcFXjjaB"
+               , V004._freezerUpdate_cycle = 332
+               , V004._freezerUpdate_change = 4.8
+               }
+            ]
+          , V004._endorsementMetadata_delegate = "tz3gN8NTLNLJg5KRsUU47NHNVHbdhcFXjjaB"
+          , V004._endorsementMetadata_slots = [29, 26, 25, 24, 17, 15, 11, 8, 6, 3, 2, 1]
+          }
+        , V004._operationContentsEndorsement_level = 681655
+        }
+      ]
+    }], [], [], []
+  ]
 
 testFilePath :: FilePath -> FilePath
 testFilePath = ("tests/Tezos/V005/NodeRPC/CrossCompatTests/" <>)
@@ -450,8 +607,8 @@ tests = testGroup "Tezos.V005.NodeRPC.CrossCompat"
     , aesonRoundTripTest "V004" (testFilePath "AccountV004.json") (AccountV004 testAccountV004)
     ]
   , testGroup "Block"
-    [
-  --    aesonRoundTripTest "V005" (testFilePath "BlockV005.json") (BlockV005 testBlockV005)
-  --  , aesonRoundTripTest "V004" (testFilePath "BlockV004.json") (BlockV004 testBlockV004)
+    [ aesonRoundTripTest "V005" (testFilePath "BlockV005.json") (BlockV005 testBlockV005)
+    , aesonRoundTripTest "V004" (testFilePath "BlockV004.json") (BlockV004 testBlockV004)
+
     ]
   ]

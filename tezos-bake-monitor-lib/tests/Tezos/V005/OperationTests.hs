@@ -48,6 +48,7 @@ testOperationOrigination= Operation
             , _operationResult_errors = Nothing
             , _operationResult_content = Nothing
             }
+          , _managerOperationMetadata_internalOperationResults = Nothing
           }
         , _operationContentsReveal_source = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
         , _operationContentsReveal_fee = 0.001259
@@ -101,6 +102,7 @@ testOperationOrigination= Operation
               , _operationResultOrigination_paidStorageSizeDiff = 1014
               }
             }
+          , _managerOperationMetadata_internalOperationResults = Nothing
           }
         , _operationContentsOrigination_fee = 0.004585
         , _operationContentsOrigination_counter = 437655
@@ -115,23 +117,23 @@ testOperationOrigination= Operation
               (MichelinePrimitive "parameter")
               [ Expression_Prim $ MichelinePrimAp
                 (MichelinePrimitive "pair")
-                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] []
+                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "counter" ]
                 , Expression_Prim $ MichelinePrimAp
                   (MichelinePrimitive "option")
-                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") [] [] ] []
+                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") [] [] ] [ Annotation_Field "delegate" ]
                 ] []
               ] []
             , Expression_Prim $ MichelinePrimAp
               (MichelinePrimitive "storage")
               [ Expression_Prim $ MichelinePrimAp
                 (MichelinePrimitive "pair")
-                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] []
+                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "stored_counter" ]
                 , Expression_Prim $ MichelinePrimAp
                   (MichelinePrimitive "pair")
-                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] []
+                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "threshold" ]
                   , Expression_Prim $ MichelinePrimAp
                     (MichelinePrimitive "list")
-                    [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key") [] [] ] []
+                    [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key") [] [] ] [ Annotation_Field "keys"]
                   ] []
                 ] []
               ] []
@@ -193,6 +195,36 @@ testOperationTransaction = Operation
               , _operationResultTransaction_originatedContracts = [ ]
               }
             }
+          , _managerOperationMetadata_internalOperationResults = Just
+            [ InternalOperationResult_Transaction $ InternalOperationContentsTransaction
+              { _internalOperationContentsTransaction_source = "KT1DeKNWcB2hXv7M9ZfYmVSPECLJLWDfEJDh"
+              , _internalOperationContentsTransaction_nonce = 0
+              , _internalOperationContentsTransaction_amount = 0.002000
+              , _internalOperationContentsTransaction_destination = "tz1M7RpncdPVx19rtZda42UNDWon4NE5kmGu"
+              , _internalOperationContentsTransaction_parameters = Nothing
+              , _internalOperationContentsTransaction_result = OperationResultTransaction
+                { _operationResultTransaction_storage = Nothing
+                , _operationResultTransaction_balanceUpdates =
+                  [ BalanceUpdate_Contract $ ContractUpdate
+                    { _contractUpdate_contract = "KT1DeKNWcB2hXv7M9ZfYmVSPECLJLWDfEJDh"
+                    , _contractUpdate_change = -0.002000
+                    }
+                  , BalanceUpdate_Contract $ ContractUpdate
+                    { _contractUpdate_contract = "tz1M7RpncdPVx19rtZda42UNDWon4NE5kmGu"
+                    , _contractUpdate_change = 0.002000
+                    }
+                  , BalanceUpdate_Contract $ ContractUpdate
+                    { _contractUpdate_contract = "tz1NF7b38uQ43N4nmTHvDKpr1Qo5LF9iYawk"
+                    , _contractUpdate_change = -0.257
+                    }
+                  ]
+                , _operationResultTransaction_originatedContracts = []
+                , _operationResultTransaction_consumedGas = 10207
+                , _operationResultTransaction_storageSize = 0
+                , _operationResultTransaction_paidStorageSizeDiff = 0
+                }
+              }
+            ]
           }
         , _operationContentsTransaction_source = "tz1NF7b38uQ43N4nmTHvDKpr1Qo5LF9iYawk"
         , _operationContentsTransaction_fee = 0.002954

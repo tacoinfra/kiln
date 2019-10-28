@@ -26,12 +26,13 @@ import Control.Monad (unless)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
+import Data.Constraint.Extras
 import Data.Default
 import qualified Data.Dependent.Map as DMap
-import Data.Dependent.Sum (DSum(..), EqTag)
+import Data.Dependent.Sum (DSum(..))
 import Data.Functor.Infix hiding ((<&>))
 import Data.Functor.Compose (Compose(..))
-import Data.Functor.Sum
+import Data.GADT.Compare
 import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
@@ -40,15 +41,17 @@ import Data.Ord (Down (..))
 import qualified Data.Set as Set
 import Data.String (IsString)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Time as Time
 import Data.Word (Word64)
 import Data.Version
+import Database.Id.Class
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Location as Location
 import qualified GHCJS.DOM.File as File
 import GHCJS.DOM.Types (MonadJSM, liftJSM)
 import qualified GHCJS.DOM.Window as Window
-import qualified Obelisk.ExecutableConfig
+import qualified Obelisk.ExecutableConfig.Lookup
 import Obelisk.Frontend (Frontend (..))
 import Obelisk.Generated.Static (static)
 import Obelisk.Route (R)
@@ -57,8 +60,8 @@ import Reflex.Dom.Core
 import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (AppWebSocket (..), MonadRhyoliteFrontendWidget, runRhyoliteWidget)
-import Rhyolite.Schema (Json (..), Id(..))
+import Rhyolite.Frontend.App (AppWebSocket (..), runRhyoliteWidget, functorToWire)
+import Rhyolite.Schema (Json (..))
 import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -106,7 +109,7 @@ type RouteConstraints t r m =
   ( Routed t (R r) m
   , RouteToUrl (R r) m
   , SetRoute t (R r) m
-  , EqTag r Identity
+  , GEq r, Has' Eq r Identity
   )
 
 frontend :: Frontend (R AppRoute)
@@ -116,9 +119,8 @@ frontend = Frontend
   }
 
 frontendBody
-  :: forall m js t x.
+  :: forall m js t.
     ( MonadWidget t m
-    , HasJS x m
     , PrimMonad m
     , RouteConstraints t AppRoute m
     , Prerender js t m
@@ -126,27 +128,28 @@ frontendBody
   => m ()
 frontendBody = void $ do
   wsUri :: Dynamic t Text <- prerender (pure "") $
-    fmap (maybe (error "Invalid WS URL") Uri.render) $ getBackendPath (InL BackendRoute_Listen :/ ()) True
+    fmap (maybe (error "Invalid WS URL") Uri.render) $ getBackendPath (BackendRoute_Listen :/ ()) True
   dyn_ $ ffor wsUri $ \ws -> do
     rec
-      (socketState, _) <- runRhyoliteWidget ws $ do
+      (socketState, _) <- runRhyoliteWidget functorToWire ws $ do
         withFrontendContext $
           withConnectivityModal socketState $
             runModalT (ModalBackdropConfig $ "class"=:"modal-backdrop")
               appMain
     pure ()
 
-getBackendPath :: MonadJSM m => R (Sum BackendRoute (ObeliskRoute AppRoute)) -> Bool -> m (Maybe URI)
-getBackendPath backendRoute isWebsocket = do
-  let getExecutableConfig = Obelisk.ExecutableConfig.get . ("config/" <>)
-  route :: URI <- liftIO (getExecutableConfig $ T.pack Config.route) >>= \case
-    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip r
+getBackendPath :: MonadJSM m => R BackendRoute -> Bool -> m (Maybe URI)
+getBackendPath (backendRoute :/ a) isWebsocket = do
+  configs <- liftIO Obelisk.ExecutableConfig.Lookup.getConfigs
+  let getExecutableConfig f = Map.lookup f configs
+  route :: URI <- case getExecutableConfig (T.pack Config.route) of
+    Just r -> return $ fromMaybe (error $ "Unable to parse injected route: " <> show r) $ Uri.mkURI $ T.strip $ T.decodeUtf8 r
     Nothing ->
       Config.parseRootURIUnsafe <$> (Location.getHref =<< Window.getLocation =<< DOM.currentWindowUnchecked)
   let
     url = do
-      encoder <- either (const Nothing) Just $ checkEncoder backendRouteEncoder
-      let path = fst $ encode encoder backendRoute
+      encoder <- either (const Nothing) Just $ checkEncoder fullRouteEncoder
+      let path = fst $ encode encoder (FullRoute_Backend backendRoute :/ a)
       pathPiece <- NEL.nonEmpty =<< mapM Uri.mkPathPiece path
       scheme <- if isWebsocket
         then case Uri.uriScheme route of
@@ -162,9 +165,9 @@ getBackendPath backendRoute isWebsocket = do
 
 withConnectivityModal
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, Prerender js t m)
-  => AppWebSocket t app -> m () -> m ()
+  => Dynamic t (AppWebSocket t app) -> m () -> m ()
 withConnectivityModal socketState f = do
-  connectionChanged <- updatedWithInit =<< holdUniqDyn (_appWebSocket_connected socketState)
+  connectionChanged <- updatedWithInit =<< holdUniqDyn (_appWebSocket_connected =<< socketState)
   let
     wsConnected = ffilter id connectionChanged
     wsDisconnected = ffilter not connectionChanged
@@ -188,7 +191,7 @@ withConnectivityModal socketState f = do
     (mkDisconnectedModal <$ wsDisconnected)
     f
 
-withFrontendContext :: (MonadRhyoliteFrontendWidget Bake t m) => ReaderT (FrontendContext t) m () -> m ()
+withFrontendContext :: (MonadAppWidget t m) => ReaderT (FrontendContext t) m () -> m ()
 withFrontendContext f = do
   cfg <- watchFrontendConfig
   dyn_ $ ffor cfg $ \case
@@ -205,8 +208,8 @@ isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) 
 
 appMain
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
-    , MonadRhyoliteFrontendWidget Bake t (ModalM m), HasModal t m
+    ( MonadAppWidget t m
+    , MonadAppWidget t (ModalM m), HasModal t m
     , MonadJSM (Performable (ModalM m))
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
@@ -253,8 +256,8 @@ appName :: Text
 appName = "Kiln"
 
 appSidebar
-  :: ( MonadRhyoliteFrontendWidget Bake t m
-     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  :: ( MonadAppWidget t m
+     , MonadAppWidget t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
@@ -285,7 +288,7 @@ routeSelector :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
               => R r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
 routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
-appSideHeader :: (MonadRhyoliteFrontendWidget Bake t m, RouteConstraints t AppRoute m) => m ()
+appSideHeader :: (MonadAppWidget t m, RouteConstraints t AppRoute m) => m ()
 appSideHeader =
   SemUi.segment
     (def
@@ -308,8 +311,8 @@ appSideHeader =
         SemUi.divider def
 
 appGutter
-  :: ( MonadRhyoliteFrontendWidget Bake t m
-     , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  :: ( MonadAppWidget t m
+     , MonadAppWidget t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
@@ -326,7 +329,7 @@ appGutter =
         bakersList
         nodesList
 
-appSideFooter :: (MonadRhyoliteFrontendWidget Bake t m, RouteConstraints t AppRoute m, MonadReader r m, HasFrontendConfig r) => m ()
+appSideFooter :: (MonadAppWidget t m, RouteConstraints t AppRoute m, MonadReader r m, HasFrontendConfig r) => m ()
 appSideFooter =
   SemUi.segment
     (def
@@ -356,7 +359,7 @@ appSideFooter =
 
 appHeader
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM (Performable m)
+    ( MonadAppWidget t m, MonadJSM (Performable m)
     , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
     )
   => m (Event t ())
@@ -416,7 +419,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" ensureHealthyNodes
 
-headerBell :: forall t m . MonadRhyoliteFrontendWidget Bake t m => m (Event t ())
+headerBell :: forall t m . MonadAppWidget t m => m (Event t ())
 headerBell = do
   alertCount <- watchAlertCount
   let
@@ -444,14 +447,14 @@ headerBell = do
 
 appContentArea
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadAppWidget t m
     , MonadJSM (ModalM m), MonadJSM (Performable (ModalM m))
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
     , MonadReader r (ModalM m)
     , HasModal t m
-    , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , MonadAppWidget t (ModalM m)
     , Routed t (R AppRoute) m
     )
   => m ()
@@ -464,10 +467,10 @@ appContentArea = do
 
 nodesTabOrWelcome
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadAppWidget t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , MonadReader r (ModalM m), MonadJSM m, MonadJSM (Performable (ModalM m))
-    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , HasModal t m, MonadAppWidget t (ModalM m)
     )
   => m ()
 nodesTabOrWelcome = do
@@ -505,7 +508,7 @@ everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfi
 
 globalAlerts
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadAppWidget t m
     , MonadReader r m, HasFrontendConfig r
     )
   => m ()
@@ -536,7 +539,7 @@ globalAlerts = do
   dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
     SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
-networkUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => ErrorLogNetworkUpdate -> m ()
+networkUpdateAlert :: (MonadAppWidget t m) => ErrorLogNetworkUpdate -> m ()
 networkUpdateAlert elua = do
   let namedChain = _errorLogNetworkUpdate_namedChain elua
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
@@ -552,7 +555,7 @@ networkUpdateAlert elua = do
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
 
-kilnUpdateAlert :: (MonadRhyoliteFrontendWidget Bake t m) => Version -> m ()
+kilnUpdateAlert :: (MonadAppWidget t m) => Version -> m ()
 kilnUpdateAlert v = do
   let
     header = "Kiln " <> T.pack (showVersion v) <> " is available!"
@@ -572,7 +575,7 @@ kilnUpdateAlert v = do
     Nothing
     body
 
-welcomeScreen :: forall t m. MonadRhyoliteFrontendWidget Bake t m => Bool -> m ()
+welcomeScreen :: forall t m. MonadAppWidget t m => Bool -> m ()
 welcomeScreen hasOsPubNode = mdo
   closeEv <- switch . current <$> widgetHold banner (pure never <$ closeEv)
   pure ()
@@ -698,7 +701,7 @@ instance (HasAlertMetaData a, HasAlertMetaData b) => HasAlertMetaData (Either a 
 
 liveErrorsWidget
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadAppWidget t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     )
   => m ()
@@ -946,8 +949,8 @@ statusColor = \case
   MonitoredStatus_Unknown -> "grey"
 
 sidebarList :: forall t m k.
-  ( MonadRhyoliteFrontendWidget Bake t m
-  , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  ( MonadAppWidget t m
+  , MonadAppWidget t (ModalM m)
   , HasModal t m
   , Ord k
   )
@@ -992,8 +995,8 @@ bakerStatus = \case
     | otherwise -> MonitoredStatus_Healthy
 
 bakersList ::
-  ( MonadRhyoliteFrontendWidget Bake t m
-  , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  ( MonadAppWidget t m
+  , MonadAppWidget t (ModalM m)
   , MonadJSM (ModalM m)
   , MonadJSM (Performable (ModalM m))
   , HasJSContext (Performable (ModalM m))
@@ -1012,7 +1015,7 @@ bakersList = do
   sidebarList "Baker" bakers addBakerModal
 
 addBakerModal :: forall t m .
-  ( MonadRhyoliteFrontendWidget Bake t m, MonadJSM m, MonadJSM (Performable m)
+  ( MonadAppWidget t m, MonadJSM m, MonadJSM (Performable m)
   , HasJSContext (Performable m)
   )
   => Event t () -> m (Dynamic t [Text], Event t ())
@@ -1031,8 +1034,9 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
           Just (nid, pd) -> (fmap . fmap . fmap) (nid, pd,) $ watchNodeDetails nid
         let isBootstrapLevel = (< 2)
             nodeNotReady = handleClientErrorWorkflow splash ClientError_NodeNotReady
-            f Nothing _ = launchNode -- With no internal node, we prompt the user to launch a kiln node
-            f (Just (nid, pd, nd)) es
+            f Nothing _ _ = launchNode -- With no internal node, we prompt the user to launch a kiln node
+            f _ Nothing _ = nodeNotReady
+            f _ (Just (nid, pd, nd)) es
               -- If we have errors associated with the internal node, or the process isn't running, we redirect to node-not-ready modal
               | MMap.member nid es = nodeNotReady
               | ProcessControl_Stop == _processData_control pd = nodeNotReady
@@ -1042,7 +1046,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
                 result <- ledgerSetupSteps
                 let (err, done) = fanEither result
                 pure ((["ledger-setup-steps"], close <> done), handleClientErrorWorkflow splash <$> err)
-            afterDisclaimer = tag $ current (liftA2 f nodeDetails ebn)
+            afterDisclaimer = tag $ current (liftA3 f node nodeDetails ebn)
         pure (([], close'), disclaimer afterDisclaimer <$ start)
 
     startBaking = divClass "start-baking column" $ do
@@ -1108,7 +1112,7 @@ respondToPrompt prompt = do
   elClass "h6" "ui header prompt-text" prompt
 
 authorizeLedgerToBakeModal
-  :: MonadRhyoliteFrontendWidget Bake t m
+  :: MonadAppWidget t m
   => SecretKey -> PublicKeyHash -> Event t () -> m (Dynamic t [Text], Event t ())
 authorizeLedgerToBakeModal sk pkh close = ffor (workflow auth) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
   where
@@ -1147,7 +1151,7 @@ authorizeLedgerToBakeModal sk pkh close = ffor (workflow auth) $ \d -> let (c, e
       pure ((["ledger-prompt"], continue), never)
 
 setHighWaterMark
-  :: MonadRhyoliteFrontendWidget Bake t m
+  :: MonadAppWidget t m
   => Dynamic t RawLevel -> SecretKey -> PublicKeyHash -> Event t () -> m (Dynamic t [Text], Event t ())
 setHighWaterMark latestBlockLevelDyn secretKey pkh close = ffor (workflow set) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
   where
@@ -1252,8 +1256,8 @@ nodeStatus mInternalState alertCount = min fromStatus fromAlert
       _ -> MonitoredStatus_Unhealthy
 
 nodesList ::
-  ( MonadRhyoliteFrontendWidget Bake t m
-  , MonadRhyoliteFrontendWidget Bake t (ModalM m)
+  ( MonadAppWidget t m
+  , MonadAppWidget t (ModalM m)
   , HasModal t m
   , MonadJSM (ModalM m)
   , MonadJSM (Performable (ModalM m))
@@ -1273,7 +1277,7 @@ nodesList = do
   sidebarList "Node" nodes addNodeModal
 
 addNodeModal ::
-  ( MonadRhyoliteFrontendWidget Bake t m
+  ( MonadAppWidget t m
   , MonadJSM m
   , MonadJSM (Performable m)
   , HasJSContext (Performable m)
@@ -1341,7 +1345,7 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
            pure close
 
 startNodeWorkflow :: forall m t.
-  ( MonadRhyoliteFrontendWidget Bake t m
+  ( MonadAppWidget t m
   , MonadJSM m
   , MonadJSM (Performable m)
   , HasJSContext (Performable m)
@@ -1391,7 +1395,8 @@ startNodeWorkflow backWF = Workflow $ do
     liftIO $ putStrLn "starting file upload"
     fileToFormValue f
 
-  mUri <- getBackendPath (InL BackendRoute_SnapshotUpload :/ ()) False
+  mUri <-
+    getBackendPath (BackendRoute_SnapshotUpload :/ ()) False
   let
     formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
   for_ mUri $ \uri -> postForms (Uri.render uri) formUploadEv
@@ -1408,7 +1413,7 @@ verifySnapshotModal ::
   , HasTimer t r
   , HasTimeZone r
   , MonadJSM (Performable m)
-  , MonadRhyoliteFrontendWidget Bake t m
+  , MonadAppWidget t m
   )
   => SnapshotMeta -> Event t () -> m (Event t ())
 verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
@@ -1442,7 +1447,7 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
 
 showImportLogModal ::
   ( MonadReader r m
-  , MonadRhyoliteFrontendWidget Bake t m
+  , MonadAppWidget t m
   )
   => Text -> Event t () -> m (Event t ())
 showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
@@ -1457,19 +1462,17 @@ osPublicNodeRemoveMessage = do
   let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
-publicNodeOptions :: MonadRhyoliteFrontendWidget Bake t m => m ()
+publicNodeOptions :: MonadAppWidget t m => m ()
 publicNodeOptions = do
   let
     publicNodesInOrder =
       [ PublicNode_Obsidian
       , PublicNode_Blockscale
-      , PublicNode_TzScan
       ]
 
     describePublicNode = \case
       PublicNode_Obsidian -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
       PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
-      PublicNode_TzScan -> text "API provided by tzscan.io, the block explorer by OCamlPro."
 
   pncDyn <- watchPublicNodeConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
@@ -1494,7 +1497,7 @@ publicNodeOptions = do
 thirtySixHoursToInfinity
   ::
   ( MonadReader r m, HasTimer t r
-  , MonadRhyoliteFrontendWidget Bake t m
+  , MonadAppWidget t m
   )
   => m (Dynamic t (ClosedInterval (WithInfinity Time.UTCTime)))
 thirtySixHoursToInfinity = do
@@ -1520,13 +1523,13 @@ tileMenuEntryModal txt modal = do
 
 nodesTab
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadAppWidget t m
     , MonadReader r m
     , MonadReader r (ModalM m)
     , MonadJSM m
     , MonadJSM (Performable (ModalM m))
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
-    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , HasModal t m, MonadAppWidget  t (ModalM m)
     )
   => m ()
 nodesTab =
@@ -1675,7 +1678,7 @@ nodesTab =
               exportLogsMenu = do
                 isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
                 when isExportAvailable $ do
-                  mUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Node :/ ()) False
+                  mUri <- getBackendPath (BackendRoute_ExportLogs :/ ExportLog_Node :/ ()) False
                   for_ mUri $ \uri -> elAttr "a" ("download" =: "KilnNode.log" <> "href" =: Uri.render uri) $
                     SemUi.listItem' def $ text "Export Logs"
 
@@ -1781,11 +1784,8 @@ nodesTab =
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
-            chain <- holdUniqDyn $ getNamedChainOrChainId . _publicNodeHead_chain <$> vDyn
             let
-              title = dyn_ $ ffor2 source chain $ \n c -> text (publicNodeShortName n) & case (n,c) of
-                (PublicNode_TzScan, Left namedChain) -> urlLink (tzScanUri namedChain)
-                _ -> id
+              title = dyn_ $ ffor source $ \n -> text (publicNodeShortName n)
 
               publicNodeMenu :: m ()
               publicNodeMenu = do
@@ -1919,10 +1919,10 @@ data BakersBanner
 
 bakersTab
   :: forall r m t.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadAppWidget t m
     , MonadReader r m, HasTimer t r, HasTimeZone r
     , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM m, MonadJSM (Performable (ModalM m))
-    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , HasModal t m, MonadAppWidget  t (ModalM m)
     )
   => m ()
 bakersTab =
@@ -2100,7 +2100,7 @@ bakersTab =
       :: m () -- ^ Title
       -> PublicKeyHash
       -> Dynamic t (Maybe Text) -- ^ Subtitle
-      -> (Event t () -> Event t (PublicRequest Bake ())) -- ^ Construct an API request with an 'Event' to remove this baker.
+      -> (Event t () -> Event t (PublicRequest ())) -- ^ Construct an API request with an 'Event' to remove this baker.
       -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this baker
       -> Dynamic t BakerSummary -- ^ Baker
       -> Dynamic t (Maybe BakerDetails) -- ^ Details
@@ -2186,10 +2186,10 @@ bakersTab =
 
               isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
               when isExportAvailable $ do
-                mBakerUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Baker :/ ()) False
+                mBakerUri <- getBackendPath (BackendRoute_ExportLogs :/ ExportLog_Baker :/ ()) False
                 for_ mBakerUri $ \uri -> elAttr "a" ("download" =: "KilnBaker.log" <> "href" =: Uri.render uri) $
                   SemUi.listItem' def $ text "Export Baker Logs"
-                mEndorserUri <- getBackendPath (InL BackendRoute_ExportLogs :/ ExportLog_Endorser :/ ()) False
+                mEndorserUri <- getBackendPath (BackendRoute_ExportLogs :/ ExportLog_Endorser :/ ()) False
                 for_ mEndorserUri $ \uri -> elAttr "a" ("download" =: "KilnEndorser.log" <> "href" =: Uri.render uri) $
                   SemUi.listItem' def $ text "Export Endorser Logs"
 
@@ -2294,7 +2294,7 @@ bakersTab =
           True -> divClass "ui active inline loader mini blue" blank
               *> text "Gathering baker data."
 
-renderResolvableSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
+renderResolvableSplashAlert :: (MonadAppWidget t m)
   => NonEmpty (DSum LogTag (Const (Id ErrorLog)))
   -> m () -- ^ Alert icon
   -> m () -- ^ Title
@@ -2310,7 +2310,7 @@ renderResolvableSplashAlert es splashIcon title entity desc = do
         text "Resolve"
       void $ requestingIdentity $ public (PublicRequest_ResolveAlerts $ toList es) <$ resolve
 
-renderSplashAlert :: (MonadRhyoliteFrontendWidget Bake t m)
+renderSplashAlert :: (MonadAppWidget t m)
   => m () -- ^ Alert icon
   -> m () -- ^ Title
   -> Maybe (m ()) -- ^ Entity
@@ -2334,9 +2334,9 @@ withPlaceholder' placeholder f' = dyn_ $ ffor f' $ \case
 withMaybeDyn :: (Eq b, MonadFix m, MonadHold t m, Reflex t) => Dynamic t (Maybe (Dynamic t a)) -> (Dynamic t b -> m ()) -> (a -> b) -> Dynamic t (Maybe (m ()))
 withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget <=< holdUniqDyn . fmap f) d
 
-removeItemModal :: MonadRhyoliteFrontendWidget app t m
+removeItemModal :: MonadAppWidget t m
                 => Text
-                -> (Event t () -> Event t (PublicRequest app ()))
+                -> (Event t () -> Event t (PublicRequest ()))
                 -> Event t ()
                 -> m (Event t ())
 removeItemModal name = reminderModal
@@ -2368,7 +2368,7 @@ semuiTab label k currentTab enabled =
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
 
-withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadRhyoliteFrontendWidget Bake t m)
+withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadAppWidget t m)
                      => RawLevel -> (Dynamic t Time.NominalDiffTime -> m ()) -> m ()
 withAmendmentPeriodProgress expectedVotingPeriod w = do
   currentTime <- asks (^. timer)

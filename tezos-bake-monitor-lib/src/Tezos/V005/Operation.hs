@@ -694,7 +694,7 @@ data OperationResultTransaction = OperationResultTransaction
 
 instance FromJSON OperationResultTransaction where
   parseJSON = withObject "OperationResultTransaction" $ \v -> OperationResultTransaction
-    <$> v .: "storage"
+    <$> v .:? "storage"
     <*> v .:? "balance_updates" .!= mempty
     <*> v .:? "originated_contracts" .!= mempty
     <*> v .:? "consumed_gas" .!= 0
