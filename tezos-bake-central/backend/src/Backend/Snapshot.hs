@@ -190,7 +190,7 @@ importSnapshotData appConfig nds chain sm smId = do
       { Process.std_out = Process.CreatePipe
       , Process.std_err = Process.CreatePipe
       }
-    procMonitor _hStdin _hStdout hStderr ph = runLoggingEnv logger $ go
+    procMonitor _hStdin _hStdout hStderr ph = runLoggingEnv logger go
       where
         {-# INLINE go #-}
         go = do
