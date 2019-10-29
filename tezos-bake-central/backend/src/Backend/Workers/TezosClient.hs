@@ -24,7 +24,6 @@ import Control.Monad.Logger
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Maybe (MaybeT(..))
 import Data.Maybe (mapMaybe)
-import Data.List.NonEmpty (nonEmpty)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)
 import Database.Groundhog
@@ -52,6 +51,7 @@ import Backend.CachedNodeRPC
 import Backend.Common
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
+import Backend.RequestHandler.Common (addBakerImpl)
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
 import Common.Schema
 import ExtraPrelude
@@ -535,25 +535,3 @@ submitBallot appConfig chain proposal ballot = do
       Ballot_Yay -> "yay"
       Ballot_Nay -> "nay"
       Ballot_Pass -> "pass"
-
--- This is moved from RequestHandler to here. But perhaps this should belong to a common module
-addBakerImpl :: (Monad m, PersistBackend m) => PublicKeyHash -> Maybe Text -> m ()
-addBakerImpl pkh alias = do
-  existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
-  let newVal = BakerData
-        { _bakerData_alias = alias
-        }
-  case nonEmpty existingIds of
-    Nothing -> void $ insert $ Baker
-      { _baker_publicKeyHash = pkh
-      , _baker_data = DeletableRow
-        { _deletableRow_data = newVal
-        , _deletableRow_deleted = False
-        }
-      }
-    Just bIds -> for_ bIds $ \bId ->
-      update [ Baker_dataField ~> DeletableRow_deletedSelector =. False
-             , Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector =. alias
-             ]
-             (BakerKey ==. fromId bId)
-  notify NotifyTag_Baker (Id pkh, Just newVal)
