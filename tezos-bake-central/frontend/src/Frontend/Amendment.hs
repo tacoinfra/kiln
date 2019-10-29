@@ -501,7 +501,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     -- found : show green tick mark
     -- not found : show red cross mark
     ledgerDeviceIcon = divClass "ledger-device-status" $ do
-      connectedLedger <- watchConnectedLedger
+      connectedLedger <- watchConnectedLedgerForced
       let
         devFound :: Dynamic t (Maybe Bool)
         devFound = ffor connectedLedger (>>= \cl -> ffor (_connectedLedger_ledgerIdentifier cl) $ \li ->

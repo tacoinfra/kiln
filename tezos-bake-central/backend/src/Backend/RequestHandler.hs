@@ -77,6 +77,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
           { _connectedLedger_bakingAppVersion = Nothing
           , _connectedLedger_ledgerIdentifier = Nothing
           , _connectedLedger_updated = Nothing
+          , _connectedLedger_forceConnectivityCheck = True
           , _connectedLedger_walletAppVersion = Nothing
           }
       PublicRequest_ShowLedger sk -> inDb $ do
@@ -302,6 +303,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
 
               onTag :: Some BakerLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
               onTag (Some tag) = case tag of
+                BakerLogTag_BakerLedgerDisconnected -> deleteLogsId tag ErrorLogBakerLedgerDisconnected_bakerField
                 BakerLogTag_BakerMissed -> deleteLogsId tag ErrorLogBakerMissed_bakerField
                 BakerLogTag_BakerDeactivated -> deleteLogsPkh tag ErrorLogBakerDeactivated_publicKeyHashField
                 BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField
