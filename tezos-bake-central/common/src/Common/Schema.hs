@@ -1059,6 +1059,7 @@ instance UniverseSome BakerLogTag where
     , Some BakerLogTag_BakerDeactivated
     , Some BakerLogTag_BakerDeactivationRisk
     , Some BakerLogTag_BakerAccused
+    , Some BakerLogTag_BakerLedgerDisconnected
     , Some BakerLogTag_InsufficientFunds
     , Some BakerLogTag_VotingReminder
     ]

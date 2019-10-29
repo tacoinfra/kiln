@@ -240,22 +240,36 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
           else case _connectedLedger_updated cl of
             Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
             Just upd -> when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
-              dsh <- liftIO $ atomically $ dataSourceHead nds
-              doCheck <- for dsh $ \blk -> checkNextBakeOpportunity appConfig nds blk >>= \case
-                -- Avoid sending commands to the ledger within two blocks of baking rights
-                Just (_, lvl) -> pure (blk ^. level < lvl - 2 || blk ^. level > lvl + 2)
-                _ -> pure True
-              when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+              doSensibleLedgerCheck (isJust $ _connectedLedger_ledgerIdentifier cl)
 
       _ -> do
         -- If there is no row in the DB, this is our first time running and we should check it
-        updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+        doSensibleLedgerCheck False
         pure ()
+
     where
       inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
       ledgerBackgroundUpdateInterval :: NominalDiffTime -- seconds
       ledgerBackgroundUpdateInterval = 45
+
+      -- Regardless of updated time, we ought not to check the ledger if we are two levels around
+      -- a baking right and we shouldn't bother checking if we don't have an internal baker running
+      -- either
+      doSensibleLedgerCheck _wasConnected = do
+        dsh <- liftIO $ atomically $ dataSourceHead nds
+        doCheck <- for dsh $ \blk -> checkKilnBakerAndNextRights appConfig nds blk >>= \case
+          -- If we don't have an internal baker, don't bother checking
+          (Nothing, _) -> pure False
+          -- Avoid sending commands to the ledger within two blocks of baking rights
+          (_, Just (_, lvl)) -> do
+            let doC = (blk ^. level < lvl - 2 || blk ^. level > lvl + 2)
+            -- This is pretty spammy. We probably don't want this without updating the updated flag...
+            -- unless (doC || wasConnected) $ $(logWarn) ("Baking rights approaching at level " <> tshow lvl <> ". Kiln last saw that the ledger was disconnected!")
+            pure doC
+          -- If we have no rights but a baker, we may as well check because the rights are coming
+          _ -> pure True 
+        when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
 
 withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
 withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
@@ -617,25 +631,30 @@ addBakerImpl pkh alias = do
              (BakerKey ==. fromId bId)
   notify NotifyTag_Baker (Id pkh, Just newVal)
 
--- Logic copied from viewselector' next rights code
-checkNextBakeOpportunity :: (BlockLike blk) => AppConfig -> NodeDataSource -> blk -> LoggingT IO (Maybe (RightKind, RawLevel))
-checkNextBakeOpportunity appConfig nds blk = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
-  (v :: Either CacheError (Maybe (Maybe [(RightKind, RawLevel)]))) <- flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
+-- Logic mostly copied from viewselector' next rights code
+checkKilnBakerAndNextRights :: (BlockLike blk) => AppConfig -> NodeDataSource -> blk -> LoggingT IO (Maybe PublicKeyHash, Maybe (RightKind, RawLevel))
+checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
+  v <- flip runReaderT nds $ runExceptT @CacheError $ tryNodeQueryT $ do
     bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
       (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
-    rightsInfo <- cycleStartHashes blk
-    let headLevel = blk ^. level
-        chainId = _appConfig_chainId appConfig
-        rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
-    for bakerInt $ \pkh -> [queryQ|
-        SELECT br."right", MIN(br.level)
-        FROM "BakerRightsCycleProgress" brcp
-        LEFT OUTER JOIN "BakerRight" br
-          ON br.branch = brcp.id
-          AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
-        WHERE brcp."chainId" = ?chainId
-          AND brcp.branch in ?rightsHashes
-          AND brcp."publicKeyHash" = ?pkh
-        GROUP BY brcp."publicKeyHash", br."right"
-      |]
-  pure $ either (const Nothing) (((=<<) headMay) . join) v
+
+    rightsMay :: Maybe [(RightKind, RawLevel)] <- for bakerInt $ \pkh -> do
+      rightsInfo <- cycleStartHashes blk
+      let headLevel = blk ^. level
+          chainId = _appConfig_chainId appConfig
+          rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
+
+      [queryQ|
+          SELECT br."right", MIN(br.level)
+          FROM "BakerRightsCycleProgress" brcp
+          JOIN "BakerRight" br
+            ON br.branch = brcp.id
+            AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
+          WHERE brcp."chainId" = ?chainId
+            AND brcp.branch in ?rightsHashes
+            AND brcp."publicKeyHash" = ?pkh
+          GROUP BY brcp."publicKeyHash", br."right"
+        |]
+
+    pure (bakerInt, (rightsMay >>= headMay))
+  pure $ (v^?_Right._Just._1._Just, v^?_Right._Just._2._Just)

@@ -690,6 +690,9 @@ body {
               }
             }
           }
+          .ledger {
+            margin-top: 0.2em;
+          }
         }
       }
 
