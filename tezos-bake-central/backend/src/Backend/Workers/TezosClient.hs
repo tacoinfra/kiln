@@ -48,10 +48,9 @@ import qualified System.Process as Process
 import Tezos.Types
 
 import Backend.CachedNodeRPC
-import Backend.Common
+import Backend.Common (addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
-import Backend.RequestHandler.Common (addBakerImpl)
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
 import Common.Schema
 import ExtraPrelude

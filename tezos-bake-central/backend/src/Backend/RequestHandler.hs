@@ -45,10 +45,10 @@ import System.Directory (removeDirectoryRecursive)
 import Tezos.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.Common
 import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert, resolveAlerts)
-import Backend.RequestHandler.Common
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)

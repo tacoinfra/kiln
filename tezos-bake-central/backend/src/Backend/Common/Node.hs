@@ -1,3 +1,4 @@
+
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -11,9 +12,8 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
-module Backend.RequestHandler.Common where
+module Backend.Common.Node where
 
-import Data.List.NonEmpty (nonEmpty)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Some (Some(..))
 import Data.Universe
@@ -22,7 +22,6 @@ import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
 import Rhyolite.Backend.DB (getTime, project1)
-import Tezos.Types (PublicKeyHash)
 import Text.URI (URI)
 
 import Backend.Schema
@@ -32,27 +31,6 @@ import ExtraPrelude
 
 getInternalNode :: PersistBackend m => m (Maybe (Id Node, DeletableRow (Id ProcessData)))
 getInternalNode = project1 (NodeInternal_idField, NodeInternal_dataField) CondEmpty
-
-addBakerImpl :: (Monad m, PersistBackend m) => PublicKeyHash -> Maybe Text -> m ()
-addBakerImpl pkh alias = do
-  existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
-  let newVal = BakerData
-        { _bakerData_alias = alias
-        }
-  case nonEmpty existingIds of
-    Nothing -> void $ insert $ Baker
-      { _baker_publicKeyHash = pkh
-      , _baker_data = DeletableRow
-        { _deletableRow_data = newVal
-        , _deletableRow_deleted = False
-        }
-      }
-    Just bIds -> for_ bIds $ \bId ->
-      update [ Baker_dataField ~> DeletableRow_deletedSelector =. False
-             , Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector =. alias
-             ]
-             (BakerKey ==. fromId bId)
-  notify NotifyTag_Baker (Id pkh, Just newVal)
 
 removeNodeDbImpl :: forall m. (SqlDb (PhantomDb m), PersistBackend m) => Either URI () -> m ()
 removeNodeDbImpl = \case

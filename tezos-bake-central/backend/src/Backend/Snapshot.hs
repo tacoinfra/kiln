@@ -47,7 +47,6 @@ import Backend.CachedNodeRPC
 import Backend.Common
 import Backend.Config
 import Backend.NodeCmd
-import Backend.RequestHandler.Common
 import Backend.Schema
 import Backend.Workers.Process
 import Common.Schema

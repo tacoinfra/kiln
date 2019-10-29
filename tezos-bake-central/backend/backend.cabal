@@ -116,6 +116,9 @@ library
     Backend.Alerts.Common
     Backend.CachedNodeRPC
     Backend.Common
+    Backend.Common.Baker
+    Backend.Common.Node
+    Backend.Common.Worker
     Backend.Config
     --Backend.Graphs
     Backend.Http
