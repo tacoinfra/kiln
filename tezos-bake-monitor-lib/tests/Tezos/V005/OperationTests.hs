@@ -240,9 +240,13 @@ tests = testGroup "OperationTests"
     , binaryRoundTripTest "OpParameters" $ OpParameters
       (EntrypointOther (EntrypointName "foo"))
       (Expression_Prim (MichelinePrimAp (MichelinePrimitive "UNIT") []))
+    , binaryRoundTripTest "OpParameters - Empty EntryPoint" $ OpParameters
+      (EntrypointOther (EntrypointName ""))
+      (Expression_Prim (MichelinePrimAp (MichelinePrimitive "UNIT") []))
     ]
   , testGroup "JSON"
     [ aesonRoundTripTest "Origination" "tests/Tezos/V005/OperationTests/OperationOriginationV005.json" testOperationOrigination
     , aesonRoundTripTest "Transaction" "tests/Tezos/V005/OperationTests/OperationTransactionV005.json" testOperationTransaction
+    , aesonRoundTripTest "EmptyEntrypointName" "tests/Tezos/V005/OperationTests/EmptyEntrypointName.json" (EntrypointOther (EntrypointName ""))
     ]
   ]

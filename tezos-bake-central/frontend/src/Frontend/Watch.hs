@@ -309,12 +309,16 @@ watchSnapshotMeta =
 
 watchConnectedLedger :: MonadAppWidget t m => m (Dynamic t (Maybe ConnectedLedger))
 watchConnectedLedger = do
-  -- this is in lieu of a nicer libusb solution to avoid constantly polling the device
-  poll <- tickLossyFromPostBuildTime 5
-  _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
   (fmap . fmap) (join . getMaybeView . _bakeView_connectedLedger) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_connectedLedger = viewJust 1
     }
+
+watchConnectedLedgerForced :: MonadAppWidget t m => m (Dynamic t (Maybe ConnectedLedger))
+watchConnectedLedgerForced = do
+  -- this is in lieu of a nicer libusb solution to avoid constantly polling the device
+  poll <- tickLossyFromPostBuildTime 5
+  _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
+  watchConnectedLedger
 
 watchLedgerAccounts :: MonadAppWidget t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (PublicKeyHash, Tez)))
 watchLedgerAccounts dkeys =

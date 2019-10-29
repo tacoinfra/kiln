@@ -200,6 +200,7 @@ data ConnectedLedger = ConnectedLedger
   { _connectedLedger_ledgerIdentifier :: !(Maybe LedgerIdentifier)
   , _connectedLedger_bakingAppVersion :: !(Maybe Text)
   , _connectedLedger_walletAppVersion :: !(Maybe Text)
+  , _connectedLedger_forceConnectivityCheck :: !Bool
   , _connectedLedger_updated :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ConnectedLedger
@@ -659,6 +660,13 @@ data ErrorLogNetworkUpdate = ErrorLogNetworkUpdate
 instance HasId ErrorLogNetworkUpdate where
   type IdData ErrorLogNetworkUpdate = Id ErrorLog
 
+data ErrorLogBakerLedgerDisconnected = ErrorLogBakerLedgerDisconnected
+  { _errorLogBakerLedgerDisconnected_log :: !(Id ErrorLog)
+  , _errorLogBakerLedgerDisconnected_baker :: !(Id Baker)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerLedgerDisconnected where
+  type IdData ErrorLogBakerLedgerDisconnected = Id ErrorLog
+
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
@@ -893,6 +901,7 @@ deriving instance Show (NodeLogTag a)
 -- of a background process and a delegate. we should really rename one or both
 -- to minimize confusion between these two ideas.
 data BakerLogTag a where
+  BakerLogTag_BakerLedgerDisconnected :: BakerLogTag ErrorLogBakerLedgerDisconnected
   BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
@@ -929,6 +938,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
+  , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogNetworkUpdate
@@ -986,6 +996,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerDeactivationRisk
   , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
+  , 'ErrorLogBakerLedgerDisconnected
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogInsufficientFunds
   , 'ErrorLogNetworkUpdate
@@ -1050,6 +1061,7 @@ instance UniverseSome BakerLogTag where
     , Some BakerLogTag_BakerDeactivated
     , Some BakerLogTag_BakerDeactivationRisk
     , Some BakerLogTag_BakerAccused
+    , Some BakerLogTag_BakerLedgerDisconnected
     , Some BakerLogTag_InsufficientFunds
     , Some BakerLogTag_VotingReminder
     ]
@@ -1096,6 +1108,7 @@ errorLogNames =
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
+  , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogNetworkUpdate

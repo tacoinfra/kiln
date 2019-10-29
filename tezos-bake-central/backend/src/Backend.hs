@@ -209,11 +209,6 @@ backendImpl cfg serve = do
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
     firstOption = coerce . fold . (fmap.fmap) (Option . fmap First)
 
-  !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
-    [ pure $ getOption $  _opts_tzscanApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.tzscanApiUri
-    , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
-    ]
   !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_blockscaleApiUri cfg
     , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
@@ -236,8 +231,7 @@ backendImpl cfg serve = do
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
     publicDataSources' = catMaybes
-      [ (,,) <$> pure PublicNode_TzScan <*> pure chain <*> tzscanApi
-      , (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
+      [ (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
       , (,,) <$> pure PublicNode_Obsidian <*> pure chain <*> obsidianApi
       ]
 

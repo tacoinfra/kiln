@@ -98,7 +98,7 @@ instance GCompare (PromptResult m) where
 
 ledgerSetupSteps :: forall t m. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
-  connectedLedger <- watchConnectedLedger
+  connectedLedger <- watchConnectedLedgerForced
   ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
   let disconnect = ffilter isNothing $ updated ledgerIdentifier
   divClass "progress" $ do
@@ -344,10 +344,20 @@ selectAddress ledger = divClass "select-address" $ mdo
               Nothing -> do
                 divClass "ui active tiny inline blue loader" blank
                 text "Importing PKH..."
-              Just (pkh, tz) -> do
-                SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
-                text $ toPublicKeyHashText pkh
-                fancyTez tz
+              Just (pkh, tz) ->
+                let
+                  tooltipContent = el "dl" $ do
+                     el "div" $ do
+                       el "dt" $ text "Signing Curve"
+                       el "dd" $ text $ toSigningCurveText sc
+                     el "div" $ do
+                       el "dt" $ text "Derivation Path"
+                       el "dd" $ text $ unDerivationPath dp
+
+                in tooltipped TooltipPos_TopCenter tooltipContent $ do
+                  SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
+                  text $ toPublicKeyHashText pkh
+                  fancyTez tz
           let f mpkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) mpkh
           pure $ attachWithMaybe f (current dynPkhTez) (domEvent Click e)
 
