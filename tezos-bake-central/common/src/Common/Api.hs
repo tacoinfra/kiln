@@ -44,6 +44,7 @@ data PublicRequest a where
     :: WorkerType
     -> Bool -- Desired running state
     -> PublicRequest ()
+  PublicRequest_CancelSnapshotImport :: PublicRequest ()
   -- TODO think harder about update versus initial set
   PublicRequest_SetMailServerConfig
     :: MailServerView

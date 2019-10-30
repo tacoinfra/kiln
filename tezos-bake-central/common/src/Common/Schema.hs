@@ -282,6 +282,7 @@ instance HasId NodeInternal where
 
 data NodeProcessState
   = NodeProcessState_ImportingSnapshot
+  | NodeProcessState_ImportCanceled
   | NodeProcessState_ImportComplete
   | NodeProcessState_ImportFailed
   | NodeProcessState_ImportTimeout
@@ -866,6 +867,7 @@ data SnapshotMeta = SnapshotMeta
   , _snapshotMeta_headBlockPrefix :: !(Maybe Text)
   , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
   , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
+  , _snapshotMeta_control :: !ProcessControl
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId SnapshotMeta
 
