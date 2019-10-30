@@ -341,9 +341,9 @@ newtype EntrypointName = EntrypointName { unEntrypointName :: C8.ByteString }
 
 entrypointName :: MonadFail m => C8.ByteString -> m EntrypointName
 entrypointName bs =
-  if len > 0 && len < 32
+  if len < 32
     then pure (EntrypointName bs)
-    else fail "Entrypoint name not between 1 and 32 characters"
+    else fail "Entrypoint must not exceed 31 characters"
   where
     len = C8.length bs
 
@@ -353,7 +353,7 @@ data Entrypoint
   | EntrypointDo -- "do"
   | EntrypointSetDelegate -- "set_delegate"
   | EntrypointRemoveDelegate -- "remove_delegate"
-  | EntrypointOther !EntrypointName -- Note this should be < 32 chars TODO: Newtype this to make it safer?
+  | EntrypointOther !EntrypointName 
   deriving (Eq, Ord, Show, Typeable)
 
 instance ToJSON EntrypointName where
@@ -868,7 +868,7 @@ instance B.TezosBinary EntrypointName where
   get = do
     lenWord <- B.get @Word8
     let lenInt = fromIntegral lenWord
-    when (lenInt < 0 || lenInt > 31) $ fail ("Entry point len not between 1 and 31: " <> show lenInt)
+    when (lenInt > 31) $ fail ("Entry point name length exceeds 31: " <> show lenInt)
     wordsList <- replicateM lenInt (B.get @Word8)
     entrypointName (BS.pack wordsList)
 

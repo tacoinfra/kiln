@@ -80,6 +80,7 @@ import Common.Alerts (
     bakerDeactivationRiskDescriptions,
     bakerGroupedMissedDescriptions,
     bakerInsufficientFundsDescriptions,
+    bakerLedgerDisconnectedDescriptions,
     bakerMissedDescriptions,
     bakerVotingReminderDescriptions,
     networkUpdateDescription,
@@ -378,7 +379,17 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
               divClass "header" $ text title
               divClass "description" body
 
-      infoItem (pure False) "Network" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+      divClass "item" $ divClass "withRightIcon" $ do
+        divClass "content" $ do
+          divClass "header" $ text "Network"
+          divClass "description" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+        divClass "iconDiv" $
+          dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
+            SemUi.icon "icon-disconnected"
+            (def
+              & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
+              & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
+              )
 
       cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
       whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
@@ -404,12 +415,20 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
             display $ unCycle . cyclesPerPeriod <$> protoInfo
             dyn_ $ ffor (isVotingPeriod <$> kind) $ flip when $ elClass "i" "blue icon-vote-badge icon" blank
 
-    dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
-      SemUi.icon "icon-disconnected"
-      (def
-        & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
-        & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
-        )
+      internalBakerMayDyn <- watchInternalBaker
+
+      dyn_ $ ffor internalBakerMayDyn $ \internalBakerMay ->
+        when (isJust internalBakerMay) $ do
+          elAttr "div" ("class" =: "item" <> "style" =: "position: relative") $ divClass "content" $ do
+            dCl <- watchConnectedLedger
+            let dIsLedgerConnected = isJust . (_connectedLedger_ledgerIdentifier =<<) <$> dCl
+            divClass "header" $ do
+              iconDyn $ ffor dIsLedgerConnected $ bool "red x" "green check"
+              elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
+            divClass "description" $ do
+              text "Ledger Device "
+              dynText $ ffor dIsLedgerConnected $ bool "Disconnected" "Connected"
+
   headerBell
 
   where
@@ -671,6 +690,11 @@ instance HasAlertMetaData (DSum BakerLogTag a) where
 
 instance HasAlertMetaData (BakerLogTag a) where
   getAlertMetaData = \case
+    BakerLogTag_BakerLedgerDisconnected ->
+      def { _alertMetaData_isEventBased = False
+          , _alertMetaData_isUserResolvable = False
+          , _alertMetaData_severity = AlertSeverity_Error
+          }
     BakerLogTag_BakerMissed ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_BakerDeactivated -> def
@@ -880,6 +904,9 @@ liveErrorsWidget = void $ do
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
 
         LogTag_Baker blt -> case blt of
+          BakerLogTag_BakerLedgerDisconnected -> renderBakerError
+            (bakerLedgerDisconnectedDescriptions log)
+            pkh
           BakerLogTag_BakerDeactivated -> renderBakerError
             (bakerDeactivatedDescriptions log)
             pkh
@@ -1994,6 +2021,7 @@ bakersTab =
                         aRight = case _errorLogBakerMissed_right log of
                           RightKind_Baking -> "a bake"
                           RightKind_Endorsing -> "an endorsement"
+                    BakerLogTag_BakerLedgerDisconnected -> Just $ renderBakerError $ bakerLedgerDisconnectedDescriptions log
                     BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
                     BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
                     BakerLogTag_BakerAccused -> Just $ renderBakerError $ bakerAccusedDescriptions log
@@ -2061,6 +2089,7 @@ bakersTab =
           pkh = bakerIdForBakerErrorLogView errorView
           ev = (LogTag_Baker bTag :=> (Const $ errorLogIdForBakerLogTag bTag log)) :| []
         in case bTag of
+          BakerLogTag_BakerLedgerDisconnected -> renderBakerError ev (pure $ bakerLedgerDisconnectedDescriptions log) pkh
           BakerLogTag_BakerMissed -> renderBakerError ev (pure $ bakerMissedDescriptions log) pkh
           BakerLogTag_BakerDeactivated -> renderBakerError ev (pure $ bakerDeactivatedDescriptions log) pkh
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh

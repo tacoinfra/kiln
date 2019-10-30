@@ -194,6 +194,47 @@ clearBakerDeactivationRisk pkh newFit = do
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
+reportBakerLedgerDisconnected
+  :: ( Monad m, MonadIO m, MonadReader a m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => PublicKeyHash -> m ()
+reportBakerLedgerDisconnected pkh = do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogInsufficientFunds) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.log
+      FROM "ErrorLog" el
+      JOIN "ErrorLogBakerLedgerDisconnected" t ON t.log = el.id
+      JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
+     WHERE NOT b."data#deleted"
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogBakerLedgerDisconnected_logField []
+    Nothing -> do
+      void $ insertErrorLog $ \logId ->
+        ErrorLogBakerLedgerDisconnected logId (Id pkh)
+
+clearBakerLedgerDisconnected
+  :: ( Monad m, MonadIO m, MonadReader a m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => PublicKeyHash -> m ()
+clearBakerLedgerDisconnected pkh = do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  lids :: [Id ErrorLogBakerLedgerDisconnected] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogBakerLedgerDisconnected" t
+      WHERE t.log = el.id
+      AND t."baker#publicKeyHash" = ?pkh
+      AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
+    RETURNING t.log |]
+  for_ lids notifyDefault
+
 reportInsufficientFunds
   :: ( Monad m, MonadIO m, MonadReader a m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
