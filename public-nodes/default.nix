@@ -9,12 +9,12 @@ let
   tezos = (import dep/tezos-baking-platform {}).tezos;
 
   kilnApiV1 = import (builtins.fetchTarball {
-    url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/archive/0.5.3/tezos-bake-monitor-0.5.3.tar.gz";
+    url = "https://gitlab.com/obsidian.systems/kiln/-/archive/0.5.3/kiln-0.5.3.tar.gz";
     sha256 = "0g1fijywb7afqy056v9rfl293fa9hzrz1q1p949blzcxv3iqp0jn";
   }) { system = "x86_64-linux"; };
 
   kilnApiV2 = import (builtins.fetchTarball {
-    url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/archive/0.6.2/tezos-bake-monitor-0.6.2.tar.gz";
+    url = "https://gitlab.com/obsidian.systems/kiln/-/archive/0.6.2/kiln-0.6.2.tar.gz";
     sha256 = "0kgbbfs75ql9vd514nsspapgr3l80vwwwfyslaixj1cfmlzahdxr";
   }) { system = "x86_64-linux"; };
 

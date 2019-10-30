@@ -15,8 +15,8 @@ If you have not done so already, we recommend you add our Nix caches to your Nix
 ### Cloning the repository
 
 ```shell
-git clone https://gitlab.com/obsidian.systems/tezos-bake-monitor.git
-cd tezos-bake-monitor/
+git clone https://gitlab.com/obsidian.systems/kiln.git
+cd kiln/
 ```
 
 By default you will be on the `develop` branch which is the latest unstable version. For a stable version, checkout `master` or one of the specific version tags.

@@ -166,7 +166,7 @@ let
   deb-copyright = pkgs.writeTextFile { name = "${pkgName}-deb-copyright"; text = ''
     Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
     Upstream-Name: Kiln
-    Source: https://gitlab.com/obsidian.systems/tezos-bake-monitor
+    Source: https://gitlab.com/obsidian.systems/kiln
 
     Files: *
     Copyright: 2019 obsidian.systems

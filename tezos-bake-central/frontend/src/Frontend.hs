@@ -355,7 +355,7 @@ appSideFooter =
                     elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
                   _ -> pure ()
 
-        hrefLink "https://gitlab.com/obsidian.systems/tezos-bake-monitor" $
+        hrefLink "https://gitlab.com/obsidian.systems/kiln" $
           elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") blank
 
 appHeader
@@ -581,7 +581,7 @@ kilnUpdateAlert v = do
     body = el "div" $ do
       el "p" $ do
         text "This may be a crucial update that provides functionality to support upcoming Tezos protocol changes. Please check the release notes for details on the importance of this update: "
-        let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/releases"
+        let url = "https://gitlab.com/obsidian.systems/kiln/-/releases"
         elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
       el "p" $ do
         resolve <- divClass "buttons" $ uiButtonM "primary" $ do
@@ -1486,7 +1486,7 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
   text "This Node can only be turned off via "
-  let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
+  let url = "https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
 publicNodeOptions :: MonadAppWidget t m => m ()

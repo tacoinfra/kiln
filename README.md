@@ -29,7 +29,7 @@ Kiln bakes with a local node, which increases system requirements.
 # Obtaining Kiln
 
 Kiln can be built from source on linux distributions and Obsidian Systems provides:
-* pre-built Docker images hosted on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/).
+* pre-built Docker images hosted on [Docker Hub](https://hub.docker.com/r/obsidiansystems/kiln/).
 * pre-built deb files
 * pre-built ova files
 
