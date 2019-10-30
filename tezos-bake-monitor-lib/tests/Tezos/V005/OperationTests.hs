@@ -29,7 +29,7 @@ testOperationOrigination= Operation
     [ OperationContents_Reveal
       OperationContentsReveal
         { _operationContentsReveal_metadata = ManagerOperationMetadata
-          { _managerOperationMetadata_balanceUpdates = 
+          { _managerOperationMetadata_balanceUpdates =
             [ BalanceUpdate_Contract $
               ContractUpdate
                 { _contractUpdate_contract = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
@@ -48,6 +48,7 @@ testOperationOrigination= Operation
             , _operationResult_errors = Nothing
             , _operationResult_content = Nothing
             }
+          , _managerOperationMetadata_internalOperationResults = Nothing
           }
         , _operationContentsReveal_source = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
         , _operationContentsReveal_fee = 0.001259
@@ -77,7 +78,7 @@ testOperationOrigination= Operation
             { _operationResult_status = OperationResultStatus_Applied
             , _operationResult_errors = Nothing
             , _operationResult_content = Just $ OperationResultOrigination
-              { _operationResultOrigination_balanceUpdates = 
+              { _operationResultOrigination_balanceUpdates =
                 [ BalanceUpdate_Contract $ ContractUpdate
                     { _contractUpdate_contract = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
                     , _contractUpdate_change = -1.014000
@@ -101,6 +102,7 @@ testOperationOrigination= Operation
               , _operationResultOrigination_paidStorageSizeDiff = 1014
               }
             }
+          , _managerOperationMetadata_internalOperationResults = Nothing
           }
         , _operationContentsOrigination_fee = 0.004585
         , _operationContentsOrigination_counter = 437655
@@ -115,28 +117,28 @@ testOperationOrigination= Operation
               (MichelinePrimitive "parameter")
               [ Expression_Prim $ MichelinePrimAp
                 (MichelinePrimitive "pair")
-                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") []
+                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "counter" ]
                 , Expression_Prim $ MichelinePrimAp
                   (MichelinePrimitive "option")
-                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") [] ]
-                ]
-              ]
+                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") [] [] ] [ Annotation_Field "delegate" ]
+                ] []
+              ] []
             , Expression_Prim $ MichelinePrimAp
               (MichelinePrimitive "storage")
               [ Expression_Prim $ MichelinePrimAp
                 (MichelinePrimitive "pair")
-                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") []
+                [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "stored_counter" ]
                 , Expression_Prim $ MichelinePrimAp
                   (MichelinePrimitive "pair")
-                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") []
+                  [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "threshold" ]
                   , Expression_Prim $ MichelinePrimAp
                     (MichelinePrimitive "list")
-                    [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key") [] ]
-                  ]
-                ]
-              ]
+                    [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key") [] [] ] [ Annotation_Field "keys"]
+                  ] []
+                ] []
+              ] []
             , Expression_Prim $ MichelinePrimAp
-               (MichelinePrimitive "code") [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "UNIT") [] ]
+               (MichelinePrimitive "code") [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "UNIT") [] [] ] []
             ]
           , _contractScript_storage = Expression_Prim $ MichelinePrimAp
             (MichelinePrimitive "Pair")
@@ -149,8 +151,8 @@ testOperationOrigination= Operation
                 , Expression_String "edpkudQarx27avpEsMKGKXevZKb2Maa1voyfi7uJazcbxgCFd4Nufh"
                 , Expression_String "edpkutw9BqRcChuVFLZ7rpAj59gQgjzm3ihdGj5iFmQwCcdwhRFCqm"
                 ]
-              ]
-            ]
+              ] []
+            ] []
           }
         }
     ]
@@ -193,6 +195,36 @@ testOperationTransaction = Operation
               , _operationResultTransaction_originatedContracts = [ ]
               }
             }
+          , _managerOperationMetadata_internalOperationResults = Just
+            [ InternalOperationResult_Transaction $ InternalOperationContentsTransaction
+              { _internalOperationContentsTransaction_source = "KT1DeKNWcB2hXv7M9ZfYmVSPECLJLWDfEJDh"
+              , _internalOperationContentsTransaction_nonce = 0
+              , _internalOperationContentsTransaction_amount = 0.002000
+              , _internalOperationContentsTransaction_destination = "tz1M7RpncdPVx19rtZda42UNDWon4NE5kmGu"
+              , _internalOperationContentsTransaction_parameters = Nothing
+              , _internalOperationContentsTransaction_result = OperationResultTransaction
+                { _operationResultTransaction_storage = Nothing
+                , _operationResultTransaction_balanceUpdates =
+                  [ BalanceUpdate_Contract $ ContractUpdate
+                    { _contractUpdate_contract = "KT1DeKNWcB2hXv7M9ZfYmVSPECLJLWDfEJDh"
+                    , _contractUpdate_change = -0.002000
+                    }
+                  , BalanceUpdate_Contract $ ContractUpdate
+                    { _contractUpdate_contract = "tz1M7RpncdPVx19rtZda42UNDWon4NE5kmGu"
+                    , _contractUpdate_change = 0.002000
+                    }
+                  , BalanceUpdate_Contract $ ContractUpdate
+                    { _contractUpdate_contract = "tz1NF7b38uQ43N4nmTHvDKpr1Qo5LF9iYawk"
+                    , _contractUpdate_change = -0.257
+                    }
+                  ]
+                , _operationResultTransaction_originatedContracts = []
+                , _operationResultTransaction_consumedGas = 10207
+                , _operationResultTransaction_storageSize = 0
+                , _operationResultTransaction_paidStorageSizeDiff = 0
+                }
+              }
+            ]
           }
         , _operationContentsTransaction_source = "tz1NF7b38uQ43N4nmTHvDKpr1Qo5LF9iYawk"
         , _operationContentsTransaction_fee = 0.002954
@@ -204,22 +236,22 @@ testOperationTransaction = Operation
         , _operationContentsTransaction_parameters = Just $ OpParameters
           { _opParameters_entrypoint = EntrypointDo
           , _opParameters_value = Expression_Seq
-            [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "DROP") []
+            [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "DROP") [] []
             , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "NIL")
-              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "operation") []
-              ]
+              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "operation") [] []
+              ] []
             , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "PUSH")
-              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") []
+              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "key_hash") [] []
               , Expression_String "tz1M7RpncdPVx19rtZda42UNDWon4NE5kmGu"
-              ]
-            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "IMPLICIT_ACCOUNT") []
+              ] []
+            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "IMPLICIT_ACCOUNT") [] []
             , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "PUSH")
-              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "mutez") []
+              [ Expression_Prim $ MichelinePrimAp (MichelinePrimitive "mutez") [] []
               , Expression_Int 2000
-              ]
-            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "UNIT") []
-            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "TRANSFER_TOKENS") []
-            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "CONS") []
+              ] []
+            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "UNIT") [] []
+            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "TRANSFER_TOKENS") [] []
+            , Expression_Prim $ MichelinePrimAp (MichelinePrimitive "CONS") [] []
             ]
           }
         }
@@ -239,10 +271,10 @@ tests = testGroup "OperationTests"
       ]
     , binaryRoundTripTest "OpParameters" $ OpParameters
       (EntrypointOther (EntrypointName "foo"))
-      (Expression_Prim (MichelinePrimAp (MichelinePrimitive "UNIT") []))
+      (Expression_Prim $ MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "stored_counter" ])
     , binaryRoundTripTest "OpParameters - Empty EntryPoint" $ OpParameters
       (EntrypointOther (EntrypointName ""))
-      (Expression_Prim (MichelinePrimAp (MichelinePrimitive "UNIT") []))
+      (Expression_Prim (MichelinePrimAp (MichelinePrimitive "nat") [] [ Annotation_Field "stored_counter" ]))
     ]
   , testGroup "JSON"
     [ aesonRoundTripTest "Origination" "tests/Tezos/V005/OperationTests/OperationOriginationV005.json" testOperationOrigination

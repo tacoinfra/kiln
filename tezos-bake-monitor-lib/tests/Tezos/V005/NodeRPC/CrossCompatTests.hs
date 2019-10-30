@@ -82,6 +82,7 @@ testOperationTransactionV005 = V005.Operation
               , V005._operationResultTransaction_originatedContracts = [ ]
               }
             }
+          , V005._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V005._operationContentsTransaction_source = "tz1NF7b38uQ43N4nmTHvDKpr1Qo5LF9iYawk"
         , V005._operationContentsTransaction_fee = 0.002954
@@ -93,22 +94,22 @@ testOperationTransactionV005 = V005.Operation
         , V005._operationContentsTransaction_parameters = Just $ V005.OpParameters
           { V005._opParameters_entrypoint = V005.EntrypointDo
           , V005._opParameters_value = V005.Expression_Seq
-            [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "DROP") []
+            [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "DROP") [] []
             , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "NIL")
-              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "operation") []
-              ]
+              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "operation") [] []
+              ] []
             , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "PUSH")
-              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key_hash") []
+              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key_hash") [] []
               , V005.Expression_String "tz1M7RpncdPVx19rtZda42UNDWon4NE5kmGu"
-              ]
-            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "IMPLICIT_ACCOUNT") []
+              ] []
+            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "IMPLICIT_ACCOUNT") [] []
             , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "PUSH")
-              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "mutez") []
+              [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "mutez") [] []
               , V005.Expression_Int 2000
-              ]
-            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "UNIT") []
-            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "TRANSFER_TOKENS") []
-            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "CONS") []
+              ] []
+            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "UNIT") [] []
+            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "TRANSFER_TOKENS") [] []
+            , V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "CONS") [] []
             ]
           }
         }
@@ -145,6 +146,7 @@ testOperationTransactionV004 = V004.Operation
             , V004._operationResult_errors = Nothing
             , V004._operationResult_content = Nothing
             }
+          , V004._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V004._operationContentsTransaction_source = "tz1SiPXX4MYGNJNDsRc7n8hkvUqFzg8xqF9m"
         , V004._operationContentsTransaction_fee = 0.001420
@@ -154,7 +156,7 @@ testOperationTransactionV004 = V004.Operation
         , V004._operationContentsTransaction_amount = 326.093080
         , V004._operationContentsTransaction_destination = "tz1ZADZUDP7brp17j6iRsujboGoUzsdqZzX2"
         , V004._operationContentsTransaction_parameters = Just $ V004.Expression_Prim $
-          V004.MichelinePrimAp (V004.MichelinePrimitive "Unit") []
+          V004.MichelinePrimAp (V004.MichelinePrimitive "Unit") [] []
         }
     ]
   }
@@ -171,7 +173,7 @@ testOperationOriginationV004 = V004.Operation
     [ V004.OperationContents_Reveal
       V004.OperationContentsReveal
         { V004._operationContentsReveal_metadata = V004.ManagerOperationMetadata
-          { V004._managerOperationMetadata_balanceUpdates = 
+          { V004._managerOperationMetadata_balanceUpdates =
             [ V004.BalanceUpdate_Contract $
               V004.ContractUpdate
                 { V004._contractUpdate_contract = "tz1Qc1BNygfhs3LYi9PRFNKfBjiiBakcMwCu"
@@ -190,6 +192,7 @@ testOperationOriginationV004 = V004.Operation
             , V004._operationResult_errors = Nothing
             , V004._operationResult_content = Nothing
             }
+          , V004._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V004._operationContentsReveal_source = "tz1Qc1BNygfhs3LYi9PRFNKfBjiiBakcMwCu"
         , V004._operationContentsReveal_fee = 0.001269
@@ -201,7 +204,7 @@ testOperationOriginationV004 = V004.Operation
     , V004.OperationContents_Origination
       V004.OperationContentsOrigination
         { V004._operationContentsOrigination_metadata = V004.ManagerOperationMetadata
-          { V004._managerOperationMetadata_balanceUpdates = 
+          { V004._managerOperationMetadata_balanceUpdates =
             [ V004.BalanceUpdate_Contract $
               V004.ContractUpdate
                 { V004._contractUpdate_contract = "tz1Qc1BNygfhs3LYi9PRFNKfBjiiBakcMwCu"
@@ -219,7 +222,7 @@ testOperationOriginationV004 = V004.Operation
             { V004._operationResult_status = V004.OperationResultStatus_Applied
             , V004._operationResult_errors = Nothing
             , V004._operationResult_content = Just $ V004.OperationResultOrigination
-              { V004._operationResultOrigination_balanceUpdates = 
+              { V004._operationResultOrigination_balanceUpdates =
                 [ V004.BalanceUpdate_Contract $
                   V004.ContractUpdate
                     { V004._contractUpdate_contract = "tz1Qc1BNygfhs3LYi9PRFNKfBjiiBakcMwCu"
@@ -232,6 +235,7 @@ testOperationOriginationV004 = V004.Operation
               , V004._operationResultOrigination_paidStorageSizeDiff = 0
               }
             }
+          , V004._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V004._operationContentsOrigination_fee = 0.001400
         , V004._operationContentsOrigination_counter = 2058582
@@ -260,7 +264,7 @@ testOperationOriginationV005 = V005.Operation
     [ V005.OperationContents_Reveal
       V005.OperationContentsReveal
         { V005._operationContentsReveal_metadata = V005.ManagerOperationMetadata
-          { V005._managerOperationMetadata_balanceUpdates = 
+          { V005._managerOperationMetadata_balanceUpdates =
             [ V005.BalanceUpdate_Contract $
               V005.ContractUpdate
                 { V005._contractUpdate_contract = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
@@ -279,6 +283,7 @@ testOperationOriginationV005 = V005.Operation
             , V005._operationResult_errors = Nothing
             , V005._operationResult_content = Nothing
             }
+          , V005._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V005._operationContentsReveal_source = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
         , V005._operationContentsReveal_fee = 0.001259
@@ -308,7 +313,7 @@ testOperationOriginationV005 = V005.Operation
             { V005._operationResult_status = V005.OperationResultStatus_Applied
             , V005._operationResult_errors = Nothing
             , V005._operationResult_content = Just $ V005.OperationResultOrigination
-              { V005._operationResultOrigination_balanceUpdates = 
+              { V005._operationResultOrigination_balanceUpdates =
                 [ V005.BalanceUpdate_Contract $ V005.ContractUpdate
                     { V005._contractUpdate_contract = "tz1SoipFhLFjFhVBCEfNUWSRZ3EwMAYrhe9z"
                     , V005._contractUpdate_change = -1.014000
@@ -332,6 +337,7 @@ testOperationOriginationV005 = V005.Operation
               , V005._operationResultOrigination_paidStorageSizeDiff = 1014
               }
             }
+          , V005._managerOperationMetadata_internalOperationResults = Nothing
           }
         , V005._operationContentsOrigination_fee = 0.004585
         , V005._operationContentsOrigination_counter = 437655
@@ -346,28 +352,28 @@ testOperationOriginationV005 = V005.Operation
               (V005.MichelinePrimitive "parameter")
               [ V005.Expression_Prim $ V005.MichelinePrimAp
                 (V005.MichelinePrimitive "pair")
-                [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") []
+                [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") [] []
                 , V005.Expression_Prim $ V005.MichelinePrimAp
                   (V005.MichelinePrimitive "option")
-                  [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key_hash") [] ]
-                ]
-              ]
+                  [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key_hash") [] [] ] []
+                ] []
+              ] []
             , V005.Expression_Prim $ V005.MichelinePrimAp
               (V005.MichelinePrimitive "storage")
               [ V005.Expression_Prim $ V005.MichelinePrimAp
                 (V005.MichelinePrimitive "pair")
-                [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") []
+                [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") [] []
                 , V005.Expression_Prim $ V005.MichelinePrimAp
                   (V005.MichelinePrimitive "pair")
-                  [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") []
+                  [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "nat") [] []
                   , V005.Expression_Prim $ V005.MichelinePrimAp
                     (V005.MichelinePrimitive "list")
-                    [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key") [] ]
-                  ]
-                ]
-              ]
+                    [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "key") [] [] ] []
+                  ] []
+                ] []
+              ] []
             , V005.Expression_Prim $ V005.MichelinePrimAp
-               (V005.MichelinePrimitive "code") [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "UNIT") [] ]
+               (V005.MichelinePrimitive "code") [ V005.Expression_Prim $ V005.MichelinePrimAp (V005.MichelinePrimitive "UNIT") [] [] ] []
             ]
           , V005._contractScript_storage = V005.Expression_Prim $ V005.MichelinePrimAp
             (V005.MichelinePrimitive "Pair")
@@ -380,8 +386,8 @@ testOperationOriginationV005 = V005.Operation
                 , V005.Expression_String "edpkudQarx27avpEsMKGKXevZKb2Maa1voyfi7uJazcbxgCFd4Nufh"
                 , V005.Expression_String "edpkutw9BqRcChuVFLZ7rpAj59gQgjzm3ihdGj5iFmQwCcdwhRFCqm"
                 ]
-              ]
-            ]
+              ] []
+            ] []
           }
         }
     ]
@@ -593,7 +599,7 @@ testBlockV004 = V004.Block
 
 testFilePath :: FilePath -> FilePath
 testFilePath = ("tests/Tezos/V005/NodeRPC/CrossCompatTests/" <>)
- 
+
 tests :: TestTree
 tests = testGroup "Tezos.V005.NodeRPC.CrossCompat"
   [ testGroup "Account"

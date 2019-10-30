@@ -9,6 +9,7 @@
 module Tezos.V005.NodeRPC.Class where
 
 import Control.Lens (uncons)
+import Data.Dependent.Sum
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Semigroup ((<>))
@@ -27,7 +28,7 @@ import qualified Data.Text as T
 import qualified Network.HTTP.Types.Method as Http (Method, methodGet, methodPost)
 
 import Tezos.Common.Chain (ChainTag(ChainTag_Hash))
-import Tezos.V005.Operation (Ballot)
+import Tezos.V005.Operation (Ballot, OpWithChain(..))
 import Tezos.V005.Types
 
 import Tezos.V005.NodeRPC.CrossCompat
@@ -69,6 +70,8 @@ class QueryHistory repr where -- blockscale
 
   rDelegateInfo :: PublicKeyHash -> ChainId -> BlockHash -> repr DelegateInfo
 
+  rRunOperation :: ChainId -> BlockHash -> OpWithChain (DSum OpsKindTag Op) -> repr OperationWithMetadata
+
 class QueryNode repr where -- my node
   rConnections :: repr Word64 -- just a count for now, but there's more data there we may someday be interested in
   rNetworkStat :: repr NetworkStat
@@ -76,6 +79,9 @@ class QueryNode repr where -- my node
 
 class MonitorHeads repr where
   rMonitorHeads :: ChainId -> repr MonitorBlock
+
+class Injection repr where
+  rInjectOperation :: DSum OpsKindTag Op -> repr OperationHash
 
 data RpcQuery a = RpcQuery
   { _RpcQuery_decoder :: LBS.ByteString -> Either String a
@@ -130,6 +136,10 @@ instance QueryHistory RpcQuery where
   rEndorsingRights params = blockAPI $ "/helpers/endorsing_rights"
       <> (if null params then "" else "?" <> T.intercalate "&" (dynamicParamRightsRangeToQueryArg <$> toList params))
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
+  rRunOperation chainId blockHash contents =
+    postNodeRequest
+      contents
+      (chainBlockUrl chainId blockHash <> "/helpers/scripts/run_operation")
 
 chainAPI :: FromJSON a => Text -> ChainId -> RpcQuery a
 chainAPI = (. ChainTag_Hash) . chainAPI'
@@ -153,6 +163,12 @@ instance QueryNode RpcQuery where
 
 instance MonitorHeads PlainNodeStream where
   rMonitorHeads chainId = PlainNodeStream $ plainNodeRequest Http.methodGet ("/monitor/heads/" <> toBase58Text chainId)
+
+instance Injection RpcQuery where
+  rInjectOperation contents =
+    postNodeRequest
+      (Base16ByteString contents)
+      "/injection/operation"
 
 chainBlockUrl :: ChainId -> BlockHash -> Text
 chainBlockUrl = chainBlockUrl' . ChainTag_Hash

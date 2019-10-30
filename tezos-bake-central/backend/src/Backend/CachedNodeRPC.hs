@@ -1031,6 +1031,7 @@ instance QueryHistory OsNodeQuery where
   rBlockPred = error "rBlockPred NYI for OsNodeQuery"
   rProtoConstants = error "rProtoConstants NYI for OsNodeQuery"
   rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
+  rRunOperation = error "rRunOperation for OsNodeQuery"
 
   rBallots = blockApi1 "/ballots"
   rContract contractId = case contractId of

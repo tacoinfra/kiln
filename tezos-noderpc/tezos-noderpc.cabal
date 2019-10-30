@@ -12,8 +12,10 @@ library
   exposed-modules:
     Tezos.History
     Tezos.NodeRPC
+    Tezos.NodeRPC.Helpers
     Tezos.NodeRPC.Network
     Tezos.Signature.Verify
+    Tezos.Signature.Sign
   other-modules:
     Paths_tezos_noderpc
   -- other-extensions:
@@ -24,6 +26,7 @@ library
     , containers
     , cryptonite
     , deepseq
+    , dependent-sum
     , http-client
     , http-types
     , lens
