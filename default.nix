@@ -51,7 +51,7 @@ let
       exec ./backend "$@"
     '';
   in pkgs.dockerTools.buildImage {
-    name = "tezos-bake-monitor";
+    name = "kiln";
     contents = [ pkgs.iana-etc pkgs.cacert ];
     runAsRoot = bakeCentralSetupScript;
     keepContentsDirlinks = true;

@@ -1,6 +1,6 @@
 # Virtual Machine
 
-Obsidian Systems provides Kiln virtual machine releases as a `.ova` file, which can be found at https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases beginning with `v0.5.2`.
+Obsidian Systems provides Kiln virtual machine releases as a `.ova` file, which can be found at https://gitlab.com/obsidian.systems/kiln/releases beginning with `v0.5.2`.
 The VM has been tested on VirtualBox only, on the host OS: Windows, Mac and Ubuntu.
 But this might work with other VM software like VMWare, and other hosts.
 
@@ -108,4 +108,4 @@ In the "HDD" tab right click "kiln-vm-disk002.vmdk" and select "Move..."
 Specify the target location in the next dialog.
 
 [1]: https://www.virtualbox.org/wiki/Downloads
-[2]: https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md
+[2]: https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md

@@ -25,7 +25,7 @@ import Common.URI (Port, mkRootUri)
 import ExtraPrelude
 
 changelogUrl :: Text -> Text
-changelogUrl branch = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/tree/" <> UriEncode.encodeText branch <> "/CHANGELOG.md"
+changelogUrl branch = "https://gitlab.com/obsidian.systems/kiln/tree/" <> UriEncode.encodeText branch <> "/CHANGELOG.md"
 
 pgConnectionString :: FilePath
 pgConnectionString = "pg-connection"
