@@ -127,7 +127,6 @@ library
     Backend.NodeCmd
     Backend.NotifyHandler
     Backend.RequestHandler
-    Backend.RequestHandler.Common
     Backend.Schema
     Backend.Snapshot
     Backend.STM
