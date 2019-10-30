@@ -564,7 +564,7 @@ instance Monoid Opts where
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
   [ mkReqArg Config.pgConnectionString "CONNSTRING" (set opts_pgConnectionString . Just) $
-      "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.pgConnectionString <> "' file or create a database in '" <> Config.db <> "' if empty."
+      "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> configPath Config.pgConnectionString <> "' file or create a database in '" <> Config.db <> "' if empty."
 
   , mkReqArg Config.route "URL" (set opts_route . Just . Config.parseRootURIUnsafe) $
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
