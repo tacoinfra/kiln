@@ -1358,7 +1358,15 @@ getProtocolIndex branch protoHash = do
       Right p' -> do
         insert p'
         pure p'
-      Left _ -> buildProtocolIndex branch protoHash history
+      Left _ -> nqTry (buildProtocolIndex branch protoHash history) >>= \case
+        Right p' -> do
+          pure p'
+        Left e -> do
+          -- as a last measure just fetch the protocol constants without building the index
+          p <- fetchProtocolForBlock chainId branch
+          if p ^. protocolIndex_hash == protoHash
+            then pure p
+            else nqThrowError e
 
 buildProtocolIndex
   :: forall m
@@ -1502,6 +1510,31 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
           x | x ^. protocolHash == low ^. protocolHash -> binarySearch halfway high
             | x ^. protocolHash == high ^. protocolHash -> binarySearch low halfway
             | otherwise -> pure Nothing
+
+fetchProtocolForBlock
+  :: forall m
+   . (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
+  => ChainId
+  -> BlockHash
+  -> NodeQueryT m ProtocolIndex
+fetchProtocolForBlock chainId blkHash = do
+  $(logDebug) [i|fetchProtocolForBlock: ${blkHash}|]
+  protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants blkHash
+  blockHeader <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
+  let p = ProtocolIndex
+          { _protocolIndex_chainId = chainId
+          , _protocolIndex_hash = blockHeader ^. protocolHash
+          , _protocolIndex_constants = protoInfo
+          , _protocolIndex_proto = blockHeader ^. blockHeader_proto
+          , _protocolIndex_firstBlockHash = Nothing
+          , _protocolIndex_firstBlockPredecessor = Nothing
+          , _protocolIndex_firstBlockLevel = Nothing
+          , _protocolIndex_firstBlockFitness = Nothing
+          , _protocolIndex_firstBlockTimestamp = Nothing
+          , _protocolIndex_firstBlockCycle = Nothing
+          }
+  insert p
+  pure p
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
