@@ -19,6 +19,7 @@ import Database.PostgreSQL.Simple.Types (Identifier (..), QualifiedIdentifier (.
 import Rhyolite.Backend.Account (migrateAccount)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, traceExecuteQ, Only(..))
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
+import Safe
 import Tezos.Types (ChainId)
 
 import ExtraPrelude
@@ -80,6 +81,7 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "CachedProtocolConstants")
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "Parameters")
   >=> migrateErrorLogBakerMissedTimestamp
+  >=> migrateProtocolIndexKey
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -476,6 +478,22 @@ migrateErrorLogBakerMissedTimestamp ta = do
               ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "bakeTime" TIMESTAMP WITHOUT TIME ZONE NULL;
               UPDATE "ErrorLogBakerMissed" e SET "bakeTime" = (SELECT started FROM "ErrorLog" l WHERE l.id = e.log);
               ALTER TABLE "ErrorLogBakerMissed" ALTER COLUMN "bakeTime" SET NOT NULL;
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+-- This is needed to remove the firstBlockHash from the unique constraints
+-- Without this the auto migration fails to make the firstBlockHash field 'Maybe'
+-- The constraint will be added back by automigrate after altering the columns
+migrateProtocolIndexKey :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateProtocolIndexKey ta = do
+  let table = (Nothing, "ProtocolIndex")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | maybe False (((==) 3) . length . uniqueDefFields) $ headMay $ tableUniques analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "ProtocolIndex" DROP CONSTRAINT "ProtocolIndexKey";
             |]
           getTableAnalysis
     _ -> pure ta
