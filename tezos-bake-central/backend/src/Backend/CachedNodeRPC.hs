@@ -1352,7 +1352,7 @@ getProtocolIndex branch protoHash = do
     ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
 
   history <- nqAtomically $ readTVar' historyVar
-  case headMay [x | x <- existingEntries, isJust $ branchPointPure (x ^. hash) branch history] of
+  case headMay existingEntries of
     Just existing -> pure existing
     Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
       Right p' -> do
@@ -1403,22 +1403,22 @@ buildProtocolIndex branch protoHash history = do
             , _protocolIndex_hash = firstBlock ^. protocolHash
             , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
             , _protocolIndex_constants = constants
-            , _protocolIndex_firstBlockHash = firstBlock ^. hash
-            , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
-            , _protocolIndex_firstBlockLevel = firstBlock ^. level
-            , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
-            , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
-            , _protocolIndex_firstBlockCycle = firstBlock ^. blockMetadata . blockMetadata_level . level_cycle
+            , _protocolIndex_firstBlockHash = Just $ firstBlock ^. hash
+            , _protocolIndex_firstBlockPredecessor = Just $ firstBlock ^. predecessor
+            , _protocolIndex_firstBlockLevel = Just $ firstBlock ^. level
+            , _protocolIndex_firstBlockFitness = Just $ firstBlock ^. fitness
+            , _protocolIndex_firstBlockTimestamp = Just $ firstBlock ^. timestamp
+            , _protocolIndex_firstBlockCycle = Just $ firstBlock ^. blockMetadata . blockMetadata_level . level_cycle
             }
 
       for_ protoIndexes $ \protoIndex -> do
-        mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
+        mp :: Maybe (Maybe BlockHash) <- project1 ProtocolIndex_firstBlockHashField
           (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
-            &&. (ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash)
+            &&. (ProtocolIndex_chainIdField ==. chainId)
           )
-        when (mp == Nothing) $ do
+        when (join mp == Nothing) $ do
           insert protoIndex
-          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
+          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash)
 
       maybe (nqThrowError CacheError_NotEnoughHistory) pure $
         find ((protoHash ==) . view protocolHash) protoIndexes
