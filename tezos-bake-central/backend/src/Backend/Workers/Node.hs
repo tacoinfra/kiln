@@ -98,7 +98,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
       headBlockHeader <- withExceptT Right $ do
-        flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
+        flip runReaderT (if pn == Nothing then nds { _nodeDataSource_nodeForQuery = Just nodeAddr } else nds) $ do
           nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
 
       withExceptT Left $
