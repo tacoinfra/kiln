@@ -490,7 +490,7 @@ migrateProtocolIndexKey ta = do
   let table = (Nothing, "ProtocolIndex")
   analyzeTable ta table >>= \case
     Just analyzedTable
-      | maybe False (((==) 3) . length . uniqueDefFields) $ headMay $ tableUniques analyzedTable
+      | maybe False ((==) 3 . length . uniqueDefFields) $ headMay $ tableUniques analyzedTable
       -> do
           void [traceExecuteQ|
               ALTER TABLE "ProtocolIndex" DROP CONSTRAINT "ProtocolIndexKey";
