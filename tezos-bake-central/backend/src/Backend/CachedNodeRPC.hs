@@ -293,15 +293,15 @@ instance MonadNodeQuery NodeQueryQueued where
         NodeQueryQueued $ atomicallyWith $ do
           nodes' <- validNodes nodes q
           let (badCandidates', okCandidates) = partitionEithers $ (\(u,e) -> bimap (u,) (u,) e) <$> nodes'
-          -- pickNodes will filter out any nodes where our query branch isn't on that node 
+          -- pickNodes will filter out any nodes where our query branch isn't on that node
           (okNodes, branchedNodes) <- pickNodes qBranch okCandidates
           -- So we want to combine the nodes ignored because of pickNodes and those ignored by validNodes
           pure (okNodes, badCandidates' <> branchedNodes)
 
-    let 
+    let
 
     result <- case mNodesToTry of
-      -- The public node is the last resort 
+      -- The public node is the last resort
       [] -> case _nodeDataSource_osPublicNode dsrc of
         Nothing -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
         Just uri ->
@@ -319,7 +319,7 @@ instance MonadNodeQuery NodeQueryQueued where
               r <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
               pure $ first ((:es).(anyNode,)) r
         pure $ first (CacheError_NoSuitableNode (tshow q) . fmap (second (UnsuitableNodeReason_QueryFailed . tshow))) res
-        
+
     nqLiftEither result
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
@@ -902,7 +902,7 @@ validNodes nodes q = case q of
     findNodes :: Maybe RawLevel -> [(URI, Either UnsuitableNodeReason VeryBlockLike)]
     findNodes mLvl = do
       case mLvl of
-        Nothing -> 
+        Nothing ->
           (\(nUri, mBlk, _) -> (nUri,note UnsuitableNodeReason_MissingBlockInfo mBlk)) <$> nodes
         Just lvl -> (\(nUri, mBlk, mSp) -> (nUri, suitableNodeBlock mBlk mSp)) <$> nodes
           where
@@ -924,7 +924,7 @@ pickNodes branch =
   . traverse (\(nodeUri, nodeHead) ->
     bool
       (Right (nodeUri, UnsuitableNodeReason_BranchNotContained branch))
-      (Left (nodeUri)) 
+      (Left (nodeUri))
       <$> containsBranch nodeHead)
   where
     containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
@@ -1430,7 +1430,7 @@ buildProtocolHistoryUntil
   -> "branch" :! BlockHash
   -> "history" :! CachedHistory'
   -> NodeQueryT m (Map ProtocolHash BlockCrossCompat)
-  -- Turns this into table, ProtocolHash 
+  -- Turns this into table, ProtocolHash
 buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
   branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
   go ! #currentBlock branchBlock
