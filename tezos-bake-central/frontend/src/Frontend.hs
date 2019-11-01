@@ -382,7 +382,11 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       divClass "item" $ divClass "withRightIcon" $ do
         divClass "content" $ do
           divClass "header" $ text "Network"
-          divClass "description" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+          divClass "description" $
+            tooltipped TooltipPos_BottomLeft (protocolTooltip latestHead) $
+              text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+              
+
         divClass "iconDiv" $
           dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
             SemUi.icon "icon-disconnected"
@@ -437,6 +441,13 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" ensureHealthyNodes
+        
+    protocolTooltip dmLatestHead = divClass "protocol-tooltip" $ do
+      divClass "tooltip-title" $ text "Current Protocol"
+      let dProtoText = maybe "Unknown" (^.protocolHash.to toBase58Text) <$> dmLatestHead
+      divClass "tooltip-description" $ el "p" $ do
+        whenJustDyn dmLatestHead $ \_ -> copyButton (current dProtoText)
+        dynText dProtoText
 
 headerBell :: forall t m . MonadAppWidget t m => m (Event t ())
 headerBell = do
