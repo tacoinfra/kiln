@@ -101,7 +101,7 @@ requiredTezosBakingAppVersion = "2.0.0"
 data UnsuitableNodeReason
   = UnsuitableNodeReason_QueryBeforeSavepoint RawLevel RawLevel
   | UnsuitableNodeReason_MissingBlockInfo
-  | UnsuitableNodeReason_MissingSavePoint
+  | UnsuitableNodeReason_MissingSavepoint
   | UnsuitableNodeReason_QueryFailed Text -- TODO This should be CacheError but we've got a cycle that doesn't play ball with TH
   | UnsuitableNodeReason_BranchNotContained BlockHash
   | UnsuitableNodeReason_ProtocolIndex -- Only the public node can do rProtocolIndex
