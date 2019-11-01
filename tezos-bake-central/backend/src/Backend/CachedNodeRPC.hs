@@ -1225,7 +1225,7 @@ cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc 
   where
     prettyCacheError = \case 
       CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
-      CacheError_NoSuitableNode q reasons -> "No suitable node was found for query `" <> q <> "`. Nodes are [" <> (T.intercalate "," . fmap prettyUnsuitableReason $ reasons) <> "]"
+      CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
       CacheError_Timeout t -> "Timed out after " <> tshow t
       CacheError_RpcError rpcErr -> case rpcErr of
         RpcError_UnexpectedStatus _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
@@ -1234,6 +1234,10 @@ cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc 
       CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
       CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
       CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
+
+noSuitableNodeLogMessage :: Text -> [(URI, UnsuitableNodeReason)] -> Text
+noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <> q <> "`. Nodes are [" <> (T.intercalate "," . fmap prettyUnsuitableReason $ reasons) <> "]"
+  where
     prettyUnsuitableReason (u, r) = (("(" <> Uri.render u <> ",") <>) $ case r of
       UnsuitableNodeReason_QueryFailed ce -> "Query Failed on node: " <> ce
       UnsuitableNodeReason_QueryBeforeSavepoint savepointLevel queryLevel -> "The level required to fulfill this query is " <> prettyLevel queryLevel <> " but the node savepoint is at " <> prettyLevel savepointLevel
