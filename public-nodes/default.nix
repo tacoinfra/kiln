@@ -278,9 +278,10 @@ let
 
   server = args@{ hostName, adminEmail, routeHost, enableHttps, version, ... }:
     let
+      # Babylonnet is deployed to alphanet-tezosapi.obsidian.systems for now until we get a new domain
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
-        if pkgs.lib.strings.hasPrefix "babylonnet" hostName then "babylonnet" else
+        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "babylonnet" else
         "mainnet";
       networkConfig = networkConfigOptions.${network};
       nixos = import (pkgs.path + /nixos);
