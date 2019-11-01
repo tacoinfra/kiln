@@ -98,7 +98,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
       headBlockHeader <- withExceptT Right $ do
-        flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
+        flip runReaderT (if pn == Nothing then nds { _nodeDataSource_nodeForQuery = Just nodeAddr } else nds) $ do
           nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
 
       withExceptT Left $
@@ -825,7 +825,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     prettyNodes (uri, reason)  = "(" <> Uri.render uri <> "," <> tshow reason <> ")"
     prettyCacheError (CacheError_NoSuitableNode q nodes) =
       "No suitable nodes found for query " <> q <> ". Nodes: (" <> (T.intercalate "," . fmap prettyNodes $ nodes ) <> ")"
-    prettyCacheError e = tshow e 
+    prettyCacheError e = tshow e
     getProtocol = getProtocol' >>= \case
       Right p -> return p
       Left e -> do
@@ -838,7 +838,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     babyHax :: ProtocolHash -> ProtocolHash
     babyHax "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU" = "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
     babyHax ph = ph
-    
+
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. blockMetadata . blockMetadata_votingPeriodKind

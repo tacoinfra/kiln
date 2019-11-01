@@ -293,15 +293,15 @@ instance MonadNodeQuery NodeQueryQueued where
         NodeQueryQueued $ atomicallyWith $ do
           nodes' <- validNodes nodes q
           let (badCandidates', okCandidates) = partitionEithers $ (\(u,e) -> bimap (u,) (u,) e) <$> nodes'
-          -- pickNodes will filter out any nodes where our query branch isn't on that node 
+          -- pickNodes will filter out any nodes where our query branch isn't on that node
           (okNodes, branchedNodes) <- pickNodes qBranch okCandidates
           -- So we want to combine the nodes ignored because of pickNodes and those ignored by validNodes
           pure (okNodes, badCandidates' <> branchedNodes)
 
-    let 
+    let
 
     result <- case mNodesToTry of
-      -- The public node is the last resort 
+      -- The public node is the last resort
       [] -> case _nodeDataSource_osPublicNode dsrc of
         Nothing -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
         Just uri ->
@@ -319,7 +319,7 @@ instance MonadNodeQuery NodeQueryQueued where
               r <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
               pure $ first ((:es).(anyNode,)) r
         pure $ first (CacheError_NoSuitableNode (tshow q) . fmap (second (UnsuitableNodeReason_QueryFailed . tshow))) res
-        
+
     nqLiftEither result
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
@@ -902,7 +902,7 @@ validNodes nodes q = case q of
     findNodes :: Maybe RawLevel -> [(URI, Either UnsuitableNodeReason VeryBlockLike)]
     findNodes mLvl = do
       case mLvl of
-        Nothing -> 
+        Nothing ->
           (\(nUri, mBlk, _) -> (nUri,note UnsuitableNodeReason_MissingBlockInfo mBlk)) <$> nodes
         Just lvl -> (\(nUri, mBlk, mSp) -> (nUri, suitableNodeBlock mBlk mSp)) <$> nodes
           where
@@ -924,7 +924,7 @@ pickNodes branch =
   . traverse (\(nodeUri, nodeHead) ->
     bool
       (Right (nodeUri, UnsuitableNodeReason_BranchNotContained branch))
-      (Left (nodeUri)) 
+      (Left (nodeUri))
       <$> containsBranch nodeHead)
   where
     containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
@@ -1352,13 +1352,21 @@ getProtocolIndex branch protoHash = do
     ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
 
   history <- nqAtomically $ readTVar' historyVar
-  case headMay [x | x <- existingEntries, isJust $ branchPointPure (x ^. hash) branch history] of
+  case headMay existingEntries of
     Just existing -> pure existing
     Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
       Right p' -> do
         insert p'
         pure p'
-      Left _ -> buildProtocolIndex branch protoHash history
+      Left _ -> nqTry (buildProtocolIndex branch protoHash history) >>= \case
+        Right p' -> do
+          pure p'
+        Left e -> do
+          -- as a last measure just fetch the protocol constants without building the index
+          p <- fetchProtocolForBlock chainId branch
+          if p ^. protocolIndex_hash == protoHash
+            then pure p
+            else nqThrowError e
 
 buildProtocolIndex
   :: forall m
@@ -1403,22 +1411,22 @@ buildProtocolIndex branch protoHash history = do
             , _protocolIndex_hash = firstBlock ^. protocolHash
             , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
             , _protocolIndex_constants = constants
-            , _protocolIndex_firstBlockHash = firstBlock ^. hash
-            , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
-            , _protocolIndex_firstBlockLevel = firstBlock ^. level
-            , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
-            , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
-            , _protocolIndex_firstBlockCycle = firstBlock ^. blockMetadata . blockMetadata_level . level_cycle
+            , _protocolIndex_firstBlockHash = Just $ firstBlock ^. hash
+            , _protocolIndex_firstBlockPredecessor = Just $ firstBlock ^. predecessor
+            , _protocolIndex_firstBlockLevel = Just $ firstBlock ^. level
+            , _protocolIndex_firstBlockFitness = Just $ firstBlock ^. fitness
+            , _protocolIndex_firstBlockTimestamp = Just $ firstBlock ^. timestamp
+            , _protocolIndex_firstBlockCycle = Just $ firstBlock ^. blockMetadata . blockMetadata_level . level_cycle
             }
 
       for_ protoIndexes $ \protoIndex -> do
-        mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
+        mp :: Maybe (Maybe BlockHash) <- project1 ProtocolIndex_firstBlockHashField
           (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
-            &&. (ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash)
+            &&. (ProtocolIndex_chainIdField ==. chainId)
           )
-        when (mp == Nothing) $ do
+        when (join mp == Nothing) $ do
           insert protoIndex
-          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
+          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash)
 
       maybe (nqThrowError CacheError_NotEnoughHistory) pure $
         find ((protoHash ==) . view protocolHash) protoIndexes
@@ -1430,7 +1438,7 @@ buildProtocolHistoryUntil
   -> "branch" :! BlockHash
   -> "history" :! CachedHistory'
   -> NodeQueryT m (Map ProtocolHash BlockCrossCompat)
-  -- Turns this into table, ProtocolHash 
+  -- Turns this into table, ProtocolHash
 buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
   branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
   go ! #currentBlock branchBlock
@@ -1502,6 +1510,31 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
           x | x ^. protocolHash == low ^. protocolHash -> binarySearch halfway high
             | x ^. protocolHash == high ^. protocolHash -> binarySearch low halfway
             | otherwise -> pure Nothing
+
+fetchProtocolForBlock
+  :: forall m
+   . (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
+  => ChainId
+  -> BlockHash
+  -> NodeQueryT m ProtocolIndex
+fetchProtocolForBlock chainId blkHash = do
+  $(logDebug) [i|fetchProtocolForBlock: ${blkHash}|]
+  protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants blkHash
+  blockHeader <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
+  let p = ProtocolIndex
+          { _protocolIndex_chainId = chainId
+          , _protocolIndex_hash = blockHeader ^. protocolHash
+          , _protocolIndex_constants = protoInfo
+          , _protocolIndex_proto = blockHeader ^. blockHeader_proto
+          , _protocolIndex_firstBlockHash = Nothing
+          , _protocolIndex_firstBlockPredecessor = Nothing
+          , _protocolIndex_firstBlockLevel = Nothing
+          , _protocolIndex_firstBlockFitness = Nothing
+          , _protocolIndex_firstBlockTimestamp = Nothing
+          , _protocolIndex_firstBlockCycle = Nothing
+          }
+  insert p
+  pure p
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery

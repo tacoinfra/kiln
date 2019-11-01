@@ -679,7 +679,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             fields:
               - _protocolIndex_chainId
               - _protocolIndex_hash
-              - _protocolIndex_firstBlockHash
 
   - primitive: VotingPeriodKind
   - primitive: Ballot
@@ -1140,8 +1139,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   ]
 
 instance DefaultKeyId ProtocolIndex where
-  toIdData _ (ProtocolIndexKeyKey chainId protoHash firstBlockHash) = (chainId, protoHash, firstBlockHash)
-  fromIdData _ (chainId, protoHash, firstBlockHash) = ProtocolIndexKeyKey chainId protoHash firstBlockHash
+  toIdData _ (ProtocolIndexKeyKey chainId protoHash) = (chainId, protoHash)
+  fromIdData _ (chainId, protoHash) = ProtocolIndexKeyKey chainId protoHash
 
 instance DefaultKeyId Accusation where
   toIdData _ (Accusation_hashKey oh bh) = (oh, bh)
