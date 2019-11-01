@@ -37,7 +37,7 @@ $(nix-build -A installKiln --no-out-link)/bin/install-kiln kiln-latest
 
 ### Starting the monitor
 
-To run the monitor, enter the `app` directory and start the `backend`. Replace `<network>` with your desired Tezos network, e.g. `zeronet`, `alphanet`, `mainnet`, or with a specific chain ID.
+To run the monitor, enter the `app` directory and start the `backend`. Replace `<network>` with your desired Tezos network, e.g. `zeronet`, `babylonnet`, `mainnet`, or with a specific chain ID.
 
 ```shell
 cd app
@@ -50,7 +50,7 @@ If you completed these steps correctly, your Monitor should now be running at ht
 
 For the most complete list of options while starting Kiln, run `./backend --help`. Some of the most helpful options are:
 
-* `--network <network>` - Values are 'zeronet', 'alphanet', and 'mainnet' (default).
+* `--network <network>` - Values are 'zeronet', 'babylonnet', and 'mainnet' (default).
 * `--node` or `--nodes` - Adds monitored nodes to Kiln at startup. Entries should be comma separated, and can optionally take an alias.
     *   Note: Nodes must begin with `http://`
     *   Example: `--nodes http://localhost:8732,http://localhost:8733@SecondNode`

@@ -280,7 +280,7 @@ let
     let
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
-        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "babylonnet" else
+        if pkgs.lib.strings.hasPrefix "babylonnet" hostName then "babylonnet" else
         "mainnet";
       networkConfig = networkConfigOptions.${network};
       nixos = import (pkgs.path + /nixos);
