@@ -36,8 +36,8 @@ import Data.Pool (Pool)
 import qualified Data.Set as S
 import Data.String.Here.Interpolated (i)
 import Data.These
-import qualified Data.Text as T
 import Data.Time (NominalDiffTime, diffUTCTime)
+import qualified Data.Text as T
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import Database.Id.Class
@@ -109,7 +109,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
       pure headBlockHeader
 
     case newStateRsp of
-      Left e -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left e
+      Left (Left e) -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left (Left e)
+      Left (Right e) -> $(logWarn) (cacheErrorLogMessage "Handle new node head" e) $> Left (Right e)
       Right headBlockHeader -> pure $ Right (isNewBlock, headBlockHeader)
 
   for_ res $ \(isNewBlock, headBlockHeader) ->
@@ -719,7 +720,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
 
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
-    throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
+    throwing = fmap (either (error . T.unpack . cacheErrorLogMessage "amendmentProcessWorker") id) . flip runReaderT nds . runExceptT @CacheError
 
     runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
@@ -822,14 +823,10 @@ protocolMonitorWorker
 protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
-    prettyNodes (uri, reason)  = "(" <> Uri.render uri <> "," <> tshow reason <> ")"
-    prettyCacheError (CacheError_NoSuitableNode q nodes) =
-      "No suitable nodes found for query " <> q <> ". Nodes: (" <> (T.intercalate "," . fmap prettyNodes $ nodes ) <> ")"
-    prettyCacheError e = tshow e 
     getProtocol = getProtocol' >>= \case
       Right p -> return p
       Left e -> do
-        $(logWarnSH) ("protocolMonitorWorker: cannot fetch protocol"::Text, prettyCacheError e)
+        $(logWarnSH) (cacheErrorLogMessage "protocolMonitorWorker: fetch protocol" e)
         threadDelay' 1
         getProtocol
 

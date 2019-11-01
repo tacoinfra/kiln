@@ -76,6 +76,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson (ToJSON, FromJSON)
 import Data.Aeson.Encoding (emptyObject_)
 import Data.Bifunctor (bimap, first)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
@@ -96,6 +97,8 @@ import Data.Sequence (Seq)
 import qualified Data.Set as Set
 import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Vector as V
 import Database.Id.Class
 import Database.Groundhog.Core
@@ -909,7 +912,7 @@ validNodes nodes q = case q of
             suitableNodeBlock mBlk mSp =
               -- If our node has a save point, check that the query that we are doing is not
               -- for a level prior to this savepoint.
-              note UnsuitableNodeReason_MissingSavePoint mSp >>= \savepoint ->
+              note UnsuitableNodeReason_MissingSavepoint mSp >>= \savepoint ->
                 if savepoint <= lvl
                   then note UnsuitableNodeReason_MissingBlockInfo mBlk
                   else Left $ UnsuitableNodeReason_QueryBeforeSavepoint savepoint lvl
@@ -1212,6 +1215,35 @@ calculateBakerStats pkhs = do
 
 
 -}
+
+-- | Logs the cache error as a Error to the monadlogger context
+cacheErrorLogMessage
+  :: Text -- A user friendly description of what was doing the call
+  -> CacheError
+  -> Text
+cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc <> "' Reason: ") <>) $ prettyCacheError err
+  where
+    prettyCacheError = \case 
+      CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
+      CacheError_NoSuitableNode q reasons -> "No suitable node was found for query `" <> q <> "`. Nodes are [" <> (T.intercalate "," . fmap prettyUnsuitableReason $ reasons) <> "]"
+      CacheError_Timeout t -> "Timed out after " <> tshow t
+      CacheError_RpcError rpcErr -> case rpcErr of
+        RpcError_UnexpectedStatus _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
+        RpcError_HttpException e -> "RPC Exception (The Node is unreachable) " <> tshow e
+        RpcError_NonJSON e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
+      CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
+      CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
+      CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
+    prettyUnsuitableReason (u, r) = (("(" <> Uri.render u <> ",") <>) $ case r of
+      UnsuitableNodeReason_QueryFailed ce -> "Query Failed on node: " <> ce
+      UnsuitableNodeReason_QueryBeforeSavepoint savepointLevel queryLevel -> "The level required to fulfill this query is " <> prettyLevel queryLevel <> " but the node savepoint is at " <> prettyLevel savepointLevel
+      UnsuitableNodeReason_MissingBlockInfo -> "Kiln has not yet retrieved the latest block head for this node"
+      UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
+      UnsuitableNodeReason_BranchNotContained b -> "The block '" <> tshow b <> "' could not be found within the kiln's known history for this node."
+      UnsuitableNodeReason_ProtocolIndex -> "Kiln is looking for the ProtocolIndex, which only the public node can find. If you see this, then it may indicate that the public node is down and the alternative means of building the protocol index from the node aren't working (your node may not have enough history to do this yet)."
+      
+    prettyLevel = tshow . unRawLevel
+
 -- produce (up to) n ancestor hashes (including the block itself)
 ancestors ::
   ( MonadIO m

@@ -225,7 +225,7 @@ bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_node
 
   case res of
     Right _ -> pure ()
-    Left (err :: CacheError) -> $(logErrorSH) ("bakerRightsWorker" :: String, err)
+    Left err -> $(logErrorSH) (cacheErrorLogMessage "bakerRightsWorker" err)
 
   $(logDebug) $ "BAKERRIGHTSWORKER STEP" <> tshow res
 
@@ -267,7 +267,7 @@ bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_
 
   case res of
     Right () -> $(logDebug) "bakerWorker DONE"
-    Left (err :: CacheError) -> $(logErrorSH) ("bakerWorker" :: String, err)
+    Left (err :: CacheError) -> $(logErrorSH) (cacheErrorLogMessage "bakerWorker" err)
 
 
 -- separating the monad that can do RPC(mPrepare) from the one that can do
