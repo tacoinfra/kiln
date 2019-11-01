@@ -143,13 +143,13 @@ bakerLedgerDisconnectedDescriptions :: ErrorLogBakerLedgerDisconnected -> BakerE
 bakerLedgerDisconnectedDescriptions _elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Ledger Device is disconnected"
   , _bakerErrorDescriptions_tile = "Ledger Device disconnected"
-  , _bakerErrorDescriptions_notification = "The Ledger device for this baker is disconected."
-  , _bakerErrorDescriptions_problem = ["The Ledger device for this baker is disconnected, and so it cannot process any baking or signing activity."]
+  , _bakerErrorDescriptions_notification = "The Ledger Device for this baker is disconected."
+  , _bakerErrorDescriptions_problem = ["The Ledger Device for this baker is disconnected, and so it cannot process any baking or signing activity."]
   , _bakerErrorDescriptions_warning = Nothing
-  , _bakerErrorDescriptions_fix = "Make sure the Ledger device is connected to your computer and has the Tezos Baking app open."
+  , _bakerErrorDescriptions_fix = "Make sure the Ledger Device is connected to your computer and has the Tezos Baking app open."
   , _bakerErrorDescriptions_resolved = const
-     ( "Resolved: The Ledger device has been re-connected."
-     , "The Ledger device has been re-connected."
+     ( "Resolved: The Ledger Device has been re-connected."
+     , "The Ledger Device has been re-connected."
      )
   }
 
