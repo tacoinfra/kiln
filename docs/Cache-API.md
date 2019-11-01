@@ -24,7 +24,7 @@ Most endpoints require that Kiln is successfully connected to at least one non-p
 
 ### Chain ID
 
-Retrieve the *chain ID* of the chain/network being monitored/cached. This will never be a name like `mainnet` or `alphanet`.
+Retrieve the *chain ID* of the chain/network being monitored/cached. This will never be a name like `mainnet` or `babylonnet`.
 
 > `GET /api/v3/chain HTTP/1.1`
 

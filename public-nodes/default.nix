@@ -37,26 +37,13 @@ let
         }
       ];
     };
-    alphanet = {
-      network = "alphanet";
+    babylonnet = {
+      network = "babylonnet";
       p2pPort = 19732;
       rpcPort = 18732;
-      tzKit = tezos.alphanet.kit;
+      tzKit = tezos.babylonnet.kit;
       histMode = "archive";
       kilns = [
-        {
-          app = kilnApiV1;
-          apiVersion = 1;
-          apiPort = 8001;
-        }
-        {
-          app = kilnApiV2;
-          apiVersion = 2;
-          apiPort = 8002;
-          extraArgs = [
-            "--enable-obsidian-node=false"
-          ];
-        }
         {
           inherit app;
           apiVersion = 3;
@@ -291,9 +278,10 @@ let
 
   server = args@{ hostName, adminEmail, routeHost, enableHttps, version, ... }:
     let
+      # Babylonnet is deployed to alphanet-tezosapi.obsidian.systems for now until we get a new domain
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
-        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "alphanet" else
+        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "babylonnet" else
         "mainnet";
       networkConfig = networkConfigOptions.${network};
       nixos = import (pkgs.path + /nixos);

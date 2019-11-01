@@ -46,6 +46,6 @@ Unless the setting is disabled, the monitor should automically check for newer v
 
   1. Run Kiln with that project ID so it establishes a HEAD commit
   1. Stop running Kiln
-  1. Go to the branch you are monitoring with Kiln (alphanet for me) and make a simple commit. Here's mine - https://gitlab.com/mikereinhart/tezos/commit/fad61ab65ecc30a20b2df629c28274bd45b57076
+  1. Go to the branch you are monitoring with Kiln (babylonnet for me) and make a simple commit. Here's mine - https://gitlab.com/mikereinhart/tezos/commit/fad61ab65ecc30a20b2df629c28274bd45b57076
   1. Restart Kiln. It checks for an update at startup or every hour. You should
      now see the notification.  use the `--network-gitlab-project-id=PROJECTID`

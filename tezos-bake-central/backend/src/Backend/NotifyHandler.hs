@@ -121,11 +121,10 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     paramsVS = _bakeViewSelector_parameters aggVS
 
     handleParameters :: PersistBackend m' => Id ProtocolIndex -> m' (BakeView a)
-    handleParameters (Id (chainId, protoHash, firstBlockHash)) = whenM (viewSelects protoHash paramsVS) $ do
+    handleParameters (Id (chainId, protoHash)) = whenM (viewSelects protoHash paramsVS) $ do
       newProto :: Maybe ProtocolIndex <- selectSingle $
         ProtocolIndex_hashField ==. protoHash &&.
-        ProtocolIndex_chainIdField ==. chainId &&.
-        ProtocolIndex_firstBlockHashField ==. firstBlockHash
+        ProtocolIndex_chainIdField ==. chainId
       pure mempty
         { _bakeView_parameters = MapView $ mempty $
           liftA2 (\v p -> MMap.singleton protoHash (First p, v)) (MMap.lookup protoHash $ unMapSelector paramsVS) newProto

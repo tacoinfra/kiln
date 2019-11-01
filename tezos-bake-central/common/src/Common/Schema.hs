@@ -387,15 +387,15 @@ data ProtocolIndex = ProtocolIndex
   , _protocolIndex_hash :: !ProtocolHash
   , _protocolIndex_constants :: !ProtoInfo
   , _protocolIndex_proto :: !Word8
-  , _protocolIndex_firstBlockHash :: !BlockHash
-  , _protocolIndex_firstBlockPredecessor :: !BlockHash
-  , _protocolIndex_firstBlockLevel :: !RawLevel
-  , _protocolIndex_firstBlockFitness :: !Fitness
-  , _protocolIndex_firstBlockTimestamp :: !UTCTime
-  , _protocolIndex_firstBlockCycle :: !Cycle
+  , _protocolIndex_firstBlockHash :: !(Maybe BlockHash)
+  , _protocolIndex_firstBlockPredecessor :: !(Maybe BlockHash)
+  , _protocolIndex_firstBlockLevel :: !(Maybe RawLevel)
+  , _protocolIndex_firstBlockFitness :: !(Maybe Fitness)
+  , _protocolIndex_firstBlockTimestamp :: !(Maybe UTCTime)
+  , _protocolIndex_firstBlockCycle :: !(Maybe Cycle)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId ProtocolIndex where
-  type IdData ProtocolIndex = (ChainId, ProtocolHash, BlockHash)
+  type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
 data PublicNodeConfig = PublicNodeConfig
   { _publicNodeConfig_source :: !PublicNode
@@ -1079,13 +1079,6 @@ instance BlockLike PublicNodeHead where
 
 instance HasProtocolHash PublicNodeHead where
   protocolHash = publicNodeHead_protocolHash
-
-instance BlockLike ProtocolIndex where
-  hash = protocolIndex_firstBlockHash
-  predecessor = protocolIndex_firstBlockPredecessor
-  fitness = protocolIndex_firstBlockFitness
-  level = protocolIndex_firstBlockLevel
-  timestamp = protocolIndex_firstBlockTimestamp
 
 instance HasProtocolHash ProtocolIndex where
   protocolHash = protocolIndex_hash
