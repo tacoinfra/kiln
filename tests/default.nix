@@ -107,7 +107,7 @@ in {
     rm -rf "$root_path"
 
     mkdir -p "$kiln_config_dir"
-    ${tzFlextesa.kit + /bin/tezos-sandbox} accusations simple-double-baking \
+    ${tzFlextesa.kit + /bin/tezos-sandbox} accusations simple-double-endorsing \
       --generate-kiln "$kiln_config_dir",10000 \
       --clean-kiln-config \
       --pause-on-error true \
