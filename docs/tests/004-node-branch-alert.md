@@ -47,7 +47,7 @@ To run this network:
   1. Open a terminal shell and `cd` into this directory.
   1. Kill all running nodes and delete any existing sandbox data, like this
       * `pkill tezos-node; pkill tezos-client; rm -rf sandbox/`
-  1. Pick a network (`mainnet`, `betanet`, `alphanet`, `zeronet`, or `master`). We'll call it `NETWORK`.
+  1. Pick a network (`mainnet`, `betanet`, `babylonnet`, `zeronet`, or `master`). We'll call it `NETWORK`.
   1. Start a `nix-shell` for the network's sandbox scripts like this
       * `nix-shell -A tezos.NETWORK.sandbox` (replacing `NETWORK` with the one you want)
   1. Start the fragile network like this

@@ -35,14 +35,14 @@ Kiln's logs can be found in journal control. Some useful commands for viewing lo
 ## Running tezos-client and tezos-admin-client binaries
 
 Use the command `kiln-shell` to create a shell from where you can use the `tezos-client` and `tezos-admin-client` for mainnet.
-For other networks specify the network like `kiln-shell alphanet` or `kiln-shell zeronet`.
+For other networks specify the network like `kiln-shell babylonnet` or `kiln-shell zeronet`.
 
 Note: when running `tezos-client` you might get this message "umount: /oldroot: filesystem was unmounted, but failed to update userspace mount table.", but this can be ignored.
 
 ```
 baker@ubuntu:~$ kiln-shell
 Starting kiln-shell for mainnet.
-To run kiln-shell for other network, please specify 'kiln-shell alphanet' or 'kiln-shell zeronet'.
+To run kiln-shell for other network, please specify 'kiln-shell babylonnet' or 'kiln-shell zeronet'.
 baker@ubuntu:~$ tezos-client -P 8733 list connected ledgers
 umount: /oldroot: filesystem was unmounted, but failed to update userspace mount table.
 Disclaimer:
@@ -61,7 +61,7 @@ To use keys at BIP32 path m/44'/1729'/0'/0' (default Tezos key path), use one of
  tezos-client import secret key ledger_divam "ledger://frilly-elephant-alienated-hippopotamus/P-256/0'/0'"
 ```
 
-To use the binaries for a different network please specify 'kiln-shell alphanet' or 'kiln-shell zeronet'
+To use the binaries for a different network please specify 'kiln-shell babylonnet' or 'kiln-shell zeronet'
 
 ## Uninstalling Kiln
 

@@ -580,7 +580,7 @@ optsArgDescr =
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
 
   , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseChainOrError) $
-      "Name of a network (mainnet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
+      "Name of a network (mainnet, babylonnet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
 
   , mkReqArg Config.serveNodeCache "BOOL" (set opts_serveNodeCache . Just . Config.parseBool)

@@ -11,6 +11,7 @@ in {
     cp -r ${tbp-flextesa.tezos.master.tezos-src}/src/bin_client/test/proto_test_injection /tmp/kiln_voting_test
     chmod -R +w /tmp/kiln_voting_test
 
+    export PATH="${pkgs.jq + /bin}:$PATH"
     export PATH="${tbp-flextesa.tezos.master.kit + /bin}:$PATH"
     ${tbp-flextesa.tezos.master.kit}/bin/tezos-sandbox voting \
       /tmp/kiln_voting_test/TEZOS_PROTOCOL /tmp/kiln_voting_test/TEZOS_PROTOCOL \

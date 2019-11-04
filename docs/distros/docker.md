@@ -36,7 +36,7 @@ Replace `mysecretpassword` with your *actually secret* password.
 
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
-Check out `docker run --rm obsidiansystems/kiln:0.7.2 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
+Check out `docker run --rm obsidiansystems/kiln:0.7.2 --help` for more command-line options. For example, you can run the monitor on babylonnet by passing `--network=babylonnet`.
 
 ## Updating an older Docker container
 
