@@ -2,6 +2,6 @@ packages:
   backend/
   common/
   frontend/
-  ../tezos-bake-monitor-lib
-  ../tezos-noderpc
-  ../dep/micro-ecc-haskell
+  dep/tezos-bake-monitor-lib/tezos-bake-monitor-lib
+  dep/tezos-bake-monitor-lib/tezos-noderpc
+  dep/micro-ecc-haskell
