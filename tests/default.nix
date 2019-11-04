@@ -97,17 +97,20 @@ in {
     export PATH="${pkgs.jq + /bin}:$PATH"
 
     kiln_config_dir="''${1:?Specify path to directory where Kiln\'s \'config\' directory should be written}/config"
-    : "''${size:=3}"
-    : "''${speed:=10}"
-    : "''${blocks_per_voting_period:=24}"
 
     echo 'Starting tezos-sandbox accusations test...'
 
     root_path=/tmp/accusing-test
     rm -rf "$root_path"
 
+    test="simple-double-baking"
+    if [ $# -eq 2 ]
+      then
+        test="''${2}"
+    fi
+
     mkdir -p "$kiln_config_dir"
-    ${tzFlextesa.kit + /bin/tezos-sandbox} accusations simple-double-endorsing \
+    ${tzFlextesa.kit + /bin/tezos-sandbox} accusations $test \
       --generate-kiln "$kiln_config_dir",10000 \
       --clean-kiln-config \
       --pause-on-error true \
