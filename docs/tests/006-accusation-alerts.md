@@ -19,13 +19,17 @@ These alerts should appear whenever an accusation presenting evidence of double 
      Enter `q` to when the test script starts and gives a prompt.
 
 
-  1. Wait for a few seconds after the `accusations-test` shows this
+  1. Wait for a few seconds after the `accusations-test` starts showing messages like this
      ```
        Ensure-protocol-default-bootstrap 1. directory
        Ensure-protocol-default-bootstrap 2. sandbox.json
        Ensure-protocol-default-bootstrap 3. protocol_parameters.json
        <DBG| Trying to bootstrap client |DBG>
        <DBG| Waiting for all nodes to be bootstrapped |DBG>
+       Flextesa.accusing:
+        Successful bake (C-Simple000: first bakes: [1/49]): [
+          "Injected block BKye6FJuSrfs"
+        ]    
      ```
 
   1. Start Kiln: (At the moment it is necessary to remove the file `config/binary-paths` manually)
