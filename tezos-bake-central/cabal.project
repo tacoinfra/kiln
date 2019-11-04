@@ -4,4 +4,3 @@ packages:
   frontend/
   dep/tezos-bake-monitor-lib/tezos-bake-monitor-lib
   dep/tezos-bake-monitor-lib/tezos-noderpc
-  dep/micro-ecc-haskell
