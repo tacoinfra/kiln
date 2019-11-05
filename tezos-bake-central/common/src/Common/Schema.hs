@@ -678,8 +678,8 @@ instance HasId ErrorLogInaccessibleNode where
 data ErrorLogNodeVersionMismatch = ErrorLogNodeVersionMismatch
   { _errorLogNodeVersionMismatch_log :: !(Id ErrorLog)
   , _errorLogNodeVersionMismatch_node :: !(Id Node)
-  , _errorLogNodeVersionMismatch_nodeHash :: !Text
   , _errorLogNodeVersionMismatch_latestHash :: !Text
+  , _errorLogNodeVersionMismatch_nodeHash :: !Text
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeVersionMismatch where
   type IdData ErrorLogNodeVersionMismatch = Id ErrorLog

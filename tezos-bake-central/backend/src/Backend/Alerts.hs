@@ -379,6 +379,46 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
       nodeName <> " is on correct network"
 
+reportNodeVersionMismatchError
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, HasAppConfig a, MonadReader a m
+     , SqlDb (PhantomDb m))
+  => Id Node -> Text -> Text -> m ()
+reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeVersionMismatch) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.log
+      FROM "ErrorLog" el
+      JOIN "ErrorLogNodeVersionMismatch" t ON t.log = el.id
+      JOIN "NodeExternal" n ON n.id = t.node
+     WHERE t."latestHash" = ?latestHash
+       AND t."nodeHash" = ?nodeHash
+       AND t.node = ?nodeId
+       AND NOT n."data#deleted"
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Nothing -> void $ insertErrorLog $ \logId -> ErrorLogNodeVersionMismatch logId nodeId latestHash nodeHash
+    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+
+clearNodeVersionMismatchError
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m
+     , SqlDb (PhantomDb m)
+     , MonadReader a m, HasAppConfig a) => Id Node -> m ()
+clearNodeVersionMismatchError nodeId = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  lids :: [Id ErrorLogNodeVersionMismatch] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNodeVersionMismatch" t
+    WHERE t.log = el.id
+      AND t.node = ?nodeId
+      AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
+    RETURNING t.log |]
+  for_ lids notifyDefault
+
 reportNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
       MonadLogger m, SqlDb (PhantomDb m))
