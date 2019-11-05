@@ -12,16 +12,16 @@ These alerts should appear whenever an accusation presenting evidence of double 
      ```shell
      $(nix-build --no-out-link -A installKiln)/bin/install-kiln app
 
-  1. In a separate terminal start the protocol-transition test and tell it to install Kiln configs in `app`.
+  1. In a separate terminal start the accusations test and tell it to install Kiln configs in `app`.
      ```shell
-     $(nix-build --no-out-link -A tests.protocol)/bin/accusations-test app
+     $(nix-build --no-out-link -A tests.accusations)/bin/accusations-test app
      ```
      Enter `q` to when the test script starts and gives a prompt.
 
      Note: By default this script will run the double baking accusation test. To run the double endorsing accusation test specify 'simple-double-endorsing' after the name of the directory.
 
      ```shell
-     $(nix-build --no-out-link -A tests.protocol)/bin/accusations-test app simple-double-endorsing
+     $(nix-build --no-out-link -A tests.accusations)/bin/accusations-test app simple-double-endorsing
 
   1. Wait for a few seconds after the `accusations-test` starts showing messages like this
      ```
