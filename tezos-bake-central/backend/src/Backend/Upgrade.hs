@@ -13,11 +13,13 @@ module Backend.Upgrade where
 import Control.Exception.Safe (try)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (MonadLogger, logError, logInfo)
+import Control.Monad.Logger (MonadLogger, logError, logInfo, logWarn)
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
+import qualified Data.Map as Map
 import Data.Maybe
 import Data.Pool (Pool)
+import Data.String.Here.Interpolated (i)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (NominalDiffTime, UTCTime)
@@ -27,10 +29,12 @@ import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
+import qualified Network.HTTP.Types.Method as Http (methodGet)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
+import qualified Text.URI as Uri
 
 import Backend.Alerts
 import Backend.Alerts.Common
@@ -42,10 +46,11 @@ import Common.Schema
 import Common.Alerts
 import ExtraPrelude
 import Tezos.Types
+import Tezos.NodeRPC
 
 upgradeCheckWorker
   :: MonadIO m
-  => Maybe NamedChain
+  => NamedChain
   -> Text
   -> Text
   -> NominalDiffTime
@@ -54,11 +59,12 @@ upgradeCheckWorker
   -> Pool Postgresql
   -> AppConfig
   -> m (IO ())
-upgradeCheckWorker mchain gitLabProjectId upgradeBranch delay logger httpMgr db appConfig = do
-  liftIO $ forM_ mchain $ runLoggingEnv logger . runDb (Identity db) . clearUnrelatedNetworkUpdateError
+upgradeCheckWorker chain gitLabProjectId upgradeBranch delay logger httpMgr db appConfig = do
+  liftIO $ runLoggingEnv logger $ runDb (Identity db) $ clearUnrelatedNetworkUpdateError chain
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
-    forM_ mchain $ \chain -> notifyChainUpgrade chain gitLabProjectId httpMgr db appConfig
+    fetchNodeVersions httpMgr db
+    notifyChainUpgrade chain gitLabProjectId httpMgr db appConfig
     void $ updateUpstreamVersion upgradeBranch httpMgr (runDb (Identity db))
 
 notifyChainUpgrade
@@ -114,6 +120,25 @@ getLatestNamedChainUpgradeLog namedChain =
     ORDER BY el.started DESC
     LIMIT 1
     |]
+
+fetchNodeVersions
+  :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
+  => Http.Manager
+  -> Pool Postgresql
+  -> m ()
+fetchNodeVersions httpMgr db = do
+  extNodes <- runDb (Identity db) $ Map.fromList <$> project
+    (NodeExternal_idField, NodeExternal_dataField ~> DeletableRow_dataSelector)
+    (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False)
+
+  ifor_ extNodes $ \nodeId nodeData -> do
+    mHash :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
+      nodeRPC $ plainNodeRequest Http.methodGet $ "/monitor/commit_hash"
+    case mHash of
+      Left e -> $(logWarn) [i|fetchNodeVersions: could not fetch node commit hash: ${e}|]
+      Right hash' -> runDb (Identity db) $ update
+        [NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_commitHashSelector =. Just hash']
+        (NodeExternal_idField `in_` [nodeId])
 
 updateUpstreamVersion
   :: (MonadIO m, PersistBackend db)

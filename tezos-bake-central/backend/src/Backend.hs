@@ -96,7 +96,7 @@ import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
-import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeVersionMonitorWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
+import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
 import Backend.Workers.TezosClient (tezosClientWorker, resetLedgerQueue)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
@@ -426,7 +426,6 @@ backendImpl cfg serve = do
 
       addFinalizer =<< cacheWorker 90 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< nodeVersionMonitorWorker 600 dataSrc db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< bakerRightsWorker dataSrc
@@ -437,8 +436,8 @@ backendImpl cfg serve = do
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
         -- Square roots of rationals are the most effective for this because number theory.
 
-      when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
+      when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
+        addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChainOrPaths $ \v -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
