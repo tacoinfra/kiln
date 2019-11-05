@@ -96,7 +96,7 @@ import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
-import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
+import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeVersionMonitorWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
 import Backend.Workers.TezosClient (tezosClientWorker, resetLedgerQueue)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
@@ -309,6 +309,7 @@ backendImpl cfg serve = do
               { _nodeExternalData_address = newAddress
               , _nodeExternalData_alias = alias
               , _nodeExternalData_minPeerConnections = Nothing
+              , _nodeExternalData_commitHash = Nothing
               }
             }
 
@@ -425,6 +426,7 @@ backendImpl cfg serve = do
 
       addFinalizer =<< cacheWorker 90 dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
+      addFinalizer =<< nodeVersionMonitorWorker 600 dataSrc db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< bakerRightsWorker dataSrc

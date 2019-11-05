@@ -43,6 +43,7 @@ import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Types.Method as Http (methodGet)
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
@@ -223,6 +224,29 @@ updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
       ]
       (NodeDetails_idField ==. nid)
     project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
+
+nodeVersionMonitorWorker
+  :: NominalDiffTime -- delay between checking for updates, in microseconds
+  -> NodeDataSource
+  -> Pool Postgresql
+  -> IO (IO ())
+nodeVersionMonitorWorker delay nds db = workerWithDelay (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+  $(logDebug) "nodeVersionMonitorWorker: worker heartbeat"
+
+  extNodes <- runDb (Identity db) $ Map.fromList <$> project
+    (NodeExternal_idField, NodeExternal_dataField ~> DeletableRow_dataSelector)
+    (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False)
+
+  let
+    httpMgr = _nodeDataSource_httpMgr nds
+  ifor_ extNodes $ \nodeId nodeData -> do
+    mHash :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
+      nodeRPC $ plainNodeRequest Http.methodGet $ "/monitor/commit_hash"
+    case mHash of
+      Left e -> $(logWarn) [i|nodeVersionMonitorWorker: could not fetch node commit hash: ${e}|]
+      Right hash' -> runDb (Identity db) $ update
+        [NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_commitHashSelector =. Just hash']
+        (NodeExternal_idField `in_` [nodeId])
 
 type NodeData = Either (Id ProcessData) NodeExternalData
 nodeData_address :: AppConfig -> NodeData -> URI

@@ -877,7 +877,7 @@ liveErrorsWidget = void $ do
             NodeLogTag_InaccessibleNode ->
               case _nodeSummary_node n of
                 Right _ -> blank
-                Left (NodeExternalData address alias _) -> do
+                Left (NodeExternalData address alias _ _) -> do
                   header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> uriHostPortPath address <> "."
                   nodeLabel n
 
