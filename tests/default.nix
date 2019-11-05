@@ -85,4 +85,41 @@ in {
       --tezos-client-binary ${tzMultiProto.kit + /bin/tezos-client} \
       --tezos-admin-client-binary ${tzMultiProto.kit + /bin/tezos-admin-client}
   '';
+
+  accusations = let
+    tzFlextesa = tbp-flextesa.tezos.mainnet;
+    tzMultiProto = tzFlextesa;
+
+  in pkgs.writeScriptBin "accusations-test" ''
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+
+    export PATH="${pkgs.jq + /bin}:$PATH"
+
+    kiln_config_dir="''${1:?Specify path to directory where Kiln\'s \'config\' directory should be written}/config"
+
+    echo 'Starting tezos-sandbox accusations test...'
+
+    root_path=/tmp/accusing-test
+    rm -rf "$root_path"
+
+    test="simple-double-baking"
+    if [ $# -eq 2 ]
+      then
+        test="''${2}"
+    fi
+
+    mkdir -p "$kiln_config_dir"
+    ${tzFlextesa.kit + /bin/tezos-sandbox} accusations $test \
+      --generate-kiln "$kiln_config_dir",10000 \
+      --clean-kiln-config \
+      --pause-on-error true \
+      --interactive true \
+      --pause-at-end true \
+      --starting-level 50 \
+      --root-path "$root_path" \
+      --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
+      --tezos-accuser-alpha-binary ${tzMultiProto.kit + /bin/tezos-accuser} \
+      --tezos-client-binary ${tzMultiProto.kit + /bin/tezos-client}
+  '';
 }
