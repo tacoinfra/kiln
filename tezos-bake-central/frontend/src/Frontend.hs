@@ -684,6 +684,7 @@ instance HasAlertMetaData (NodeLogTag a) where
     NodeLogTag_NodeWrongChain -> def
     NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
     NodeLogTag_BadNodeHead -> def
+    NodeLogTag_VersionMismatch -> def { _alertMetaData_isUserResolvable = True, _alertMetaData_severity = AlertSeverity_Info }
 
 instance HasAlertMetaData (DSum BakerLogTag a) where
   getAlertMetaData (logTag :=> _) = getAlertMetaData logTag
@@ -902,6 +903,13 @@ liveErrorsWidget = void $ do
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
+
+            NodeLogTag_VersionMismatch -> do
+              header "Node is not running the latest software."
+              nodeLabel n
+              el "div" $ text $
+                "This node is running the node software with hash: '" <> _errorLogNodeVersionMismatch_nodeHash log <> "'."
+                  <> "The latest software version has hash: '" <> _errorLogNodeVersionMismatch_latestHash log <> "'."
 
         LogTag_Baker blt -> case blt of
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError
@@ -1642,6 +1650,7 @@ nodesTab =
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
                 NodeLogTag_BadNodeHead -> text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."
+                NodeLogTag_VersionMismatch -> text "Running old software."
 
           void $ listWithKey external $ \nodeId vDyn -> do
             let
