@@ -976,7 +976,7 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
-    case view managerKey_key managerkeyResp of
+    case view managerKeyCrossCompat_key managerkeyResp of
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
       Just pk -> pure pk
   where

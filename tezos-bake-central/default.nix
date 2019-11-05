@@ -39,16 +39,15 @@ obelisk.project ./. ({ pkgs, ... }@args:
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     # staticFilesImpure = toString ./result-static;
     packages = {
-      tezos-bake-monitor-lib = ../tezos-bake-monitor-lib;
-      tezos-noderpc = ../tezos-noderpc;
-
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
       functor-infix = hackGet dep/functor-infix;
       jsaddle-dom = hackGet dep/jsaddle-dom;
-      micro-ecc = hackGet ../dep/micro-ecc-haskell;
+      micro-ecc = hackGet dep/micro-ecc-haskell;
       named = hackGet dep/named; # TODO: Drop once package set includes 0.3.0.0
       reflex-dom-forms = hackGet dep/reflex-dom-forms;
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
+      tezos-bake-monitor-lib = hackGet dep/tezos-bake-monitor-lib + "/tezos-bake-monitor-lib";
+      tezos-noderpc = hackGet dep/tezos-bake-monitor-lib + "/tezos-noderpc";
     };
 
     overrides = pkgs.lib.composeExtensions rhyolite.haskellOverrides (self: super: with pkgs.haskell.lib; {
