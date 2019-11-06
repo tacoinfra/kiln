@@ -189,6 +189,7 @@ instance HasDefaultNotify (DSum BakerLogTag Id) where
   mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Baker t :=> v
 
 instance HasDefaultNotify (Id ProtocolIndex)
+instance HasDefaultNotify (Id ErrorLogNodeVersionMismatch)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead)
@@ -206,6 +207,8 @@ instance HasDefaultNotify (Id ErrorLogVotingReminder)
 instance HasNotification NotifyTag ProtocolIndex where
   notification _ = NotifyTag_ProtocolIndex
 
+instance HasNotification NotifyTag ErrorLogNodeVersionMismatch where
+  notification _ = mkNodeNotify NodeLogTag_VersionMismatch
 instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
 instance HasNotification NotifyTag ErrorLogNodeInvalidPeerCount where
@@ -1016,6 +1019,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogInsufficientFundsId
             type: primary
             fields: [_errorLogInsufficientFunds_log]
+  - entity: ErrorLogNodeVersionMismatch
+    autoKey: null
+    keys:
+      - name: ErrorLogNodeVersionMismatchId
+        default: true
+    constructors:
+      - name: ErrorLogNodeVersionMismatch
+        uniques:
+          - name: ErrorLogNodeVersionMismatchId
+            type: primary
+            fields: [_errorLogNodeVersionMismatch_log]
   - entity: ErrorLogNodeWrongChain
     autoKey: null
     keys:
@@ -1188,6 +1202,9 @@ instance DefaultKeyId ErrorLogBakerDeactivationRisk where
 instance DefaultKeyId ErrorLogInsufficientFunds where
   toIdData _ (ErrorLogInsufficientFundsIdKey eid) = eid
   fromIdData _ = ErrorLogInsufficientFundsIdKey
+instance DefaultKeyId ErrorLogNodeVersionMismatch where
+  toIdData _ (ErrorLogNodeVersionMismatchIdKey eid) = eid
+  fromIdData _ = ErrorLogNodeVersionMismatchIdKey
 instance DefaultKeyId ErrorLogNodeWrongChain where
   toIdData _ (ErrorLogNodeWrongChainIdKey eid) = eid
   fromIdData _ = ErrorLogNodeWrongChainIdKey
@@ -1243,6 +1260,7 @@ nodeLogAssume = \case
   NodeLogTag_NodeWrongChain -> id
   NodeLogTag_NodeInvalidPeerCount -> id
   NodeLogTag_BadNodeHead -> id
+  NodeLogTag_VersionMismatch -> id
 
 bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
 bakerLogAssume = \case
@@ -1289,6 +1307,7 @@ nodeLogDep = \case
   NodeLogTag_NodeWrongChain -> depNodeAlert ErrorLogNodeWrongChain_nodeField
   NodeLogTag_NodeInvalidPeerCount -> depNodeAlert ErrorLogNodeInvalidPeerCount_nodeField
   NodeLogTag_BadNodeHead -> depNodeAlert ErrorLogBadNodeHead_nodeField
+  NodeLogTag_VersionMismatch -> depNodeAlert ErrorLogNodeVersionMismatch_nodeField
   where
     depNodeAlert f = Related f ForeignKey_AutoId
 
@@ -1325,6 +1344,7 @@ instance ArgDict c NotifyTag where
     , c (Id ErrorLogNodeWrongChain)
     , c (Id ErrorLogNodeInvalidPeerCount)
     , c (Id ErrorLogBadNodeHead)
+    , c (Id ErrorLogNodeVersionMismatch)
     , c (Id ErrorLogBakerMissed)
     , c (Id ErrorLogBakerDeactivated)
     , c (Id ErrorLogBakerDeactivationRisk)
@@ -1369,6 +1389,7 @@ instance ArgDict c NotifyTag where
         NodeLogTag_NodeWrongChain -> Dict
         NodeLogTag_NodeInvalidPeerCount -> Dict
         NodeLogTag_BadNodeHead -> Dict
+        NodeLogTag_VersionMismatch -> Dict
       LogTag_Baker t -> case t of
         BakerLogTag_BakerLedgerDisconnected -> Dict
         BakerLogTag_BakerMissed -> Dict

@@ -545,13 +545,15 @@ globalAlerts
 globalAlerts = do
   mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   mNetworkAlert <- for mchain $ \chain -> do
-    dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (pure $ DMap.singleton LogTag_NetworkUpdate (Const ())) everythingWindow
-    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
-      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
-        guard $ _errorLogNetworkUpdate_namedChain ua == chain
-        return ua
+    nodesDyn <- watchNodeAddresses
+    let
+      external = fmapMaybe (preview _Left) . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
+    dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (pure $ DMap.singleton (LogTag_Node NodeLogTag_VersionMismatch) (Const ())) everythingWindow
+    verMismatchLogs <- holdUniqDyn $ ffor2 external dXs $ \nodes xs -> NEL.nonEmpty $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
+      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_Node NodeLogTag_VersionMismatch :=> Identity ua) ->
+        (,ua) <$> Map.lookup (_errorLogNodeVersionMismatch_node ua) nodes
       _ -> Nothing
-    pure $ fmap networkUpdateAlert <$> mUpgradeLog
+    pure $ fmap (networkUpdateAlert chain) <$> verMismatchLogs
 
   currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
   upstreamVersion <- watchUpstreamVersion
@@ -569,12 +571,11 @@ globalAlerts = do
   dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
     SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
-networkUpdateAlert :: (MonadAppWidget t m) => ErrorLogNetworkUpdate -> m ()
-networkUpdateAlert elua = do
-  let namedChain = _errorLogNetworkUpdate_namedChain elua
+networkUpdateAlert :: (MonadAppWidget t m) => NamedChain -> NonEmpty (NodeExternalData, ErrorLogNodeVersionMismatch) -> m ()
+networkUpdateAlert namedChain elogs = do
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
-    (pure (LogTag_NetworkUpdate :=> (Const $ _errorLogNetworkUpdate_log elua)))
+    (fmap (\(_, elog) -> LogTag_Node NodeLogTag_VersionMismatch :=> (Const $ _errorLogNodeVersionMismatch_log elog)) elogs)
     (icon "icon-alert-badge big blue")
     (text header)
     Nothing
@@ -583,7 +584,13 @@ networkUpdateAlert elua = do
           text "Get the new software here "
           elClass "i" "ui icon small icon-arrow-right" blank
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
-          elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
+          elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
+        el "p" $ el "strong" $ text "Kiln has detected these nodes are not running the latest software:"
+        el "p" $ el "ul" $ do
+          for_ elogs $ \(NodeExternalData address mAlias _ _, _) -> el "li" $ do
+            let host = uriHostPortPath address
+            text $ maybe host (\alias -> alias <> " (" <> host <> ")") mAlias
+        el "p" $ text "Kiln cannot detect which version bakers are running. It is recommended to update your bakers if needed.")
 
 kilnUpdateAlert :: (MonadAppWidget t m) => Version -> m ()
 kilnUpdateAlert v = do
@@ -695,6 +702,7 @@ instance HasAlertMetaData (NodeLogTag a) where
     NodeLogTag_NodeWrongChain -> def
     NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
     NodeLogTag_BadNodeHead -> def
+    NodeLogTag_VersionMismatch -> def { _alertMetaData_isUserResolvable = True, _alertMetaData_severity = AlertSeverity_Info }
 
 instance HasAlertMetaData (DSum BakerLogTag a) where
   getAlertMetaData (logTag :=> _) = getAlertMetaData logTag
@@ -888,7 +896,7 @@ liveErrorsWidget = void $ do
             NodeLogTag_InaccessibleNode ->
               case _nodeSummary_node n of
                 Right _ -> blank
-                Left (NodeExternalData address alias _) -> do
+                Left (NodeExternalData address alias _ _) -> do
                   header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> uriHostPortPath address <> "."
                   nodeLabel n
 
@@ -913,6 +921,13 @@ liveErrorsWidget = void $ do
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
+
+            NodeLogTag_VersionMismatch -> do
+              header "Node is not running the latest software."
+              nodeLabel n
+              el "div" $ text $
+                "This node is running the node software with hash: '" <> _errorLogNodeVersionMismatch_nodeHash log <> "'."
+                  <> "The latest software version has hash: '" <> _errorLogNodeVersionMismatch_latestHash log <> "'."
 
         LogTag_Baker blt -> case blt of
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError
@@ -1653,6 +1668,7 @@ nodesTab =
                 NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
                 NodeLogTag_BadNodeHead -> text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."
+                NodeLogTag_VersionMismatch -> text "Running old software."
 
           void $ listWithKey external $ \nodeId vDyn -> do
             let

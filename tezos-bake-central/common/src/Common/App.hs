@@ -375,6 +375,7 @@ nodeIdForNodeErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
   NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_node
   NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_node
   NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_node
+  NodeLogTag_VersionMismatch -> _errorLogNodeVersionMismatch_node
 
 bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
 bakerErrorViewOnly = \case
@@ -410,6 +411,7 @@ errorLogIdForNodeLogTag = \case
   NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_log
   NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_log
   NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_log
+  NodeLogTag_VersionMismatch -> _errorLogNodeVersionMismatch_log
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView (tag :=> Identity v) = ($ v) $ case tag of

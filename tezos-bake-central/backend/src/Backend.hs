@@ -321,6 +321,7 @@ backendImpl cfg serve = do
               { _nodeExternalData_address = newAddress
               , _nodeExternalData_alias = alias
               , _nodeExternalData_minPeerConnections = Nothing
+              , _nodeExternalData_commitHash = Nothing
               }
             }
 
@@ -447,8 +448,8 @@ backendImpl cfg serve = do
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
         -- Square roots of rationals are the most effective for this because number theory.
 
-      when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
+      when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
+        addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChainOrPaths $ \v -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
