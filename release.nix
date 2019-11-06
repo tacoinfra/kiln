@@ -23,4 +23,4 @@ let
     inherit (root) exe;
   });
 
-in perPlatform.x86_64-linux
+in perPlatform
