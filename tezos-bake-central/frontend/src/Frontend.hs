@@ -575,7 +575,7 @@ networkUpdateAlert :: (MonadAppWidget t m) => NamedChain -> NonEmpty (NodeExtern
 networkUpdateAlert namedChain elogs = do
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
-    (fmap (\(_, elog) -> (LogTag_Node NodeLogTag_VersionMismatch :=> (Const $ _errorLogNodeVersionMismatch_log elog))) elogs)
+    (fmap (\(_, elog) -> LogTag_Node NodeLogTag_VersionMismatch :=> (Const $ _errorLogNodeVersionMismatch_log elog)) elogs)
     (icon "icon-alert-badge big blue")
     (text header)
     Nothing
@@ -587,7 +587,7 @@ networkUpdateAlert namedChain elogs = do
           elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
         el "p" $ el "strong" $ text "Kiln has detected these nodes are not running the latest software:"
         el "p" $ el "ul" $ do
-          for_ elogs $ \((NodeExternalData address mAlias _ _), _) -> el "li" $ do
+          for_ elogs $ \(NodeExternalData address mAlias _ _, _) -> el "li" $ do
             let host = uriHostPortPath address
             text $ maybe host (\alias -> alias <> " (" <> host <> ")") mAlias
         el "p" $ text "Kiln cannot detect which version bakers are running. It is recommended to update your bakers if needed.")

@@ -149,7 +149,7 @@ fetchNodeVersions httpMgr db = do
 
   ifor_ extNodes $ \nodeId nodeData -> do
     mHash :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
-      nodeRPC $ plainNodeRequest Http.methodGet $ "/monitor/commit_hash"
+      nodeRPC $ plainNodeRequest Http.methodGet "/monitor/commit_hash"
     case mHash of
       Left e -> $(logWarn) [i|fetchNodeVersions: could not fetch node commit hash: ${e}|]
       Right hash' -> runDb (Identity db) $ update
