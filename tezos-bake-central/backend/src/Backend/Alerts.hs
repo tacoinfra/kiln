@@ -385,6 +385,8 @@ reportNodeVersionMismatchError
   => Id Node -> Text -> Text -> m ()
 reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDeleted nodeId) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
+  -- Not filtering on "stopped", consider previously reported/dismissed alerts also
+  -- and dont report again if already reported for the given hash mismatch
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeVersionMismatch) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
       FROM "ErrorLog" el
@@ -394,14 +396,13 @@ reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDelete
        AND t."nodeHash" = ?nodeHash
        AND t.node = ?nodeId
        AND NOT n."data#deleted"
-       AND el.stopped IS NULL
        AND el."chainId" = ?chainId
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
   case existingLog of
     Nothing -> void $ insertErrorLog $ \logId -> ErrorLogNodeVersionMismatch logId nodeId latestHash nodeHash
-    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+    Just _ -> pure ()
 
 clearNodeVersionMismatchError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m
