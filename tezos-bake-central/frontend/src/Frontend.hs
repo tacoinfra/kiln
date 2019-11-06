@@ -534,13 +534,11 @@ globalAlerts
 globalAlerts = do
   mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   mNetworkAlert <- for mchain $ \chain -> do
-    dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (pure $ DMap.singleton LogTag_NetworkUpdate (Const ())) everythingWindow
-    mUpgradeLog <- holdUniqDyn $ ffor dXs $ \xs -> listToMaybe $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
-      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_NetworkUpdate :=> Identity ua) -> do
-        guard $ _errorLogNetworkUpdate_namedChain ua == chain
-        return ua
+    dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (pure $ DMap.singleton (LogTag_Node NodeLogTag_VersionMismatch) (Const ())) everythingWindow
+    verMismatchLogs <- holdUniqDyn $ ffor dXs $ \xs -> NEL.nonEmpty $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
+      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_Node NodeLogTag_VersionMismatch :=> Identity ua) -> Just ua
       _ -> Nothing
-    pure $ fmap networkUpdateAlert <$> mUpgradeLog
+    pure $ fmap (networkUpdateAlert chain) <$> verMismatchLogs
 
   currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
   upstreamVersion <- watchUpstreamVersion
@@ -558,12 +556,11 @@ globalAlerts = do
   dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
     SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
-networkUpdateAlert :: (MonadAppWidget t m) => ErrorLogNetworkUpdate -> m ()
-networkUpdateAlert elua = do
-  let namedChain = _errorLogNetworkUpdate_namedChain elua
+networkUpdateAlert :: (MonadAppWidget t m) => NamedChain -> NonEmpty ErrorLogNodeVersionMismatch -> m ()
+networkUpdateAlert namedChain elogs = do
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
-    (pure (LogTag_NetworkUpdate :=> (Const $ _errorLogNetworkUpdate_log elua)))
+    (fmap (\elog -> (LogTag_Node NodeLogTag_VersionMismatch :=> (Const $ _errorLogNodeVersionMismatch_log elog))) elogs)
     (icon "icon-alert-badge big blue")
     (text header)
     Nothing
