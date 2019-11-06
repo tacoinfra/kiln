@@ -400,6 +400,18 @@ reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDelete
      ORDER BY el."lastSeen" DESC, el.started DESC
      LIMIT 1
     |]
+  -- If we have unresolved alerts for a different/older hash, then auto-resolve them
+  oldLogs :: [Id ErrorLogNodeVersionMismatch] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNodeVersionMismatch" t
+     WHERE t."latestHash" != ?latestHash
+       AND t."nodeHash" = ?nodeHash
+       AND t.log = el.id
+       AND t.node = ?nodeId
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
+    RETURNING t.log |]
+  for_ oldLogs notifyDefault
   case existingLog of
     Nothing -> void $ insertErrorLog $ \logId -> ErrorLogNodeVersionMismatch logId nodeId latestHash nodeHash
     Just _ -> pure ()
