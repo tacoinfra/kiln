@@ -67,6 +67,7 @@ import System.Environment (getArgs, getProgName, withArgs)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
+import System.IO.Temp (writeSystemTempFile)
 import Text.URI (URI)
 import qualified Text.URI as URI
 
@@ -173,9 +174,13 @@ backendImpl cfg serve = do
     (pure $ _opts_upgradeBranch cfg)
     (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
-  !(pgConnString :: Maybe Text) <- liftA2 (<|>)
-    (pure $ _opts_pgConnectionString cfg)
-    (getConfigFromFile Just $ configPath Config.db)
+  !(pgConnStringFile :: Maybe FilePath) <- do
+    let fileName = configPath Config.pgConnectionString
+    inFile <- getConfigFromFile Just fileName
+    case (inFile, _opts_pgConnectionString cfg) of
+      (_, Just str) -> Just <$> writeSystemTempFile "pg-connection" (T.unpack str)
+      (Just _, Nothing) -> pure $ Just fileName
+      _ -> pure Nothing
 
   !(networkGitLabProjectId :: Text) <- fmap (fromMaybe Config.networkGitLabProjectIdDefault) $ liftA2 (<|>)
     (pure $ _opts_networkGitLabProjectId cfg)
@@ -237,7 +242,7 @@ backendImpl cfg serve = do
 
   publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
 
-  let !dbSpec = maybe Config.db T.unpack pgConnString
+  let !dbSpec = fromMaybe Config.db pgConnStringFile
 
   httpMgr <- Http.newManager Https.tlsManagerSettings
 
@@ -560,7 +565,7 @@ instance Monoid Opts where
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
   [ mkReqArg Config.pgConnectionString "CONNSTRING" (set opts_pgConnectionString . Just) $
-      "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
+      "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> configPath Config.pgConnectionString <> "' file or create a database in '" <> Config.db <> "' if empty."
 
   , mkReqArg Config.route "URL" (set opts_route . Just . Config.parseRootURIUnsafe) $
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
@@ -576,7 +581,7 @@ optsArgDescr =
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
 
   , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseChainOrError) $
-      "Name of a network (mainnet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
+      "Name of a network (mainnet, babylonnet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
 
   , mkReqArg Config.serveNodeCache "BOOL" (set opts_serveNodeCache . Just . Config.parseBool)

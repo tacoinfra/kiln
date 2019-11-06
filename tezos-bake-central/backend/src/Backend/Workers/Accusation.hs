@@ -39,7 +39,7 @@ accusationWorker delay nds appConfig = runLoggingEnv (_nodeDataSource_logger nds
   workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     $(logDebug) "Check accusations cycle."
 
-    either $(logErrorSH) pure <=< flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+    either ($(logErrorSH) . cacheErrorLogMessage "Accusation Worker") pure <=< flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
       alertData <- [queryQ|
         select a.hash, a."blockHash", a."isBake", a.baker, a."occurredLevel", a.level
         from "Baker" b join "Accusation" a on b."publicKeyHash" = a.baker

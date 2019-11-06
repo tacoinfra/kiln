@@ -355,7 +355,7 @@ appSideFooter =
                     elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
                   _ -> pure ()
 
-        hrefLink "https://gitlab.com/obsidian.systems/tezos-bake-monitor" $
+        hrefLink "https://gitlab.com/obsidian.systems/kiln" $
           elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") blank
 
 appHeader
@@ -382,7 +382,11 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       divClass "item" $ divClass "withRightIcon" $ do
         divClass "content" $ do
           divClass "header" $ text "Network"
-          divClass "description" $ text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+          divClass "description" $
+            tooltipped TooltipPos_BottomLeft (protocolTooltip latestHead) $
+              text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
+              
+
         divClass "iconDiv" $
           dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
             SemUi.icon "icon-disconnected"
@@ -437,6 +441,13 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" ensureHealthyNodes
+        
+    protocolTooltip dmLatestHead = divClass "protocol-tooltip" $ do
+      divClass "tooltip-title" $ text "Current Protocol"
+      let dProtoText = maybe "Unknown" (^.protocolHash.to toBase58Text) <$> dmLatestHead
+      divClass "tooltip-description" $ el "p" $ do
+        whenJustDyn dmLatestHead $ \_ -> copyButton (current dProtoText)
+        dynText dProtoText
 
 headerBell :: forall t m . MonadAppWidget t m => m (Event t ())
 headerBell = do
@@ -588,7 +599,7 @@ kilnUpdateAlert v = do
     body = el "div" $ do
       el "p" $ do
         text "This may be a crucial update that provides functionality to support upcoming Tezos protocol changes. Please check the release notes for details on the importance of this update: "
-        let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/releases"
+        let url = "https://gitlab.com/obsidian.systems/kiln/-/releases"
         elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
       el "p" $ do
         resolve <- divClass "buttons" $ uiButtonM "primary" $ do
@@ -1501,7 +1512,7 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
   text "This Node can only be turned off via "
-  let url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/develop/docs/config.md#enable-obsidian-node-bool"
+  let url = "https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
 publicNodeOptions :: MonadAppWidget t m => m ()

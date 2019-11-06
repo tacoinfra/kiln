@@ -1,6 +1,6 @@
 # Chain Reset Procedure 
 
-Occassionally alphanet and zeronet are reset, starting over from the genesis block.
+Occassionally babylonnet and zeronet are reset, starting over from the genesis block.
 When that happens, it is important to clear all the data of the previous chain. 
 
 ## Tezos Data

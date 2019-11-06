@@ -9,12 +9,12 @@ let
   tezos = (import dep/tezos-baking-platform {}).tezos;
 
   kilnApiV1 = import (builtins.fetchTarball {
-    url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/archive/0.5.3/tezos-bake-monitor-0.5.3.tar.gz";
+    url = "https://gitlab.com/obsidian.systems/kiln/-/archive/0.5.3/kiln-0.5.3.tar.gz";
     sha256 = "0g1fijywb7afqy056v9rfl293fa9hzrz1q1p949blzcxv3iqp0jn";
   }) { system = "x86_64-linux"; };
 
   kilnApiV2 = import (builtins.fetchTarball {
-    url = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/-/archive/0.6.2/tezos-bake-monitor-0.6.2.tar.gz";
+    url = "https://gitlab.com/obsidian.systems/kiln/-/archive/0.6.2/kiln-0.6.2.tar.gz";
     sha256 = "0kgbbfs75ql9vd514nsspapgr3l80vwwwfyslaixj1cfmlzahdxr";
   }) { system = "x86_64-linux"; };
 
@@ -37,26 +37,13 @@ let
         }
       ];
     };
-    alphanet = {
-      network = "alphanet";
+    babylonnet = {
+      network = "babylonnet";
       p2pPort = 19732;
       rpcPort = 18732;
-      tzKit = tezos.alphanet.kit;
+      tzKit = tezos.babylonnet.kit;
       histMode = "archive";
       kilns = [
-        {
-          app = kilnApiV1;
-          apiVersion = 1;
-          apiPort = 8001;
-        }
-        {
-          app = kilnApiV2;
-          apiVersion = 2;
-          apiPort = 8002;
-          extraArgs = [
-            "--enable-obsidian-node=false"
-          ];
-        }
         {
           inherit app;
           apiVersion = 3;
@@ -291,9 +278,10 @@ let
 
   server = args@{ hostName, adminEmail, routeHost, enableHttps, version, ... }:
     let
+      # Babylonnet is deployed to alphanet-tezosapi.obsidian.systems for now until we get a new domain
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
-        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "alphanet" else
+        if pkgs.lib.strings.hasPrefix "alphanet" hostName then "babylonnet" else
         "mainnet";
       networkConfig = networkConfigOptions.${network};
       nixos = import (pkgs.path + /nixos);

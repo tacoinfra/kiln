@@ -1,6 +1,6 @@
 # Running a Pre-Built Monitor (Docker Image)
 
-Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/tezos-bake-monitor/). These images allow anyone to run the software without building it themselves. It has been tested on Linux and macOS.
+Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/kiln/). These images allow anyone to run the software without building it themselves. It has been tested on Linux and macOS.
 
 To run the Docker image you need to have [Docker](https://www.docker.com/get-started) installed.
 
@@ -9,34 +9,34 @@ Before you can download and run the monitor, you'll need a [PostgreSQL](https://
 The easiest way to get a database running is with Docker. The following command will download the PostgreSQL Docker image (if it's not already downloaded) and start a database instance in the background on port `5432`. The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator.
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --name tezos-monitor-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+DOCKER_CONTENT_TRUST=1 docker run --name kiln-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
 ```
 
 (For anything serious you'll want to pick a better password than `mysecretpassword`.)
 
 For more advanced users, we recommend setting up a Docker network, or better yet, using [Docker Compose](https://docs.docker.com/compose/).
 
-You can stop this database by running `docker container stop tezos-monitor-postgres`. You can then remove it with `docker container rm tezos-monitor-postgres` but be aware your database state will be lost.
+You can stop this database by running `docker container stop kiln-postgres`. You can then remove it with `docker container rm kiln-postgres` but be aware your database state will be lost.
 
 Now you can download and run the monitor like this:
 
 On Linux and macOS (Docker Toolbox):
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.7.2 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/kiln:0.7.2 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 On macOS (Docker Desktop for Mac):
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/tezos-bake-monitor:0.7.2 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/kiln:0.7.2 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
 
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
-Check out `docker run --rm obsidiansystems/tezos-bake-monitor:0.7.2 --help` for more command-line options. For example, you can run the monitor on alphanet by passing `--network=alphanet`.
+Check out `docker run --rm obsidiansystems/kiln:0.7.2 --help` for more command-line options. For example, you can run the monitor on babylonnet by passing `--network=babylonnet`.
 
 ## Updating an older Docker container
 
@@ -49,15 +49,15 @@ Ideally you should make a backup of your database before upgrading, just in case
 If you started your PostgreSQL database in Docker (as described above) you can use `docker commit` to save a copy of you current database before the upgrade:
 
 ```shell
-docker commit tezos-monitor-postgres tezos-monitor-postgres:backup1
+docker commit kiln-postgres kiln-postgres:backup1
 ```
 
-Use `docker image ls` to see your backup image listed. `docker image rm tezos-monitor-postgres:backup1` will delete it.
+Use `docker image ls` to see your backup image listed. `docker image rm kiln-postgres:backup1` will delete it.
 
 Alternatively, if you have a compatible version of `pg_dump` installed, you can make a more lightweight backup by connecting to your database:
 
 ```shell
-pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword" > tezos-monitor-postgres-backup1.sql
+pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword" > kiln-postgres-backup1.sql
 ```
 
 ### Running the newer version
@@ -65,7 +65,7 @@ pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres passw
 Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/tezos-bake-monitor:0.7.2 ...
+DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/kiln:0.7.2 ...
 ```
 
 you can replace `0.7.2` with another available version.
