@@ -80,6 +80,8 @@ notifyChainUpgrade namedChain gitLabProjectId httpMgr db appConfig =
     Left err -> $(logError) err -- TODO use proper log message
     Right commitId -> runDb (Identity db) $ do
       mLastCommit <- getLatestNamedChainUpgradeLog namedChain
+      -- Although we are reporting ErrorLogNetworkUpdate, it is currently not used in frontend
+      -- the only effect it has is to send an email
       when (preview (_Just . _3) mLastCommit /= Just commitId) $ reportNew mLastCommit commitId
       flip runReaderT appConfig $ reportNodeVersionMismatch commitId
   where
