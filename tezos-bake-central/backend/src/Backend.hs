@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -54,7 +55,9 @@ import Rhyolite.Backend.Logging (
     LoggingConfig (..),
     LoggingEnv (..),
     RhyoliteLogAppender(..),
+#if defined(SUPPORT_SYSTEMD_JOURNAL)
     RhyoliteLogAppenderJournald(..),
+#endif
     RhyoliteLogLevel (..),
     runLoggingEnv,
     withLoggingMinLevel,
@@ -127,6 +130,7 @@ backendImpl cfg serve = do
     loggingConfigForDistro = case distributionMethod of
       Distribution_FromSource -> defaultLoggingConfig
       Distribution_Docker -> defaultLoggingConfig
+#if defined(SUPPORT_SYSTEMD_JOURNAL)
       Distribution_LinuxPackage -> map (\(t, p, l) -> LoggingConfig
         { _loggingConfig_logger = RhyoliteLogAppender_Journald (RhyoliteLogAppenderJournald t)
         , _loggingConfig_filters = Just $ Map.fromList [(p, l)]
@@ -137,6 +141,9 @@ backendImpl cfg serve = do
         , ("kiln-baker", "kiln-baker", RhyoliteLogLevel_Info)
         , ("kiln-endorser", "kiln-endorser", RhyoliteLogLevel_Info)
         ]
+#else
+      Distribution_LinuxPackage -> defaultLoggingConfig
+#endif
 
     defaultLoggingConfig = [LoggingConfig
       { _loggingConfig_logger = def @ RhyoliteLogAppender
