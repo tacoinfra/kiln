@@ -534,9 +534,13 @@ globalAlerts
 globalAlerts = do
   mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   mNetworkAlert <- for mchain $ \chain -> do
+    nodesDyn <- watchNodeAddresses
+    let
+      external = fmapMaybe (preview _Left) . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
     dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (pure $ DMap.singleton (LogTag_Node NodeLogTag_VersionMismatch) (Const ())) everythingWindow
-    verMismatchLogs <- holdUniqDyn $ ffor dXs $ \xs -> NEL.nonEmpty $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
-      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_Node NodeLogTag_VersionMismatch :=> Identity ua) -> Just ua
+    verMismatchLogs <- holdUniqDyn $ ffor2 external dXs $ \nodes xs -> NEL.nonEmpty $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
+      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_Node NodeLogTag_VersionMismatch :=> Identity ua) ->
+        (,ua) <$> Map.lookup (_errorLogNodeVersionMismatch_node ua) nodes
       _ -> Nothing
     pure $ fmap (networkUpdateAlert chain) <$> verMismatchLogs
 
@@ -556,11 +560,11 @@ globalAlerts = do
   dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
     SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
-networkUpdateAlert :: (MonadAppWidget t m) => NamedChain -> NonEmpty ErrorLogNodeVersionMismatch -> m ()
+networkUpdateAlert :: (MonadAppWidget t m) => NamedChain -> NonEmpty (NodeExternalData, ErrorLogNodeVersionMismatch) -> m ()
 networkUpdateAlert namedChain elogs = do
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
-    (fmap (\elog -> (LogTag_Node NodeLogTag_VersionMismatch :=> (Const $ _errorLogNodeVersionMismatch_log elog))) elogs)
+    (fmap (\(_, elog) -> (LogTag_Node NodeLogTag_VersionMismatch :=> (Const $ _errorLogNodeVersionMismatch_log elog))) elogs)
     (icon "icon-alert-badge big blue")
     (text header)
     Nothing
@@ -569,7 +573,13 @@ networkUpdateAlert namedChain elogs = do
           text "Get the new software here "
           elClass "i" "ui icon small icon-arrow-right" blank
           let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
-          elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url)
+          elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
+        el "p" $ el "strong" $ text "Kiln has detected these nodes are not running the latest software:"
+        el "p" $ el "ul" $ do
+          for_ elogs $ \((NodeExternalData address mAlias _ _), _) -> el "li" $ do
+            let host = uriHostPortPath address
+            text $ maybe host (\alias -> alias <> " (" <> host <> ")") mAlias
+        el "p" $ text "Kiln cannot detect which version bakers are running. It is recommended to update your bakers if needed.")
 
 kilnUpdateAlert :: (MonadAppWidget t m) => Version -> m ()
 kilnUpdateAlert v = do
