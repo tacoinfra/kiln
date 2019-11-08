@@ -894,6 +894,7 @@ deriving instance Eq (LogTag a)
 deriving instance Ord (LogTag a)
 deriving instance Show (LogTag a)
 
+-- Review CollectiveNodesFailure code when adding a new alert
 data NodeLogTag a where
   NodeLogTag_InaccessibleNode :: NodeLogTag ErrorLogInaccessibleNode
   NodeLogTag_NodeWrongChain :: NodeLogTag ErrorLogNodeWrongChain
