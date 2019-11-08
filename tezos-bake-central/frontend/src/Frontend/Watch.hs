@@ -16,6 +16,7 @@ module Frontend.Watch where
 import qualified Data.List.NonEmpty as NEL
 import Data.Dependent.Map (DMap, DSum(..), Some (..))
 import qualified Data.Dependent.Map as DMap
+import Data.List ((\\))
 import Data.Map (Map)
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down(..))
@@ -230,7 +231,7 @@ nodeSummaryStateIfInternal :: NodeSummary -> Maybe ProcessState
 nodeSummaryStateIfInternal = preview $ nodeSummary_node . _Right . processData_state
 
 watchCollectiveNodesStatus
-  :: MonadAppWidget t m
+  :: forall t m . MonadAppWidget t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
@@ -241,7 +242,18 @@ watchCollectiveNodesStatus alertWindow = do
         <$> ffilter (maybe True (== ProcessState_Running)
                      . nodeSummaryStateIfInternal)
         <$> dNodes
-  ebn <- watchErrorsByNode alertWindow
+  let nodeTags = DMap.fromList $ map (\(Some t) -> LogTag_Node t :=> Const ()) $ universe \\
+                   [ Some NodeLogTag_NodeInvalidPeerCount
+                   , Some NodeLogTag_VersionMismatch
+                   ]
+  dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (constDyn nodeTags) alertWindow
+  let ebn :: (Dynamic t (MonoidalMap (Id Node) (NonEmpty ErrorLog)))
+      ebn = ffor dXs $ \xs -> MMap.fromListWith (<>)
+              [ (k, pure l)
+              | (l@ErrorLog{_errorLog_stopped = Nothing}, t) <- MMap.elems xs
+              , Just t' <- [nodeErrorViewOnly t]
+              , let k = nodeIdForNodeErrorLogView t'
+              ]
   holdUniqDyn $ ffor3 dUsingOsPublicNode dmNids ebn $ \case
     Just True -> const $ const $ Right ()
     _ -> \case
@@ -253,7 +265,7 @@ watchCollectiveNodesStatus alertWindow = do
             Min $
             fmap Down $
             -- if there are errors, we went "ill" when the first one started
-            minimumMay $ _errorLog_started . fst
+            minimumMay $ _errorLog_started
               <$> maybe [] toList (MMap.lookup nid nodeErrors)
         of
           Nothing -> Right ()
