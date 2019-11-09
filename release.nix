@@ -23,4 +23,11 @@ let
     inherit (root) exe;
   });
 
-in perPlatform.x86_64-linux
+# Mash these into a single level for ci. Without this, just returning perPlatform
+# was actually building nothing because none of the attr values are derivations.
+# We  need a flat set of derivations to properly build everything in CI.
+# I'm hoping that there is a nicer way to collect this together because this is kinda manky. Lol.
+in lib.fold
+  (system: o: o // lib.mapAttrs' (n: v: lib.nameValuePair "${system}_${n}" v) (lib.getAttr system perPlatform))
+  {}
+  (lib.attrNames perPlatform)

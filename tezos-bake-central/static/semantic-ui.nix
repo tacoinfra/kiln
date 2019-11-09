@@ -1,7 +1,9 @@
-{pkgs ? (import ../.obelisk/impl {}).reflex-platform.nixpkgs} :
+{ pkgs ? (import ../.obelisk/impl {}).reflex-platform.nixpkgs
+, system ? builtins.currentSystem
+} :
 let
   semantic-ui = ./semantic-ui;
-  old-pkgs = import ../dep/old-nixpkgs {};
+  old-pkgs = import ../dep/old-nixpkgs { inherit system; };
   semantic-ui-env = import ./semantic-ui-env {pkgs = old-pkgs;};
 in {
   bakemonitor-semantic-ui = pkgs.runCommand "bakemonitor-semantic-ui" {} ''
