@@ -82,6 +82,7 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "Parameters")
   >=> migrateErrorLogBakerMissedTimestamp
   >=> migrateProtocolIndexKey
+  >=> migrateSnapshotMetaControl
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -494,6 +495,19 @@ migrateProtocolIndexKey ta = do
       -> do
           void [traceExecuteQ|
               ALTER TABLE "ProtocolIndex" DROP CONSTRAINT "ProtocolIndexKey";
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateSnapshotMetaControl :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateSnapshotMetaControl ta = do
+  let table = (Nothing, "SnapshotMeta")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | not . any ((== "control") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              TRUNCATE TABLE "SnapshotMeta";
             |]
           getTableAnalysis
     _ -> pure ta
