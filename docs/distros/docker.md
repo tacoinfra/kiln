@@ -23,13 +23,13 @@ Now you can download and run the monitor like this:
 On Linux and macOS (Docker Toolbox):
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/kiln:0.7.3 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run  --tmpfs /tmp --network host --rm obsidiansystems/kiln:0.7.3 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 On macOS (Docker Desktop for Mac):
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run -p 8000:8000 obsidiansystems/kiln:0.7.3 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
+DOCKER_CONTENT_TRUST=1 docker run  --tmpfs /tmp -p 8000:8000 obsidiansystems/kiln:0.7.3 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
@@ -65,7 +65,7 @@ pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres passw
 Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --network host --rm obsidiansystems/kiln:0.7.3 ...
+DOCKER_CONTENT_TRUST=1 docker run  --tmpfs /tmp --network host --rm obsidiansystems/kiln:0.7.3 ...
 ```
 
 you can replace `0.7.3` with another available version.
