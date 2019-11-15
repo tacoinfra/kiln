@@ -18,7 +18,7 @@ preceding periods, if we are in a period after proposal).
   5. Enter `q` in the interactive shell from the previous step. The node should be updated in kiln and show the first block.
   6. Enter `q` again. The top bar should be updated with the block and amendment period data. Verify that we are in the proposal period.
   7. After some time, flextesa will run up to block 41. You should see the popup updated as the proposal period resets, ending on the last proposal period in cycle 5-6.
-  8. Enter `q` again. Verify that three proposals have been added to the popup.
+  8. Enter `q` again. Verify that two proposals have been added to the popup.
   9. Enter `q` again, flextesa will quickly cycle through exploration and testing periods. Ensure that the popup stays up to date throughout and you can go back to previous periods and the data is still there.
   10. Enter `q` twice, verify we are in the promotion period and the popup is populated with data.
   11. Enter `q` again, flextesa will run through the remainder of the promotion period.
