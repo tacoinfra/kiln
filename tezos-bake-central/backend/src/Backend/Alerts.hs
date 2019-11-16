@@ -48,6 +48,7 @@ import Common.Alerts (
     badNodeHeadMessage,
     bakerDeactivatedDescriptions,
     bakerDeactivationRiskDescriptions,
+    bakerLedgerDisconnectedDescriptions,
     bakerVotingReminderDescriptions,
     plaintextErrorDescription,
   )
@@ -195,7 +196,7 @@ clearBakerDeactivationRisk pkh newFit = do
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
 reportBakerLedgerDisconnected
-  :: ( Monad m, MonadIO m, MonadReader a m
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
   => PublicKeyHash -> m ()
@@ -215,11 +216,12 @@ reportBakerLedgerDisconnected pkh = do
   case existingLog of
     Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogBakerLedgerDisconnected_logField []
     Nothing -> do
-      void $ insertErrorLog $ \logId ->
+      (logId, log) <- insertErrorLog $ \logId ->
         ErrorLogBakerLedgerDisconnected logId (Id pkh)
+      queueAlert (Just logId) $ unresolvedBakerAlert $ bakerLedgerDisconnectedDescriptions log
 
 clearBakerLedgerDisconnected
-  :: ( Monad m, MonadIO m, MonadReader a m
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
      )
   => PublicKeyHash -> m ()
@@ -234,6 +236,10 @@ clearBakerLedgerDisconnected pkh = do
       AND el."chainId" = ?chainId
     RETURNING t.log |]
   for_ lids notifyDefault
+  baker' <- getBaker pkh
+  log' <- for (listToMaybe lids) $ getBy . fromId
+  for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
+    queueAlert Nothing $ resolvedBakerAlert (bakerLedgerDisconnectedDescriptions log) baker
 
 reportInsufficientFunds
   :: ( Monad m, MonadIO m, MonadReader a m
