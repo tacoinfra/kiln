@@ -144,12 +144,12 @@ bakerLedgerDisconnectedDescriptions _elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Ledger Device is disconnected"
   , _bakerErrorDescriptions_tile = "Ledger Device is disconnected"
   , _bakerErrorDescriptions_notification = "The Ledger Device for this baker is disconected."
-  , _bakerErrorDescriptions_problem = ["The Ledger Device for this baker is disconnected, and so it cannot process any baking or signing activity."]
+  , _bakerErrorDescriptions_problem = ["The Ledger Device that is used by this baker is not connected and will cause this baker to miss any baking or endorsing rights that occur while the device is disconnected."]
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Make sure the Ledger Device is connected to your computer and has the Tezos Baking app open."
   , _bakerErrorDescriptions_resolved = const
-     ( "Resolved: The Ledger Device has been re-connected."
-     , "The Ledger Device has been re-connected."
+     ( "The Ledger Device that is used by this baker has been re-connected."
+     , ""
      )
   }
 
