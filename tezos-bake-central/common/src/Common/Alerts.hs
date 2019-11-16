@@ -142,7 +142,7 @@ data ErrorLogWidgets m = ErrorLogWidgets
 bakerLedgerDisconnectedDescriptions :: ErrorLogBakerLedgerDisconnected -> BakerErrorDescriptions
 bakerLedgerDisconnectedDescriptions _elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Ledger Device is disconnected"
-  , _bakerErrorDescriptions_tile = "Ledger Device disconnected"
+  , _bakerErrorDescriptions_tile = "Ledger Device is disconnected"
   , _bakerErrorDescriptions_notification = "The Ledger Device for this baker is disconected."
   , _bakerErrorDescriptions_problem = ["The Ledger Device for this baker is disconnected, and so it cannot process any baking or signing activity."]
   , _bakerErrorDescriptions_warning = Nothing
