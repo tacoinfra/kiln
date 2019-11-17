@@ -63,6 +63,7 @@ nodePaths :: NamedChain -> FilePath
 nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 nodePaths NamedChain_Babylonnet = $(staticWhich "babylonnet-tezos-node")
+nodePaths NamedChain_Carthagenet = $(staticWhich "carthagenet-tezos-node")
 
 bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)
@@ -96,6 +97,10 @@ tezosBinaryPaths _ =
     [ ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
       , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
       , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
+      )
+    , ( "PtCarthavAMoXqbjBPVgDCRd5LgT7qqKWUPXnYii3xCaHRBMfHH"
+      , $(staticWhich "carthagenet-tezos-baker-006-PtCartha")
+      , $(staticWhich "carthagenet-tezos-endorser-006-PtCartha")
       )
     ]
 

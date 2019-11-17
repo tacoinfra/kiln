@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE PatternGuards #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -74,7 +75,7 @@ import System.IO.Temp (writeSystemTempFile)
 import Text.URI (URI)
 import qualified Text.URI as URI
 
-import Tezos.Common.Chain (mainnetChainId)
+import Tezos.Common.Chain (identifyChain)
 import Tezos.History (emptyCache)
 import Tezos.NodeRPC hiding (DataSource)
 import Tezos.Common.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
@@ -119,7 +120,8 @@ askLogger = LoggingT $ return . LoggingEnv
 
 resolveKnownChains :: Either NamedChain ChainId -> Either NamedChain ChainId
 resolveKnownChains = \case
-  Right chainId | chainId == mainnetChainId -> Left NamedChain_Mainnet
+  Right chainId
+    | Just chain <- identifyChain chainId -> Left chain
   x -> x
 
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
@@ -224,12 +226,12 @@ backendImpl cfg serve = do
   !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_blockscaleApiUri cfg
     , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
-    , pure $ getPublicNodeUri PublicNode_Blockscale <$> maybeNamedChain
+    , pure $ getPublicNodeUri PublicNode_Blockscale =<< maybeNamedChain
     ]
   !(obsidianApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_obsidianApiUri cfg
     , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.obsidianApiUri
-    , pure $ getPublicNodeUri PublicNode_Obsidian <$> maybeNamedChain
+    , pure $ getPublicNodeUri PublicNode_Obsidian =<< maybeNamedChain
     ]
 
   !(nodes :: Maybe (Map.Map URI (Maybe Text))) <- liftA2 (<|>)
@@ -255,15 +257,18 @@ backendImpl cfg serve = do
 
   chainId <- runHttpT httpMgr $ case chain of
     Right chainId -> pure chainId
-    Left NamedChain_Mainnet -> pure mainnetChainId
-
-    -- We're doing some RPC here, which needs logging, but we haven't really
-    -- started yet so where it does log, we log to stderr instead of normally.
-    -- if there's issues, we exit immediately anyhow.
-    Left chainName -> runStderrLoggingT $ runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head $ getPublicNodeUri PublicNode_Blockscale chainName))) >>= \case
-      Left (e :: RpcError) -> throwString $
-        "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
-      Right chainId -> pure chainId
+    Left chainName -> case getNamedChainId chainName of
+      Just chainId -> pure chainId
+      -- We're doing some RPC here, which needs logging, but we haven't really
+      -- started yet so where it does log, we log to stderr instead of normally.
+      -- if there's issues, we exit immediately anyhow.
+      Nothing -> case getPublicNodeUri PublicNode_Blockscale chainName of
+        Nothing -> throwString $
+            "Unable to fetch chainId from foundation node for chain " <> T.unpack (showChain chain)
+        Just uris -> runStderrLoggingT $ runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head uris))) >>= \case
+          Left (e :: RpcError) -> throwString $
+            "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
+          Right chainId -> pure chainId
 
   withDb dbSpec $ \db -> withLoggingMinLevel Nothing loggingConfig $ do
     logger <- askLogger
@@ -588,7 +593,7 @@ optsArgDescr =
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
 
   , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseChainOrError) $
-      "Name of a network (mainnet, babylonnet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
+      "Name of a network (mainnet, babylonnet, carthagenet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
 
   , mkReqArg Config.serveNodeCache "BOOL" (set opts_serveNodeCache . Just . Config.parseBool)
