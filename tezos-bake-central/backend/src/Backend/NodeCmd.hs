@@ -89,15 +89,10 @@ tezosBinaryPaths NamedChain_Babylonnet  =
   ) :|
     []
 tezosBinaryPaths _ =
-  ( "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
-  , $(staticWhich "mainnet-tezos-baker-004-Pt24m4xi")
-  , $(staticWhich "mainnet-tezos-endorser-004-Pt24m4xi")
-  ) :|
-    [ ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
-      , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
-      , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
-      )
-    ]
+  ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+  , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
+  , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
+  ) :| []
 
 -- TODO: use postgres for "process-id's"
 
