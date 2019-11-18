@@ -90,15 +90,11 @@ tezosBinaryPaths NamedChain_Babylonnet  =
   ) :|
     []
 tezosBinaryPaths _ =
-  ( "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
-  , $(staticWhich "mainnet-tezos-baker-004-Pt24m4xi")
-  , $(staticWhich "mainnet-tezos-endorser-004-Pt24m4xi")
+  ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+  , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
+  , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
   ) :|
-    [ ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
-      , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
-      , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
-      )
-    , ( "PtCarthavAMoXqbjBPVgDCRd5LgT7qqKWUPXnYii3xCaHRBMfHH"
+    [ ( "PtCarthavAMoXqbjBPVgDCRd5LgT7qqKWUPXnYii3xCaHRBMfHH"
       , $(staticWhich "carthagenet-tezos-baker-006-PtCartha")
       , $(staticWhich "carthagenet-tezos-endorser-006-PtCartha")
       )
