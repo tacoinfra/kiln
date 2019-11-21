@@ -42,6 +42,10 @@
     * The core logic of Tezos block data and node RPC communications, written in Haskell, has been moved to a separate project (https://gitlab.com/obsidian.systems/tezos-bake-monitor-lib)
       This will allow anyone to easily make use of this code to create other projects for Tezos.
 
+### Known Issues
+  * The copy button on the 'Network' -> 'Current Protocol' pop up might fail to copy the protocol hash to the clipboard.
+  * On cancelling snapshot import the UI might display "Snapshot import failed" error.
+
 ## 0.7.2
 
   * Include the tezos-node containing: Mempool: remove parsing exceptions (a7d357bb)
