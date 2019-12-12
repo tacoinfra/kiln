@@ -47,12 +47,6 @@ import Data.Constraint (Dict(..))
 import Data.Constraint.Extras
 import Data.Constraint.Forall
 import Data.Dependent.Sum (DSum(..))
-import Data.Dependent.Sum (EqTag)
-import Data.Dependent.Sum (OrdTag)
-import Data.Dependent.Sum (ShowTag)
-import Data.Dependent.Sum (compareTagged)
-import Data.Dependent.Sum (eqTagged)
-import Data.Dependent.Sum (showTaggedPrec)
 import Data.Fixed (Fixed (MkFixed), HasResolution)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Compare.TH (deriveGCompare)
@@ -67,7 +61,9 @@ import qualified Data.Text.Lazy as LT
 import Data.Version (Version)
 import qualified Data.Version as Version
 import Data.Word (Word64)
+import Database.Id.Class
 import Database.Groundhog.Core
+import Database.Id.Groundhog
 import qualified Database.Groundhog.Expression as GH
 import Database.Groundhog.Generic
 import Database.Groundhog.Instances ()
@@ -85,8 +81,6 @@ import Language.Haskell.TH (mkName)
 import Language.Haskell.TH (nameBase)
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (HasNotification (..), NotificationType (..), DbNotification (..), getSchemaName, notifyChannel)
-import Rhyolite.Backend.Schema (fromId, toId)
-import Rhyolite.Backend.Schema.Class (DefaultKeyId, toIdData, fromIdData)
 import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 import Rhyolite.Backend.Schema.Class (defaultKeyToKey)
@@ -94,8 +88,7 @@ import Rhyolite.Backend.Schema.Class (HasSingleConstructor)
 import Rhyolite.Backend.Schema.Class (SingleConstructor)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Rhyolite.Backend.Schema.TH (makeDefaultKeyIdInt64, mkRhyolitePersist)
-import Rhyolite.Schema (Id, Json (..), SchemaName (..))
-import Rhyolite.Schema (IdData)
+import Rhyolite.Schema (Json (..), SchemaName (..))
 import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -196,9 +189,11 @@ instance HasDefaultNotify (DSum BakerLogTag Id) where
   mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Baker t :=> v
 
 instance HasDefaultNotify (Id ProtocolIndex)
+instance HasDefaultNotify (Id ErrorLogNodeVersionMismatch)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead)
+instance HasDefaultNotify (Id ErrorLogBakerLedgerDisconnected)
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
 instance HasDefaultNotify (Id ErrorLogBakerAccused)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated)
@@ -212,6 +207,8 @@ instance HasDefaultNotify (Id ErrorLogVotingReminder)
 instance HasNotification NotifyTag ProtocolIndex where
   notification _ = NotifyTag_ProtocolIndex
 
+instance HasNotification NotifyTag ErrorLogNodeVersionMismatch where
+  notification _ = mkNodeNotify NodeLogTag_VersionMismatch
 instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
 instance HasNotification NotifyTag ErrorLogNodeInvalidPeerCount where
@@ -221,6 +218,8 @@ instance HasNotification NotifyTag ErrorLogBadNodeHead where
 instance HasNotification NotifyTag ErrorLogInaccessibleNode where
   notification _ = mkNodeNotify NodeLogTag_InaccessibleNode
 
+instance HasNotification NotifyTag ErrorLogBakerLedgerDisconnected where
+  notification _ = mkBakerNotify BakerLogTag_BakerLedgerDisconnected
 instance HasNotification NotifyTag ErrorLogBakerAccused where
   notification _ = mkBakerNotify BakerLogTag_BakerAccused
 instance HasNotification NotifyTag ErrorLogBakerDeactivated where
@@ -683,7 +682,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             fields:
               - _protocolIndex_chainId
               - _protocolIndex_hash
-              - _protocolIndex_firstBlockHash
 
   - primitive: VotingPeriodKind
   - primitive: Ballot
@@ -761,6 +759,12 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null
+    constructors:
+      - name: ConnectedLedger
+        fields:
+          - name: _connectedLedger_forceConnectivityCheck
+            type: Bool
+            default: "False"
   - embedded: SecretKey
   - entity: LedgerAccount
     autoKey: null
@@ -949,6 +953,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerNoHeartbeatId
             type: primary
             fields: [_errorLogBakerNoHeartbeat_log]
+  - entity: ErrorLogBakerLedgerDisconnected
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerLedgerDisconnectedId
+        default: true
+    constructors:
+      - name: ErrorLogBakerLedgerDisconnected
+        uniques:
+          - name: ErrorLogBakerLedgerDisconnectedId
+            type: primary
+            fields: [_errorLogBakerLedgerDisconnected_log]
   - entity: ErrorLogInaccessibleNode
     autoKey: null
     keys:
@@ -1004,6 +1019,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogInsufficientFundsId
             type: primary
             fields: [_errorLogInsufficientFunds_log]
+  - entity: ErrorLogNodeVersionMismatch
+    autoKey: null
+    keys:
+      - name: ErrorLogNodeVersionMismatchId
+        default: true
+    constructors:
+      - name: ErrorLogNodeVersionMismatch
+        uniques:
+          - name: ErrorLogNodeVersionMismatchId
+            type: primary
+            fields: [_errorLogNodeVersionMismatch_log]
   - entity: ErrorLogNodeWrongChain
     autoKey: null
     keys:
@@ -1127,8 +1153,8 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   ]
 
 instance DefaultKeyId ProtocolIndex where
-  toIdData _ (ProtocolIndexKeyKey chainId protoHash firstBlockHash) = (chainId, protoHash, firstBlockHash)
-  fromIdData _ (chainId, protoHash, firstBlockHash) = ProtocolIndexKeyKey chainId protoHash firstBlockHash
+  toIdData _ (ProtocolIndexKeyKey chainId protoHash) = (chainId, protoHash)
+  fromIdData _ (chainId, protoHash) = ProtocolIndexKeyKey chainId protoHash
 
 instance DefaultKeyId Accusation where
   toIdData _ (Accusation_hashKey oh bh) = (oh, bh)
@@ -1158,6 +1184,9 @@ instance DefaultKeyId ErrorLogBadNodeHead where
 instance DefaultKeyId ErrorLogBakerNoHeartbeat where
   toIdData _ (ErrorLogBakerNoHeartbeatIdKey eid) = eid
   fromIdData _ = ErrorLogBakerNoHeartbeatIdKey
+instance DefaultKeyId ErrorLogBakerLedgerDisconnected where
+  toIdData _ (ErrorLogBakerLedgerDisconnectedIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerLedgerDisconnectedIdKey
 instance DefaultKeyId ErrorLogInaccessibleNode where
   toIdData _ (ErrorLogInaccessibleNodeIdKey eid) = eid
   fromIdData _ = ErrorLogInaccessibleNodeIdKey
@@ -1173,6 +1202,9 @@ instance DefaultKeyId ErrorLogBakerDeactivationRisk where
 instance DefaultKeyId ErrorLogInsufficientFunds where
   toIdData _ (ErrorLogInsufficientFundsIdKey eid) = eid
   fromIdData _ = ErrorLogInsufficientFundsIdKey
+instance DefaultKeyId ErrorLogNodeVersionMismatch where
+  toIdData _ (ErrorLogNodeVersionMismatchIdKey eid) = eid
+  fromIdData _ = ErrorLogNodeVersionMismatchIdKey
 instance DefaultKeyId ErrorLogNodeWrongChain where
   toIdData _ (ErrorLogNodeWrongChainIdKey eid) = eid
   fromIdData _ = ErrorLogNodeWrongChainIdKey
@@ -1228,9 +1260,11 @@ nodeLogAssume = \case
   NodeLogTag_NodeWrongChain -> id
   NodeLogTag_NodeInvalidPeerCount -> id
   NodeLogTag_BadNodeHead -> id
+  NodeLogTag_VersionMismatch -> id
 
 bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
 bakerLogAssume = \case
+  BakerLogTag_BakerLedgerDisconnected -> id
   BakerLogTag_BakerMissed -> id
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
@@ -1245,27 +1279,6 @@ logAssume = \case
   LogTag_Baker bTag -> bakerLogAssume bTag
   LogTag_BakerNoHeartbeat -> id
 
-instance EqTag LogTag Id where
-  eqTagged t _ = logAssume t (==)
-instance OrdTag LogTag Id where
-  compareTagged t _ = logAssume t compare
-instance ShowTag LogTag Id where
-  showTaggedPrec t = logAssume t showsPrec
-
-instance EqTag NodeLogTag Id where
-  eqTagged t _ = nodeLogAssume t (==)
-instance OrdTag NodeLogTag Id where
-  compareTagged t _ = nodeLogAssume t compare
-instance ShowTag NodeLogTag Id where
-  showTaggedPrec t = nodeLogAssume t showsPrec
-
-instance EqTag BakerLogTag Id where
-  eqTagged t _ = bakerLogAssume t (==)
-instance OrdTag BakerLogTag Id where
-  compareTagged t _ = bakerLogAssume t compare
-instance ShowTag BakerLogTag Id where
-  showTaggedPrec t = bakerLogAssume t showsPrec
-
 data Related b c r where
   Related :: (HasSingleConstructor r, PersistEntity r, PersistField x) => Field b c x -> ForeignKey r x -> Related b c r
 
@@ -1279,13 +1292,13 @@ logDep :: LogTag e -> [Some (Related e (SingleConstructor e))]
 logDep = \case
   LogTag_NetworkUpdate -> []
   LogTag_Node nTag -> bothNodes $ nodeLogDep nTag
-  LogTag_Baker bTag -> pure $ This $ bakerLogDep bTag
+  LogTag_Baker bTag -> pure $ Some $ bakerLogDep bTag
   LogTag_BakerNoHeartbeat -> []
   where
     bothNodes :: forall e. Related e (SingleConstructor e) Node -> [Some (Related e (SingleConstructor e))]
     bothNodes = \case
       Related fld fk -> case fk of
-        ForeignKey_AutoId -> [This (Related fld $ ForeignKey_UniqueIdData @NodeExternal), This (Related fld $ ForeignKey_UniqueIdData @NodeInternal)]
+        ForeignKey_AutoId -> [Some (Related fld $ ForeignKey_UniqueIdData @NodeExternal), Some (Related fld $ ForeignKey_UniqueIdData @NodeInternal)]
         ForeignKey_Field fld2 -> case fld2 of {}
 
 nodeLogDep :: NodeLogTag e -> Related e (SingleConstructor e) Node
@@ -1294,11 +1307,13 @@ nodeLogDep = \case
   NodeLogTag_NodeWrongChain -> depNodeAlert ErrorLogNodeWrongChain_nodeField
   NodeLogTag_NodeInvalidPeerCount -> depNodeAlert ErrorLogNodeInvalidPeerCount_nodeField
   NodeLogTag_BadNodeHead -> depNodeAlert ErrorLogBadNodeHead_nodeField
+  NodeLogTag_VersionMismatch -> depNodeAlert ErrorLogNodeVersionMismatch_nodeField
   where
     depNodeAlert f = Related f ForeignKey_AutoId
 
 bakerLogDep :: BakerLogTag e -> Related e (SingleConstructor e) Baker
 bakerLogDep = \case
+  BakerLogTag_BakerLedgerDisconnected -> depBakerAlert' ErrorLogBakerLedgerDisconnected_bakerField
   BakerLogTag_BakerMissed -> depBakerAlert' ErrorLogBakerMissed_bakerField
   BakerLogTag_BakerDeactivated -> depBakerAlert ErrorLogBakerDeactivated_publicKeyHashField
   BakerLogTag_BakerDeactivationRisk -> depBakerAlert ErrorLogBakerDeactivationRisk_publicKeyHashField
@@ -1317,17 +1332,19 @@ embeddedSecretKeyEquals f sk =
   GH.&&. f ~> SecretKey_signingCurveSelector ==. _secretKey_signingCurve sk
   GH.&&. f ~> SecretKey_derivationPathSelector ==. _secretKey_derivationPath sk
 
-instance ArgDict NotifyTag where
+instance ArgDict c NotifyTag where
   type ConstraintsFor NotifyTag c =
     ( c (Id Baker, Maybe BakerData)
     , c BakerDetails
     , c (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
     , c (Id ErrorLogNetworkUpdate)
     , c (Id ErrorLogBakerNoHeartbeat)
+    , c (Id ErrorLogBakerLedgerDisconnected)
     , c (Id ErrorLogInaccessibleNode)
     , c (Id ErrorLogNodeWrongChain)
     , c (Id ErrorLogNodeInvalidPeerCount)
     , c (Id ErrorLogBadNodeHead)
+    , c (Id ErrorLogNodeVersionMismatch)
     , c (Id ErrorLogBakerMissed)
     , c (Id ErrorLogBakerDeactivated)
     , c (Id ErrorLogBakerDeactivationRisk)
@@ -1372,7 +1389,9 @@ instance ArgDict NotifyTag where
         NodeLogTag_NodeWrongChain -> Dict
         NodeLogTag_NodeInvalidPeerCount -> Dict
         NodeLogTag_BadNodeHead -> Dict
+        NodeLogTag_VersionMismatch -> Dict
       LogTag_Baker t -> case t of
+        BakerLogTag_BakerLedgerDisconnected -> Dict
         BakerLogTag_BakerMissed -> Dict
         BakerLogTag_BakerDeactivated -> Dict
         BakerLogTag_BakerDeactivationRisk -> Dict

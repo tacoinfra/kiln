@@ -32,7 +32,10 @@ library
     , bytestring
     , common
     , containers
+    , constraints
+    , constraints-extras
     , data-default
+    , database-id-class
     , dependent-map
     , dependent-sum
     , dependent-sum-template
@@ -46,7 +49,7 @@ library
     , modern-uri
     , monoidal-containers
     , mtl
-    , obelisk-executable-config
+    , obelisk-executable-config-lookup
     , obelisk-frontend
     , obelisk-generated-static
     , obelisk-route

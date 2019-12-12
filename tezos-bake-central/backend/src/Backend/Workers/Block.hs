@@ -76,14 +76,14 @@ blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds
     -- leases on work items time out and let other backends just steal them,
     -- rather than making postgres the central arbiter of locking.
 
-    for_ (queuedBlockOrNot ^.. _Right . traverse) $ \queuedBlock -> (either ($(logErrorSH) . \e -> ("blockWorker" :: Text,queuedBlock,e)) pure =<<) $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+    for_ (queuedBlockOrNot ^.. _Right . traverse) $ \queuedBlock -> (either ($(logErrorSH) . cacheErrorLogMessage "blockWorker") pure =<<) $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
       $(logDebug) $ "Scrape block " <> toBase58Text (_blockTodo_hash queuedBlock) <> "."
       couldBeBlock <- unliftEither $ nodeQueryDataSourceSafe $ NodeQuery_Block (_blockTodo_hash queuedBlock)
       case couldBeBlock of
         Left (CacheError_RpcError (RpcError_UnexpectedStatus 404 _)) ->
           $(logDebugSH) ("blockWorker"::Text,"Error (404) in retrieving block from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
-        Left CacheError_NoSuitableNode ->
-          $(logDebugSH) ("blockWorker"::Text,"No suitable node to obtain block:"::Text,toBase58Text (_blockTodo_hash queuedBlock))
+        Left (CacheError_NoSuitableNode q reasons) ->
+          $(logDebugSH) ("blockWorker"::Text, noSuitableNodeLogMessage q reasons)
         Left e -> nqThrowError e
         Right block -> do
           let blockHash = block ^. hash

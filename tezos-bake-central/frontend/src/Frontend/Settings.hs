@@ -26,7 +26,6 @@ import Prelude hiding (log)
 import Reflex.Dom.Core
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
 import Text.Read (readMaybe)
 
 import Common.Api
@@ -73,11 +72,11 @@ data SettingsRoute t cfg
 
 settingsTab
   :: forall r t m.
-    ( MonadRhyoliteFrontendWidget Bake t m
+    ( MonadAppWidget t m
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
-    , HasModal t m, MonadRhyoliteFrontendWidget Bake t (ModalM m)
+    , HasModal t m, MonadAppWidget  t (ModalM m)
     )
   => m ()
 settingsTab = do
@@ -276,7 +275,7 @@ settingsTab = do
               elAttr "div" ("class" =: "ui tiny header" <> "style" =: "margin-bottom: 1rem") $ do
                 icon "upgrade-icon icon-arrow-up"
                 text ("Kiln " <> T.pack (showVersion v) <> " is available!")
-              let uri = "https://gitlab.com/obsidian.systems/tezos-bake-monitor/releases"
+              let uri = "https://gitlab.com/obsidian.systems/kiln/releases"
               el "p" $ do
                 text "Release notes: "
                 hrefLink uri $ text uri

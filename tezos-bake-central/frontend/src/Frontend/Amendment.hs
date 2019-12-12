@@ -26,8 +26,6 @@ import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
-import Rhyolite.Schema
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
@@ -70,7 +68,7 @@ isVotingPeriod = \case
   VotingPeriodKind_PromotionVote -> True
 
 amendmentPopup
-  :: (MonadReader r m, HasTimeZone r, DomBuilder t m, MonadJSM (Performable m), MonadRhyoliteFrontendWidget Bake t m)
+  :: (MonadReader r m, HasTimeZone r, DomBuilder t m, MonadJSM (Performable m), MonadAppWidget t m)
   => Dynamic t Amendment
   -- ^ The current period
   -> Dynamic t (Map.Map VotingPeriodKind Amendment)
@@ -247,7 +245,7 @@ progressDots currentCycle' maxCycle' = do
 
 -- | Modal for voting
 voteModal :: forall r t m.
-  ( MonadRhyoliteFrontendWidget Bake t m
+  ( MonadAppWidget t m
   , MonadReader r m, HasFrontendConfig r
   , MonadJSM (Performable m)
   , HasTimer t r, HasTimeZone r
@@ -503,7 +501,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     -- found : show green tick mark
     -- not found : show red cross mark
     ledgerDeviceIcon = divClass "ledger-device-status" $ do
-      connectedLedger <- watchConnectedLedger
+      connectedLedger <- watchConnectedLedgerForced
       let
         devFound :: Dynamic t (Maybe Bool)
         devFound = ffor connectedLedger (>>= \cl -> ffor (_connectedLedger_ledgerIdentifier cl) $ \li ->

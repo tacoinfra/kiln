@@ -1,8 +1,8 @@
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -10,15 +10,16 @@ module Backend.Migrations where
 
 import Backend.Schema (migrateSchema)
 import Control.Monad.Logger (MonadLogger, logInfoS)
-import qualified Data.Text as T
 import Data.String (fromString)
+import qualified Data.Text as T
 import Database.Groundhog.Core
 import Database.Groundhog.Generic (runMigration)
 import Database.Groundhog.Generic.Migration hiding (migrateSchema)
 import Database.PostgreSQL.Simple.Types (Identifier (..), QualifiedIdentifier (..))
 import Rhyolite.Backend.Account (migrateAccount)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, execute_, queryQ, traceExecuteQ, Only(..))
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, execute_, queryQ, traceExecuteQ)
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
+import Safe
 import Tezos.Types (ChainId)
 
 import ExtraPrelude
@@ -80,6 +81,10 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "CachedProtocolConstants")
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "Parameters")
   >=> migrateErrorLogBakerMissedTimestamp
+  >=> migrateProtocolIndexKey
+  >=> migrateSnapshotMetaControl
+  >=> deleteTzScanPublicNodeConfigs
+  >=> deleteTzScanPublicNodeHeads
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do
@@ -478,4 +483,57 @@ migrateErrorLogBakerMissedTimestamp ta = do
               ALTER TABLE "ErrorLogBakerMissed" ALTER COLUMN "bakeTime" SET NOT NULL;
             |]
           getTableAnalysis
+    _ -> pure ta
+
+-- This is needed to remove the firstBlockHash from the unique constraints
+-- Without this the auto migration fails to make the firstBlockHash field 'Maybe'
+-- The constraint will be added back by automigrate after altering the columns
+migrateProtocolIndexKey :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateProtocolIndexKey ta = do
+  let table = (Nothing, "ProtocolIndex")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | maybe False ((==) 3 . length . uniqueDefFields) $ headMay $ tableUniques analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "ProtocolIndex" DROP CONSTRAINT "ProtocolIndexKey";
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+migrateSnapshotMetaControl :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateSnapshotMetaControl ta = do
+  let table = (Nothing, "SnapshotMeta")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | not . any ((== "control") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              TRUNCATE TABLE "SnapshotMeta";
+            |]
+          getTableAnalysis
+    _ -> pure ta
+
+-- Without deleting these entries with TzScan entries, you get a really nasty crash
+-- of the ViewSelectorHandler with Prelude.read: no parse
+deleteTzScanPublicNodeConfigs :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+deleteTzScanPublicNodeConfigs ta = do
+  let table = (Nothing, "PublicNodeConfig")
+  analyzeTable ta table >>= \case
+    Just _ -> do
+      void [traceExecuteQ|
+          DELETE FROM "PublicNodeConfig" WHERE "source" = 'PublicNode_TzScan'
+        |]
+      pure ta
+    _ -> pure ta
+
+deleteTzScanPublicNodeHeads :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+deleteTzScanPublicNodeHeads ta = do
+  let table = (Nothing, "PublicNodeHead")
+  analyzeTable ta table >>= \case
+    Just _ -> do
+      void [traceExecuteQ|
+          DELETE FROM "PublicNodeHead" WHERE "source" = 'PublicNode_TzScan'
+        |]
+      pure ta
     _ -> pure ta

@@ -1,9 +1,9 @@
 # Configuration
 
 Kiln configuration can either be done by passing command line arguments (e.g.
-`--network alphanet`) or by putting a config file with the argument contents
+`--network babylonnet`) or by putting a config file with the argument contents
 into a file in the config directory (e.g. a file `config/network` containing
-`alphanet`). Using config files is required during development since `ob run`
+`babylonnet`). Using config files is required during development since `ob run`
 doesn't allow passing of command line arguments.
 
 ## loggers
@@ -37,7 +37,7 @@ Upstream Git branch to use for checking upgrades. If blank, use contents of
 
 ## network NETWORK
 
-Name of a network (mainnet, alphanet, zeronet) or a network ID to monitor. If
+Name of a network (mainnet, babylonnet, zeronet) or a network ID to monitor. If
 blank, use contents of 'config/network'. If also blank, default to 'mainnet'.
 
 ## serve-node-cache BOOL

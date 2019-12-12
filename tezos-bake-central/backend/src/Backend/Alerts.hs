@@ -28,12 +28,13 @@ import Data.Word
 import Database.Groundhog
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
+import Database.Id.Class
+import Database.Id.Groundhog
 import Database.PostgreSQL.Simple.Types (Identifier(..))
 import Rhyolite.Backend.DB (getTime, selectSingle, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
-import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id(..), Json (..), IdData)
+import Rhyolite.Schema (Json (..))
 import qualified Text.URI as Uri
 
 import Tezos.Types
@@ -47,6 +48,7 @@ import Common.Alerts (
     badNodeHeadMessage,
     bakerDeactivatedDescriptions,
     bakerDeactivationRiskDescriptions,
+    bakerLedgerDisconnectedDescriptions,
     bakerVotingReminderDescriptions,
     plaintextErrorDescription,
   )
@@ -193,6 +195,52 @@ clearBakerDeactivationRisk pkh newFit = do
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
+reportBakerLedgerDisconnected
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => PublicKeyHash -> m ()
+reportBakerLedgerDisconnected pkh = do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogInsufficientFunds) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.log
+      FROM "ErrorLog" el
+      JOIN "ErrorLogBakerLedgerDisconnected" t ON t.log = el.id
+      JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
+     WHERE NOT b."data#deleted"
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  case existingLog of
+    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogBakerLedgerDisconnected_logField []
+    Nothing -> do
+      (logId, log) <- insertErrorLog $ \logId ->
+        ErrorLogBakerLedgerDisconnected logId (Id pkh)
+      queueAlert (Just logId) $ unresolvedBakerAlert $ bakerLedgerDisconnectedDescriptions log
+
+clearBakerLedgerDisconnected
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => PublicKeyHash -> m ()
+clearBakerLedgerDisconnected pkh = do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  lids :: [Id ErrorLogBakerLedgerDisconnected] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogBakerLedgerDisconnected" t
+      WHERE t.log = el.id
+      AND t."baker#publicKeyHash" = ?pkh
+      AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
+    RETURNING t.log |]
+  for_ lids notifyDefault
+  baker' <- getBaker pkh
+  log' <- for (listToMaybe lids) $ getBy . fromId
+  for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
+    queueAlert Nothing $ resolvedBakerAlert (bakerLedgerDisconnectedDescriptions log) baker
+
 reportInsufficientFunds
   :: ( Monad m, MonadIO m, MonadReader a m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
@@ -336,6 +384,59 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   unless (null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
       nodeName <> " is on correct network"
+
+reportNodeVersionMismatchError
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, HasAppConfig a, MonadReader a m
+     , SqlDb (PhantomDb m))
+  => Id Node -> Text -> Text -> m ()
+reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  -- Not filtering on "stopped", consider previously reported/dismissed alerts also
+  -- and dont report again if already reported for the given hash mismatch
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeVersionMismatch) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.log
+      FROM "ErrorLog" el
+      JOIN "ErrorLogNodeVersionMismatch" t ON t.log = el.id
+      JOIN "NodeExternal" n ON n.id = t.node
+     WHERE t."latestHash" = ?latestHash
+       AND t."nodeHash" = ?nodeHash
+       AND t.node = ?nodeId
+       AND NOT n."data#deleted"
+       AND el."chainId" = ?chainId
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  -- If we have unresolved alerts for a different/older hash, then auto-resolve them
+  oldLogs :: [Id ErrorLogNodeVersionMismatch] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNodeVersionMismatch" t
+     WHERE t."latestHash" != ?latestHash
+       AND t."nodeHash" = ?nodeHash
+       AND t.log = el.id
+       AND t.node = ?nodeId
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
+    RETURNING t.log |]
+  for_ oldLogs notifyDefault
+  case existingLog of
+    Nothing -> void $ insertErrorLog $ \logId -> ErrorLogNodeVersionMismatch logId nodeId latestHash nodeHash
+    Just _ -> pure ()
+
+clearNodeVersionMismatchError
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m
+     , SqlDb (PhantomDb m)
+     , MonadReader a m, HasAppConfig a) => Id Node -> m ()
+clearNodeVersionMismatchError nodeId = when' (nodeNotDeleted nodeId) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  lids :: [Id ErrorLogNodeVersionMismatch] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNodeVersionMismatch" t
+    WHERE t.log = el.id
+      AND t.node = ?nodeId
+      AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
+    RETURNING t.log |]
+  for_ lids notifyDefault
 
 reportNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,

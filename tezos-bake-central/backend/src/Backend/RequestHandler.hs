@@ -25,10 +25,12 @@ import Data.Functor.Infix hiding ((<&>))
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
-import Data.Some (Some(This))
+import Data.Some (Some(..))
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
+import Database.Id.Class
+import Database.Id.Groundhog
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
@@ -37,12 +39,13 @@ import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Email, Id (..), IdData)
+import Rhyolite.Schema (Email)
+import Safe
 import System.Directory (removeDirectoryRecursive)
 import Tezos.Types (Tez, PublicKeyHash)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.Common
 import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert, resolveAlerts)
@@ -50,7 +53,6 @@ import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Node (DataSource, updateDataSource)
-import Backend.Workers.TezosClient (addBakerImpl)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -63,7 +65,7 @@ requestHandler
   -> Address
   -> NodeDataSource
   -> [DataSource]
-  -> RequestHandler Bake m
+  -> RequestHandler (ApiRequest () PublicRequest PrivateRequest) m
 requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
@@ -76,6 +78,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
           { _connectedLedger_bakingAppVersion = Nothing
           , _connectedLedger_ledgerIdentifier = Nothing
           , _connectedLedger_updated = Nothing
+          , _connectedLedger_forceConnectivityCheck = True
           , _connectedLedger_walletAppVersion = Nothing
           }
       PublicRequest_ShowLedger sk -> inDb $ do
@@ -150,6 +153,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                     { _nodeExternalData_address = addr
                     , _nodeExternalData_alias = alias
                     , _nodeExternalData_minPeerConnections = minPeerConn
+                    , _nodeExternalData_commitHash = Nothing
                     }
                 node = NodeExternal
                   { _nodeExternal_id = nid
@@ -170,6 +174,14 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
             project (NodeExternal_dataField ~> DeletableRow_dataSelector)
                     (NodeExternal_idField ==. nid)
               >>= traverse_ (notify NotifyTag_NodeExternal . (nid,) . Just)
+
+      PublicRequest_CancelSnapshotImport -> inDb $ do
+        procControl <- project SnapshotMeta_controlField CondEmpty
+        case headMay procControl of
+          -- If the value is already Stop, then the last command was
+          -- not completed succesfully, so do a force cleanup of the node
+          Just ProcessControl_Stop -> removeNodeDbImpl (Right ())
+          _ -> update [ SnapshotMeta_controlField =. ProcessControl_Stop ] CondEmpty
 
       PublicRequest_UpdateInternalWorker workerType shouldRun -> inDb $ case workerType of
         WorkerType_Node
@@ -199,54 +211,15 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
               processData <- getId $ _deletableRow_data nodeData
               notify NotifyTag_NodeInternal (nid, processData)
 
-      PublicRequest_RemoveNode node -> case node of
-        Left addr -> inDb $ do
-          nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
-          for_ nids $ \nid -> do
-            update [NodeExternal_dataField ~> DeletableRow_deletedSelector =. True] (NodeExternal_idField ==. nid)
-            notify NotifyTag_NodeExternal (nid, Nothing)
-            clearErrors nid
-        Right () -> do
-          inDb $ getInternalNode >>= \case
-            Nothing -> pure ()
-            Just (nid, nodeData) -> do
-              update
-                [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. True
-                ]
-                CondEmpty
-              let pid = _deletableRow_data nodeData
-              update [ProcessData_controlField =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
-              clearErrors nid
-              notify NotifyTag_NodeInternal (nid, Nothing)
+      PublicRequest_RemoveNode node -> do
+        inDb $ removeNodeDbImpl node
+        when (isRight node) $
           void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) removeDataDir
         where
           removeDataDir = do
             let dataDir = nodeDataDir appConfig
             $(logDebug) ("Removing Kiln node's data dir: " <> tshow dataDir)
             liftIO $ removeDirectoryRecursive dataDir
-          clearErrors nid = do
-            let
-              deleteLogs :: forall cstr m' t.
-                            ( Monad m', PersistBackend m'
-                            , IdData t ~ Id ErrorLog, HasDefaultNotify (Id t), EntityConstr t cstr)
-                         => NodeLogTag t
-                         -> Field t cstr (Id Node)
-                         -> m' [Id ErrorLog]
-              deleteLogs tag field = do
-                ids <- errorLogIdForNodeLogTag tag <$$> select (field ==. nid)
-                for_ ids $ notifyDefault . Id @t
-                pure ids
-
-              onTag :: Some NodeLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
-              onTag (This tag) = case tag of
-                NodeLogTag_InaccessibleNode -> deleteLogs tag ErrorLogInaccessibleNode_nodeField
-                NodeLogTag_NodeWrongChain -> deleteLogs tag ErrorLogNodeWrongChain_nodeField
-                NodeLogTag_BadNodeHead -> deleteLogs tag ErrorLogBadNodeHead_nodeField
-                NodeLogTag_NodeInvalidPeerCount -> deleteLogs tag ErrorLogNodeInvalidPeerCount_nodeField
-
-            ids <- fmap concat $ for universe onTag
-            now <- getTime
-            update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
 
       -- TODO: use BakerRightsCycleProgress to fast-path update rights we already have in cache.
       PublicRequest_AddBaker pkh alias -> inDb $ addBakerImpl pkh alias
@@ -300,7 +273,8 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
                 pure ids
 
               onTag :: Some BakerLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
-              onTag (This tag) = case tag of
+              onTag (Some tag) = case tag of
+                BakerLogTag_BakerLedgerDisconnected -> deleteLogsId tag ErrorLogBakerLedgerDisconnected_bakerField
                 BakerLogTag_BakerMissed -> deleteLogsId tag ErrorLogBakerMissed_bakerField
                 BakerLogTag_BakerDeactivated -> deleteLogsPkh tag ErrorLogBakerDeactivated_publicKeyHashField
                 BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField
@@ -540,5 +514,3 @@ getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   -- Silliness to help type inference:
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
 
-getInternalNode :: PersistBackend m => m (Maybe (Id Node, DeletableRow (Id ProcessData)))
-getInternalNode = project1 (NodeInternal_idField, NodeInternal_dataField) CondEmpty

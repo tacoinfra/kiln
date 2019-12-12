@@ -41,11 +41,11 @@ Unless the setting is disabled, the monitor should automically check for newer v
      your forked version of Tezos.  
      `./backend --network-gitlab-project-id=PROJECTID [OTHER OPTIONS]`
 
-      1. Alternatively, you should be able to place the project ID in this file, but that did not work for me - https://gitlab.com/obsidian.systems/tezos-bake-monitor/blob/f34428af76ed11add0c973facffe392f0e283f05/tezos-bake-central/config/network-gitlab-project-id
+      1. Alternatively, you should be able to place the project ID in this file, but that did not work for me - https://gitlab.com/obsidian.systems/kiln/blob/f34428af76ed11add0c973facffe392f0e283f05/tezos-bake-central/config/network-gitlab-project-id
         this is the only way to set this option in `ob run`, but our default instructions make the `config/app` dir non-writeable.
 
   1. Run Kiln with that project ID so it establishes a HEAD commit
   1. Stop running Kiln
-  1. Go to the branch you are monitoring with Kiln (alphanet for me) and make a simple commit. Here's mine - https://gitlab.com/mikereinhart/tezos/commit/fad61ab65ecc30a20b2df629c28274bd45b57076
+  1. Go to the branch you are monitoring with Kiln (babylonnet for me) and make a simple commit. Here's mine - https://gitlab.com/mikereinhart/tezos/commit/fad61ab65ecc30a20b2df629c28274bd45b57076
   1. Restart Kiln. It checks for an update at startup or every hour. You should
      now see the notification.  use the `--network-gitlab-project-id=PROJECTID`

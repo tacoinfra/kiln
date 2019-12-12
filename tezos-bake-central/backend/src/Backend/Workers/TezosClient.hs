@@ -24,16 +24,17 @@ import Control.Monad.Logger
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Maybe (MaybeT(..))
 import Data.Maybe (mapMaybe)
-import Data.List.NonEmpty (nonEmpty)
 import Data.Pool (Pool)
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
+import Database.Id.Class
+import Database.Id.Groundhog
+import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Backend.Schema (fromId)
-import Rhyolite.Schema (Id (..))
+import Safe
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
 import System.IO (hIsEOF)
@@ -48,9 +49,11 @@ import qualified System.Process as Process
 
 import Tezos.Types
 
+import Backend.Alerts
 import Backend.CachedNodeRPC
-import Backend.Common
+import Backend.Common (addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
 import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
+import Backend.IndexQueries
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
 import Common.Schema
@@ -79,12 +82,13 @@ tezosClientWorker
 tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ do
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
+
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
+    currentTime <- inDb getTime
     case mConnectedLedger of
-      Just cl
+      Just cl -> do
         -- If we think the ledger is connected
-        | isJust (_connectedLedger_ledgerIdentifier cl) && isJust (_connectedLedger_updated cl)
-        -> do
+        when (isJust (_connectedLedger_ledgerIdentifier cl) && isJust (_connectedLedger_updated cl)) $ do
           -- import secret keys
           inDb (selectSingle $ LedgerAccount_shouldImportField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
@@ -228,36 +232,104 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
                 notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First vs })
             _ -> pure () -- shouldn't happen
 
-        -- If there is a ConnectedLedger row but the updated field is null
-        -- (marked for update)
-        | isNothing (_connectedLedger_updated cl) ->
-          getConnectedLedger appConfig chain >>= \case
-        Left err -> $(logError) (tshow err)
-        Right mliv -> do
-          inDb $ do
-            $(logDebug) ("Updating connectedledger: " <> tshow mliv)
-            now <- getTime
-            let connectedLedger = ConnectedLedger
-                  { _connectedLedger_ledgerIdentifier = fmap (view _1) mliv
-                  , _connectedLedger_bakingAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Baking)
-                  , _connectedLedger_walletAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Wallet)
-                  , _connectedLedger_updated = Just now
-                  }
-            deleteAll' @ConnectedLedger Proxy
-            insert connectedLedger
-            notify NotifyTag_ConnectedLedger $ Just connectedLedger
-      _ -> pure ()
+        if _connectedLedger_forceConnectivityCheck cl
+          -- If we want to immediately do the connectivity check
+          then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+          -- Otherwise, we might want to do the connectivity check because some time has passed
+          else case _connectedLedger_updated cl of
+            Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+            Just upd -> when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
+              doSensibleLedgerCheck (isJust $ _connectedLedger_ledgerIdentifier cl)
+
+      _ -> do
+        -- If there is no row in the DB, this is our first time running and we should check it
+        doSensibleLedgerCheck False
+        pure ()
+
+    where
+      inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+      inDb = runDb (Identity db) . flip runReaderT appConfig
+      ledgerBackgroundUpdateInterval :: NominalDiffTime -- seconds
+      ledgerBackgroundUpdateInterval = 45
+
+      -- Regardless of updated time, we ought not to check the ledger if we are two levels around
+      -- a baking right and we shouldn't bother checking if we don't have an internal baker running
+      -- either
+      doSensibleLedgerCheck _wasConnected = do
+        dsh <- liftIO $ atomically $ dataSourceHead nds
+        doCheck <- for dsh $ \blk -> checkKilnBakerAndNextRights appConfig nds blk >>= \case
+          -- If we don't have an internal baker, don't bother checking
+          (Nothing, _) -> pure False
+          -- Avoid sending commands to the ledger within two blocks of baking rights
+          (_, Just (_, lvl)) -> do
+            let doC = (blk ^. level < lvl - 2 || blk ^. level > lvl + 2)
+            -- This is pretty spammy. We probably don't want this without updating the updated flag...
+            -- unless (doC || wasConnected) $ $(logWarn) ("Baking rights approaching at level " <> tshow lvl <> ". Kiln last saw that the ledger was disconnected!")
+            pure doC
+          -- If we have no rights but a baker, we may as well check because the rights are coming
+          _ -> pure True 
+        when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+
+withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
+
+updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> Either NamedChain BinaryPaths -> LoggingT IO ()
+updateConnectedLedgerViaGetConnectedLedger appConfig db chain = do
+  getConnectedLedger appConfig chain >>= \case
+    Left err -> do
+      $(logError) (tshow err)
+      reportLedgerDisconnection db appConfig
+      updateConnectedLedger Nothing
+    Right mliv -> do
+      case mliv of
+        Nothing -> do
+          reportLedgerDisconnection db appConfig
+          $(logDebug) "The connectedledger is Nothing"
+
+        Just _ -> do
+          clearLedgerDisconnection db appConfig
+
+      updateConnectedLedger mliv
+
   where
-    inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
-    inDb = runDb (Identity db) . flip runReaderT appConfig
+    -- TODO: Because this deletes and re-adds, we will only have the walletAppVersion or the bakerAppVersion
+    -- is this what we want?
+    updateConnectedLedger mliv = do
+      withDbAndConfig db appConfig $ do
+        $(logDebug) ("Updating connectedledger: " <> tshow mliv)
+        now <- getTime
+        let connectedLedger = ConnectedLedger
+              { _connectedLedger_ledgerIdentifier = fmap (view _1) mliv
+              , _connectedLedger_bakingAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Baking)
+              , _connectedLedger_walletAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Wallet)
+              , _connectedLedger_forceConnectivityCheck = False
+              , _connectedLedger_updated = Just now
+              }
+        deleteAll' @ConnectedLedger Proxy
+        insert connectedLedger
+        notify NotifyTag_ConnectedLedger $ Just connectedLedger
+
+reportLedgerDisconnection :: Pool Postgresql -> AppConfig -> LoggingT IO ()
+reportLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
+  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ bdis $ \bdi -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+      reportBakerLedgerDisconnected pkh
+
+clearLedgerDisconnection :: Pool Postgresql -> AppConfig -> LoggingT IO ()
+clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
+  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ bdis $ \bdi -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+      clearBakerLedgerDisconnected pkh
 
 -- TODO XXX OBVIOUSLY BAD
 clientPath :: Either NamedChain BinaryPaths -> FilePath
 clientPath = \case
   Right (BinaryPaths _ c _) -> c
   Left NamedChain_Mainnet -> $(staticWhich "mainnet-tezos-client")
-  Left NamedChain_Alphanet -> $(staticWhich "alphanet-tezos-client")
   Left NamedChain_Zeronet -> $(staticWhich "zeronet-tezos-client")
+  Left NamedChain_Babylonnet -> $(staticWhich "babylonnet-tezos-client")
 
 
 {- Example output from `list connected ledgers`
@@ -279,6 +351,19 @@ defaultTimeout = Just (5, ClientError_Timeout)
 
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
+
+-- Clears any notion of us waiting for us to do an action on this ledger. Call this when kiln boots
+-- just in case it was in any kind of ledger action prior to the restart
+resetLedgerQueue :: (MonadIO m)  => LoggingEnv -> Pool Postgresql ->  m ()
+resetLedgerQueue logger db =  liftIO $ runLoggingEnv logger $ runDb (Identity db) $ update
+  [ LedgerAccount_shouldImportField =. False
+  , LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)
+  , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: Maybe Ballot)
+  , LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe (Id PeriodProposal))
+  , LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)
+  , LedgerAccount_shouldSetupToBakeField =. False
+  ]
+  CondEmpty
 
 getConnectedLedger :: (MonadIO m, MonadLoggerIO m) => AppConfig -> Either NamedChain BinaryPaths -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
 getConnectedLedger appConfig chain = runExceptT $ do
@@ -523,24 +608,30 @@ submitBallot appConfig chain proposal ballot = do
       Ballot_Nay -> "nay"
       Ballot_Pass -> "pass"
 
--- This is moved from RequestHandler to here. But perhaps this should belong to a common module
-addBakerImpl :: (Monad m, PersistBackend m) => PublicKeyHash -> Maybe Text -> m ()
-addBakerImpl pkh alias = do
-  existingIds :: [Id Baker] <- fmap toId <$> project BakerKey (Baker_publicKeyHashField ==. pkh)
-  let newVal = BakerData
-        { _bakerData_alias = alias
-        }
-  case nonEmpty existingIds of
-    Nothing -> void $ insert $ Baker
-      { _baker_publicKeyHash = pkh
-      , _baker_data = DeletableRow
-        { _deletableRow_data = newVal
-        , _deletableRow_deleted = False
-        }
-      }
-    Just bIds -> for_ bIds $ \bId ->
-      update [ Baker_dataField ~> DeletableRow_deletedSelector =. False
-             , Baker_dataField ~> DeletableRow_dataSelector ~> BakerData_aliasSelector =. alias
-             ]
-             (BakerKey ==. fromId bId)
-  notify NotifyTag_Baker (Id pkh, Just newVal)
+-- Logic mostly copied from viewselector' next rights code
+checkKilnBakerAndNextRights :: (BlockLike blk) => AppConfig -> NodeDataSource -> blk -> LoggingT IO (Maybe PublicKeyHash, Maybe (RightKind, RawLevel))
+checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
+  v <- flip runReaderT nds $ runExceptT @CacheError $ tryNodeQueryT $ do
+    bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
+      (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+
+    rightsMay :: Maybe [(RightKind, RawLevel)] <- for bakerInt $ \pkh -> do
+      rightsInfo <- cycleStartHashes blk
+      let headLevel = blk ^. level
+          chainId = _appConfig_chainId appConfig
+          rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
+
+      [queryQ|
+          SELECT br."right", MIN(br.level)
+          FROM "BakerRightsCycleProgress" brcp
+          JOIN "BakerRight" br
+            ON br.branch = brcp.id
+            AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
+          WHERE brcp."chainId" = ?chainId
+            AND brcp.branch in ?rightsHashes
+            AND brcp."publicKeyHash" = ?pkh
+          GROUP BY brcp."publicKeyHash", br."right"
+        |]
+
+    pure (bakerInt, (rightsMay >>= headMay))
+  pure $ (v^?_Right._Just._1._Just, v^?_Right._Just._2._Just)

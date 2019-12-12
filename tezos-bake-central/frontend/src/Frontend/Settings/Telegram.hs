@@ -19,23 +19,22 @@ import qualified Reflex.Dom.Form.Validators as Validator
 import Reflex.Dom.Form.Widgets (validatedInput)
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget, watchViewSelector)
+import Rhyolite.Frontend.App (watchViewSelector)
 import Safe (headMay)
 
 import Common.Api
-import Common.App (Bake, BakeView (..), BakeViewSelector (..))
+import Common.App (BakeView (..), BakeViewSelector (..))
 import Common.Schema
 import Common.Vassal (getRangeView', viewRangeAll)
 import ExtraPrelude
-import Frontend.Common (Enabled (..), formIsLoading, formWithSubmit, icon, uiButton,
-                        uiDynSubmit, updatedWithInit)
+import Frontend.Common
 
 -- We take a dynamic `Maybe TelegramConfig` parameter rather than watching to
 -- get `Maybe (Maybe TelegramConfig)`, so the caller can handle the
 -- uninitialized case.
 
 viewCfg
-  :: MonadRhyoliteFrontendWidget Bake t m
+  :: MonadAppWidget t m
   => Dynamic t TelegramConfig
   -> m (Event t ())
 viewCfg cfg = do
@@ -56,7 +55,7 @@ viewCfg cfg = do
 
 editCfg
   :: forall m t
-  .  MonadRhyoliteFrontendWidget Bake t m
+  .  MonadAppWidget t m
   => Dynamic t (Maybe TelegramConfig)
   -> m (Event t ())
 editCfg cfg = switchHold never <=< workflowView $ Workflow $ do
@@ -120,7 +119,7 @@ telegramRecipientFullName
 telegramRecipientFullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
 
 settingsForm
-  :: MonadRhyoliteFrontendWidget Bake t m
+  :: MonadAppWidget t m
   => Dynamic t (Maybe TelegramConfig)
   -> m (Dynamic t (Either Text Text))
 settingsForm cfg = holdUniqDyn =<< do
@@ -155,7 +154,7 @@ settingsForm cfg = holdUniqDyn =<< do
       $ text "You’re done! Click " *> st "‘Connect Telegram'" *> text " to finish linking Kiln to your bot!"
 
     return v
-watchTelegramRecipients :: MonadRhyoliteFrontendWidget Bake t m => m (Dynamic t (Map (Id TelegramRecipient) TelegramRecipient))
+watchTelegramRecipients :: MonadAppWidget t m => m (Dynamic t (Map (Id TelegramRecipient) TelegramRecipient))
 watchTelegramRecipients =
   (fmap . fmap) (getMonoidalMap . fmapMaybe getFirst . getRangeView' . _bakeView_telegramRecipients) $
     watchViewSelector $ pure $ mempty

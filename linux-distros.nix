@@ -161,12 +161,14 @@ let
     SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="0000", MODE="0660", GROUP="plugdev"
     SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="0001", MODE="0660", GROUP="plugdev"
     SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="0004", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="1011", MODE="0660", GROUP="plugdev"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", ATTRS{idProduct}=="1015", MODE="0660", GROUP="plugdev"
   ''; };
 
   deb-copyright = pkgs.writeTextFile { name = "${pkgName}-deb-copyright"; text = ''
     Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
     Upstream-Name: Kiln
-    Source: https://gitlab.com/obsidian.systems/tezos-bake-monitor
+    Source: https://gitlab.com/obsidian.systems/kiln
 
     Files: *
     Copyright: 2019 obsidian.systems
@@ -211,12 +213,12 @@ let
         }
       '';
 
-      kiln-shell-alphanet-rc = pkgs.writeText "bashrc" ''
+      kiln-shell-babylonnet-rc = pkgs.writeText "bashrc" ''
         function tezos-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/alphanet-tezos-client $@
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/babylonnet-tezos-client $@
         }
         function tezos-admin-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/alphanet-tezos-admin-client $@
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/babylonnet-tezos-admin-client $@
         }
       '';
       kiln-shell-zeronet-rc = pkgs.writeText "bashrc" ''
@@ -268,7 +270,7 @@ let
         #!/usr/bin/env bash
         if [[ \$# -eq 0 ]] ; then
         	echo \"Starting kiln-shell for mainnet.\"
-        	echo \"To run kiln-shell for other network, please specify 'kiln-shell alphanet' or 'kiln-shell zeronet'.\"
+        	echo \"To run kiln-shell for other network, please specify 'kiln-shell babylonnet' or 'kiln-shell zeronet'.\"
           bash --rcfile ${nix-store-root}/${kiln-shell-mainnet-rc}
         else
         	case \$1 in
@@ -280,12 +282,12 @@ let
         			echo \"Starting kiln-shell for zeronet.\"
               bash --rcfile ${nix-store-root}/${kiln-shell-zeronet-rc}
         			;;
-        		alphanet)
-        			echo \"Starting kiln-shell for alphanet.\"
-              bash --rcfile ${nix-store-root}/${kiln-shell-alphanet-rc}
+        		babylonnet)
+        			echo \"Starting kiln-shell for babylonnet.\"
+              bash --rcfile ${nix-store-root}/${kiln-shell-babylonnet-rc}
         			;;
         		*)
-        			echo \"Unknown argument, specify mainnet, zeronet or alphanet\"
+        			echo \"Unknown argument, specify mainnet, zeronet or babylonnet\"
         			exit 1
         			;;
         	esac

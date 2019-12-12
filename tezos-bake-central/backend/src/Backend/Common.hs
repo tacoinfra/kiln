@@ -1,49 +1,10 @@
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE OverloadedStrings #-}
-module Backend.Common where
 
-import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, cancel)
-import Control.Monad (forever, (<=<))
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (MonadLogger, logDebug)
-import Data.Functor (void)
-import qualified Data.Text as T
-import Data.Text (Text)
-import Data.Time.Clock (NominalDiffTime)
-import Rhyolite.Concurrent (supervise)
-import System.Exit (ExitCode)
-import qualified System.Process as Process
-import System.Timeout (timeout)
+module Backend.Common
+  ( module X
+  )
+  where
 
-import Common (nominalDiffTimeToMicroseconds)
-import ExtraPrelude
+import Backend.Common.Baker as X
+import Backend.Common.Node as X
+import Backend.Common.Worker as X
 
-workerWithDelay :: MonadIO m => IO NominalDiffTime -> (NominalDiffTime -> IO ()) -> m (IO ())
-workerWithDelay getDelay f = worker' $ do
-  delay <- getDelay
-  f delay
-  threadDelay' delay
-
-worker' :: MonadIO m => IO () -> m (IO ())
-worker' f = return . cancel <=< liftIO $ async $ supervise $ void $ forever f
-
--- Like 'workerWithDelay' but without a supervising thread. Use this when you don't
--- want your thread to be restarted without you controlling how that happens.
-unsupervisedWorkerWithDelay :: MonadIO m => NominalDiffTime -> IO () -> m (IO ())
-unsupervisedWorkerWithDelay delay f =
-  return . cancel <=< liftIO $ async $ forever $ f *> threadDelay' delay
-
-threadDelay' :: MonadIO m => NominalDiffTime -> m ()
-threadDelay' delay = liftIO $ threadDelay (fromIntegral $ nominalDiffTimeToMicroseconds delay)
-
-timeout' :: MonadIO m => NominalDiffTime -> IO a -> m (Maybe a)
-timeout' timeLimit f = liftIO $ timeout (fromIntegral $ nominalDiffTimeToMicroseconds timeLimit) f
-
-readCreateProcessWithExitCodeWithLogging
-  :: (MonadIO m, MonadLogger m)
-  => Process.CreateProcess -> Text -> m (ExitCode, Text, Text)
-readCreateProcessWithExitCodeWithLogging cp stdin = do
-  $(logDebug) $ "readProcessWithExitCode: " <> tshow cp <> " with STDIN: " <> stdin
-  (ec, stdOut, stdErr) <- liftIO $ Process.readCreateProcessWithExitCode cp $ T.unpack stdin
-  pure (ec, T.pack stdOut, T.pack stdErr)

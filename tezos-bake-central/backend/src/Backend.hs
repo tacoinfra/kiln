@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -35,6 +36,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
+import Gargoyle.PostgreSQL.Connect (withDb)
 import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
 import Network.Mail.Mime (Address (..))
@@ -53,7 +55,9 @@ import Rhyolite.Backend.Logging (
     LoggingConfig (..),
     LoggingEnv (..),
     RhyoliteLogAppender(..),
+#if defined(SUPPORT_SYSTEMD_JOURNAL)
     RhyoliteLogAppenderJournald(..),
+#endif
     RhyoliteLogLevel (..),
     runLoggingEnv,
     withLoggingMinLevel,
@@ -66,11 +70,14 @@ import System.Environment (getArgs, getProgName, withArgs)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
+import System.IO.Temp (writeSystemTempFile)
 import Text.URI (URI)
 import qualified Text.URI as URI
 
-import Backend.Db (gargoyleSupported, withDb)
+import Tezos.Common.Chain (mainnetChainId)
+import Tezos.History (emptyCache)
 import Tezos.NodeRPC hiding (DataSource)
+import Tezos.Common.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource(..))
@@ -94,11 +101,11 @@ import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
-import Backend.Workers.TezosClient (tezosClientWorker)
+import Backend.Workers.TezosClient (tezosClientWorker, resetLedgerQueue)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
-import Common.Route (AppRoute, BackendRoute (..), backendRouteEncoder)
+import Common.Route (AppRoute, BackendRoute (..), fullRouteEncoder)
 import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
@@ -123,6 +130,7 @@ backendImpl cfg serve = do
     loggingConfigForDistro = case distributionMethod of
       Distribution_FromSource -> defaultLoggingConfig
       Distribution_Docker -> defaultLoggingConfig
+#if defined(SUPPORT_SYSTEMD_JOURNAL)
       Distribution_LinuxPackage -> map (\(t, p, l) -> LoggingConfig
         { _loggingConfig_logger = RhyoliteLogAppender_Journald (RhyoliteLogAppenderJournald t)
         , _loggingConfig_filters = Just $ Map.fromList [(p, l)]
@@ -133,6 +141,9 @@ backendImpl cfg serve = do
         , ("kiln-baker", "kiln-baker", RhyoliteLogLevel_Info)
         , ("kiln-endorser", "kiln-endorser", RhyoliteLogLevel_Info)
         ]
+#else
+      Distribution_LinuxPackage -> defaultLoggingConfig
+#endif
 
     defaultLoggingConfig = [LoggingConfig
       { _loggingConfig_logger = def @ RhyoliteLogAppender
@@ -170,9 +181,13 @@ backendImpl cfg serve = do
     (pure $ _opts_upgradeBranch cfg)
     (getConfigFromFile Just $ configPath Config.upgradeBranch)
 
-  !(pgConnString :: Maybe Text) <- liftA2 (<|>)
-    (pure $ _opts_pgConnectionString cfg)
-    (getConfigFromFile Just $ configPath Config.db)
+  !(pgConnStringFile :: Maybe FilePath) <- do
+    let fileName = configPath Config.pgConnectionString
+    inFile <- getConfigFromFile Just fileName
+    case (inFile, _opts_pgConnectionString cfg) of
+      (_, Just str) -> Just <$> writeSystemTempFile "pg-connection" (T.unpack str)
+      (Just _, Nothing) -> pure $ Just fileName
+      _ -> pure Nothing
 
   !(networkGitLabProjectId :: Text) <- fmap (fromMaybe Config.networkGitLabProjectIdDefault) $ liftA2 (<|>)
     (pure $ _opts_networkGitLabProjectId cfg)
@@ -206,11 +221,6 @@ backendImpl cfg serve = do
     firstOption :: [IO (Maybe a)] -> IO (Maybe a)
     firstOption = coerce . fold . (fmap.fmap) (Option . fmap First)
 
-  !(tzscanApi :: Maybe (NonEmpty URI)) <- firstOption
-    [ pure $ getOption $  _opts_tzscanApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.tzscanApiUri
-    , pure $ getPublicNodeUri PublicNode_TzScan <$> maybeNamedChain
-    ]
   !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_blockscaleApiUri cfg
     , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
@@ -233,18 +243,13 @@ backendImpl cfg serve = do
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
     publicDataSources' = catMaybes
-      [ (,,) <$> pure PublicNode_TzScan <*> pure chain <*> tzscanApi
-      , (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
+      [ (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
       , (,,) <$> pure PublicNode_Obsidian <*> pure chain <*> obsidianApi
       ]
 
   publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
 
-  let
-    defaultDbSpec = if gargoyleSupported
-      then Left Config.db
-      else error "Please specify a PostgreSQL connection string"
-  !dbSpec <- pure $ maybe defaultDbSpec Right pgConnString
+  let !dbSpec = fromMaybe Config.db pgConnStringFile
 
   httpMgr <- Http.newManager Https.tlsManagerSettings
 
@@ -316,6 +321,7 @@ backendImpl cfg serve = do
               { _nodeExternalData_address = newAddress
               , _nodeExternalData_alias = alias
               , _nodeExternalData_minPeerConnections = Nothing
+              , _nodeExternalData_commitHash = Nothing
               }
             }
 
@@ -353,6 +359,8 @@ backendImpl cfg serve = do
             , PublicNodeConfig_enabledField =. enabled
             , PublicNodeConfig_updatedField =. now
             ]
+
+    resetLedgerQueue logger db
 
     let
       minLevel :: RawLevel
@@ -421,7 +429,7 @@ backendImpl cfg serve = do
       _ <- Telegram.initState addFinalizer httpMgr logger db
 
       let withWs = RhyoliteWs.withWebsocketsConnectionLogging @Snap.Snap (\str e -> runLoggingEnv logger $ $logError $ T.pack $ "Websocket error: " <> str <> " " <> show e)
-      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs db
+      (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs "v3" RhyoliteApp.functorFromWire db
         (requestHandler appConfig upgradeBranch emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
@@ -440,8 +448,8 @@ backendImpl cfg serve = do
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
         -- Square roots of rationals are the most effective for this because number theory.
 
-      when checkForUpgrade $
-        addFinalizer =<< upgradeCheckWorker maybeNamedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
+      when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
+        addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChainOrPaths $ \v -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
@@ -465,7 +473,7 @@ backend = backend' mempty
 backend' :: Opts -> Backend BackendRoute AppRoute
 backend' cfg = Backend
   { _backend_run = backendImpl cfg
-  , _backend_routeEncoder = backendRouteEncoder
+  , _backend_routeEncoder = fullRouteEncoder
   }
 
 clearMailQueueWithDynamicEmailEnv
@@ -564,7 +572,7 @@ instance Monoid Opts where
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
   [ mkReqArg Config.pgConnectionString "CONNSTRING" (set opts_pgConnectionString . Just) $
-      "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> Config.db <> "' file or create a database there if empty."
+      "Connection string or URI to PostgreSQL database. If blank, use connection string in '" <> configPath Config.pgConnectionString <> "' file or create a database in '" <> Config.db <> "' if empty."
 
   , mkReqArg Config.route "URL" (set opts_route . Just . Config.parseRootURIUnsafe) $
       "Root URL for this service as seen by external users. If blank, use contents of '" <> configPath Config.route <> "'."
@@ -580,7 +588,7 @@ optsArgDescr =
       "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
 
   , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseChainOrError) $
-      "Name of a network (mainnet, alphanet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
+      "Name of a network (mainnet, babylonnet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
       "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
 
   , mkReqArg Config.serveNodeCache "BOOL" (set opts_serveNodeCache . Just . Config.parseBool)
@@ -657,7 +665,7 @@ backendMain k = do
         !staticHead = do
           let injectIt config = injectPure (T.pack $ "config/" <> config)
           headTag
-          for_ route $ injectIt Config.route . URI.render
+          for_ route $ injectIt Config.route . T.encodeUtf8 . URI.render
 
       for_ route $ \r -> putStrLn $ "Using route " <> T.unpack (URI.render r)
       withArgs rest $ k (backend' cfg) (frontend { _frontend_head = staticHead })

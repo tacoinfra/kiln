@@ -11,11 +11,13 @@ in {
     cp -r ${tbp-flextesa.tezos.master.tezos-src}/src/bin_client/test/proto_test_injection /tmp/kiln_voting_test
     chmod -R +w /tmp/kiln_voting_test
 
+    export PATH="${pkgs.jq + /bin}:$PATH"
     export PATH="${tbp-flextesa.tezos.master.kit + /bin}:$PATH"
     ${tbp-flextesa.tezos.master.kit}/bin/tezos-sandbox voting \
       /tmp/kiln_voting_test/TEZOS_PROTOCOL /tmp/kiln_voting_test/TEZOS_PROTOCOL \
       --base-port=20000 \
       --interactive=true \
+      --winning-client-is-clueless \
       --pause-on-error=true
   '';
 
@@ -27,10 +29,8 @@ in {
     oldProtoHash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd";
     oldSuffix = "004-${builtins.substring 0 8 oldProtoHash}";
     newSuffix = "005-PsBabyM1";
-    # this should ideally be same as newSuffix, but for 005 the proposal is different from the actual new protocol
-    proposalSuffix = "005-PsBABY5H";
 
-    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] proposalSuffix}/lib_protocol";
+    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -85,5 +85,42 @@ in {
       --second-accuser-alpha-binary  ${tzMultiProto.kit + /bin/tezos-accuser- + newSuffix} \
       --tezos-client-binary ${tzMultiProto.kit + /bin/tezos-client} \
       --tezos-admin-client-binary ${tzMultiProto.kit + /bin/tezos-admin-client}
+  '';
+
+  accusations = let
+    tzFlextesa = tbp-flextesa.tezos.mainnet;
+    tzMultiProto = tzFlextesa;
+
+  in pkgs.writeScriptBin "accusations-test" ''
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+
+    export PATH="${pkgs.jq + /bin}:$PATH"
+
+    kiln_config_dir="''${1:?Specify path to directory where Kiln\'s \'config\' directory should be written}/config"
+
+    echo 'Starting tezos-sandbox accusations test...'
+
+    root_path=/tmp/accusing-test
+    rm -rf "$root_path"
+
+    test="simple-double-baking"
+    if [ $# -eq 2 ]
+      then
+        test="''${2}"
+    fi
+
+    mkdir -p "$kiln_config_dir"
+    ${tzFlextesa.kit + /bin/tezos-sandbox} accusations $test \
+      --generate-kiln "$kiln_config_dir",10000 \
+      --clean-kiln-config \
+      --pause-on-error true \
+      --interactive true \
+      --pause-at-end true \
+      --starting-level 50 \
+      --root-path "$root_path" \
+      --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
+      --tezos-accuser-alpha-binary ${tzMultiProto.kit + /bin/tezos-accuser} \
+      --tezos-client-binary ${tzMultiProto.kit + /bin/tezos-client}
   '';
 }

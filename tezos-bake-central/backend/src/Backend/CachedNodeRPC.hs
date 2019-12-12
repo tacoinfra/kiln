@@ -41,6 +41,8 @@ import Control.Concurrent.STM (
     retry,
     writeTQueue,
   )
+
+import Control.Error (note)
 import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
@@ -71,10 +73,14 @@ import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import qualified Data.Aeson as Aeson
+import Data.Aeson (ToJSON, FromJSON)
 import Data.Aeson.Encoding (emptyObject_)
-import Data.Constraint (Dict (..))
+import Data.Bifunctor (bimap, first)
+import qualified Data.ByteString.Lazy as LBS
+import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
+import Data.Either (partitionEithers)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
@@ -84,14 +90,17 @@ import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (mapMaybe, maybeToList)
+import Data.Maybe (mapMaybe)
 import Data.Ord (comparing, Down(..))
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Set as Set
 import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Vector as V
+import Database.Id.Class
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple.LargeObjects as PG
@@ -104,9 +113,7 @@ import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Request.Class (requestResponseFromJSON, requestToJSON)
-import Rhyolite.Request.TH (makeRequestForData)
-import Rhyolite.Schema (Json (..), LargeObjectId (..), Id(..))
+import Rhyolite.Schema (Json (..), LargeObjectId (..))
 import Safe (headMay, minimumMay)
 import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
@@ -124,6 +131,7 @@ import qualified Backend.STM as Stm
 import Common (unixEpoch)
 import Common.Schema
 import ExtraPrelude
+
 
 -- This exception should be impossible, but that depends on the node
 -- working correctly.  The information inside is just the arguments of
@@ -178,11 +186,12 @@ data CachedBlockInfo = CachedBlockInfo
 type CachedHistory' = CachedHistory ()
 type DirtyBit = Maybe (Id GenericCacheEntry)
 
-data CacheLine a = CacheLine
-  { _cacheLine_value :: !a
-  , _cacheLine_used :: !UTCTime
-  , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
-  }
+data CacheLine a where
+  CacheLine :: (ToJSON a, FromJSON a) =>
+    { _cacheLine_value :: !a
+    , _cacheLine_used :: !UTCTime
+    , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
+    } -> CacheLine a
 
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(TVar CachedHistory')
@@ -219,7 +228,7 @@ class MonadLogger m => MonadNodeQuery m where
   nqAtomicallyWithTime action = liftIO $ atomicallyWithTime action
   answerImmediate :: ReaderT UTCTime STM (Maybe (Either CacheError a)) -> STM (m (AnswerM m a))
   withFinishWith :: NodeDataSource -> (forall r. (Either CacheError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
-  nodeRPCOrBust :: BlockHash -> NodeQuery a -> m a
+  nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m a
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
@@ -270,30 +279,50 @@ instance MonadNodeQuery NodeQueryQueued where
     let ioQueue = _nodeDataSource_ioQueue nds
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
+
+  -- Here we examine the internal & external (but not public) nodes before doing the query
+  -- We keep hold of our candidate nodes right till the end in case we exhaust all of our options
+  -- and need to give everything that we tried and what went wrong to the user in a CacheError_NoSuitableNode
+  -- error.
   nodeRPCOrBust qBranch q = do
     $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: Branch ${qBranch}: ${tshow q}|]
     dsrc <- askNodeDataSource
-    mNodesToTry <- case _nodeDataSource_nodeForQuery dsrc of
-      Just n -> pure $ Right [n]
+    (mNodesToTry, badCandidates) <- case _nodeDataSource_nodeForQuery dsrc of
+      -- If we have the nodeForQuery override set, just push it through assuming that the overrider is responsible for
+      -- making sure that it's good and don't load any other candidates.
+      Just n -> pure ([n], [])
       Nothing -> do
         nodes <- nqInDB $ getActiveNodeDetails $ _nodeDataSource_kilnNodeUri dsrc
-        NodeQueryQueued $ atomicallyWith (validNodes nodes q >>= \case
-          Left e -> pure $ Left e
-          Right nodes' -> Right . maybeToList <$> pickNode qBranch nodes')
+        NodeQueryQueued $ atomicallyWith $ do
+          nodes' <- validNodes nodes q
+          let (badCandidates', okCandidates) = partitionEithers $ (\(u,e) -> bimap (u,) (u,) e) <$> nodes'
+          -- pickNodes will filter out any nodes where our query branch isn't on that node
+          (okNodes, branchedNodes) <- pickNodes qBranch okCandidates
+          -- So we want to combine the nodes ignored because of pickNodes and those ignored by validNodes
+          pure (okNodes, badCandidates' <> branchedNodes)
+
+    let
+
     result <- case mNodesToTry of
-      Left e -> pure $ Left e
-      Right [] -> case _nodeDataSource_osPublicNode dsrc of
-        Nothing -> pure $ Left CacheError_NoSuitableNode
+      -- The public node is the last resort
+      [] -> case _nodeDataSource_osPublicNode dsrc of
+        Nothing -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
         Just uri ->
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
+          -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
           in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
-      Right nodesToTry -> foldM `flip` Left CacheError_NoSuitableNode `flip` nodesToTry $ \case
-        answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
-        Left _ -> \anyNode -> do
-          let
-            ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
-          NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+      -- But if we have candidate nodes, try them until we succeed
+      -- TODO: Why isn't there a public node call as the last attempt here?
+      nodesToTry -> do
+        res <- foldM `flip` Left [] `flip` nodesToTry $ \case
+            answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
+            Left es -> \anyNode -> do
+              let ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
+              r <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+              pure $ first ((:es).(anyNode,)) r
+        pure $ first (CacheError_NoSuitableNode (tshow q) . fmap (second (UnsuitableNodeReason_QueryFailed . tshow))) res
+
     nqLiftEither result
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
@@ -323,7 +352,7 @@ instance MonadNodeQuery NodeQueryImmediate where
 
 data NodeQueryTResult a where
   NodeQueryTResult_Done :: a -> NodeQueryTResult a
-  NodeQueryTResult_Query :: forall a b. BlockHash -> NodeQuery a -> NodeQueryTResult b
+  NodeQueryTResult_Query :: forall a b. (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> NodeQueryTResult b
 
 deriving instance Functor NodeQueryTResult
 
@@ -725,6 +754,7 @@ nodeQueryDataSource
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsCacheError e
+    , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m a
 nodeQueryDataSource q = do
@@ -747,6 +777,8 @@ nodeQueryDataSourceSafe
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
     )
   => NodeQuery a -> NodeQueryT m a
 nodeQueryDataSourceSafe q = unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw q
@@ -758,6 +790,8 @@ nodeQueryDataSourceImmediate
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsCacheError e
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m a
 nodeQueryDataSourceImmediate q = runNodeQueryQueued $
@@ -767,6 +801,8 @@ nodeQueryDataSourceRaw
   :: forall m a.
     ( MonadNodeQuery m
     , MonadMask m
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m (AnswerM m a)
 nodeQueryDataSourceRaw q = do
@@ -779,7 +815,7 @@ nodeQueryDataSourceRaw q = do
 -- Returns the raw cache value (if found) and an action that will wait on the cache
 -- regardless of whether it was found or required a new request to be queued.
 nodeQueryDataSourceSTM
-  :: forall n a m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n)
+  :: forall n a m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
   => nds -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n a))
 nodeQueryDataSourceSTM nds qBranch q = do
   cache <- readTVar' cacheVar
@@ -840,47 +876,59 @@ unliftEither action = (Right <$> action) `catchError` (pure . Left)
 -- Check the level of the query and determine the nodes which could service the queries
 validNodes
   :: forall r m a . (HasNodeDataSource r, MonadSTM m, MonadReader r m)
-  => [(URI, Maybe VeryBlockLike, Maybe RawLevel)] -> NodeQuery a -> m (Either CacheError [(URI, VeryBlockLike)])
+  => [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
+  -> NodeQuery a
+  -> m [(URI, Either UnsuitableNodeReason VeryBlockLike)]
 validNodes nodes q = case q of
-  NodeQuery_ProtocolConstants ctx -> findNode =<< getLvl ctx
-  NodeQuery_ProtocolIndex _ctx -> pure $ Right [] -- only OS public node can do this query
-  NodeQuery_BakingRights _ctx lvl -> findNode $ Just lvl
-  NodeQuery_EndorsingRights _ctx lvl -> findNode $ Just lvl
-  NodeQuery_Block ctx -> findNode =<< getLvl ctx
-  NodeQuery_BlockHeader _ctx -> findNode Nothing
-  NodeQuery_Account ctx _contractId -> findNode =<< getLvl ctx
-  NodeQuery_Ballots ctx -> findNode =<< getLvl ctx
-  NodeQuery_Ballot ctx _pkh -> findNode =<< getLvl ctx
-  NodeQuery_ProposalVote ctx _pkh -> findNode =<< getLvl ctx
-  NodeQuery_Listings ctx -> findNode =<< getLvl ctx
-  NodeQuery_Proposals ctx -> findNode =<< getLvl ctx
-  NodeQuery_CurrentProposal ctx -> findNode =<< getLvl ctx
-  NodeQuery_CurrentQuorum ctx -> findNode =<< getLvl ctx
-  NodeQuery_DelegateInfo _ctx lvl _pkh -> findNode $ Just lvl
-  NodeQuery_PublicKey _ -> findNode Nothing
+  NodeQuery_ProtocolConstants ctx -> findNodes <$> getLvl ctx
+  NodeQuery_ProtocolIndex _ctx -> pure $ (\(u,_,_) -> (u, Left UnsuitableNodeReason_ProtocolIndex)) <$> nodes -- only OS public node can do this query
+  NodeQuery_BakingRights _ctx lvl -> pure $ findNodes $ Just lvl
+  NodeQuery_EndorsingRights _ctx lvl -> pure $ findNodes $ Just lvl
+  NodeQuery_Block ctx -> findNodes <$> getLvl ctx
+  NodeQuery_BlockHeader _ctx -> pure $ findNodes Nothing
+  NodeQuery_Account ctx _contractId -> findNodes <$> getLvl ctx
+  NodeQuery_Ballots ctx -> findNodes <$> getLvl ctx
+  NodeQuery_Ballot ctx _pkh -> findNodes <$> getLvl ctx
+  NodeQuery_ProposalVote ctx _pkh -> findNodes <$> getLvl ctx
+  NodeQuery_Listings ctx -> findNodes <$> getLvl ctx
+  NodeQuery_Proposals ctx -> findNodes <$> getLvl ctx
+  NodeQuery_CurrentProposal ctx -> findNodes <$> getLvl ctx
+  NodeQuery_CurrentQuorum ctx -> findNodes <$> getLvl ctx
+  NodeQuery_DelegateInfo _ctx lvl _pkh -> pure $ findNodes $ Just lvl
+  NodeQuery_PublicKey _ -> pure $ findNodes Nothing
   where
     getLvl :: BlockHash -> m (Maybe RawLevel)
     getLvl ctx = do
       dsrc <- asks (^. nodeDataSource)
       fmap (view level) <$> lookupBlock dsrc ctx
 
-    findNode :: Maybe RawLevel -> m (Either CacheError [(URI, VeryBlockLike)])
-    findNode mLvl = do
+    findNodes :: Maybe RawLevel -> [(URI, Either UnsuitableNodeReason VeryBlockLike)]
+    findNodes mLvl = do
       case mLvl of
-        Nothing -> pure $ Right $ mapMaybe
-          (\(nUri, mBlk, _) -> (nUri,) <$> mBlk) nodes
-        Just lvl -> pure $ Right candidateNodes
+        Nothing ->
+          (\(nUri, mBlk, _) -> (nUri,note UnsuitableNodeReason_MissingBlockInfo mBlk)) <$> nodes
+        Just lvl -> (\(nUri, mBlk, mSp) -> (nUri, suitableNodeBlock mBlk mSp)) <$> nodes
           where
-            candidateNodes = flip mapMaybe nodes $
-              \(nUri, mBlk, mSp) -> mSp >>= \sp ->
-                if sp <= lvl
-                  then (nUri,) <$> mBlk
-                  else Nothing
+            suitableNodeBlock mBlk mSp =
+              -- If our node has a save point, check that the query that we are doing is not
+              -- for a level prior to this savepoint.
+              note UnsuitableNodeReason_MissingSavepoint mSp >>= \savepoint ->
+                if savepoint <= lvl
+                  then note UnsuitableNodeReason_MissingBlockInfo mBlk
+                  else Left $ UnsuitableNodeReason_QueryBeforeSavepoint savepoint lvl
 
-pickNode
+-- Sort candidate nodes into suitable and unsuitable buckets based on whether the supplied branch
+-- is contained within the node.
+pickNodes
   :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
-  => BlockHash -> [(URI, VeryBlockLike)] -> m (Maybe URI)
-pickNode branch = fmap (headMay . catMaybes . toList) . traverse (\(nodeUri, nodeHead) -> bool Nothing (Just nodeUri) <$> containsBranch nodeHead)
+  => BlockHash -> [(URI, VeryBlockLike)] -> m ([URI],[(URI, UnsuitableNodeReason)])
+pickNodes branch =
+  fmap partitionEithers
+  . traverse (\(nodeUri, nodeHead) ->
+    bool
+      (Right (nodeUri, UnsuitableNodeReason_BranchNotContained branch))
+      (Left (nodeUri))
+      <$> containsBranch nodeHead)
   where
     containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
 
@@ -928,7 +976,7 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
-    case view managerKey_key managerkeyResp of
+    case view managerKeyCrossCompat_key managerkeyResp of
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
       Just pk -> pure pk
   where
@@ -986,6 +1034,7 @@ instance QueryHistory OsNodeQuery where
   rBlockPred = error "rBlockPred NYI for OsNodeQuery"
   rProtoConstants = error "rProtoConstants NYI for OsNodeQuery"
   rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
+  rRunOperation = error "rRunOperation for OsNodeQuery"
 
   rBallots = blockApi1 "/ballots"
   rContract contractId = case contractId of
@@ -1166,6 +1215,39 @@ calculateBakerStats pkhs = do
 
 
 -}
+
+-- | Logs the cache error as a Error to the monadlogger context
+cacheErrorLogMessage
+  :: Text -- A user friendly description of what was doing the call
+  -> CacheError
+  -> Text
+cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc <> "' Reason: ") <>) $ prettyCacheError err
+  where
+    prettyCacheError = \case 
+      CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
+      CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
+      CacheError_Timeout t -> "Timed out after " <> tshow t
+      CacheError_RpcError rpcErr -> case rpcErr of
+        RpcError_UnexpectedStatus _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
+        RpcError_HttpException e -> "RPC Exception (The Node is unreachable) " <> tshow e
+        RpcError_NonJSON e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
+      CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
+      CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
+      CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
+
+noSuitableNodeLogMessage :: Text -> [(URI, UnsuitableNodeReason)] -> Text
+noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <> q <> "`. Nodes are [" <> (T.intercalate "," . fmap prettyUnsuitableReason $ reasons) <> "]"
+  where
+    prettyUnsuitableReason (u, r) = (("(" <> Uri.render u <> ",") <>) $ case r of
+      UnsuitableNodeReason_QueryFailed ce -> "Query Failed on node: " <> ce
+      UnsuitableNodeReason_QueryBeforeSavepoint savepointLevel queryLevel -> "The level required to fulfill this query is " <> prettyLevel queryLevel <> " but the node savepoint is at " <> prettyLevel savepointLevel
+      UnsuitableNodeReason_MissingBlockInfo -> "Kiln has not yet retrieved the latest block head for this node"
+      UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
+      UnsuitableNodeReason_BranchNotContained b -> "The block '" <> tshow b <> "' could not be found within the kiln's known history for this node."
+      UnsuitableNodeReason_ProtocolIndex -> "Kiln is looking for the ProtocolIndex, which only the public node can find. If you see this, then it may indicate that the public node is down and the alternative means of building the protocol index from the node aren't working (your node may not have enough history to do this yet)."
+      
+    prettyLevel = tshow . unRawLevel
+
 -- produce (up to) n ancestor hashes (including the block itself)
 ancestors ::
   ( MonadIO m
@@ -1219,11 +1301,11 @@ calculateBakeEfficiency branch len baker = do
 
 -}
 tryFetchFromCache
-  :: forall m a. MonadNodeQuery m
+  :: forall m a. (MonadNodeQuery m, FromJSON a, ToJSON (NodeQuery a))
   => ChainId -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
 tryFetchFromCache chainId q = do
   let
-    qJson = Json $ requestToJSON q
+    qJson = Json $ Aeson.toJSON q
   -- although this is within the grasp of groundhog, this table is very hot,
   -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
   -- terrible:
@@ -1236,12 +1318,11 @@ tryFetchFromCache chainId q = do
     |] <&> fmap (\(id_, c, k, v) -> (id_, GenericCacheEntry c k v))
   case nonEmpty resultM of
     Nothing -> return Nothing
-    Just ((rid, result) :| _) -> case requestResponseFromJSON q of
-      Dict -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
-        Aeson.Success v -> return $ Just (v, rid)
-        Aeson.Error bad -> do
-          $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
-          return Nothing
+    Just ((rid, result) :| _) -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
+      Aeson.Success v -> return $ Just (v, rid)
+      Aeson.Error bad -> do
+        $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
+        return Nothing
 
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
@@ -1303,18 +1384,25 @@ getProtocolIndex
   => BlockHash -> ProtocolHash -> NodeQueryT m ProtocolIndex
 getProtocolIndex branch protoHash = do
   (chainId, historyVar) <- asksNodeDataSource (_nodeDataSource_chain &&& _nodeDataSource_history)
-
   existingEntries :: [ProtocolIndex] <- select $
     ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
 
   history <- nqAtomically $ readTVar' historyVar
-  case headMay [x | x <- existingEntries, isJust $ branchPointPure (x ^. hash) branch history] of
+  case headMay existingEntries of
     Just existing -> pure existing
     Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
       Right p' -> do
         insert p'
         pure p'
-      Left _ -> buildProtocolIndex branch protoHash history
+      Left _ -> nqTry (buildProtocolIndex branch protoHash history) >>= \case
+        Right p' -> do
+          pure p'
+        Left e -> do
+          -- as a last measure just fetch the protocol constants without building the index
+          p <- fetchProtocolForBlock chainId branch
+          if p ^. protocolIndex_hash == protoHash
+            then pure p
+            else nqThrowError e
 
 buildProtocolIndex
   :: forall m
@@ -1359,22 +1447,22 @@ buildProtocolIndex branch protoHash history = do
             , _protocolIndex_hash = firstBlock ^. protocolHash
             , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
             , _protocolIndex_constants = constants
-            , _protocolIndex_firstBlockHash = firstBlock ^. hash
-            , _protocolIndex_firstBlockPredecessor = firstBlock ^. predecessor
-            , _protocolIndex_firstBlockLevel = firstBlock ^. level
-            , _protocolIndex_firstBlockFitness = firstBlock ^. fitness
-            , _protocolIndex_firstBlockTimestamp = firstBlock ^. timestamp
-            , _protocolIndex_firstBlockCycle = firstBlock ^. blockMetadata . blockMetadata_level . level_cycle
+            , _protocolIndex_firstBlockHash = Just $ firstBlock ^. hash
+            , _protocolIndex_firstBlockPredecessor = Just $ firstBlock ^. predecessor
+            , _protocolIndex_firstBlockLevel = Just $ firstBlock ^. level
+            , _protocolIndex_firstBlockFitness = Just $ firstBlock ^. fitness
+            , _protocolIndex_firstBlockTimestamp = Just $ firstBlock ^. timestamp
+            , _protocolIndex_firstBlockCycle = Just $ firstBlock ^. blockMetadata . blockMetadata_level . level_cycle
             }
 
       for_ protoIndexes $ \protoIndex -> do
-        mp :: Maybe BlockHash <- project1 ProtocolIndex_firstBlockHashField
+        mp :: Maybe (Maybe BlockHash) <- project1 ProtocolIndex_firstBlockHashField
           (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
-            &&. (ProtocolIndex_firstBlockHashField ==. protoIndex ^. protocolIndex_firstBlockHash)
+            &&. (ProtocolIndex_chainIdField ==. chainId)
           )
-        when (mp == Nothing) $ do
+        when (join mp == Nothing) $ do
           insert protoIndex
-          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash, protoIndex ^. hash)
+          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash)
 
       maybe (nqThrowError CacheError_NotEnoughHistory) pure $
         find ((protoHash ==) . view protocolHash) protoIndexes
@@ -1386,7 +1474,7 @@ buildProtocolHistoryUntil
   -> "branch" :! BlockHash
   -> "history" :! CachedHistory'
   -> NodeQueryT m (Map ProtocolHash BlockCrossCompat)
-  -- Turns this into table, ProtocolHash 
+  -- Turns this into table, ProtocolHash
 buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
   branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
   go ! #currentBlock branchBlock
@@ -1459,15 +1547,40 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
             | x ^. protocolHash == high ^. protocolHash -> binarySearch low halfway
             | otherwise -> pure Nothing
 
+fetchProtocolForBlock
+  :: forall m
+   . (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
+  => ChainId
+  -> BlockHash
+  -> NodeQueryT m ProtocolIndex
+fetchProtocolForBlock chainId blkHash = do
+  $(logDebug) [i|fetchProtocolForBlock: ${blkHash}|]
+  protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants blkHash
+  blockHeader <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
+  let p = ProtocolIndex
+          { _protocolIndex_chainId = chainId
+          , _protocolIndex_hash = blockHeader ^. protocolHash
+          , _protocolIndex_constants = protoInfo
+          , _protocolIndex_proto = blockHeader ^. blockHeader_proto
+          , _protocolIndex_firstBlockHash = Nothing
+          , _protocolIndex_firstBlockPredecessor = Nothing
+          , _protocolIndex_firstBlockLevel = Nothing
+          , _protocolIndex_firstBlockFitness = Nothing
+          , _protocolIndex_firstBlockTimestamp = Nothing
+          , _protocolIndex_firstBlockCycle = Nothing
+          }
+  insert p
+  pure p
+
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery
 deriveGShow ''NodeQuery
-makeRequestForData ''NodeQuery
+deriveJSONGADT ''NodeQuery
 
 deriveGEq ''NodeQueryIx
 deriveGCompare ''NodeQueryIx
 deriveGShow ''NodeQueryIx
-makeRequestForData ''NodeQueryIx
+deriveJSONGADT ''NodeQueryIx
 
-instance Hashable (NodeQuery a) where
-  hashWithSalt s = hashWithSalt s . requestToJSON
+instance (ToJSON (NodeQuery a)) => Hashable (NodeQuery a) where
+  hashWithSalt s = hashWithSalt s . Aeson.toJSON

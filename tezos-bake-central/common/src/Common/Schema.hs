@@ -48,9 +48,9 @@ import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.TH (deriveJSON)
 import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Aeson.GADT (deriveJSONGADT)
-import Data.GADT.Compare.TH (deriveGEq, deriveEqTagIdentity)
-import Data.GADT.Compare.TH (deriveGCompare, deriveOrdTagIdentity)
-import Data.GADT.Show.TH (deriveGShow, deriveShowTagIdentity)
+import Data.GADT.Compare.TH (deriveGEq)
+import Data.GADT.Compare.TH (deriveGCompare)
+import Data.GADT.Show.TH (deriveGShow)
 import Data.Dependent.Sum.Orphans ()
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -64,12 +64,13 @@ import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
 import Data.Universe
 import Data.Universe.Helpers (universeDef)
-import Data.Universe.TH (deriveSomeUniverse)
+import Data.Universe.Some
 import Data.Version (Version)
 import Data.Word
+import Database.Id.Class
 import GHC.Generics (Generic)
 import Language.Haskell.TH (Name)
-import Rhyolite.Schema (Email, HasId (..), Id, Json)
+import Rhyolite.Schema (Email, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
@@ -97,9 +98,20 @@ instance Aeson.FromJSON ClientError
 requiredTezosBakingAppVersion :: Text
 requiredTezosBakingAppVersion = "2.0.0"
 
+data UnsuitableNodeReason
+  = UnsuitableNodeReason_QueryBeforeSavepoint RawLevel RawLevel
+  | UnsuitableNodeReason_MissingBlockInfo
+  | UnsuitableNodeReason_MissingSavepoint
+  | UnsuitableNodeReason_QueryFailed Text -- TODO This should be CacheError but we've got a cycle that doesn't play ball with TH
+  | UnsuitableNodeReason_BranchNotContained BlockHash
+  | UnsuitableNodeReason_ProtocolIndex -- Only the public node can do rProtocolIndex
+  deriving (Show, Generic, Typeable)
+makePrisms ''UnsuitableNodeReason
+
+
 data CacheError
   = CacheError_RpcError !RpcError
-  | CacheError_NoSuitableNode
+  | CacheError_NoSuitableNode Text [(URI,UnsuitableNodeReason)]
   | CacheError_NotEnoughHistory
   | CacheError_Timeout !NominalDiffTime
   | CacheError_SomeException !SomeException
@@ -188,6 +200,7 @@ data ConnectedLedger = ConnectedLedger
   { _connectedLedger_ledgerIdentifier :: !(Maybe LedgerIdentifier)
   , _connectedLedger_bakingAppVersion :: !(Maybe Text)
   , _connectedLedger_walletAppVersion :: !(Maybe Text)
+  , _connectedLedger_forceConnectivityCheck :: !Bool
   , _connectedLedger_updated :: !(Maybe UTCTime)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ConnectedLedger
@@ -252,6 +265,7 @@ data NodeExternalData = NodeExternalData
   { _nodeExternalData_address :: !URI
   , _nodeExternalData_alias :: !(Maybe Text)
   , _nodeExternalData_minPeerConnections :: !(Maybe Int)
+  , _nodeExternalData_commitHash :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeExternalData where
@@ -269,6 +283,7 @@ instance HasId NodeInternal where
 
 data NodeProcessState
   = NodeProcessState_ImportingSnapshot
+  | NodeProcessState_ImportCanceled
   | NodeProcessState_ImportComplete
   | NodeProcessState_ImportFailed
   | NodeProcessState_ImportTimeout
@@ -373,15 +388,15 @@ data ProtocolIndex = ProtocolIndex
   , _protocolIndex_hash :: !ProtocolHash
   , _protocolIndex_constants :: !ProtoInfo
   , _protocolIndex_proto :: !Word8
-  , _protocolIndex_firstBlockHash :: !BlockHash
-  , _protocolIndex_firstBlockPredecessor :: !BlockHash
-  , _protocolIndex_firstBlockLevel :: !RawLevel
-  , _protocolIndex_firstBlockFitness :: !Fitness
-  , _protocolIndex_firstBlockTimestamp :: !UTCTime
-  , _protocolIndex_firstBlockCycle :: !Cycle
+  , _protocolIndex_firstBlockHash :: !(Maybe BlockHash)
+  , _protocolIndex_firstBlockPredecessor :: !(Maybe BlockHash)
+  , _protocolIndex_firstBlockLevel :: !(Maybe RawLevel)
+  , _protocolIndex_firstBlockFitness :: !(Maybe Fitness)
+  , _protocolIndex_firstBlockTimestamp :: !(Maybe UTCTime)
+  , _protocolIndex_firstBlockCycle :: !(Maybe Cycle)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId ProtocolIndex where
-  type IdData ProtocolIndex = (ChainId, ProtocolHash, BlockHash)
+  type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
 data PublicNodeConfig = PublicNodeConfig
   { _publicNodeConfig_source :: !PublicNode
@@ -646,12 +661,28 @@ data ErrorLogNetworkUpdate = ErrorLogNetworkUpdate
 instance HasId ErrorLogNetworkUpdate where
   type IdData ErrorLogNetworkUpdate = Id ErrorLog
 
+data ErrorLogBakerLedgerDisconnected = ErrorLogBakerLedgerDisconnected
+  { _errorLogBakerLedgerDisconnected_log :: !(Id ErrorLog)
+  , _errorLogBakerLedgerDisconnected_baker :: !(Id Baker)
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerLedgerDisconnected where
+  type IdData ErrorLogBakerLedgerDisconnected = Id ErrorLog
+
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
   , _errorLogInaccessibleNode_node :: !(Id Node)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInaccessibleNode where
   type IdData ErrorLogInaccessibleNode = Id ErrorLog
+
+data ErrorLogNodeVersionMismatch = ErrorLogNodeVersionMismatch
+  { _errorLogNodeVersionMismatch_log :: !(Id ErrorLog)
+  , _errorLogNodeVersionMismatch_node :: !(Id Node)
+  , _errorLogNodeVersionMismatch_latestHash :: !Text
+  , _errorLogNodeVersionMismatch_nodeHash :: !Text
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNodeVersionMismatch where
+  type IdData ErrorLogNodeVersionMismatch = Id ErrorLog
 
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
@@ -846,6 +877,7 @@ data SnapshotMeta = SnapshotMeta
   , _snapshotMeta_headBlockPrefix :: !(Maybe Text)
   , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
   , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
+  , _snapshotMeta_control :: !ProcessControl
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId SnapshotMeta
 
@@ -862,11 +894,13 @@ deriving instance Eq (LogTag a)
 deriving instance Ord (LogTag a)
 deriving instance Show (LogTag a)
 
+-- Review CollectiveNodesFailure code when adding a new alert
 data NodeLogTag a where
   NodeLogTag_InaccessibleNode :: NodeLogTag ErrorLogInaccessibleNode
   NodeLogTag_NodeWrongChain :: NodeLogTag ErrorLogNodeWrongChain
   NodeLogTag_NodeInvalidPeerCount :: NodeLogTag ErrorLogNodeInvalidPeerCount
   NodeLogTag_BadNodeHead :: NodeLogTag ErrorLogBadNodeHead
+  NodeLogTag_VersionMismatch :: NodeLogTag ErrorLogNodeVersionMismatch
 
 deriving instance Eq (NodeLogTag a)
 deriving instance Ord (NodeLogTag a)
@@ -879,6 +913,7 @@ deriving instance Show (NodeLogTag a)
 -- of a background process and a delegate. we should really rename one or both
 -- to minimize confusion between these two ideas.
 data BakerLogTag a where
+  BakerLogTag_BakerLedgerDisconnected :: BakerLogTag ErrorLogBakerLedgerDisconnected
   BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
@@ -915,10 +950,12 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
+  , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
+  , ''ErrorLogNodeVersionMismatch
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
   , ''ProtocolIndex
@@ -972,6 +1009,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerDeactivationRisk
   , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
+  , 'ErrorLogBakerLedgerDisconnected
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogInsufficientFunds
   , 'ErrorLogNetworkUpdate
@@ -1011,9 +1049,6 @@ fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
   , deriveGEq t
   , deriveGCompare t
   , deriveGShow t
-  , deriveEqTagIdentity t
-  , deriveOrdTagIdentity t
-  , deriveShowTagIdentity t
   ]
 
 -- Do this is second because it is downstream
@@ -1023,17 +1058,31 @@ fmap concat $ for [''LogTag] $ \t -> concat <$> sequence
   , deriveGEq t
   , deriveGCompare t
   , deriveGShow t
-  , deriveEqTagIdentity t
-  , deriveOrdTagIdentity t
-  , deriveShowTagIdentity t
   ]
 
-deriveSomeUniverse ''NodeLogTag
-deriveSomeUniverse ''BakerLogTag
+instance UniverseSome NodeLogTag where
+  universeSome =
+    [ Some NodeLogTag_InaccessibleNode
+    , Some NodeLogTag_NodeWrongChain
+    , Some NodeLogTag_NodeInvalidPeerCount
+    , Some NodeLogTag_BadNodeHead
+    , Some NodeLogTag_VersionMismatch
+    ]
+
+instance UniverseSome BakerLogTag where
+  universeSome =
+    [ Some BakerLogTag_BakerMissed
+    , Some BakerLogTag_BakerDeactivated
+    , Some BakerLogTag_BakerDeactivationRisk
+    , Some BakerLogTag_BakerAccused
+    , Some BakerLogTag_BakerLedgerDisconnected
+    , Some BakerLogTag_InsufficientFunds
+    , Some BakerLogTag_VotingReminder
+    ]
 -- need Cale to fix this
 -- deriveSomeUniverse ''LogTag
-instance Universe (Some LogTag) where
-  universe = [This LogTag_NetworkUpdate] <> fmap (\(This x) -> This (LogTag_Node x)) universe <> fmap (\(This x) -> This (LogTag_Baker x)) universe <> [This LogTag_BakerNoHeartbeat]
+instance UniverseSome LogTag where
+  universeSome = [Some LogTag_NetworkUpdate] <> fmap (\(Some x) -> Some (LogTag_Node x)) universe <> fmap (\(Some x) -> Some (LogTag_Baker x)) universe <> [Some LogTag_BakerNoHeartbeat]
 
 instance BlockLike PublicNodeHead where
   hash = publicNodeHead_headBlock . hash
@@ -1044,13 +1093,6 @@ instance BlockLike PublicNodeHead where
 
 instance HasProtocolHash PublicNodeHead where
   protocolHash = publicNodeHead_protocolHash
-
-instance BlockLike ProtocolIndex where
-  hash = protocolIndex_firstBlockHash
-  predecessor = protocolIndex_firstBlockPredecessor
-  fitness = protocolIndex_firstBlockFitness
-  level = protocolIndex_firstBlockLevel
-  timestamp = protocolIndex_firstBlockTimestamp
 
 instance HasProtocolHash ProtocolIndex where
   protocolHash = protocolIndex_hash
@@ -1073,10 +1115,12 @@ errorLogNames =
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
+  , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
+  , ''ErrorLogNodeVersionMismatch
   , ''ErrorLogVotingReminder
   ]

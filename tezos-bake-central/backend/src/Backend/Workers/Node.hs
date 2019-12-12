@@ -37,16 +37,17 @@ import qualified Data.Set as S
 import Data.String.Here.Interpolated (i)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
+import qualified Data.Text as T
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
+import Database.Id.Class
+import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
-import Rhyolite.Backend.Schema (toId, fromId)
-import Rhyolite.Schema (Id (..))
 import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -97,7 +98,11 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
       headBlockHeader <- withExceptT Right $ do
-        flip runReaderT (nds { _nodeDataSource_nodeForQuery = Just nodeAddr }) $ do
+        -- Only OS public node can do a NodeQuery_BlockHeader, and that will be automatically chosen 
+        -- to do the query if there are no other nodes/the query is not cached.
+        -- Also dont specify the nodeAddr for the OS public node here, as the OS public node query logic is special
+        -- and doesn't work like usual node RPC.
+        flip runReaderT (if pn == Nothing then nds { _nodeDataSource_nodeForQuery = Just nodeAddr } else nds) $ do
           nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
 
       withExceptT Left $
@@ -108,7 +113,8 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
       pure headBlockHeader
 
     case newStateRsp of
-      Left e -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left e
+      Left (Left e) -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left (Left e)
+      Left (Right e) -> $(logWarn) (cacheErrorLogMessage "Handle new node head" e) $> Left (Right e)
       Right headBlockHeader -> pure $ Right (isNewBlock, headBlockHeader)
 
   for_ res $ \(isNewBlock, headBlockHeader) ->
@@ -128,6 +134,16 @@ nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> 
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
+    $(logDebug) $ fold
+      [ "Updating node "
+      , tshow nodeId
+      , " details "
+      , Uri.render nodeAddr
+      , " at block "
+      , tshow headBlockInfo
+      , " savepoint "
+      , tshow mSpData
+      ]
     -- This isn't very nuanced: old, stale nodes, even if they are catching
     -- up, will churn a lot here.  Maybe we could improve this to filter
     -- out "new" blocks that are already on the branch of `oldHead`?
@@ -708,7 +724,7 @@ amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \late
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
 
     throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
-    throwing = fmap (either (error . show) id) . flip runReaderT nds . runExceptT @CacheError
+    throwing = fmap (either (error . T.unpack . cacheErrorLogMessage "amendmentProcessWorker") id) . flip runReaderT nds . runExceptT @CacheError
 
     runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
@@ -814,7 +830,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     getProtocol = getProtocol' >>= \case
       Right p -> return p
       Left e -> do
-        $(logWarnSH) ("protocolMonitorWorker: cannot fetch protocol"::Text, e)
+        $(logWarnSH) (cacheErrorLogMessage "protocolMonitorWorker: fetch protocol" e)
         threadDelay' 1
         getProtocol
 
@@ -823,7 +839,7 @@ protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> r
     babyHax :: ProtocolHash -> ProtocolHash
     babyHax "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU" = "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
     babyHax ph = ph
-    
+
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. blockMetadata . blockMetadata_votingPeriodKind
