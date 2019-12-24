@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.4
+
+  * Ledger connectivity check is now disabled by default.
+    To enable the check use the 'ledger-check-delay' option.
+
+  * Bug Fixes
+    * Fix the export logs functionality for Debian.
+
 ## 0.7.3
 
   * Ledger connectivity icon and alert
