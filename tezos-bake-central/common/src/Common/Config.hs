@@ -13,12 +13,13 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.String (IsString)
 import qualified Data.Text as T
-import Text.Read (readMaybe)
+import Data.Time (NominalDiffTime)
 import Data.Version (Version)
 import qualified Network.URI.Encode as UriEncode
+import Text.Read (readMaybe)
 import Text.URI (URI)
 
-import Tezos.Types (ChainId, NamedChain (..), PublicKeyHash, tryReadPublicKeyHashText, HashBase58Error(..))
+import Tezos.Types (ChainId, HashBase58Error (..), NamedChain (..), PublicKeyHash, tryReadPublicKeyHashText)
 
 import Common (defaultTezosCompatJsonOptions)
 import Common.URI (Port, mkRootUri)
@@ -65,6 +66,15 @@ serveNodeCache = "serve-node-cache"
 
 enableOsPublicNode :: FilePath
 enableOsPublicNode = "enable-obsidian-node"
+
+ledgerCheckDelay :: FilePath
+ledgerCheckDelay = "ledger-check-delay"
+
+parseSecondsUnsafe :: Text -> NominalDiffTime
+parseSecondsUnsafe = unsafeParse "seconds" $ \a -> case readMaybe (T.unpack a) of
+  Nothing -> Left "Not a number of seconds"
+  Just b | b >= 45 -> Right $ fromIntegral (b :: Integer)
+  _ -> Left "Ledger check delay must be 45 seconds or more"
 
 parseBool :: Text -> Bool
 parseBool txt
@@ -187,6 +197,7 @@ data FrontendConfig = FrontendConfig
   , _frontendConfig_appVersion :: !Version
   , _frontendConfig_usingOsPublicNode :: !Bool
   , _frontendConfig_logExportAvailable :: !Bool
+  , _frontendConfig_ledgerConnectedChecks :: !Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 class HasFrontendConfig r where
