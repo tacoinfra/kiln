@@ -2,6 +2,7 @@
   "owner": "obsidiansystems",
   "repo": "rhyolite",
   "branch": "kiln",
-  "rev": "56584131d131dcae7eaaecefc91c387fb7878493",
-  "sha256": "0cka1fbxax8kna3jhh464d2vpwhpa0yxyv097sc4xw2r98361r0y"
+  "private": false,
+  "rev": "32a8474462179d33f593125c79a57f2ffb0e0800",
+  "sha256": "0vn4v9m89spygqdvh5qwpjgy0fzss0nf9fh4dm2mccqqpq7qyhkk"
 }
