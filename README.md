@@ -2,6 +2,8 @@
 
 Kiln, by [Obsidian Systems](https://obsidian.systems/), is a tool for both baking and monitoring on the Tezos network. It provides a locally hosted graphical interface, binaries for tezos-client, tezos-node, tezos-baker, and tezos-endorser, and it builds a cache of chain data from the nodes to which it connects.
 
+**For step-by-step instructions on how to get started, see our medium post [How to Install Kiln and Bake on Ubuntu](https://medium.com/@obsidian.systems/how-to-install-kiln-and-bake-on-ubuntu-a13d17df63c).** We also post release notes to the [Obsidian Medium Account](https://medium.com/@obsidian.systems).
+
 ## System Requirements
 
 System requirements are dependent on whether you plan on running a Tezos node in Kiln, which is necessary for baking.
