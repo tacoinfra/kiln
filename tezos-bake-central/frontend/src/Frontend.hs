@@ -1,6 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -21,7 +21,7 @@
 
 module Frontend where
 
-import Control.Lens ((<>~), imap, to)
+import Control.Lens (imap, to, (<>~))
 import Control.Monad (unless)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
@@ -29,9 +29,9 @@ import Control.Monad.Reader (ReaderT)
 import Data.Constraint.Extras
 import Data.Default
 import qualified Data.Dependent.Map as DMap
-import Data.Dependent.Sum (DSum(..))
+import Data.Dependent.Sum (DSum (..))
+import Data.Functor.Compose (Compose (..))
 import Data.Functor.Infix hiding ((<&>))
-import Data.Functor.Compose (Compose(..))
 import Data.GADT.Compare
 import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NEL
@@ -43,12 +43,12 @@ import Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Time as Time
-import Data.Word (Word64)
 import Data.Version
+import Data.Word (Word64)
 import Database.Id.Class
 import qualified GHCJS.DOM as DOM
-import qualified GHCJS.DOM.Location as Location
 import qualified GHCJS.DOM.File as File
+import qualified GHCJS.DOM.Location as Location
 import GHCJS.DOM.Types (MonadJSM, liftJSM)
 import qualified GHCJS.DOM.Window as Window
 import qualified Obelisk.ExecutableConfig.Lookup
@@ -60,37 +60,29 @@ import Reflex.Dom.Core
 import Reflex.Dom.Form.Widgets (formItem, formItem')
 import qualified Reflex.Dom.SemanticUI as SemUi
 import Rhyolite.Api (public)
-import Rhyolite.Frontend.App (AppWebSocket (..), runRhyoliteWidget, functorToWire)
+import Rhyolite.Frontend.App (AppWebSocket (..), functorToWire, runRhyoliteWidget)
 import Rhyolite.Schema (Json (..))
 import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Common.NodeRPC.Sources 
+import Tezos.Common.NodeRPC.Sources
 import Tezos.Types
 
 import Common (humanBytes)
 import Common (unixEpoch, uriHostPortPath)
-import Common.Alerts (
-    AlertsFilter(..),
-    BakerErrorDescriptions(..),
-    badNodeHeadMessage,
-    bakerAccusedDescriptions,
-    bakerDeactivatedDescriptions,
-    bakerDeactivationRiskDescriptions,
-    bakerGroupedMissedDescriptions,
-    bakerInsufficientFundsDescriptions,
-    bakerLedgerDisconnectedDescriptions,
-    bakerMissedDescriptions,
-    bakerVotingReminderDescriptions,
-    networkUpdateDescription,
-    standardTimeFormat,
-  )
+import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHeadMessage,
+                      bakerAccusedDescriptions, bakerDeactivatedDescriptions,
+                      bakerDeactivationRiskDescriptions, bakerGroupedMissedDescriptions,
+                      bakerInsufficientFundsDescriptions, bakerLedgerDisconnectedDescriptions,
+                      bakerMissedDescriptions, bakerVotingReminderDescriptions, networkUpdateDescription,
+                      standardTimeFormat)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Calculations (levelToCycleSameProtocol)
-import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_chainId, frontendConfig_chain, frontendConfig_appVersion, frontendConfig_logExportAvailable, FrontendConfig(..))
+import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
+                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -385,7 +377,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
           divClass "description" $
             tooltipped TooltipPos_BottomLeft (protocolTooltip latestHead) $
               text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
-              
+
 
         divClass "iconDiv" $
           dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
@@ -421,8 +413,10 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
       internalBakerMayDyn <- watchInternalBaker
 
-      dyn_ $ ffor internalBakerMayDyn $ \internalBakerMay ->
-        when (isJust internalBakerMay) $ do
+      dHasLedgerConnectedChecks <- fmap (maybe False _frontendConfig_ledgerConnectedChecks) <$> watchFrontendConfig
+
+      dyn_ $ ffor2 internalBakerMayDyn dHasLedgerConnectedChecks $ \internalBakerMay hasLedgerConnectedChecks -> do
+        when (isJust internalBakerMay && hasLedgerConnectedChecks) $ do
           elAttr "div" ("class" =: "item" <> "style" =: "position: relative") $ divClass "content" $ do
             dCl <- watchConnectedLedger
             let dIsLedgerConnected = isJust . (_connectedLedger_ledgerIdentifier =<<) <$> dCl
@@ -441,7 +435,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" ensureHealthyNodes
-        
+
     protocolTooltip dmLatestHead = divClass "protocol-tooltip" $ do
       divClass "tooltip-title" $ text "Current Protocol"
       let dProtoText = maybe "Unknown" (^.protocolHash.to toBase58Text) <$> dmLatestHead

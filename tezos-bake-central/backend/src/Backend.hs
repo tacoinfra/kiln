@@ -17,7 +17,7 @@
 module Backend where
 
 import Control.Concurrent.MVar (MVar, newEmptyMVar)
-import Control.Concurrent.STM (atomically, readTQueue, newTVarIO, newTQueueIO)
+import Control.Concurrent.STM (atomically, newTQueueIO, newTVarIO, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
@@ -35,6 +35,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
+import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
 import Gargoyle.PostgreSQL.Connect (withDb)
@@ -47,22 +48,17 @@ import Obelisk.Frontend
 import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import qualified Rhyolite.Backend.WebSocket as RhyoliteWs
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
-import Rhyolite.Backend.Logging (
-    LoggingConfig (..),
-    LoggingEnv (..),
-    RhyoliteLogAppender(..),
+import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender (..),
+                                 RhyoliteLogLevel (..), runLoggingEnv, withLoggingMinLevel)
 #if defined(SUPPORT_SYSTEMD_JOURNAL)
-    RhyoliteLogAppenderJournald(..),
+import Rhyolite.Backend.Logging (RhyoliteLogAppenderJournald (..))
 #endif
-    RhyoliteLogLevel (..),
-    runLoggingEnv,
-    withLoggingMinLevel,
-  )
+
+import qualified Rhyolite.Backend.WebSocket as RhyoliteWs
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
@@ -76,17 +72,17 @@ import Text.URI (URI)
 import qualified Text.URI as URI
 
 import Tezos.Common.Chain (identifyChain)
+import Tezos.Common.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.History (emptyCache)
 import Tezos.NodeRPC hiding (DataSource)
-import Tezos.Common.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.Types
 
-import Backend.CachedNodeRPC (NodeDataSource(..))
-import Backend.Common (workerWithDelay, worker')
-import Backend.Config (AppConfig (..), defaultNodeConfigFile, nodeDataDir, BinaryPaths(..), kilnNodeRpcURI)
+import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.Common (worker', workerWithDelay)
+import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
-import Backend.NodeCmd (bakerDaemonProcess, internalNodeWorker, handleExportLogs)
+import Backend.NodeCmd (bakerDaemonProcess, handleExportLogs, internalNodeWorker)
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
@@ -98,11 +94,12 @@ import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.WebApi (v3PublicApi)
 import Backend.Workers.Accusation (accusationWorker)
+import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
-import Backend.Workers.Node (DataSource, nodeAlertWorker, nodeWorker, publicNodesWorker, protocolMonitorWorker, amendmentProcessWorker)
-import Backend.Workers.TezosClient (tezosClientWorker, resetLedgerQueue)
+import Backend.Workers.Node (DataSource, amendmentProcessWorker, nodeAlertWorker, nodeWorker,
+                             protocolMonitorWorker, publicNodesWorker)
+import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
@@ -241,6 +238,14 @@ backendImpl cfg serve = do
   !(bakers :: Maybe (Map.Map PublicKeyHash (Maybe Text))) <- liftA2 (<|>)
     (pure $ getOption $ _opts_bakers cfg)
     (getConfigFromFile (Just . Config.parseBakersUnsafe) $ configPath Config.bakers)
+
+  !(ledgerCheckDelay :: Maybe NominalDiffTime) <- liftA2 (<|>)
+    (pure $ _opts_ledgerCheckDelaySeconds cfg)
+    (getConfigFromFile (Just . Config.parseSecondsUnsafe) $ configPath Config.ledgerCheckDelay)
+
+  -- Force the check delay so that an error is thrown early
+  -- Exceptions in non-strict languages are terrabad
+  for_ ledgerCheckDelay (`seq` pure ())
 
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
@@ -415,6 +420,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_appVersion = version
           , Config._frontendConfig_usingOsPublicNode = isJust $ _nodeDataSource_osPublicNode dataSrc
           , Config._frontendConfig_logExportAvailable = logExportAvailable
+          , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
           }
 
       -- migrate old kiln storage
@@ -460,7 +466,7 @@ backendImpl cfg serve = do
         addFinalizer =<< internalNodeWorker appConfig logger db v
         addFinalizer =<< protocolMonitorWorker dataSrc db
         addFinalizer =<< bakerDaemonProcess appConfig logger db v
-        addFinalizer =<< tezosClientWorker 1.3 logger dataSrc appConfig db v
+        addFinalizer =<< tezosClientWorker 1.3 ledgerCheckDelay logger dataSrc appConfig db v
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case
@@ -542,6 +548,7 @@ data Opts = Opts
   , _opts_kilnNodeCustomArgs :: !(Maybe Text)
   , _opts_kilnDataDir :: !(Maybe FilePath)
   , _opts_binaryPaths :: !(Maybe Text)
+  , _opts_ledgerCheckDelaySeconds :: !(Maybe NominalDiffTime)
   }
 makeLenses ''Opts
 
@@ -566,13 +573,14 @@ instance Semigroup Opts where
     , _opts_kilnNodeCustomArgs = rightBiased (<|>) _opts_kilnNodeCustomArgs
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
+    , _opts_ledgerCheckDelaySeconds = rightBiased (<|>) _opts_ledgerCheckDelaySeconds
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
@@ -634,6 +642,9 @@ optsArgDescr =
 
   , mkReqArg Config.binaryPaths "BINPATHS" (set opts_binaryPaths . Just)
       "Custom paths to tezos binaries."
+
+  , mkReqArg Config.ledgerCheckDelay "SECONDS" (set opts_ledgerCheckDelaySeconds . Just . Config.parseSecondsUnsafe)
+      "Check ledger connectivity every X seconds (off by default)"
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

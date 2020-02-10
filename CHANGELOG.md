@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.7.4
+
+  * Ledger connectivity check is now disabled by default.
+    To enable the check use the 'ledger-check-delay' option.
+
+  * Bug Fixes
+    * Fix the export logs functionality for Debian.
+
+## 0.7.3
+
+  * Ledger connectivity icon and alert
+    Kiln now displays an icon on the top bar to indicate if the Ledger is connected/disconnected,
+    and also gives an alert to the user if the Ledger device gets disconnected.
+
+  * Support for baking with the new ed25519 derivation scheme (bip25519)
+
+  * Support for babylonnet. (alphanet has been removed)
+
+  * Snapshot import can be cancelled.
+
+  * Improved log messages.
+    Kiln now gives better log messages when it is not able to obtain required information from available nodes.
+
+  * Support building Kiln on MacOS from source code using nix
+
+  * "New Tezos software version is available" notification logic has been improved.
+    Kiln now detects the version of each monitored node separately, and notify on the node tile UI if the node is running the software different from the latest version.
+    This feature can also be disabled / configured via command line options.
+
+  * TzScan public node has been removed.
+
+  * Block hashes on node tile now links to tzstats.com (previously tzscan.com was used).
+
+  * Bug Fixes
+    * In some cases Kiln would continue to show "Gathering baking data", even though it has obtained all the available data (of preserved cycles) from the nodes.
+      This has been fixed.
+    * Fixed baker alert logic to not show the alert if the network is changed.
+    * Babylon specific
+      * Block's operation parsing now works if the entrypoint is an empty string.
+      * Double endorsement detection logic has been fixed.
+
+  * UI improvements
+    * When adding a new baker, the Public Key Hash's curve and derivation info is shown as a hover tool tip.
+    * Hovering over 'Network' in Kiln's header shows the current protocol.
+
+  * Code improvements
+    * The underlying app frameworks used by Kiln (Rhyolite, Obelisk and Reflex) have been upgraded.
+    * The core logic of Tezos block data and node RPC communications, written in Haskell, has been moved to a separate project (https://gitlab.com/obsidian.systems/tezos-bake-monitor-lib)
+      This will allow anyone to easily make use of this code to create other projects for Tezos.
+
+### Known Issues
+  * The copy button on the 'Network' -> 'Current Protocol' pop up might fail to copy the protocol hash to the clipboard.
+  * On cancelling snapshot import the UI might display "Snapshot import failed" error.
+
 ## 0.7.2
 
   * Include the tezos-node containing: Mempool: remove parsing exceptions (a7d357bb)

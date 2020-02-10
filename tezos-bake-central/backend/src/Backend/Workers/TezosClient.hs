@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -73,13 +74,14 @@ startBaking pkh = do
 
 tezosClientWorker
   :: NominalDiffTime
+  -> Maybe NominalDiffTime
   -> LoggingEnv
   -> NodeDataSource
   -> AppConfig
   -> Pool Postgresql
   -> Either NamedChain BinaryPaths
   -> IO (IO ())
-tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ do
+tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db chain = runLoggingEnv logger $ do
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
 
@@ -236,10 +238,12 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
           -- If we want to immediately do the connectivity check
           then updateConnectedLedgerViaGetConnectedLedger appConfig db chain
           -- Otherwise, we might want to do the connectivity check because some time has passed
-          else case _connectedLedger_updated cl of
-            Nothing -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
-            Just upd -> when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
-              doSensibleLedgerCheck (isJust $ _connectedLedger_ledgerIdentifier cl)
+          else case (mLedgerCheckDelay, _connectedLedger_updated cl) of
+            (Nothing, _) -> pure ()
+            (_,Nothing) -> updateConnectedLedgerViaGetConnectedLedger appConfig db chain
+            (Just ledgerBackgroundUpdateInterval, Just upd) ->
+              when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
+                doSensibleLedgerCheck (isJust $ _connectedLedger_ledgerIdentifier cl)
 
       _ -> do
         -- If there is no row in the DB, this is our first time running and we should check it
@@ -249,8 +253,6 @@ tezosClientWorker delay logger nds appConfig db chain = runLoggingEnv logger $ d
     where
       inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
-      ledgerBackgroundUpdateInterval :: NominalDiffTime -- seconds
-      ledgerBackgroundUpdateInterval = 45
 
       -- Regardless of updated time, we ought not to check the ledger if we are two levels around
       -- a baking right and we shouldn't bother checking if we don't have an internal baker running
