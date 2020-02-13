@@ -209,4 +209,6 @@ in (obApp distroMethods.source) // {
     pkgName = "kiln";
     version = "0.7.4"; # TODO: Calculate this
   }).kiln-debian;
+
+  inherit tezosScopedKit;
 }

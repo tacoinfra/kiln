@@ -94,9 +94,9 @@ tezosBinaryPaths _ =
   , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
   , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
   ) :|
-    [ ( "PtCarthavAMoXqbjBPVgDCRd5LgT7qqKWUPXnYii3xCaHRBMfHH"
-      , $(staticWhich "carthagenet-tezos-baker-006-PtCartha")
-      , $(staticWhich "carthagenet-tezos-endorser-006-PtCartha")
+    [ ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
+      , $(staticWhich "carthagenet-tezos-baker-006-PsCARTHA")
+      , $(staticWhich "carthagenet-tezos-endorser-006-PsCARTHA")
       )
     ]
 
