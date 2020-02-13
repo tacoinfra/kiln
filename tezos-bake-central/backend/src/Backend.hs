@@ -6,11 +6,11 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE PatternGuards #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -269,7 +269,7 @@ backendImpl cfg serve = do
       -- if there's issues, we exit immediately anyhow.
       Nothing -> case getPublicNodeUri PublicNode_Blockscale chainName of
         Nothing -> throwString $
-            "Unable to fetch chainId from foundation node for chain " <> T.unpack (showChain chain)
+            "Unable to fetch chain ID from foundation node for chain " <> T.unpack (showChain chain)
         Just uris -> runStderrLoggingT $ runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head uris))) >>= \case
           Left (e :: RpcError) -> throwString $
             "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
