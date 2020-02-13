@@ -407,6 +407,7 @@ validateBakerAddr = Validator.Validator
 tzStatsBlockUri :: NamedChain -> Text -> Maybe Uri.URI
 tzStatsBlockUri chain path = (`appendPaths` [path]) $ case chain of
   NamedChain_Babylonnet -> [uri|http://babylonnet.tzstats.com/|]
+  NamedChain_Carthagenet -> [uri|http://carthagenet.tzstats.com/|]
   NamedChain_Zeronet -> [uri|http://zeronet.tzstats.com/|]
   NamedChain_Mainnet -> [uri|http://tzstats.com/|]
 

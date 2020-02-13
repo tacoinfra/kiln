@@ -13,7 +13,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite = obelisk;
     nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits.nix {
       inherit pkgs;
-      tezos-baking-platform = import (hackGet ../dep/tezos-baking-platform) {};
+      tezos-baking-platform = import ../dep/tezos-baking-platform {};
     };
 
     hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {
