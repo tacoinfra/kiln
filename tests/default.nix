@@ -1,7 +1,7 @@
 { obelisk ? (import ../tezos-bake-central/.obelisk/impl {})
 , pkgs ? obelisk.reflex-platform.nixpkgs
 }: let
-  tbp-flextesa = import dep/tbp-flextesa {};
+  tbp-flextesa = import dep/tbp-multi-protocol-mainnet {};
 in {
   voting = pkgs.writeScriptBin "voting-test" ''
     #!/usr/bin/env bash
@@ -22,15 +22,15 @@ in {
   '';
 
   protocol = let
-    tzFlextesa = tbp-flextesa.tezos.mainnet;
-    tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.mainnet;
+    tzFlextesa = tbp-flextesa.tezos.master;
+    tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.master;
 
     # CONFIGURATION
     oldProtoHash = "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS";
     oldSuffix = "005-${builtins.substring 0 8 oldProtoHash}";
     newSuffix = "006-PsCARTHA";
 
-    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
+    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol/TEZOS_PROTOCOL";
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -67,7 +67,7 @@ in {
       --add-external 10000 \
       --generate-kiln "$kiln_config_dir",10000 \
       --clean-kiln-config \
-      --time "$speed,$speed" \
+      --time-between-blocks "$speed" \
       --size "$size" \
       --blocks-per-vot "$blocks_per_voting_period" \
       --pause-on-error true \
