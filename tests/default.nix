@@ -1,5 +1,6 @@
 { obelisk ? (import ../tezos-bake-central/.obelisk/impl {})
 , pkgs ? obelisk.reflex-platform.nixpkgs
+, bakeWithLedger ? true
 }: let
   tbp-flextesa = import dep/tbp-multi-protocol-mainnet {};
 in {
@@ -45,17 +46,19 @@ in {
     fail() { "''${___fail:?$1}"; }
     contains_re_group() { [[ $1 =~ $2 ]] && echo "''${BASH_REMATCH[1]}"; }
 
-    # if [ -z "''${ledger_uri:-}" ]; then
-    #   connected_ledgers=''$(${tzFlextesa.kit + /bin/tezos-client} -P 0 list connected ledgers 2>/dev/null)
-    #   ledger_uri=$(contains_re_group "$connected_ledgers" '(ledger://[^\"]+)' || fail "Unable to find a connected ledger")
-    # fi
-    # echo "> Ledger: $ledger_uri"
+    ${if bakeWithLedger then ''
+        if [ -z "''${ledger_uri:-}" ]; then
+          connected_ledgers=''$(${tzFlextesa.kit + /bin/tezos-client} -P 0 list connected ledgers 2>/dev/null)
+          ledger_uri=$(contains_re_group "$connected_ledgers" '(ledger://[^\"]+)' || fail "Unable to find a connected ledger")
+        fi
+        echo "> Ledger: $ledger_uri"
 
-    # show_ledger=$(${tzFlextesa.kit + /bin/tezos-client} -P 0 show ledger "$ledger_uri" 2>/dev/null)
-    # pk=$(contains_re_group "$show_ledger" '\* Public Key: ([A-Za-z0-9]+)' || fail "Unable to determine public key for $ledger_uri")
-    # echo "> PK: $pk"
-    # pkh=$(contains_re_group "$show_ledger" '\* Public Key Hash: ([A-Za-z0-9]+)' || fail "Unable to determine public key hash for $ledger_uri")
-    # echo "> PKH: $pkh"
+        show_ledger=$(${tzFlextesa.kit + /bin/tezos-client} -P 0 show ledger "$ledger_uri" 2>/dev/null)
+        pk=$(contains_re_group "$show_ledger" '\* Public Key: ([A-Za-z0-9]+)' || fail "Unable to determine public key for $ledger_uri")
+        echo "> PK: $pk"
+        pkh=$(contains_re_group "$show_ledger" '\* Public Key Hash: ([A-Za-z0-9]+)' || fail "Unable to determine public key hash for $ledger_uri")
+        echo "> PKH: $pkh"
+    '' else ""}
 
     echo 'Starting tezos-sandbox protocol test...'
 
@@ -64,6 +67,9 @@ in {
 
     mkdir -p "$kiln_config_dir"
     ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${proposalProtocolLib} \
+    ${if bakeWithLedger then ''
+      --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
+      --no-daemons-for LBK \'' else "\\"}
       --add-external 10000 \
       --generate-kiln "$kiln_config_dir",10000 \
       --clean-kiln-config \
