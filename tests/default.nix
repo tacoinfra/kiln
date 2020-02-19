@@ -1,7 +1,8 @@
 { obelisk ? (import ../tezos-bake-central/.obelisk/impl {})
 , pkgs ? obelisk.reflex-platform.nixpkgs
+, bakeWithLedger ? true
 }: let
-  tbp-flextesa = import dep/tbp-flextesa {};
+  tbp-flextesa = import dep/tbp-multi-protocol-mainnet {};
 in {
   voting = pkgs.writeScriptBin "voting-test" ''
     #!/usr/bin/env bash
@@ -23,14 +24,14 @@ in {
 
   protocol = let
     tzFlextesa = tbp-flextesa.tezos.master;
-    tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.mainnet;
+    tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.master;
 
     # CONFIGURATION
-    oldProtoHash = "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd";
-    oldSuffix = "004-${builtins.substring 0 8 oldProtoHash}";
-    newSuffix = "005-PsBabyM1";
+    oldProtoHash = "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS";
+    oldSuffix = "005-${builtins.substring 0 8 oldProtoHash}";
+    newSuffix = "006-PsCARTHA";
 
-    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol";
+    proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol/TEZOS_PROTOCOL";
   in pkgs.writeScriptBin "protocol-test" ''
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -45,17 +46,19 @@ in {
     fail() { "''${___fail:?$1}"; }
     contains_re_group() { [[ $1 =~ $2 ]] && echo "''${BASH_REMATCH[1]}"; }
 
-    if [ -z "''${ledger_uri:-}" ]; then
-      connected_ledgers=''$(${tzFlextesa.kit + /bin/tezos-client} -P 0 list connected ledgers 2>/dev/null)
-      ledger_uri=$(contains_re_group "$connected_ledgers" '(ledger://[^\"]+)' || fail "Unable to find a connected ledger")
-    fi
-    echo "> Ledger: $ledger_uri"
+    ${if bakeWithLedger then ''
+        if [ -z "''${ledger_uri:-}" ]; then
+          connected_ledgers=''$(${tzFlextesa.kit + /bin/tezos-client} -P 0 list connected ledgers 2>/dev/null)
+          ledger_uri=$(contains_re_group "$connected_ledgers" '(ledger://[^\"]+)' || fail "Unable to find a connected ledger")
+        fi
+        echo "> Ledger: $ledger_uri"
 
-    show_ledger=$(${tzFlextesa.kit + /bin/tezos-client} -P 0 show ledger "$ledger_uri" 2>/dev/null)
-    pk=$(contains_re_group "$show_ledger" '\* Public Key: ([A-Za-z0-9]+)' || fail "Unable to determine public key for $ledger_uri")
-    echo "> PK: $pk"
-    pkh=$(contains_re_group "$show_ledger" '\* Public Key Hash: ([A-Za-z0-9]+)' || fail "Unable to determine public key hash for $ledger_uri")
-    echo "> PKH: $pkh"
+        show_ledger=$(${tzFlextesa.kit + /bin/tezos-client} -P 0 show ledger "$ledger_uri" 2>/dev/null)
+        pk=$(contains_re_group "$show_ledger" '\* Public Key: ([A-Za-z0-9]+)' || fail "Unable to determine public key for $ledger_uri")
+        echo "> PK: $pk"
+        pkh=$(contains_re_group "$show_ledger" '\* Public Key Hash: ([A-Za-z0-9]+)' || fail "Unable to determine public key hash for $ledger_uri")
+        echo "> PKH: $pkh"
+    '' else ""}
 
     echo 'Starting tezos-sandbox protocol test...'
 
@@ -64,12 +67,13 @@ in {
 
     mkdir -p "$kiln_config_dir"
     ${tzFlextesa.kit + /bin/tezos-sandbox} daemons-upgrade ${proposalProtocolLib} \
+    ${if bakeWithLedger then ''
       --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
-      --no-daemons-for LBK \
+      --no-daemons-for LBK \'' else "\\"}
       --add-external 10000 \
       --generate-kiln "$kiln_config_dir",10000 \
       --clean-kiln-config \
-      --time "$speed,$speed" \
+      --time-between-blocks "$speed" \
       --size "$size" \
       --blocks-per-vot "$blocks_per_voting_period" \
       --pause-on-error true \

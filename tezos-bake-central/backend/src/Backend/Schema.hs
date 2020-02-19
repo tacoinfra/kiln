@@ -58,6 +58,8 @@ import Data.Some (Some(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
+import Data.Vector (Vector)
+import qualified Data.Vector as V
 import Data.Version (Version)
 import qualified Data.Version as Version
 import Data.Word (Word64)
@@ -353,6 +355,16 @@ instance HasResolution a => PersistField (Fixed a) where
   fromPersistValues = primFromPersistValue
   dbType _ _ = DbTypePrimitive DbInt64 False Nothing Nothing
 
+instance PrimitivePersistField (Vector Tez) where
+  toPrimitivePersistValue p x = toPrimitivePersistValue p ( Groundhog.Array $ V.toList x)
+  fromPrimitivePersistValue p = V.fromList . unArray . fromPrimitivePersistValue p
+
+instance PersistField (Vector Tez) where
+  persistName _ = "VectorTez"
+  toPersistValues = toPersistValues . Groundhog.Array . V.toList
+  fromPersistValues vs = first (V.fromList . unArray) <$> fromPersistValues vs
+  dbType p x = dbType p (Groundhog.Array (V.toList x))
+
 instance PrimitivePersistField Tez where
   toPrimitivePersistValue p (Tez x) = toPrimitivePersistValue p x
   fromPrimitivePersistValue p v = Tez $ fromPrimitivePersistValue p v
@@ -528,7 +540,6 @@ instance PersistField Version where
   toPersistValues x = primToPersistValue (Version.showVersion x)
   fromPersistValues = fmap (first parseVersionOrError) . primFromPersistValue
   dbType p x = dbType p ("" :: String)
-
 
 instance PersistField PublicKeyHash where
   persistName _ = "PublicKeyHash"
