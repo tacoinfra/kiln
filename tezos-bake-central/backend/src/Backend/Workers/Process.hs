@@ -97,7 +97,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
           updateState ProcessState_Failed
       v <- catches initialize
         [ Handler $ \(e :: InternalNodeFailureReason) ->
-            inDb (initFailed *> reportInternalNodeFailed pid e) *> throwIO e
+            inDb (initFailed *> runReaderT (reportInternalNodeFailed pid e) appConfig) *> throwIO e
         , Handler $ \(e :: ExitCode) -> inDb initFailed *> throwIO e
         ]
       inDb $ updateState ProcessState_Starting

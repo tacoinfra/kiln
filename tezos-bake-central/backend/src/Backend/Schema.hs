@@ -190,21 +190,22 @@ instance HasDefaultNotify (DSum NodeLogTag Id) where
 instance HasDefaultNotify (DSum BakerLogTag Id) where
   mkDefaultNotify (t :=> v) = mkDefaultNotify $ LogTag_Baker t :=> v
 
-instance HasDefaultNotify (Id ProtocolIndex)
-instance HasDefaultNotify (Id ErrorLogNodeVersionMismatch)
-instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
-instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogBadNodeHead)
-instance HasDefaultNotify (Id ErrorLogBakerLedgerDisconnected)
-instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
 instance HasDefaultNotify (Id ErrorLogBakerAccused)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivated)
 instance HasDefaultNotify (Id ErrorLogBakerDeactivationRisk)
+instance HasDefaultNotify (Id ErrorLogBakerLedgerDisconnected)
 instance HasDefaultNotify (Id ErrorLogBakerMissed)
-instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
 instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat)
+instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
 instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
+instance HasDefaultNotify (Id ErrorLogInternalNodeFailed)
+instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
+instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
+instance HasDefaultNotify (Id ErrorLogNodeVersionMismatch)
+instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogVotingReminder)
+instance HasDefaultNotify (Id ProtocolIndex)
 
 instance HasNotification NotifyTag ProtocolIndex where
   notification _ = NotifyTag_ProtocolIndex
@@ -237,6 +238,8 @@ instance HasNotification NotifyTag ErrorLogVotingReminder where
 
 instance HasNotification NotifyTag ErrorLogNetworkUpdate where
   notification _ = NotifyTag_ErrorLog LogTag_NetworkUpdate
+instance HasNotification NotifyTag ErrorLogInternalNodeFailed where
+  notification _ = NotifyTag_ErrorLog LogTag_InternalNodeFailed
 instance HasNotification NotifyTag ErrorLogBakerNoHeartbeat where
   notification _ = NotifyTag_ErrorLog LogTag_BakerNoHeartbeat
 
