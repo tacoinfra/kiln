@@ -1096,6 +1096,18 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogVotingReminderId
             type: primary
             fields: [_errorLogVotingReminder_log]
+  - primitive: InternalNodeFailureReason
+  - entity: ErrorLogInternalNodeFailed
+    autoKey: null
+    keys:
+      - name: ErrorLogInternalNodeFailedId
+        default: true
+    constructors:
+      - name: ErrorLogInternalNodeFailed
+        uniques:
+          - name: ErrorLogInternalNodeFailedId
+            type: primary
+            fields: [_errorLogInternalNodeFailed_log]
   - entity: GenericCacheEntry
     constructors:
      - name: GenericCacheEntry
@@ -1228,6 +1240,9 @@ instance DefaultKeyId ErrorLogNetworkUpdate where
 instance DefaultKeyId ErrorLogVotingReminder where
   toIdData _ (ErrorLogVotingReminderIdKey eid) = eid
   fromIdData _ = ErrorLogVotingReminderIdKey
+instance DefaultKeyId ErrorLogInternalNodeFailed where
+  toIdData _ (ErrorLogInternalNodeFailedIdKey eid) = eid
+  fromIdData _ = ErrorLogInternalNodeFailedIdKey
 
 fmap concat $ traverse (\n ->
   let u = mkName (nameBase n <> "Id") in
@@ -1288,6 +1303,7 @@ logAssume = \case
   LogTag_NetworkUpdate -> id
   LogTag_Node nTag -> nodeLogAssume nTag
   LogTag_Baker bTag -> bakerLogAssume bTag
+  LogTag_InternalNodeFailed -> id
   LogTag_BakerNoHeartbeat -> id
 
 data Related b c r where
@@ -1304,6 +1320,7 @@ logDep = \case
   LogTag_NetworkUpdate -> []
   LogTag_Node nTag -> bothNodes $ nodeLogDep nTag
   LogTag_Baker bTag -> pure $ Some $ bakerLogDep bTag
+  LogTag_InternalNodeFailed -> [Some (Related ErrorLogInternalNodeFailed_nodeField ForeignKey_UniqueId) ]
   LogTag_BakerNoHeartbeat -> []
   where
     bothNodes :: forall e. Related e (SingleConstructor e) Node -> [Some (Related e (SingleConstructor e))]
@@ -1348,19 +1365,20 @@ instance ArgDict c NotifyTag where
     ( c (Id Baker, Maybe BakerData)
     , c BakerDetails
     , c (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
-    , c (Id ErrorLogNetworkUpdate)
-    , c (Id ErrorLogBakerNoHeartbeat)
-    , c (Id ErrorLogBakerLedgerDisconnected)
-    , c (Id ErrorLogInaccessibleNode)
-    , c (Id ErrorLogNodeWrongChain)
-    , c (Id ErrorLogNodeInvalidPeerCount)
     , c (Id ErrorLogBadNodeHead)
-    , c (Id ErrorLogNodeVersionMismatch)
-    , c (Id ErrorLogBakerMissed)
+    , c (Id ErrorLogBakerAccused)
     , c (Id ErrorLogBakerDeactivated)
     , c (Id ErrorLogBakerDeactivationRisk)
-    , c (Id ErrorLogBakerAccused)
+    , c (Id ErrorLogBakerLedgerDisconnected)
+    , c (Id ErrorLogBakerMissed)
+    , c (Id ErrorLogBakerNoHeartbeat)
+    , c (Id ErrorLogInaccessibleNode)
     , c (Id ErrorLogInsufficientFunds)
+    , c (Id ErrorLogInternalNodeFailed)
+    , c (Id ErrorLogNetworkUpdate)
+    , c (Id ErrorLogNodeInvalidPeerCount)
+    , c (Id ErrorLogNodeVersionMismatch)
+    , c (Id ErrorLogNodeWrongChain)
     , c (Id ErrorLogVotingReminder)
     , c (Id UpstreamVersion, UpstreamVersion)
     , c (Id MailServerConfig, MailServerConfig)
@@ -1395,6 +1413,7 @@ instance ArgDict c NotifyTag where
     NotifyTag_ErrorLog t' -> case t' of
       LogTag_NetworkUpdate -> Dict
       LogTag_BakerNoHeartbeat -> Dict
+      LogTag_InternalNodeFailed -> Dict
       LogTag_Node t -> case t of
         NodeLogTag_InaccessibleNode -> Dict
         NodeLogTag_NodeWrongChain -> Dict

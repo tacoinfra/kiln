@@ -20,7 +20,7 @@ module Backend.Workers.Process where
 
 import Control.Concurrent.Async (withAsync)
 import Control.Exception.Safe (tryJust, throwIO)
-import Control.Monad.Catch (bracket, catch)
+import Control.Monad.Catch (Handler (..), bracket, catches)
 import Control.Monad.Logger (MonadLogger, LoggingT, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
@@ -42,6 +42,7 @@ import System.IO (hFlush, hGetLine)
 import System.IO.Error (isEOFError)
 import System.IO.Temp (withTempFile)
 
+import Backend.Alerts (reportInternalNodeFailed)
 import Backend.Common
 import Backend.Config
 import Backend.Schema
@@ -84,18 +85,21 @@ processWorker
   -> "pidToRunAfter" :! Maybe (Id ProcessData)
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
   -> m (IO ())
-processWorker initialize (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg pidToRunAfter) (Arg makeNotify) = worker' $ do
+processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg pidToRunAfter) (Arg makeNotify) = worker' $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
     inDb $ updateState ProcessState_Initializing
     withNodeConfig appConfig $ \configFile -> do
       let
-        initF = initialize ! #db db ! #updateState (\ps -> inDb $ updateState ps) ! #configFile configFile
-      v <- catch initF $ \e -> do
-        inDb $ do
+        initialize = initialize' ! #db db ! #updateState (\ps -> inDb $ updateState ps) ! #configFile configFile
+        initFailed = do
           update [control_ =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
           updateState ProcessState_Failed
-        throwIO (e :: ExitCode)
+      v <- catches initialize
+        [ Handler $ \(e :: InternalNodeFailureReason) ->
+            inDb (initFailed *> reportInternalNodeFailed pid e) *> throwIO e
+        , Handler $ \(e :: ExitCode) -> inDb initFailed *> throwIO e
+        ]
       inDb $ updateState ProcessState_Starting
       let
         procSpec = (mkProcess v configFile)

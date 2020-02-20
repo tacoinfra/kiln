@@ -271,8 +271,6 @@ data NodeExternalData = NodeExternalData
 instance HasId NodeExternalData where
   type IdData NodeExternalData = Id Node
 
--- data NodeInternal = NodeInternal (WithId (Id Node) (Deletable NodeInternal'))
-
 data NodeInternal = NodeInternal
   { _nodeInternal_id :: !(Id Node)
   , _nodeInternal_data :: !(DeletableRow (Id ProcessData))
@@ -281,6 +279,7 @@ data NodeInternal = NodeInternal
 instance HasId NodeInternal where
   type IdData NodeInternal = Id Node
 
+-- | WARNING: Never remove or modify these cases since they are stored in the DB directly. Adding is ok.
 data NodeProcessState
   = NodeProcessState_ImportingSnapshot
   | NodeProcessState_ImportCanceled
@@ -290,6 +289,7 @@ data NodeProcessState
   | NodeProcessState_GeneratingIdentity
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
+-- | WARNING: Never remove or modify these cases since they are stored in the DB directly. Adding is ok.
 data ProcessState
    = ProcessState_Stopped
    | ProcessState_Initializing
@@ -318,8 +318,6 @@ data ProcessData = ProcessData
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId ProcessData
-
--- data NodeDetails = NodeDetails (WithId (Id Node) NodeDetails')
 
 data NodeDetails = NodeDetails
   { _nodeDetails_id :: !(Id Node)
@@ -794,6 +792,21 @@ data ErrorLogVotingReminder = ErrorLogVotingReminder
 instance HasId ErrorLogVotingReminder where
   type IdData ErrorLogVotingReminder = Id ErrorLog
 
+-- | WARNING: Never remove or modify these cases since they are stored in the DB directly. Adding is ok.
+data InternalNodeFailureReason
+  = InternalNodeFailureReason_CarthageUpgrade
+  | InternalNodeFailureReason_Unknown Text
+  deriving (Eq, Ord, Generic, Typeable, Read, Show)
+instance Exception InternalNodeFailureReason
+
+data ErrorLogInternalNodeFailed = ErrorLogInternalNodeFailed
+  { _errorLogInternalNodeFailed_log :: !(Id ErrorLog)
+  , _errorLogInternalNodeFailed_node :: !(Id NodeInternal)
+  , _errorLogInternalNodeFailed_reason :: !InternalNodeFailureReason
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogInternalNodeFailed where
+  type IdData ErrorLogInternalNodeFailed = Id ErrorLog
+
 data ErrorLog = ErrorLog
   { _errorLog_started :: !UTCTime
   , _errorLog_stopped :: !(Maybe UTCTime)
@@ -887,6 +900,7 @@ data LogTag a where
   LogTag_NetworkUpdate :: LogTag ErrorLogNetworkUpdate
   LogTag_Node :: NodeLogTag a -> LogTag a
   LogTag_Baker :: BakerLogTag a -> LogTag a
+  LogTag_InternalNodeFailed :: LogTag ErrorLogInternalNodeFailed
   LogTag_BakerNoHeartbeat :: LogTag ErrorLogBakerNoHeartbeat
   --  | Misc baker /daemon/ error.
 
@@ -927,8 +941,8 @@ deriving instance Show (BakerLogTag a)
 
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
-  , ''Amendment
   , ''AlertNotificationMethod
+  , ''Amendment
   , ''BakeEfficiency
   , ''Baker
   , ''BakerDaemon
@@ -948,17 +962,18 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
+  , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
-  , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
+  , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeVersionMismatch
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
-  , ''ProtocolIndex
+  , ''InternalNodeFailureReason
   , ''MailServerConfig
   , ''Node
   , ''NodeDetails
@@ -975,13 +990,14 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
+  , ''ProtocolIndex
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''RightKind
   , ''RightNotificationLimit
   , ''RightNotificationSettings
-  , ''SnapshotMeta
   , ''SmtpProtocol
+  , ''SnapshotMeta
   , ''TelegramConfig
   , ''TelegramMessageQueue
   , ''TelegramRecipient
@@ -1007,11 +1023,12 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerAccused
   , 'ErrorLogBakerDeactivated
   , 'ErrorLogBakerDeactivationRisk
+  , 'ErrorLogBakerLedgerDisconnected
   , 'ErrorLogBakerMissed
   , 'ErrorLogBakerNoHeartbeat
-  , 'ErrorLogBakerLedgerDisconnected
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogInsufficientFunds
+  , 'ErrorLogInternalNodeFailed
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
   , 'ErrorLogNodeWrongChain
@@ -1040,7 +1057,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'TelegramRecipient
   , 'UpstreamVersion
   ] ++ map makePrisms
-  [ ''UpgradeCheckError
+  [ ''ErrorLogInternalNodeFailed
+  , ''UpgradeCheckError
   ])
 
 fmap concat $ for [''NodeLogTag, ''BakerLogTag] $ \t -> concat <$> sequence
@@ -1082,7 +1100,11 @@ instance UniverseSome BakerLogTag where
 -- need Cale to fix this
 -- deriveSomeUniverse ''LogTag
 instance UniverseSome LogTag where
-  universeSome = [Some LogTag_NetworkUpdate] <> fmap (\(Some x) -> Some (LogTag_Node x)) universe <> fmap (\(Some x) -> Some (LogTag_Baker x)) universe <> [Some LogTag_BakerNoHeartbeat]
+  universeSome =
+    [Some LogTag_NetworkUpdate]
+    <> fmap (\(Some x) -> Some (LogTag_Node x)) universe
+    <> fmap (\(Some x) -> Some (LogTag_Baker x)) universe
+    <> [Some LogTag_InternalNodeFailed, Some LogTag_BakerNoHeartbeat]
 
 instance BlockLike PublicNodeHead where
   hash = publicNodeHead_headBlock . hash
@@ -1113,14 +1135,15 @@ errorLogNames =
   , ''ErrorLogBakerAccused
   , ''ErrorLogBakerDeactivated
   , ''ErrorLogBakerDeactivationRisk
+  , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerNoHeartbeat
-  , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
+  , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
-  , ''ErrorLogNodeWrongChain
   , ''ErrorLogNodeVersionMismatch
+  , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
   ]

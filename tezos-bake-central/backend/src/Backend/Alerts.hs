@@ -484,6 +484,37 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
     queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
       nodeName <> " now meets or exceeds the required minimum number of connected peers."
 
+reportInternalNodeFailed
+  :: (Monad m) => Id ProcessData -> InternalNodeFailureReason -> m ()
+reportInternalNodeFailed _pid _reason = pure ()
+
+-- reportInternalNodeFailed
+--   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+--       MonadLogger m, SqlDb (PhantomDb m))
+--   => Id ProcessData -> InternalNodeFailureReason -> m ()
+-- reportInternalNodeFailed pid reason = do
+--   chainId <- _appConfig_chainId <$> askAppConfig
+--   existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeInvalidPeerCount) <- listToMaybe <$> [queryQ|
+--     SELECT el.id, t.log
+--       FROM "ErrorLog" el
+--       JOIN "ErrorLogInternalNodeFailed" t ON t.log = el.id
+--       JOIN "NodeInternal" n ON n."data#data" = t.node
+--      WHERE NOT n."data#deleted"
+--        AND el.stopped IS NULL
+--        AND el."chainId" = ?chainId
+--      ORDER BY el."lastSeen" DESC, el.started DESC
+--      LIMIT 1
+--     |]
+--   let formatExtNodeName alias address = "Node" <> maybe "" (" " <>) alias <> " at " <> address
+--   case existingLog of
+--     Nothing -> (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+--       (logId, _) <- insertErrorLog $ \logId ->
+--         ErrorLogNodeInvalidPeerCount logId nodeId minPeerCount actualPeerCount
+--       queueAlert (Just logId) $ Alert Unresolved "Node has too few peers." $
+--         nodeName <> " has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
+--     Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+
+
 reportVotingReminderError
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a

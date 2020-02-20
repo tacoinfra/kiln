@@ -689,6 +689,11 @@ instance HasAlertMetaData (LogTag a) where
           , _alertMetaData_isUserResolvable = True
           , _alertMetaData_severity = AlertSeverity_Info
           }
+    LogTag_InternalNodeFailed ->
+      def { _alertMetaData_isEventBased = True
+          , _alertMetaData_isUserResolvable = True
+          , _alertMetaData_severity = AlertSeverity_Error
+          }
 
 instance HasAlertMetaData (NodeLogTag a) where
   getAlertMetaData = \case
@@ -968,6 +973,14 @@ liveErrorsWidget = void $ do
           header $ T.unwords ["New", chainText, "version."]
           el "div" $ do
             text $ "There is a new version of the " <> chainText <> " software available on GitLab."
+
+        LogTag_InternalNodeFailed -> case _errorLogInternalNodeFailed_reason log of
+          InternalNodeFailureReason_CarthageUpgrade -> do
+            header "Kiln node out-of-date for Carthage"
+            el "div" $ text "The Kiln node must be rebuilt to support the new storage framework in Carthage."
+          InternalNodeFailureReason_Unknown reason -> do
+            header "Kiln node failed"
+            unless (T.null reason) $ el "div" $ text $ "The Kiln node failed: " <> reason
 
     renderBakerError dsc pkh = do
       bakersDyn <- watchBakerAddresses
