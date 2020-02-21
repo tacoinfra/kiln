@@ -1663,8 +1663,8 @@ nodesTab =
           MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
           ) publicNodeConfigDyn rawPublicNodesDyn
 
-        partition = fmapMaybe (preview _Left) &&& fmapMaybe (preview _Right)
-        (external, internal) = splitDynPure $ partition . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
+        (external, internal) = splitDynPure $
+          (filterLeft &&& filterRight) . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
         kilnNodeState = fmap _processData_state . headMay . Map.elems <$> internal
 
       useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
