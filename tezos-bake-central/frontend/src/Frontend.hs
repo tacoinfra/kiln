@@ -472,14 +472,16 @@ headerBell = do
 appContentArea
   :: forall r m t.
     ( MonadAppWidget t m
-    , MonadJSM (ModalM m), MonadJSM (Performable (ModalM m))
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
-    , MonadReader r (ModalM m)
+    , Routed t (R AppRoute) m
     , HasModal t m
     , MonadAppWidget t (ModalM m)
-    , Routed t (R AppRoute) m
+    , MonadJSM (ModalM m)
+    , MonadJSM (Performable (ModalM m))
+    , HasJSContext (Performable (ModalM m))
+    , MonadReader r (ModalM m)
     )
   => m ()
 appContentArea = do
@@ -493,8 +495,12 @@ nodesTabOrWelcome
   :: forall r m t.
     ( MonadAppWidget t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
-    , MonadReader r (ModalM m), MonadJSM m, MonadJSM (Performable (ModalM m))
+    , MonadJSM m
     , HasModal t m, MonadAppWidget t (ModalM m)
+    , MonadJSM (ModalM m)
+    , MonadJSM (Performable (ModalM m))
+    , HasJSContext (Performable (ModalM m))
+    , MonadReader r (ModalM m)
     )
   => m ()
 nodesTabOrWelcome = do
@@ -534,26 +540,47 @@ globalAlerts
   :: forall r m t.
     ( MonadAppWidget t m
     , MonadReader r m, HasFrontendConfig r
+    , HasModal t m, MonadAppWidget t (ModalM m)
+    , MonadJSM (ModalM m)
+    , MonadJSM (Performable (ModalM m))
+    , HasJSContext (Performable (ModalM m))
     )
   => m ()
 globalAlerts = do
-  mchain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
-  mNetworkAlert <- for mchain $ \chain -> do
+  mChain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
+  nodeAlerts <- do
     nodesDyn <- watchNodeAddresses
-    let
-      external = fmapMaybe (preview _Left) . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
-    dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (pure $ DMap.singleton (LogTag_Node NodeLogTag_VersionMismatch) (Const ())) everythingWindow
-    verMismatchLogs <- holdUniqDyn $ ffor2 external dXs $ \nodes xs -> NEL.nonEmpty $ toList $ flip MMap.mapMaybeWithKey xs $ \_ -> \case
-      (ErrorLog { _errorLog_stopped = Nothing }, LogTag_Node NodeLogTag_VersionMismatch :=> Identity ua) ->
-        (,ua) <$> Map.lookup (_errorLogNodeVersionMismatch_node ua) nodes
-      _ -> Nothing
-    pure $ fmap (networkUpdateAlert chain) <$> verMismatchLogs
+    relevantAlerts <- watchErrorsByTag
+      (pure $ Just AlertsFilter_UnresolvedOnly)
+      (pure $ DMap.fromList $
+        [LogTag_Node NodeLogTag_VersionMismatch :=> Const () | isJust mChain] <>
+        [LogTag_InternalNodeFailed :=> Const ()]
+      )
+      everythingWindow
+
+    verMismatchBanner <- fmap (fromMaybe $ pure Nothing) $ for mChain $ \chain -> do
+      let externalNodes = filterLeft . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
+      logs <- holdUniqDyn $ ffor2 externalNodes relevantAlerts $ \nodes xs -> NEL.nonEmpty $ toList $ fforMaybe xs $ \case
+        (ErrorLog { _errorLog_stopped = Nothing }, LogTag_Node NodeLogTag_VersionMismatch :=> Identity ua) ->
+          (,ua) <$> Map.lookup (_errorLogNodeVersionMismatch_node ua) nodes
+        _ -> Nothing
+      pure $ networkUpdateAlertBanner chain <$$> logs
+
+    internalNodeFailedLog :: Dynamic t (Maybe ErrorLogInternalNodeFailed) <-
+      holdUniqDyn $ ffor relevantAlerts $ \xs -> listToMaybe $ toList $ fforMaybe xs $ \case
+        (ErrorLog { _errorLog_stopped = Nothing }, LogTag_InternalNodeFailed :=> Identity e) -> Just e
+        _ -> Nothing
+
+    pure
+      [ verMismatchBanner
+      , fmap internalNodeFailedAlertBanner <$> internalNodeFailedLog
+      ]
 
   currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
   upstreamVersion <- watchUpstreamVersion
   let
-    mUpdateAlert :: Dynamic t (Maybe (m ()))
-    mUpdateAlert = ffor upstreamVersion $ \case
+    updateAlert :: Dynamic t (Maybe (m ()))
+    updateAlert = ffor upstreamVersion $ \case
       Just uv
         | Just v <- _upstreamVersion_version uv
         , v > currentVersion
@@ -561,30 +588,59 @@ globalAlerts = do
       _ -> Nothing
 
     allAlerts :: Dynamic t [m ()]
-    allAlerts = catMaybes <$> sequence [ (fmap join . sequence) mNetworkAlert, mUpdateAlert ]
+    allAlerts = catMaybes <$> sequence (updateAlert : nodeAlerts)
   dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
     SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
-networkUpdateAlert :: (MonadAppWidget t m) => NamedChain -> NonEmpty (NodeExternalData, ErrorLogNodeVersionMismatch) -> m ()
-networkUpdateAlert namedChain elogs = do
+networkUpdateAlertBanner :: (MonadAppWidget t m) => NamedChain -> NonEmpty (NodeExternalData, ErrorLogNodeVersionMismatch) -> m ()
+networkUpdateAlertBanner namedChain elogs = do
   let (header, bodyFirstPara) = networkUpdateDescription namedChain
   renderResolvableSplashAlert
-    (fmap (\(_, elog) -> LogTag_Node NodeLogTag_VersionMismatch :=> (Const $ _errorLogNodeVersionMismatch_log elog)) elogs)
+    (fmap (\(_, elog) -> LogTag_Node NodeLogTag_VersionMismatch :=> Const (_errorLogNodeVersionMismatch_log elog)) elogs)
     (icon "icon-alert-badge big blue")
     (text header)
     Nothing
-    (do el "p" $ text bodyFirstPara
-        el "p" $ do
-          text "Get the new software here "
-          elClass "i" "ui icon small icon-arrow-right" blank
-          let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
-          elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
-        el "p" $ el "strong" $ text "Kiln has detected these nodes are not running the latest software:"
-        el "p" $ el "ul" $ do
-          for_ elogs $ \(NodeExternalData address mAlias _ _, _) -> el "li" $ do
-            let host = uriHostPortPath address
-            text $ maybe host (\alias -> alias <> " (" <> host <> ")") mAlias
-        el "p" $ text "Kiln cannot detect which version bakers are running. It is recommended to update your bakers if needed.")
+    (do
+      el "p" $ text bodyFirstPara
+      el "p" $ do
+        text "Get the new software here "
+        elClass "i" "ui icon small icon-arrow-right" blank
+        let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
+        elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
+      el "p" $ el "strong" $ text "Kiln has detected these nodes are not running the latest software:"
+      el "p" $ el "ul" $ do
+        for_ elogs $ \(NodeExternalData address mAlias _ _, _) -> el "li" $ do
+          let host = uriHostPortPath address
+          text $ maybe host (\alias -> alias <> " (" <> host <> ")") mAlias
+      el "p" $ text "Kiln cannot detect which version bakers are running. It is recommended to update your bakers if needed."
+    )
+
+internalNodeFailedAlertBanner
+  :: ( MonadAppWidget t m
+     , HasModal t m, MonadAppWidget t (ModalM m)
+     , MonadJSM (ModalM m)
+     , MonadJSM (Performable (ModalM m))
+     , HasJSContext (Performable (ModalM m))
+     )
+  => ErrorLogInternalNodeFailed -> m ()
+internalNodeFailedAlertBanner e = case _errorLogInternalNodeFailed_reason e of
+  InternalNodeFailureReason_CarthageUpgrade -> renderSplashAlert
+    (icon "icon-warning big red")
+    (text "Kiln Node is Outdated and Must be Recreated")
+    Nothing
+    (do
+      el "p" $ text "With the last update, the Tezos Node uses a new file format for storage which requires less disk space."
+      el "p" $ text
+        "Your Kiln Node must be removed and recreated to continue running and baking. We recommend recreating \
+        \your node with a snapshot to most quickly sync with the network."
+
+      resolve <- divClass "buttons" $ uiButtonM "primary" $ text "Remove and Recreate Node"
+      deleted <- requestingIdentity $ resolve $> public (PublicRequest_RemoveNode $ Right ())
+      tellModal $ deleted $> cancelableModalWithClasses addNodeModal
+      pure ()
+    )
+
+  InternalNodeFailureReason_Unknown _ -> pure () -- TODO: Might be useful...
 
 kilnUpdateAlert :: (MonadAppWidget t m) => Version -> m ()
 kilnUpdateAlert v = do
@@ -691,7 +747,7 @@ instance HasAlertMetaData (LogTag a) where
           }
     LogTag_InternalNodeFailed ->
       def { _alertMetaData_isEventBased = True
-          , _alertMetaData_isUserResolvable = True
+          , _alertMetaData_isUserResolvable = False
           , _alertMetaData_severity = AlertSeverity_Error
           }
 
