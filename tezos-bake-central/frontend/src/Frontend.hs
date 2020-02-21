@@ -456,14 +456,14 @@ headerBell = do
     hasAlerts = fmap (> 0) totalAlertCount
     color = maybe "basic" severityColor <$> maxSeverity
   (e,_) <- SemUi.ui' "span"
-    (def & SemUi.classes .~ (SemUi.Dyn $ fmap ((<>) "ui circular label link ") color))
+    (def & SemUi.classes .~ SemUi.Dyn (fmap ((<>) "ui circular label link ") color))
     $ do
         dynText $ ffor totalAlertCount $ (fromMaybe <*> T.stripPrefix "0") . tshow
         text " "
         SemUi.icon "icon-bell"
           (def
             & SemUi.iconConfig_size SemUi.|?~ SemUi.Large
-            & SemUi.iconConfig_color .~ (SemUi.Dyn $ ffor hasAlerts $ bool (Just SemUi.Grey) Nothing)
+            & SemUi.iconConfig_color .~ SemUi.Dyn (ffor hasAlerts $ bool (Just SemUi.Grey) Nothing)
             & SemUi.iconConfig_link SemUi.|~ True
             & SemUi.iconConfig_fitted .~ SemUi.Dyn hasAlerts
             )
@@ -1599,7 +1599,7 @@ publicNodeOptions = do
     (element', ()) <- SemUi.ui' "div"
         (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> SemUi.Dyn activeClass) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
-        SemUi.ui "i" (def & SemUi.elConfigClasses .~ (SemUi.Dyn $ bool "" "icon icon-check" <$> pnActiveDyn)) blank
+        SemUi.ui "i" (def & SemUi.elConfigClasses .~ SemUi.Dyn (bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool (if pn == PublicNode_Obsidian then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ publicNodeShortName pn
@@ -2075,7 +2075,7 @@ bakersTab =
             toLogTag ba = if isUserResolvable ba
               then Just $ case ba of
                 BakerAlert_Alert (btag :=> Identity blog) ->
-                  (LogTag_Baker btag :=> (Const $ errorLogIdForBakerLogTag btag blog)) :| []
+                  (LogTag_Baker btag :=> Const (errorLogIdForBakerLogTag btag blog)) :| []
                 BakerAlert_GroupedAlert { _bakerAlert_groupedAlert_logs = elogIds } ->
                   fmap (\i -> LogTag_Baker BakerLogTag_BakerMissed :=> Const i) elogIds
               else Nothing
@@ -2194,7 +2194,7 @@ bakersTab =
       BakerAlert_Alert errorView@(bTag :=> Identity log) ->
         let
           pkh = bakerIdForBakerErrorLogView errorView
-          ev = (LogTag_Baker bTag :=> (Const $ errorLogIdForBakerLogTag bTag log)) :| []
+          ev = (LogTag_Baker bTag :=> Const (errorLogIdForBakerLogTag bTag log)) :| []
         in case bTag of
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError ev (pure $ bakerLedgerDisconnectedDescriptions log) pkh
           BakerLogTag_BakerMissed -> renderBakerError ev (pure $ bakerMissedDescriptions log) pkh
@@ -2398,7 +2398,7 @@ bakersTab =
                   RightKind_Endorsing -> "Endorse block "
                 text $ tshow $ unRawLevel l
                 let eventDyn = constDyn (r, l)
-                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view protocolIndex_constants) knownProto) <*> (Compose $ fmap (Just . snd) eventDyn) <*> Compose latestHead
+                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view protocolIndex_constants) knownProto) <*> Compose (fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
