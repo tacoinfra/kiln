@@ -637,7 +637,6 @@ internalNodeFailedAlertBanner e = case _errorLogInternalNodeFailed_reason e of
       resolve <- divClass "buttons" $ uiButtonM "primary" $ text "Remove and Recreate Node"
       deleted <- requestingIdentity $ resolve $> public (PublicRequest_RemoveNode $ Right ())
       tellModal $ deleted $> cancelableModalWithClasses addNodeModal
-      pure ()
     )
 
   InternalNodeFailureReason_Unknown _ -> pure () -- TODO: Might be useful...

@@ -512,7 +512,6 @@ reportInternalNodeFailed pid reason = do
         Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogInternalNodeFailed_logField
           [ ErrorLogInternalNodeFailed_reasonField =. reason ]
 
-
 reportVotingReminderError
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
