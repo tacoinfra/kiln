@@ -157,9 +157,9 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
-getVersion :: FilePath -> IO (Maybe Version)
-getVersion versionFile = do
-  vf <- liftIO $ LBS.readFile versionFile
+getKilnNodeVersion :: MonadIO m => FilePath -> m (Maybe Version)
+getKilnNodeVersion versionFile = liftIO $ do
+  vf <- LBS.readFile versionFile
   let parse :: Text -> Maybe Version
       parse = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
   pure $ parse =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
@@ -178,9 +178,9 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
       versionFile  = dataDir `FilePath.combine` "version.json"
 
   versionFileExists <- liftIO $ doesFileExist versionFile
-  mVersion <- if not versionFileExists then pure Nothing else liftIO $ getVersion versionFile
+  mVersion <- if not versionFileExists then pure Nothing else getKilnNodeVersion versionFile
   when (versionFileExists && maybe True needsCarthageStorageUpgrade mVersion) $ liftIO $ do
-      throwIO InternalNodeFailureReason_CarthageUpgrade
+    throwIO InternalNodeFailureReason_CarthageUpgrade
   identityFileExists <- liftIO $ doesFileExist identityFile
   when (not identityFileExists) $ do
     -- Generate Identity
