@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -17,6 +18,7 @@ import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
 import Rhyolite.Backend.DB (getTime, project1)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Text.URI (URI)
 
 import Backend.Schema
@@ -27,7 +29,7 @@ import ExtraPrelude
 getInternalNode :: PersistBackend m => m (Maybe (Id Node, DeletableRow (Id ProcessData)))
 getInternalNode = project1 (NodeInternal_idField, NodeInternal_dataField) CondEmpty
 
-removeNodeDbImpl :: forall m. (SqlDb (PhantomDb m), PersistBackend m) => Either URI () -> m ()
+removeNodeDbImpl :: forall m. (SqlDb (PhantomDb m), PersistBackend m, PostgresRaw m) => Either URI () -> m ()
 removeNodeDbImpl = \case
   Left addr -> do
     nids :: [Id Node] <- project NodeExternal_idField (NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_addressSelector ==. addr)
@@ -69,6 +71,14 @@ removeNodeDbImpl = \case
           NodeLogTag_NodeInvalidPeerCount -> deleteLogs tag ErrorLogNodeInvalidPeerCount_nodeField
           NodeLogTag_VersionMismatch -> deleteLogs tag ErrorLogNodeVersionMismatch_nodeField
 
-      ids <- fmap concat $ for universe onTag
+      internalNodeLogIds <- do
+        -- TODO: Groundhog doesn't typecheck
+        -- ids <- _errorLogInternalNodeFailed_log <$$> select (ErrorLogInternalNodeFailed_nodeField ==. (Id nid :: Id NodeInternal))
+        ids :: [Id ErrorLog] <- stripOnly <$> [queryQ|SELECT log FROM "ErrorLogInternalNodeFailed" WHERE "node#id" = ?nid|]
+        for_ ids $ notifyDefault . Id @ErrorLogInternalNodeFailed
+        pure ids
+
+      nodeLogIds <- fmap concat $ for universe onTag
+
       now <- getTime
-      update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
+      update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId (nodeLogIds <> internalNodeLogIds))

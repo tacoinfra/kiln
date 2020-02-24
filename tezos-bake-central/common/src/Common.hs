@@ -74,7 +74,7 @@ nominalDiffTimeToMicroseconds n = (numerator ratio * microsecondsInSecond) `div`
     microsecondsInSecond = 10^(6 :: Integer)
     ratio = toRational n
 
-curryMap :: (Eq a, Ord b, Semigroup c) => MonoidalMap (a, b) c -> MonoidalMap a (MonoidalMap b c)
+curryMap :: (Eq a) => MonoidalMap (a, b) c -> MonoidalMap a (MonoidalMap b c)
 curryMap = MMap.fromAscList . fmap (\((a, b), c) -> (a, MMap.singleton b c)) . MMap.toAscList
 
 maybeSomething :: Foldable f => f a -> Maybe (f a)

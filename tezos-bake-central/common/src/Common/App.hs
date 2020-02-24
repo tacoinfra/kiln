@@ -419,6 +419,7 @@ errorLogIdForErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
   LogTag_Baker blt -> errorLogIdForBakerLogTag blt
   LogTag_BakerNoHeartbeat -> _errorLogBakerNoHeartbeat_log
   LogTag_NetworkUpdate -> _errorLogNetworkUpdate_log
+  LogTag_InternalNodeFailed -> _errorLogInternalNodeFailed_log
 
 mailServerConfigToView :: MailServerConfig -> [Email] -> MailServerView
 mailServerConfigToView x ns = MailServerView
