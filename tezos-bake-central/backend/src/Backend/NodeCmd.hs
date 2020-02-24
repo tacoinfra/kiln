@@ -182,7 +182,7 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
   when (versionFileExists && maybe True needsCarthageStorageUpgrade mVersion) $ liftIO $ do
     throwIO InternalNodeFailureReason_CarthageUpgrade
   identityFileExists <- liftIO $ doesFileExist identityFile
-  when (not identityFileExists) $ do
+  unless identityFileExists $ do
     -- Generate Identity
     lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
     runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
