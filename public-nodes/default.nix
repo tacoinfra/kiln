@@ -276,7 +276,24 @@ let
             opsEmail = if pkgs.lib.strings.hasPrefix "zeronet" hostName then null else opsEmail;
           })
           usersModule
+          ./acme.nix # Backport ACME v2
         ] ++ kilnModules;
+
+        # Backport ACME v2
+        disabledModules = [
+          (pkgs.path + /nixos/modules/security/acme.nix)
+        ];
+        nixpkgs.overlays = [
+          (self: super: {
+            simp_le =
+            let
+              nixos1909 = import (builtins.fetchTarball {
+                url = https://releases.nixos.org/nixos/19.09/nixos-19.09.2149.58a9acf75a3/nixexprs.tar.xz;
+                sha256 = "0ni14fipv6k4wq38hwxfjyjjad7s4rcsq9pdvvafljl1pda0r73i";
+              }) {};
+            in nixos1909.simp_le;
+          })
+        ];
       };
     };
 in server
