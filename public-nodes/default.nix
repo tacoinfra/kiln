@@ -8,6 +8,15 @@ let
 
   tezos = (import dep/tezos-baking-platform {}).tezos;
 
+  defaultKilnApiV3 = {
+    inherit app;
+    apiVersion = 3;
+    apiPort = 8000;
+    extraArgs = [
+      "--enable-obsidian-node=false"
+    ];
+  };
+
   networkConfigOptions = {
     zeronet = {
       network = "zeronet";
@@ -16,16 +25,7 @@ let
       tzKit = tezos.zeronet.kit;
       monitorPort = 8002;
       histMode = "archive";
-      kilns = [
-        {
-          inherit app;
-          apiVersion = 3;
-          apiPort = 8000;
-          extraArgs = [
-            "--enable-obsidian-node=false"
-          ];
-        }
-      ];
+      kilns = [defaultKilnApiV3];
     };
     babylonnet = {
       network = "babylonnet";
@@ -33,16 +33,15 @@ let
       rpcPort = 18732;
       tzKit = tezos.babylonnet.kit;
       histMode = "archive";
-      kilns = [
-        {
-          inherit app;
-          apiVersion = 3;
-          apiPort = 8000;
-          extraArgs = [
-            "--enable-obsidian-node=false"
-          ];
-        }
-      ];
+      kilns = [defaultKilnApiV3];
+    };
+    carthagenet = {
+      network = "carthagenet";
+      p2pPort = 9732;
+      rpcPort = 8732;
+      tzKit = tezos.carthagenet.kit;
+      histMode = "archive";
+      kilns = [defaultKilnApiV3];
     };
     mainnet = {
       network = "mainnet";
@@ -50,16 +49,7 @@ let
       rpcPort = 8732;
       tzKit = tezos.mainnet.kit;
       histMode = "archive";
-      kilns = [
-        {
-          inherit app;
-          apiVersion = 3;
-          apiPort = 8000;
-          extraArgs = [
-            "--enable-obsidian-node=false"
-          ];
-        }
-      ];
+      kilns = [defaultKilnApiV3];
     };
   };
 
@@ -259,7 +249,9 @@ let
       network =
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
         if pkgs.lib.strings.hasPrefix "alphanet" hostName then "babylonnet" else
-        "mainnet";
+        if pkgs.lib.strings.hasPrefix "test-chain-2.api.tezos" hostName then "carthagenet" else
+        if pkgs.lib.strings.hasPrefix "tezos-api" then "mainnet" else
+        builtins.throw "Can't map hostname to Tezos network";
       networkConfig = networkConfigOptions.${network};
       nixos = import (pkgs.path + /nixos);
       kilnModules = map
