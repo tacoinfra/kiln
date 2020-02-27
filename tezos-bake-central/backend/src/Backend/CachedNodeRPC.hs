@@ -1223,7 +1223,7 @@ cacheErrorLogMessage
   -> Text
 cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc <> "' Reason: ") <>) $ prettyCacheError err
   where
-    prettyCacheError = \case 
+    prettyCacheError = \case
       CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
       CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
       CacheError_Timeout t -> "Timed out after " <> tshow t
@@ -1245,7 +1245,7 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
       UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
       UnsuitableNodeReason_BranchNotContained b -> "The block '" <> tshow b <> "' could not be found within the kiln's known history for this node."
       UnsuitableNodeReason_ProtocolIndex -> "Kiln is looking for the ProtocolIndex, which only the public node can find. If you see this, then it may indicate that the public node is down and the alternative means of building the protocol index from the node aren't working (your node may not have enough history to do this yet)."
-      
+
     prettyLevel = tshow . unRawLevel
 
 -- produce (up to) n ancestor hashes (including the block itself)
