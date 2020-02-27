@@ -1175,7 +1175,10 @@ nodeQueryIxBakingRights1
     , PersistBackend m
     , PostgresRaw m
     )
-  => BlockHash -> RawLevel -> Priority -> NodeQueryT m BakingRights
+  => BlockHash -- ^ Context block hash
+  -> RawLevel -- ^ Context block level
+  -> Priority -- ^ The minimum priority in the window of rights we want. The window will be 'priorityChunkSize' large.
+  -> NodeQueryT m BakingRights
 nodeQueryIxBakingRights1 ctx lvl prio = do
   allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx lvl
   let
@@ -1184,7 +1187,9 @@ nodeQueryIxBakingRights1 ctx lvl prio = do
     fillChunk :: Seq BakingRights -> V.Vector BakingRights
     fillChunk = (makeBlanks V.//)
       . map (\x -> (fromIntegral $ _bakingRights_priority x - prio, x))
-      . filter (\x -> _bakingRights_priority x >= prio)
+      -- Ensure things are in the window we want.
+      -- Newer nodes return more than older nodes (see https://tezos.gitlab.io/protocols/006_carthage.html#baking-rights)
+      . filter (\x -> _bakingRights_priority x >= prio && _bakingRights_priority x < prio + priorityChunkSize)
       . toList
 
     makeBlanks :: V.Vector BakingRights
