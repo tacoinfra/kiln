@@ -1,5 +1,5 @@
 {
-  "url": "ssh://git@gitlab.com/obsidian.systems/tezos-bake-monitor-lib",
+  "url": "https://gitlab.com/obsidian.systems/tezos-bake-monitor-lib",
   "rev": "9cb2e734cf53d4c20a4d2518ec01f95a86dc1f6d",
   "sha256": "1svr67zfhwlpw77wxy44ik9x3x806qi311y7fmymhcki8f0x4pca",
   "fetchSubmodules": false,
