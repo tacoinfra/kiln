@@ -816,13 +816,6 @@ data ErrorLog = ErrorLog
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
 
-data GenericCacheEntry = GenericCacheEntry
-  { _genericCacheEntry_chainId :: !ChainId
-  , _genericCacheEntry_key :: !(Json Aeson.Value)
-  , _genericCacheEntry_value :: !(Json Aeson.Value)
-  } deriving (Eq, Generic, Show, Typeable)
-instance HasId GenericCacheEntry
-
 data UpgradeCheckError
   = UpgradeCheckError_UpstreamUnreachable
   | UpgradeCheckError_UpstreamMissing

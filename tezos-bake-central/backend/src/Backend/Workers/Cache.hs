@@ -25,7 +25,7 @@ import Tezos.Types (ChainId)
 import Backend.CachedNodeRPC (CacheLine (..), NodeDataSource (..), NodeQuery (..))
 import Backend.Common (workerWithDelay)
 import Backend.STM (MonadSTM (liftSTM), readTVar', writeTVar')
-import Common.Schema (GenericCacheEntry (..))
+import Backend.Schema (GenericCacheEntry (..))
 import ExtraPrelude
 
 classifyCacheEntry
