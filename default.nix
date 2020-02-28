@@ -207,6 +207,8 @@ in (obApp distroMethods.source) // {
     obApp = obAppGargoyle distroMethods.linuxPackage;
     nodeKit = tezosScopedKit;
     pkgName = "kiln";
-    version = "0.7.4"; # TODO: Calculate this
+    version = "0.8.0"; # TODO: Calculate this
   }).kiln-debian;
+
+  inherit tezosScopedKit;
 }

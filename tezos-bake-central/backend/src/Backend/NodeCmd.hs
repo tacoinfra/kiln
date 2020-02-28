@@ -16,7 +16,7 @@
 
 module Backend.NodeCmd where
 
-import Control.Exception.Safe (catch, throwIO, tryJust)
+import Control.Exception.Safe (throwIO, tryJust)
 import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logWarn, logError, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
@@ -56,13 +56,14 @@ import Common.Route (ExportLog(..))
 import Common.Schema
 import ExtraPrelude
 
-hasHistoryModes :: Version -> Bool
-hasHistoryModes = (>= Version [0,0,3] [])
+needsCarthageStorageUpgrade :: Version -> Bool
+needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 
 nodePaths :: NamedChain -> FilePath
 nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
 nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 nodePaths NamedChain_Babylonnet = $(staticWhich "babylonnet-tezos-node")
+nodePaths NamedChain_Carthagenet = $(staticWhich "carthagenet-tezos-node")
 
 bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)
@@ -92,7 +93,12 @@ tezosBinaryPaths _ =
   ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
   , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
   , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
-  ) :| []
+  ) :|
+    [ ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
+      , $(staticWhich "carthagenet-tezos-baker-006-PsCARTHA")
+      , $(staticWhich "carthagenet-tezos-endorser-006-PsCARTHA")
+      )
+    ]
 
 -- TODO: use postgres for "process-id's"
 
@@ -151,18 +157,12 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
-getVersion :: AppConfig -> IO (Maybe Version)
-getVersion appConfig = do
-  let dataDir = nodeDataDir appConfig
-  let versionFile = dataDir `FilePath.combine` "version.json"
-  hasVersionFile <- liftIO $ doesFileExist versionFile
-  case hasVersionFile of
-    False -> pure Nothing
-    True -> do
-      vf <- liftIO $ LBS.readFile versionFile
-      let parse :: Text -> Maybe Version
-          parse = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
-      pure $ parse =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
+getKilnNodeVersion :: MonadIO m => FilePath -> m (Maybe Version)
+getKilnNodeVersion versionFile = liftIO $ do
+  vf <- LBS.readFile versionFile
+  let parse :: Text -> Maybe Version
+      parse = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
+  pure $ parse =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
 
 initNode
   :: "logger" :! LoggingEnv
@@ -175,26 +175,19 @@ initNode
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
   let identityFile = dataDir `FilePath.combine` "identity.json"
-      upgrade = runCommandWithLogging nodePath
-        ["upgrade", "storage", "--data-dir", T.pack dataDir]
-      showConfig = runCommandWithLogging nodePath
-        ["config", "show", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+      versionFile  = dataDir `FilePath.combine` "version.json"
 
-  upgrade `catch` (\(_ :: ExitCode) -> showConfig)
-
+  versionFileExists <- liftIO $ doesFileExist versionFile
+  mVersion <- if not versionFileExists then pure Nothing else getKilnNodeVersion versionFile
+  when (versionFileExists && maybe True needsCarthageStorageUpgrade mVersion) $ liftIO $ do
+    throwIO InternalNodeFailureReason_CarthageUpgrade
+  identityFileExists <- liftIO $ doesFileExist identityFile
+  unless identityFileExists $ do
+    -- Generate Identity
+    lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
+    runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
   let useArchiveMode = False
-  haveIdentityFile <- liftIO $ doesFileExist identityFile
-  enableHistoryMode <- if haveIdentityFile
-    then pure False -- Dont specify history mode if the node is already initialized
-    else do
-      -- Generate Identity
-      lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
-      runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
-      -- Now we should have version.json also
-      liftIO (getVersion appConfig) >>= \case
-        Nothing -> False <$ logErrorNS "kiln-node" "version.json not found!"
-        Just ver -> pure $ hasHistoryModes ver && useArchiveMode
-  let extraArgs = if enableHistoryMode
+      extraArgs = if useArchiveMode
         then ["--history-mode", "archive"]
         else []
   return (dataDir, extraArgs)

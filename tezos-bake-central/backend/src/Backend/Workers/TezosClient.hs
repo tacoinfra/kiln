@@ -332,6 +332,7 @@ clientPath = \case
   Left NamedChain_Mainnet -> $(staticWhich "mainnet-tezos-client")
   Left NamedChain_Zeronet -> $(staticWhich "zeronet-tezos-client")
   Left NamedChain_Babylonnet -> $(staticWhich "babylonnet-tezos-client")
+  Left NamedChain_Carthagenet -> $(staticWhich "carthagenet-tezos-client")
 
 
 {- Example output from `list connected ledgers`

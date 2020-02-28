@@ -8,16 +8,6 @@ let
 
   tezos = (import dep/tezos-baking-platform {}).tezos;
 
-  kilnApiV1 = import (builtins.fetchTarball {
-    url = "https://gitlab.com/obsidian.systems/kiln/-/archive/0.5.3/kiln-0.5.3.tar.gz";
-    sha256 = "0g1fijywb7afqy056v9rfl293fa9hzrz1q1p949blzcxv3iqp0jn";
-  }) { system = "x86_64-linux"; };
-
-  kilnApiV2 = import (builtins.fetchTarball {
-    url = "https://gitlab.com/obsidian.systems/kiln/-/archive/0.6.2/kiln-0.6.2.tar.gz";
-    sha256 = "0kgbbfs75ql9vd514nsspapgr3l80vwwwfyslaixj1cfmlzahdxr";
-  }) { system = "x86_64-linux"; };
-
   networkConfigOptions = {
     zeronet = {
       network = "zeronet";
@@ -61,19 +51,6 @@ let
       tzKit = tezos.mainnet.kit;
       histMode = "archive";
       kilns = [
-        {
-          app = kilnApiV1;
-          apiVersion = 1;
-          apiPort = 8001;
-        }
-        {
-          app = kilnApiV2;
-          apiVersion = 2;
-          apiPort = 8002;
-          extraArgs = [
-            "--enable-obsidian-node=false"
-          ];
-        }
         {
           inherit app;
           apiVersion = 3;

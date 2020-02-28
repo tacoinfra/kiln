@@ -6,7 +6,14 @@ But this might work with other VM software like VMWare, and other hosts.
 
 ## Installation
 
-- Install [VirtualBox][1] for your system
+- Install [VirtualBox][1] for your system, preferably using your usual package
+  repository.  (Installing one of the releases from the VirtualBox website's
+  downloads page directly is _not_ recommended, since some dependencies such as
+  virtualization kernel modules may not be properly installed along with it.)
+
+    - NixOS: `nix-env -iA nixpkgs.virtualbox`
+    - Ubuntu: `apt-get install virtualbox-qt`
+
 - Download the `kiln-vm.ova` file from the Kiln release page, and import this in VirtualBox from the “File” -> "Import Appliance" option.
 
     - During import step you can configure the number of processors and memory for the VM

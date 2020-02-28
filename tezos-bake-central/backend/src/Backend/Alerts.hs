@@ -33,7 +33,7 @@ import Database.Id.Groundhog
 import Database.PostgreSQL.Simple.Types (Identifier(..))
 import Rhyolite.Backend.DB (getTime, selectSingle, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), queryQ, PostgresRaw)
+import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
 import Rhyolite.Schema (Json (..))
 import qualified Text.URI as Uri
 
@@ -483,6 +483,34 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
   unless (null lids) $ (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
     queueAlert Nothing $ Alert Resolved "Resolved: Node has enough peers." $
       nodeName <> " now meets or exceeds the required minimum number of connected peers."
+
+reportInternalNodeFailed
+  :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+      MonadLogger m)
+  => Id ProcessData -> InternalNodeFailureReason -> m ()
+reportInternalNodeFailed pid reason = do
+  project NodeInternal_idField (NodeInternal_dataField ~> DeletableRow_dataSelector ==. pid) >>= \case
+    [] -> pure ()
+    nodeId:_ -> do
+      chainId <- _appConfig_chainId <$> askAppConfig
+      existingLog :: Maybe (Id ErrorLog, Id ErrorLogInternalNodeFailed) <- listToMaybe <$> [queryQ|
+        SELECT el.id, t.log
+          FROM "ErrorLog" el
+          JOIN "ErrorLogInternalNodeFailed" t ON t.log = el.id
+          JOIN "NodeInternal" n ON n.id = ?nodeId
+        WHERE NOT n."data#deleted"
+          AND el.stopped IS NULL
+          AND el."chainId" = ?chainId
+        ORDER BY el."lastSeen" DESC, el.started DESC
+        LIMIT 1
+        |]
+      case existingLog of
+        Nothing -> do
+          (logId, _) <- insertErrorLog $ \logId -> ErrorLogInternalNodeFailed logId (Id nodeId) reason
+          queueAlert (Just logId) $ Alert Unresolved "Kiln node is outdated"
+            "This node must be removed and recreated to continue running."
+        Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogInternalNodeFailed_logField
+          [ ErrorLogInternalNodeFailed_reasonField =. reason ]
 
 reportVotingReminderError
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
