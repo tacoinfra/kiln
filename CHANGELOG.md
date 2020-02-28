@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+  * Updated tezos node dependencies to support the Carthage protocol and the new, more compact storage backend (irmin-pack).
+
+  * Updated the Kiln Node management code to require the new tezos node, with a prompt to delete the old node and to initialize a new one if the existing data store is not at least version 0.0.4.
+
+  * Tweaked the protocol constant parsing to support Carthage.
+
+  * Support for the Carthagenet test network. (Babylonnet is still available for the time being.)
+
 ## 0.7.4
 
   * Ledger connectivity check is now disabled by default.

@@ -1175,7 +1175,10 @@ nodeQueryIxBakingRights1
     , PersistBackend m
     , PostgresRaw m
     )
-  => BlockHash -> RawLevel -> Priority -> NodeQueryT m BakingRights
+  => BlockHash -- ^ Context block hash
+  -> RawLevel -- ^ Context block level
+  -> Priority -- ^ The minimum priority in the window of rights we want. The window will be 'priorityChunkSize' large.
+  -> NodeQueryT m BakingRights
 nodeQueryIxBakingRights1 ctx lvl prio = do
   allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx lvl
   let
@@ -1184,7 +1187,9 @@ nodeQueryIxBakingRights1 ctx lvl prio = do
     fillChunk :: Seq BakingRights -> V.Vector BakingRights
     fillChunk = (makeBlanks V.//)
       . map (\x -> (fromIntegral $ _bakingRights_priority x - prio, x))
-      . filter (\x -> _bakingRights_priority x >= prio)
+      -- Ensure things are in the window we want.
+      -- Newer nodes return more than older nodes (see https://tezos.gitlab.io/protocols/006_carthage.html#baking-rights)
+      . filter (\x -> _bakingRights_priority x >= prio && _bakingRights_priority x < prio + priorityChunkSize)
       . toList
 
     makeBlanks :: V.Vector BakingRights
@@ -1223,7 +1228,7 @@ cacheErrorLogMessage
   -> Text
 cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc <> "' Reason: ") <>) $ prettyCacheError err
   where
-    prettyCacheError = \case 
+    prettyCacheError = \case
       CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
       CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
       CacheError_Timeout t -> "Timed out after " <> tshow t
@@ -1245,7 +1250,7 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
       UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
       UnsuitableNodeReason_BranchNotContained b -> "The block '" <> tshow b <> "' could not be found within the kiln's known history for this node."
       UnsuitableNodeReason_ProtocolIndex -> "Kiln is looking for the ProtocolIndex, which only the public node can find. If you see this, then it may indicate that the public node is down and the alternative means of building the protocol index from the node aren't working (your node may not have enough history to do this yet)."
-      
+
     prettyLevel = tshow . unRawLevel
 
 -- produce (up to) n ancestor hashes (including the block itself)
