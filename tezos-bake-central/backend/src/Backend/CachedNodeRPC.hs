@@ -178,17 +178,16 @@ toCacheDelegateInfo di = CacheDelegateInfo
   , _cacheDelegateInfo_gracePeriod = _delegateInfo_gracePeriod di
   }
 
-
-
 data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
 
 type CachedHistory' = CachedHistory ()
-type DirtyBit = Maybe (Id GenericCacheEntry)
+type DirtyBit = Maybe (Id RawCacheEntry)
 
 data CacheLine a where
   CacheLine :: (ToJSON a, FromJSON a) =>
     { _cacheLine_value :: !a
+    , _cacheLine_raw :: !LBS.ByteString
     , _cacheLine_used :: !UTCTime
     , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
     } -> CacheLine a
@@ -228,7 +227,7 @@ class MonadLogger m => MonadNodeQuery m where
   nqAtomicallyWithTime action = liftIO $ atomicallyWithTime action
   answerImmediate :: ReaderT UTCTime STM (Maybe (Either CacheError a)) -> STM (m (AnswerM m a))
   withFinishWith :: NodeDataSource -> (forall r. (Either CacheError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
-  nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m a
+  nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m (LBS.ByteString, a)
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
@@ -831,9 +830,9 @@ nodeQueryDataSourceSTM nds qBranch q = do
         -- writeResult :: Either CacheError (a, DirtyBit) -> m r
         writeResult a' = nqAtomicallyWithTime $ do
           case a' of
-            Right (a, dirty) -> populateKey q a dirty
+            Right ((raw, a), dirty) -> populateKey q raw a dirty
             Left _ -> pure ()
-          lift $ finishWith $ fmap fst a'
+          lift $ finishWith $ fmap (snd . fst) a'
 
       return $
         -- Try very hard to write *something* into the result TVar in case of exception.
@@ -855,20 +854,20 @@ nodeQueryDataSourceSTM nds qBranch q = do
     cacheVar = _nodeDataSource_cache dsrc
     chainId = _nodeDataSource_chain dsrc
 
-    populateKey q_ a dirty = do
+    populateKey q_ raw a dirty = do
       cache <- readTVar' cacheVar
       case DMap.lookup q_ cache of
         Just _ -> pure ()
         Nothing -> do
           now <- asks (^. Stm.timestamp)
-          var <- newTVar' $ CacheLine a now dirty
+          var <- newTVar' $ CacheLine a raw now dirty
           writeTVar' cacheVar $ DMap.insert q_ (Compose var) cache
 
-    makeRequestAndCache :: n (Either CacheError (a, DirtyBit))
+    makeRequestAndCache :: n (Either CacheError ((LBS.ByteString, a), DirtyBit))
     makeRequestAndCache = nqTry $
       tryFetchFromCache chainId q >>= \case
-        Just x -> pure $ fmap Just x :: n (a, DirtyBit)
-        Nothing -> (,Nothing) <$> nodeRPCOrBust qBranch q :: n (a, DirtyBit)
+        Just x -> pure $ fmap Just x :: n ((LBS.ByteString, a), DirtyBit)
+        Nothing -> (,Nothing) <$> nodeRPCOrBust qBranch q :: n ((LBS.ByteString, a), DirtyBit)
 
 unliftEither :: MonadError e m => m a -> m (Either e a)
 unliftEither action = (Right <$> action) `catchError` (pure . Left)
@@ -939,22 +938,25 @@ nodeQueryDataSourceImpl
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError a)
-nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC ChainTag_Hash
+  -> IO (Either CacheError (LBS.ByteString, a))
+nodeQueryDataSourceImpl = nodeQueryImpl myNodeRPC ChainTag_Hash
+  where
+    myNodeRPC (RpcQuery decoder body method resources) =
+      nodeRPC (RpcQuery (keepOriginalInput decoder) body method resources)
 
 nodeQueryImpl
   :: forall a chain repr.
    ( QueryBlock repr, QueryHistory repr, QueryProtocolIndex repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
-     => repr c -> m c)
+     => repr c -> m (LBS.ByteString, c))
   -> (ChainId -> chain)
   -> ChainId
   -> BlockHash
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError a)
+  -> IO (Either CacheError (LBS.ByteString, a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
   NodeQuery_ProtocolIndex protoHash -> nodeRPC' $ rProtocolIndex chainId protoHash
@@ -973,14 +975,14 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock (toChain chainId) branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
-  NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap (second toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
-    managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
+    (raw, managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKeyCrossCompat_key managerkeyResp of
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
-      Just pk -> pure pk
+      Just pk -> pure (raw, pk)
   where
-    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO c
+    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO (LBS.ByteString, c)
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
@@ -991,13 +993,16 @@ nodeQueryOsPubNodeImpl
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError a)
+  -> IO (Either CacheError (LBS.ByteString, a))
 nodeQueryOsPubNodeImpl = nodeQueryImpl osPublicNodeRPC id
+
+keepOriginalInput :: (str -> Either err a) -> str -> Either err (str, a)
+keepOriginalInput f str = (str,) <$> f str
 
 osPublicNodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON a)
-  => OsNodeQuery a -> m a
-osPublicNodeRPC (OsNodeQuery route params) = nodeRPCImpl' Aeson.eitherDecode emptyObject_ Http.methodGet rpcSelector
+  => OsNodeQuery a -> m (LBS.ByteString, a)
+osPublicNodeRPC (OsNodeQuery route params) = nodeRPCImpl' (keepOriginalInput Aeson.eitherDecode) emptyObject_ Http.methodGet rpcSelector
   where
     rpcSelector = route <> paramsE
     paramsE = maybe "" (("?" <>) . mconcat . NE.toList . NE.intersperse "&" . fmap (\(k, v) -> k <> "=" <> v)) (nonEmpty params)
@@ -1307,7 +1312,7 @@ calculateBakeEfficiency branch len baker = do
 -}
 tryFetchFromCache
   :: forall m a. (MonadNodeQuery m, FromJSON a, ToJSON (NodeQuery a))
-  => ChainId -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
+  => ChainId -> NodeQuery a -> m (Maybe ((LBS.ByteString, a), Id RawCacheEntry))
 tryFetchFromCache chainId q = do
   let
     qJson = Json $ Aeson.toJSON q
@@ -1315,19 +1320,21 @@ tryFetchFromCache chainId q = do
   -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
   -- terrible:
   -- https://www.postgresql.org/message-id/17764.1405993868%40sss.pgh.pa.us
-  resultM :: [(Id GenericCacheEntry, GenericCacheEntry)] <- nqInDB $ [queryQ|
+  resultM :: [(Id RawCacheEntry, RawCacheEntry)] <- nqInDB $ [queryQ|
     SELECT "id", "chainId", "key", "value"
-    FROM "GenericCacheEntry"
+    FROM "RawCacheEntry"
     WHERE "chainId" = ?chainId
       AND "key" = ?qJson
-    |] <&> fmap (\(id_, c, k, v) -> (id_, GenericCacheEntry c k v))
+    |] <&> fmap (\(id_, c, k, v) -> (id_, RawCacheEntry c k v))
   case nonEmpty resultM of
     Nothing -> return Nothing
-    Just ((rid, result) :| _) -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
-      Aeson.Success v -> return $ Just (v, rid)
-      Aeson.Error bad -> do
-        $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
-        return Nothing
+    Just ((rid, result) :| _) -> do
+      let raw = _rawCacheEntry_value result
+      case Aeson.eitherDecode' raw of
+        Right v -> return $ Just ((raw, v), rid)
+        Left bad -> do
+          $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
+          return Nothing
 
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]

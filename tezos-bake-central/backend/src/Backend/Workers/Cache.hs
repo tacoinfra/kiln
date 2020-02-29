@@ -25,7 +25,7 @@ import Tezos.Types (ChainId)
 import Backend.CachedNodeRPC (CacheLine (..), NodeDataSource (..), NodeQuery (..))
 import Backend.Common (workerWithDelay)
 import Backend.STM (MonadSTM (liftSTM), readTVar', writeTVar')
-import Backend.Schema (GenericCacheEntry (..))
+import Backend.Schema (RawCacheEntry (..))
 import ExtraPrelude
 
 classifyCacheEntry
@@ -33,16 +33,16 @@ classifyCacheEntry
   => ChainId
   -> UTCTime
   -> DSum NodeQuery (Compose TVar CacheLine)
-  -> m (Maybe (Either GenericCacheEntry (DSum NodeQuery (Compose TVar CacheLine))))
+  -> m (Maybe (Either RawCacheEntry (DSum NodeQuery (Compose TVar CacheLine))))
 classifyCacheEntry chainId expireTime (q :=> Compose cx) =
-  readTVar' cx <&> \(CacheLine value used dirty) -> if used < expireTime
+  readTVar' cx <&> \(CacheLine value raw used dirty) -> if used < expireTime
     then
       case dirty of
         Nothing ->
-          Just $ Left GenericCacheEntry
-            { _genericCacheEntry_chainId = chainId
-            , _genericCacheEntry_key = Json (Aeson.toJSON q)
-            , _genericCacheEntry_value = Json (Aeson.toJSON value)
+          Just $ Left RawCacheEntry
+            { _rawCacheEntry_chainId = chainId
+            , _rawCacheEntry_key = Json (Aeson.toJSON q)
+            , _rawCacheEntry_value = raw
             }
         Just _ -> Nothing
     else
@@ -75,11 +75,11 @@ compactCache expireTime dsrc = do
     $(logDebug) $ "Flushing cache: " <> tshow (length writeBackThese) <> " aged into database, " <> tshow numRetained <> " kept in-memory"
     runDb (Identity db) $
       void $ executeMany [sql|
-        INSERT INTO "GenericCacheEntry" ("chainId", key, value)
+        INSERT INTO "RawCacheEntry" ("chainId", key, value)
         VALUES (?, ?, ?) ON CONFLICT ("chainId", key) DO NOTHING
         |]
         [ (chainId, k, v)
         | entry <- writeBackThese
-        , let k = _genericCacheEntry_key entry
-        , let v = _genericCacheEntry_value entry
+        , let k = _rawCacheEntry_key entry
+        , let v = _rawCacheEntry_value entry
         ]
