@@ -22,7 +22,7 @@ import Rhyolite.Schema (Json (..))
 
 import Tezos.Types (ChainId)
 
-import Backend.CachedNodeRPC (CacheLine (..), NodeDataSource (..), NodeQuery (..))
+import Backend.CachedNodeRPC (CacheLine (..), NodeDataSource (..), NodeQuery (..), RpcResult(..))
 import Backend.Common (workerWithDelay)
 import Backend.STM (MonadSTM (liftSTM), readTVar', writeTVar')
 import Backend.Schema (RawCacheEntry (..))
@@ -35,14 +35,14 @@ classifyCacheEntry
   -> DSum NodeQuery (Compose TVar CacheLine)
   -> m (Maybe (Either RawCacheEntry (DSum NodeQuery (Compose TVar CacheLine))))
 classifyCacheEntry chainId expireTime (q :=> Compose cx) =
-  readTVar' cx <&> \(CacheLine value raw used dirty) -> if used < expireTime
+  readTVar' cx <&> \(CacheLine result used dirty) -> if used < expireTime
     then
       case dirty of
         Nothing ->
           Just $ Left RawCacheEntry
             { _rawCacheEntry_chainId = chainId
             , _rawCacheEntry_key = Json (Aeson.toJSON q)
-            , _rawCacheEntry_value = raw
+            , _rawCacheEntry_value = _rpcResult_raw result
             }
         Just _ -> Nothing
     else
