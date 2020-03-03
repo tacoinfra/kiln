@@ -1149,9 +1149,9 @@ instance Aeson.ToJSON ProtocolIndex where
     case $(Aeson.mkToJSON tezosJsonOptions ''ProtocolIndex) protoIndex of
       Aeson.Object o ->
         case HashMap.lookup "json_constants" o of
-          Nothing -> Aeson.Object o    -- this case shouldn't happen
+          Nothing -> error "the 'impossible' happened: the _protocolIndex_jsonConstants field is missing"
           Just jc -> Aeson.Object $ HashMap.insert "constants" jc $ HashMap.delete "json_constants" o
-      o -> o   -- this case also shouldn't happen
+      _ -> error "the 'impossible' happened: ProtocolIndex is not a JSON object"
 
 instance Aeson.FromJSON ProtocolIndex where
   parseJSON = Aeson.withObject "ProtocolIndex" $ \o -> do

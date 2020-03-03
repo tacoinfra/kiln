@@ -1504,7 +1504,7 @@ buildProtocolIndex branch protoHash history = do
             , _protocolIndex_hash = firstBlock ^. protocolHash
             , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
             , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw constants) of
-                                               Left  _errorMsg -> Json Aeson.Null -- this shouldn't ever happen
+                                               Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
                                                Right x -> x
             , _protocolIndex_constants = _rpcResult_value constants
             , _protocolIndex_firstBlockHash = Just $ firstBlock ^. hash
@@ -1621,7 +1621,7 @@ fetchProtocolForBlock chainId blkHash = do
           { _protocolIndex_chainId = chainId
           , _protocolIndex_hash = blockHeader ^. protocolHash
           , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw protoInfo) of
-                                             Left  _errorMsg -> Json Aeson.Null -- this shouldn't ever happen
+                                             Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
                                              Right x -> x
           , _protocolIndex_constants = _rpcResult_value protoInfo
           , _protocolIndex_proto = blockHeader ^. blockHeader_proto
