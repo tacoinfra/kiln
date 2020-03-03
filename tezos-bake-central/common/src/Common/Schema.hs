@@ -384,6 +384,14 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
   toJSONKey = Aeson.ToJSONKeyText f (AesonE.text . f)
     where f = showChain . getNamedChainOrChainId
 
+-- TODO:
+--   each protocol should have it's own ProtoInfo type
+--   remove any funny json (de-)serialization from ProtocolIndex *and* TBML
+--   factor out these funny json manipulations into a optional way of funneling a protocol-specific ProtoInfo type into another ProtoInfo type
+--   remove _protocolIndex_constants
+--   move _protocolIndex_jsonConstants to a postgresql 'jsonb' type
+--
+-- We can cache ProtoInfo types in memory,  but given the changes to ProtoInfo across protocol versions, it's not really a structured data type we can cleanly unpack into a common record or a fully "structured" SQL schema.
 data ProtocolIndex = ProtocolIndex
   { _protocolIndex_chainId :: !ChainId
   , _protocolIndex_hash :: !ProtocolHash
