@@ -577,16 +577,6 @@ tryNodeQueryT f = do
     NodeQueryTResult_Done a -> Just a
     NodeQueryTResult_Query{} -> Nothing
 
-unpackCacheResult
-  :: forall a r m. (MonadSTM m, MonadReader r m, HasTimestamp r)
-  => Compose TVar CacheLine a -> m a
-unpackCacheResult (Compose var) = do
-  result <- readTVar' var
-  now <- asks (^. Stm.timestamp)
-  when (_cacheLine_used result < now) $
-    writeTVar' var $ result{_cacheLine_used = now}
-  pure $ _rpcResult_value $ _cacheLine_result result
-
 -- get lca between two blocks
 branchPoint
   :: forall r m. (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -812,15 +802,56 @@ nodeQueryDataSourceRaw q = do
   $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q}|]
   dsrc <- asksNodeDataSource id
   qBranch <- getContext q
-  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM dsrc qBranch q
+  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM _rpcResult_value dsrc qBranch q
+
+-- | Query cached data immediately, in this thread.  Only meant to be used in the implementation
+--   of recursive queries, lest the dreaded deadlock heisenbunny return.
+nodeQueryDataSourceImmediate'
+  :: forall a s e m.
+    ( MonadIO m
+    , MonadReader s m, HasNodeDataSource s
+    , MonadError e m, AsCacheError e
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
+    )
+  => NodeQuery a -> m (RpcResult a)
+nodeQueryDataSourceImmediate' q = runNodeQueryQueued $
+  unNodeQueryImmediate $ unNodeQueryImmediateAnswerM <$> nodeQueryDataSourceRaw' q
+
+-- | Query cached data "nonblockingly".  Which is to say it will block for the database, but won't
+--   try to connect to the node.  Calling code can handle the condition where the data was not
+--   cached, for instance by abandoning the transaction before attempting an RPC call.
+nodeQueryDataSourceSafe'
+  :: forall a m.
+    ( MonadNodeQuery (NodeQueryT m)
+    , MonadMask m
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
+    )
+  => NodeQuery a -> NodeQueryT m (RpcResult a)
+nodeQueryDataSourceSafe' q = unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw' q
+
+nodeQueryDataSourceRaw'
+  :: forall m a.
+    ( MonadNodeQuery m
+    , MonadMask m
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
+    )
+  => NodeQuery a -> m (AnswerM m (RpcResult a))
+nodeQueryDataSourceRaw' q = do
+  $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q}|]
+  dsrc <- asksNodeDataSource id
+  qBranch <- getContext q
+  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM id dsrc qBranch q
 
 -- | Core primitive for running a 'NodeQuery' against the cache / worker queue.
 -- Returns the raw cache value (if found) and an action that will wait on the cache
 -- regardless of whether it was found or required a new request to be queued.
 nodeQueryDataSourceSTM
-  :: forall n a m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
-  => nds -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n a))
-nodeQueryDataSourceSTM nds qBranch q = do
+  :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
+  => (RpcResult a -> b) -> nds -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n b))
+nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
   cache <- readTVar' cacheVar
   liftSTM $ case DMap.lookup q cache of
     -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
@@ -836,7 +867,7 @@ nodeQueryDataSourceSTM nds qBranch q = do
           case a' of
             Right (res, dirty) -> populateKey q res dirty
             Left _ -> pure ()
-          lift $ finishWith $ fmap (_rpcResult_value . fst) a'
+          lift $ finishWith $ fmap (projectRpcResult . fst) a'
 
       return $
         -- Try very hard to write *something* into the result TVar in case of exception.
@@ -872,6 +903,16 @@ nodeQueryDataSourceSTM nds qBranch q = do
       tryFetchFromCache chainId q >>= \case
         Just x -> pure $ fmap Just x :: n (RpcResult a, DirtyBit)
         Nothing -> (,Nothing) <$> nodeRPCOrBust qBranch q :: n (RpcResult a, DirtyBit)
+
+    unpackCacheResult
+      :: forall r mm. (MonadSTM mm, MonadReader r mm, HasTimestamp r)
+      => Compose TVar CacheLine a -> mm b
+    unpackCacheResult (Compose var) = do
+      result <- readTVar' var
+      now <- asks (^. Stm.timestamp)
+      when (_cacheLine_used result < now) $
+        writeTVar' var $ result{_cacheLine_used = now}
+      pure $ projectRpcResult $ _cacheLine_result result
 
 unliftEither :: MonadError e m => m a -> m (Either e a)
 unliftEither action = (Right <$> action) `catchError` (pure . Left)
@@ -1457,12 +1498,15 @@ buildProtocolIndex branch protoHash history = do
             actualQueryBlockHash = case queryBlock' of
               Just queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
               _ -> firstBlock ^. hash
-          constants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants actualQueryBlockHash
+          constants <- nodeQueryDataSourceSafe' $ NodeQuery_ProtocolConstants actualQueryBlockHash
           pure ProtocolIndex
             { _protocolIndex_chainId = chainId
             , _protocolIndex_hash = firstBlock ^. protocolHash
             , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
-            , _protocolIndex_constants = constants
+            , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw constants) of
+                                               Left  _errorMsg -> Json Aeson.Null -- this shouldn't ever happen
+                                               Right x -> x
+            , _protocolIndex_constants = _rpcResult_value constants
             , _protocolIndex_firstBlockHash = Just $ firstBlock ^. hash
             , _protocolIndex_firstBlockPredecessor = Just $ firstBlock ^. predecessor
             , _protocolIndex_firstBlockLevel = Just $ firstBlock ^. level
@@ -1571,12 +1615,15 @@ fetchProtocolForBlock
   -> NodeQueryT m ProtocolIndex
 fetchProtocolForBlock chainId blkHash = do
   $(logDebug) [i|fetchProtocolForBlock: ${blkHash}|]
-  protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants blkHash
+  protoInfo <- nodeQueryDataSourceSafe' $ NodeQuery_ProtocolConstants blkHash
   blockHeader <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
   let p = ProtocolIndex
           { _protocolIndex_chainId = chainId
           , _protocolIndex_hash = blockHeader ^. protocolHash
-          , _protocolIndex_constants = protoInfo
+          , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw protoInfo) of
+                                             Left  _errorMsg -> Json Aeson.Null -- this shouldn't ever happen
+                                             Right x -> x
+          , _protocolIndex_constants = _rpcResult_value protoInfo
           , _protocolIndex_proto = blockHeader ^. blockHeader_proto
           , _protocolIndex_firstBlockHash = Nothing
           , _protocolIndex_firstBlockPredecessor = Nothing

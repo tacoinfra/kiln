@@ -44,14 +44,16 @@ import Control.Exception.Safe (Exception, SomeException)
 import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Encoding as AesonE
-import Data.Aeson.TH (deriveJSON)
-import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Aeson.GADT (deriveJSONGADT)
-import Data.GADT.Compare.TH (deriveGEq)
-import Data.GADT.Compare.TH (deriveGCompare)
-import Data.GADT.Show.TH (deriveGShow)
+import Data.Aeson.TH (deriveJSON)
+import qualified Data.Aeson.TH as Aeson
+import qualified Data.Aeson.Encoding as AesonE
+import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Dependent.Sum.Orphans ()
+import Data.GADT.Compare.TH (deriveGCompare)
+import Data.GADT.Compare.TH (deriveGEq)
+import Data.GADT.Show.TH (deriveGShow)
+import qualified Data.HashMap.Strict as HashMap
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
@@ -76,6 +78,7 @@ import qualified Text.URI as Uri
 
 import Tezos.Common.NodeRPC.Types (RpcError, AsRpcError(asRpcError))
 import Tezos.Common.NodeRPC.Sources (PublicNode)
+import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Types hiding (TestChainStatus)
 
 import Common (defaultTezosCompatJsonOptions)
@@ -384,6 +387,7 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
 data ProtocolIndex = ProtocolIndex
   { _protocolIndex_chainId :: !ChainId
   , _protocolIndex_hash :: !ProtocolHash
+  , _protocolIndex_jsonConstants :: !(Json Aeson.Value)
   , _protocolIndex_constants :: !ProtoInfo
   , _protocolIndex_proto :: !Word8
   , _protocolIndex_firstBlockHash :: !(Maybe BlockHash)
@@ -392,7 +396,7 @@ data ProtocolIndex = ProtocolIndex
   , _protocolIndex_firstBlockFitness :: !(Maybe Fitness)
   , _protocolIndex_firstBlockTimestamp :: !(Maybe UTCTime)
   , _protocolIndex_firstBlockCycle :: !(Maybe Cycle)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+  } deriving (Eq, Show, Generic, Typeable)
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
@@ -983,7 +987,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
-  , ''ProtocolIndex
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''RightKind
@@ -1140,3 +1143,18 @@ errorLogNames =
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
   ]
+
+instance Aeson.ToJSON ProtocolIndex where
+  toJSON protoIndex =
+    case $(Aeson.mkToJSON tezosJsonOptions ''ProtocolIndex) protoIndex of
+      Aeson.Object o ->
+        case HashMap.lookup "json_constants" o of
+          Nothing -> Aeson.Object o    -- this case shouldn't happen
+          Just jc -> Aeson.Object $ HashMap.insert "constants" jc $ HashMap.delete "json_constants" o
+      o -> o   -- this case also shouldn't happen
+
+instance Aeson.FromJSON ProtocolIndex where
+  parseJSON = Aeson.withObject "ProtocolIndex" $ \o -> do
+    jc :: Aeson.Value <- o Aeson..: "constants"
+    let o' = HashMap.insert "json_constants" jc o
+    $(Aeson.mkParseJSON tezosJsonOptions ''ProtocolIndex) (Aeson.Object o')
