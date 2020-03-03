@@ -347,7 +347,7 @@ data BakeView a = BakeView
   , _bakeView_votePrompting :: !(RangeView SecretKey (Deletable VoteState) a)
   , _bakeView_rightNotificationSettings :: !(RangeView RightKind (Deletable RightNotificationLimit) a)
   , _bakeView_bakerRegistered :: !(RangeView' PublicKeyHash Bool a)
-  } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
+  } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq)
 
 data MailServerView = MailServerView
   { _mailServerView_hostName :: !Text

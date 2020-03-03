@@ -44,14 +44,16 @@ import Control.Exception.Safe (Exception, SomeException)
 import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Encoding as AesonE
-import Data.Aeson.TH (deriveJSON)
-import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Aeson.GADT (deriveJSONGADT)
-import Data.GADT.Compare.TH (deriveGEq)
-import Data.GADT.Compare.TH (deriveGCompare)
-import Data.GADT.Show.TH (deriveGShow)
+import Data.Aeson.TH (deriveJSON)
+import qualified Data.Aeson.TH as Aeson
+import qualified Data.Aeson.Encoding as AesonE
+import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Dependent.Sum.Orphans ()
+import Data.GADT.Compare.TH (deriveGCompare)
+import Data.GADT.Compare.TH (deriveGEq)
+import Data.GADT.Show.TH (deriveGShow)
+import qualified Data.HashMap.Strict as HashMap
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
@@ -76,6 +78,7 @@ import qualified Text.URI as Uri
 
 import Tezos.Common.NodeRPC.Types (RpcError, AsRpcError(asRpcError))
 import Tezos.Common.NodeRPC.Sources (PublicNode)
+import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Types hiding (TestChainStatus)
 
 import Common (defaultTezosCompatJsonOptions)
@@ -381,9 +384,18 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
   toJSONKey = Aeson.ToJSONKeyText f (AesonE.text . f)
     where f = showChain . getNamedChainOrChainId
 
+-- TODO:
+--   each protocol should have it's own ProtoInfo type
+--   remove any funny json (de-)serialization from ProtocolIndex *and* TBML
+--   factor out these funny json manipulations into a optional way of funneling a protocol-specific ProtoInfo type into another ProtoInfo type
+--   remove _protocolIndex_constants
+--   move _protocolIndex_jsonConstants to a postgresql 'jsonb' type
+--
+-- We can cache ProtoInfo types in memory,  but given the changes to ProtoInfo across protocol versions, it's not really a structured data type we can cleanly unpack into a common record or a fully "structured" SQL schema.
 data ProtocolIndex = ProtocolIndex
   { _protocolIndex_chainId :: !ChainId
   , _protocolIndex_hash :: !ProtocolHash
+  , _protocolIndex_jsonConstants :: !(Json Aeson.Value)
   , _protocolIndex_constants :: !ProtoInfo
   , _protocolIndex_proto :: !Word8
   , _protocolIndex_firstBlockHash :: !(Maybe BlockHash)
@@ -392,7 +404,7 @@ data ProtocolIndex = ProtocolIndex
   , _protocolIndex_firstBlockFitness :: !(Maybe Fitness)
   , _protocolIndex_firstBlockTimestamp :: !(Maybe UTCTime)
   , _protocolIndex_firstBlockCycle :: !(Maybe Cycle)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+  } deriving (Eq, Show, Generic, Typeable)
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
@@ -816,13 +828,6 @@ data ErrorLog = ErrorLog
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
 
-data GenericCacheEntry = GenericCacheEntry
-  { _genericCacheEntry_chainId :: !ChainId
-  , _genericCacheEntry_key :: !(Json Aeson.Value)
-  , _genericCacheEntry_value :: !(Json Aeson.Value)
-  } deriving (Eq, Generic, Show, Typeable)
-instance HasId GenericCacheEntry
-
 data UpgradeCheckError
   = UpgradeCheckError_UpstreamUnreachable
   | UpgradeCheckError_UpstreamMissing
@@ -990,7 +995,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
-  , ''ProtocolIndex
   , ''PublicNodeConfig
   , ''PublicNodeHead
   , ''RightKind
@@ -1147,3 +1151,18 @@ errorLogNames =
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
   ]
+
+instance Aeson.ToJSON ProtocolIndex where
+  toJSON protoIndex =
+    case $(Aeson.mkToJSON tezosJsonOptions ''ProtocolIndex) protoIndex of
+      Aeson.Object o ->
+        case HashMap.lookup "json_constants" o of
+          Nothing -> error "the 'impossible' happened: the _protocolIndex_jsonConstants field is missing"
+          Just jc -> Aeson.Object $ HashMap.insert "constants" jc $ HashMap.delete "json_constants" o
+      _ -> error "the 'impossible' happened: ProtocolIndex is not a JSON object"
+
+instance Aeson.FromJSON ProtocolIndex where
+  parseJSON = Aeson.withObject "ProtocolIndex" $ \o -> do
+    jc :: Aeson.Value <- o Aeson..: "constants"
+    let o' = HashMap.insert "json_constants" jc o
+    $(Aeson.mkParseJSON tezosJsonOptions ''ProtocolIndex) (Aeson.Object o')
