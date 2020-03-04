@@ -250,7 +250,7 @@ let
         if pkgs.lib.strings.hasPrefix "zeronet" hostName then "zeronet" else
         if pkgs.lib.strings.hasPrefix "alphanet" hostName then "babylonnet" else
         if pkgs.lib.strings.hasPrefix "test-chain-2.api.tezos" hostName then "carthagenet" else
-        if pkgs.lib.strings.hasPrefix "tezos-api" then "mainnet" else
+        if pkgs.lib.strings.hasPrefix "tezos-api" hostName then "mainnet" else
         builtins.throw "Can't map hostname to Tezos network";
       networkConfig = networkConfigOptions.${network};
       nixos = import (pkgs.path + /nixos);
