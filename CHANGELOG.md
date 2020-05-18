@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.1
+
+  * Bump Tezos mainnet node to include fixes to the mempool and the Tezos node
+    (f0607f4b1f8c0f2a0a48adb4bc76378406203714)
+
+### Known Issues
+
+  * Kiln's memory usage may spike at the startup for few minutes.
+    It is recommended to have swap memory enabled to avoid causing issues, especially if the tezos-node is also running on the same machine.
+    Disabling the OS Public Node via the config file could reduce the Kiln's memory consumption further.
+
 ## 0.8.0
 
   * Updated tezos node dependencies to support the Carthage protocol and the new, more compact storage backend (irmin-pack).
