@@ -178,20 +178,23 @@ toCacheDelegateInfo di = CacheDelegateInfo
   , _cacheDelegateInfo_gracePeriod = _delegateInfo_gracePeriod di
   }
 
-
-
 data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
 
 type CachedHistory' = CachedHistory ()
-type DirtyBit = Maybe (Id GenericCacheEntry)
+type DirtyBit = Maybe (Id RawCacheEntry)
 
 data CacheLine a where
   CacheLine :: (ToJSON a, FromJSON a) =>
-    { _cacheLine_value :: !a
+    { _cacheLine_result :: !(RpcResult a)
     , _cacheLine_used :: !UTCTime
     , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
     } -> CacheLine a
+
+data RpcResult a = RpcResult
+  { _rpcResult_raw :: !LBS.ByteString
+  , _rpcResult_value :: !a
+  } deriving (Functor)
 
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(TVar CachedHistory')
@@ -228,7 +231,7 @@ class MonadLogger m => MonadNodeQuery m where
   nqAtomicallyWithTime action = liftIO $ atomicallyWithTime action
   answerImmediate :: ReaderT UTCTime STM (Maybe (Either CacheError a)) -> STM (m (AnswerM m a))
   withFinishWith :: NodeDataSource -> (forall r. (Either CacheError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
-  nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m a
+  nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
@@ -574,16 +577,6 @@ tryNodeQueryT f = do
     NodeQueryTResult_Done a -> Just a
     NodeQueryTResult_Query{} -> Nothing
 
-unpackCacheResult
-  :: forall a r m. (MonadSTM m, MonadReader r m, HasTimestamp r)
-  => Compose TVar CacheLine a -> m a
-unpackCacheResult (Compose var) = do
-  result <- readTVar' var
-  now <- asks (^. Stm.timestamp)
-  when (_cacheLine_used result < now) $
-    writeTVar' var $ result{_cacheLine_used = now}
-  pure $ _cacheLine_value result
-
 -- get lca between two blocks
 branchPoint
   :: forall r m. (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -809,15 +802,56 @@ nodeQueryDataSourceRaw q = do
   $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q}|]
   dsrc <- asksNodeDataSource id
   qBranch <- getContext q
-  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM dsrc qBranch q
+  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM _rpcResult_value dsrc qBranch q
+
+-- | Query cached data immediately, in this thread.  Only meant to be used in the implementation
+--   of recursive queries, lest the dreaded deadlock heisenbunny return.
+nodeQueryDataSourceImmediate'
+  :: forall a s e m.
+    ( MonadIO m
+    , MonadReader s m, HasNodeDataSource s
+    , MonadError e m, AsCacheError e
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
+    )
+  => NodeQuery a -> m (RpcResult a)
+nodeQueryDataSourceImmediate' q = runNodeQueryQueued $
+  unNodeQueryImmediate $ unNodeQueryImmediateAnswerM <$> nodeQueryDataSourceRaw' q
+
+-- | Query cached data "nonblockingly".  Which is to say it will block for the database, but won't
+--   try to connect to the node.  Calling code can handle the condition where the data was not
+--   cached, for instance by abandoning the transaction before attempting an RPC call.
+nodeQueryDataSourceSafe'
+  :: forall a m.
+    ( MonadNodeQuery (NodeQueryT m)
+    , MonadMask m
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
+    )
+  => NodeQuery a -> NodeQueryT m (RpcResult a)
+nodeQueryDataSourceSafe' q = unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw' q
+
+nodeQueryDataSourceRaw'
+  :: forall m a.
+    ( MonadNodeQuery m
+    , MonadMask m
+    , ToJSON (NodeQuery a)
+    , FromJSON a, ToJSON a
+    )
+  => NodeQuery a -> m (AnswerM m (RpcResult a))
+nodeQueryDataSourceRaw' q = do
+  $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q}|]
+  dsrc <- asksNodeDataSource id
+  qBranch <- getContext q
+  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM id dsrc qBranch q
 
 -- | Core primitive for running a 'NodeQuery' against the cache / worker queue.
 -- Returns the raw cache value (if found) and an action that will wait on the cache
 -- regardless of whether it was found or required a new request to be queued.
 nodeQueryDataSourceSTM
-  :: forall n a m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
-  => nds -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n a))
-nodeQueryDataSourceSTM nds qBranch q = do
+  :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
+  => (RpcResult a -> b) -> nds -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n b))
+nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
   cache <- readTVar' cacheVar
   liftSTM $ case DMap.lookup q cache of
     -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
@@ -831,9 +865,9 @@ nodeQueryDataSourceSTM nds qBranch q = do
         -- writeResult :: Either CacheError (a, DirtyBit) -> m r
         writeResult a' = nqAtomicallyWithTime $ do
           case a' of
-            Right (a, dirty) -> populateKey q a dirty
+            Right (res, dirty) -> populateKey q res dirty
             Left _ -> pure ()
-          lift $ finishWith $ fmap fst a'
+          lift $ finishWith $ fmap (projectRpcResult . fst) a'
 
       return $
         -- Try very hard to write *something* into the result TVar in case of exception.
@@ -855,20 +889,30 @@ nodeQueryDataSourceSTM nds qBranch q = do
     cacheVar = _nodeDataSource_cache dsrc
     chainId = _nodeDataSource_chain dsrc
 
-    populateKey q_ a dirty = do
+    populateKey q_ (RpcResult raw a) dirty = do
       cache <- readTVar' cacheVar
       case DMap.lookup q_ cache of
         Just _ -> pure ()
         Nothing -> do
           now <- asks (^. Stm.timestamp)
-          var <- newTVar' $ CacheLine a now dirty
+          var <- newTVar' $ CacheLine (RpcResult raw a) now dirty
           writeTVar' cacheVar $ DMap.insert q_ (Compose var) cache
 
-    makeRequestAndCache :: n (Either CacheError (a, DirtyBit))
+    makeRequestAndCache :: n (Either CacheError (RpcResult a, DirtyBit))
     makeRequestAndCache = nqTry $
       tryFetchFromCache chainId q >>= \case
-        Just x -> pure $ fmap Just x :: n (a, DirtyBit)
-        Nothing -> (,Nothing) <$> nodeRPCOrBust qBranch q :: n (a, DirtyBit)
+        Just x -> pure $ fmap Just x :: n (RpcResult a, DirtyBit)
+        Nothing -> (,Nothing) <$> nodeRPCOrBust qBranch q :: n (RpcResult a, DirtyBit)
+
+    unpackCacheResult
+      :: forall r mm. (MonadSTM mm, MonadReader r mm, HasTimestamp r)
+      => Compose TVar CacheLine a -> mm b
+    unpackCacheResult (Compose var) = do
+      result <- readTVar' var
+      now <- asks (^. Stm.timestamp)
+      when (_cacheLine_used result < now) $
+        writeTVar' var $ result{_cacheLine_used = now}
+      pure $ projectRpcResult $ _cacheLine_result result
 
 unliftEither :: MonadError e m => m a -> m (Either e a)
 unliftEither action = (Right <$> action) `catchError` (pure . Left)
@@ -939,22 +983,25 @@ nodeQueryDataSourceImpl
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError a)
-nodeQueryDataSourceImpl = nodeQueryImpl nodeRPC ChainTag_Hash
+  -> IO (Either CacheError (RpcResult a))
+nodeQueryDataSourceImpl = nodeQueryImpl myNodeRPC ChainTag_Hash
+  where
+    myNodeRPC (RpcQuery decoder body method resources) =
+      nodeRPC (RpcQuery (keepOriginalInput decoder) body method resources)
 
 nodeQueryImpl
   :: forall a chain repr.
    ( QueryBlock repr, QueryHistory repr, QueryProtocolIndex repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
-     => repr c -> m c)
+     => repr c -> m (RpcResult c))
   -> (ChainId -> chain)
   -> ChainId
   -> BlockHash
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError a)
+  -> IO (Either CacheError (RpcResult a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
   NodeQuery_ProtocolIndex protoHash -> nodeRPC' $ rProtocolIndex chainId protoHash
@@ -973,14 +1020,14 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock (toChain chainId) branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
-  NodeQuery_DelegateInfo branch _lvl pkh -> fmap toCacheDelegateInfo $ nodeRPC' $ rDelegateInfo pkh chainId branch
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
-    managerkeyResp <- nodeRPC' $ rManagerKey contractId chainId qBranch
+    (RpcResult raw managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKeyCrossCompat_key managerkeyResp of
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
-      Just pk -> pure pk
+      Just pk -> pure (RpcResult raw pk)
   where
-    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO c
+    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO (RpcResult c)
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
@@ -991,13 +1038,16 @@ nodeQueryOsPubNodeImpl
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError a)
+  -> IO (Either CacheError (RpcResult a))
 nodeQueryOsPubNodeImpl = nodeQueryImpl osPublicNodeRPC id
+
+keepOriginalInput :: (LBS.ByteString -> Either err a) -> LBS.ByteString -> Either err (RpcResult a)
+keepOriginalInput f str = (RpcResult str) <$> f str
 
 osPublicNodeRPC
   :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON a)
-  => OsNodeQuery a -> m a
-osPublicNodeRPC (OsNodeQuery route params) = nodeRPCImpl' Aeson.eitherDecode emptyObject_ Http.methodGet rpcSelector
+  => OsNodeQuery a -> m (RpcResult a)
+osPublicNodeRPC (OsNodeQuery route params) = nodeRPCImpl' (keepOriginalInput Aeson.eitherDecode) emptyObject_ Http.methodGet rpcSelector
   where
     rpcSelector = route <> paramsE
     paramsE = maybe "" (("?" <>) . mconcat . NE.toList . NE.intersperse "&" . fmap (\(k, v) -> k <> "=" <> v)) (nonEmpty params)
@@ -1307,7 +1357,7 @@ calculateBakeEfficiency branch len baker = do
 -}
 tryFetchFromCache
   :: forall m a. (MonadNodeQuery m, FromJSON a, ToJSON (NodeQuery a))
-  => ChainId -> NodeQuery a -> m (Maybe (a, Id GenericCacheEntry))
+  => ChainId -> NodeQuery a -> m (Maybe (RpcResult a, Id RawCacheEntry))
 tryFetchFromCache chainId q = do
   let
     qJson = Json $ Aeson.toJSON q
@@ -1315,19 +1365,21 @@ tryFetchFromCache chainId q = do
   -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
   -- terrible:
   -- https://www.postgresql.org/message-id/17764.1405993868%40sss.pgh.pa.us
-  resultM :: [(Id GenericCacheEntry, GenericCacheEntry)] <- nqInDB $ [queryQ|
+  resultM :: [(Id RawCacheEntry, RawCacheEntry)] <- nqInDB $ [queryQ|
     SELECT "id", "chainId", "key", "value"
-    FROM "GenericCacheEntry"
+    FROM "RawCacheEntry"
     WHERE "chainId" = ?chainId
       AND "key" = ?qJson
-    |] <&> fmap (\(id_, c, k, v) -> (id_, GenericCacheEntry c k v))
+    |] <&> fmap (\(id_, c, k, v) -> (id_, RawCacheEntry c k v))
   case nonEmpty resultM of
     Nothing -> return Nothing
-    Just ((rid, result) :| _) -> case Aeson.fromJSON (unJson $ _genericCacheEntry_value result) of
-      Aeson.Success v -> return $ Just (v, rid)
-      Aeson.Error bad -> do
-        $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
-        return Nothing
+    Just ((rid, result) :| _) -> do
+      let raw = _rawCacheEntry_value result
+      case Aeson.eitherDecode' raw of
+        Right v -> return $ Just (RpcResult raw v, rid)
+        Left bad -> do
+          $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
+          return Nothing
 
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
@@ -1446,12 +1498,15 @@ buildProtocolIndex branch protoHash history = do
             actualQueryBlockHash = case queryBlock' of
               Just queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
               _ -> firstBlock ^. hash
-          constants <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants actualQueryBlockHash
+          constants <- nodeQueryDataSourceSafe' $ NodeQuery_ProtocolConstants actualQueryBlockHash
           pure ProtocolIndex
             { _protocolIndex_chainId = chainId
             , _protocolIndex_hash = firstBlock ^. protocolHash
             , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
-            , _protocolIndex_constants = constants
+            , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw constants) of
+                                               Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
+                                               Right x -> x
+            , _protocolIndex_constants = _rpcResult_value constants
             , _protocolIndex_firstBlockHash = Just $ firstBlock ^. hash
             , _protocolIndex_firstBlockPredecessor = Just $ firstBlock ^. predecessor
             , _protocolIndex_firstBlockLevel = Just $ firstBlock ^. level
@@ -1560,12 +1615,15 @@ fetchProtocolForBlock
   -> NodeQueryT m ProtocolIndex
 fetchProtocolForBlock chainId blkHash = do
   $(logDebug) [i|fetchProtocolForBlock: ${blkHash}|]
-  protoInfo <- nodeQueryDataSourceSafe $ NodeQuery_ProtocolConstants blkHash
+  protoInfo <- nodeQueryDataSourceSafe' $ NodeQuery_ProtocolConstants blkHash
   blockHeader <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
   let p = ProtocolIndex
           { _protocolIndex_chainId = chainId
           , _protocolIndex_hash = blockHeader ^. protocolHash
-          , _protocolIndex_constants = protoInfo
+          , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw protoInfo) of
+                                             Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
+                                             Right x -> x
+          , _protocolIndex_constants = _rpcResult_value protoInfo
           , _protocolIndex_proto = blockHeader ^. blockHeader_proto
           , _protocolIndex_firstBlockHash = Nothing
           , _protocolIndex_firstBlockPredecessor = Nothing
