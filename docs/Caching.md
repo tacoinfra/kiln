@@ -13,9 +13,9 @@ The cache Kiln builds from these data sources is powerful: it offers the highest
 ## Baker Data Discovery
 The cache Kiln builds also powers features and notifications about the baker. For instance, it: 
 
-compares rights with history to determine if the baker has missed any opportunities
-checks block history for accusations against the Kiln Baker to detect if they have been accused of double baking or double endorsing
-Stores information about the current amendment period so the baker can see which proposal have been proposed, how the Kiln baker and other bakers are voting, and whether the proposed amendment is likely to become mainnet
+* compares rights with history to determine if the baker has missed any opportunities
+* checks block history for accusations against the Kiln Baker to detect if they have been accused of double baking or double endorsing
+* Stores information about the current amendment period so the baker can see which proposal have been proposed, how the Kiln baker and other bakers are voting, and whether the proposed amendment is likely to become mainnet
 
 This information can also be used to develop new features such as a table of rights and history or to calculate the baker’s efficiency.
 
