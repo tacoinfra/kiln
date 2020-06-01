@@ -1,5 +1,7 @@
 # Importing Chain History to the Kiln Node from Another Tezos Node
 
+_**Note: This method of importing chain history is no longer necessary. It is recommended that all users and developers instead use snapshots sync with the network faster.**_
+
 To bake with Kiln, the Kiln Node must be fully synced with the blockchain. Rather than waiting for the Kiln Node to sync from genesis, it is possible to copy chain history from another node. The import process is dependent upon how you are running Kiln. Follow the instructions below specific to your distribution.
 
 ## Built from source
