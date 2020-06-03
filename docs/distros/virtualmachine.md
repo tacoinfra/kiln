@@ -1,6 +1,6 @@
 # Virtual Machine
 
-Obsidian Systems provides Kiln virtual machine releases as a `.ova` file, which can be found at https://gitlab.com/obsidian.systems/kiln/releases beginning with `v0.5.2`.
+Obsidian Systems provides Kiln virtual machine releases as a `.ova` file, which can be found at https://gitlab.com/obsidian.systems/kiln/-/releases beginning with `v0.5.2`.
 The VM has been tested on VirtualBox only, on the host OS: Windows, Mac and Ubuntu.
 But this might work with other VM software like VMWare, and other hosts.
 
