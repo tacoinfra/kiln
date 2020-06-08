@@ -1,10 +1,10 @@
 # Ubuntu Distribution
 
-Obsidian Systems packages Kiln releases as a .deb file, which can be found at https://gitlab.com/obsidian.systems/kiln/releases beginning with v0.5.1. This package has been tested on Ubuntu only, but we plan on supporting other linux distributions in the near future.
+Obsidian Systems packages Kiln releases as a .deb file, which can be found at https://gitlab.com/obsidian.systems/kiln/-/releases beginning with v0.5.1. This package has been tested on Ubuntu only, but we plan on supporting other linux distributions in the near future.
 
 To get started:
 
-1. Download the deb file from our [releases](https://gitlab.com/obsidian.systems/kiln/releases) page.
+1. Download the deb file from our [releases](https://gitlab.com/obsidian.systems/kiln/-/releases) page.
 2. Open the file.
 3. Follow the installation instructions.
 4. Open [http://localhost:8000](http://localhost:8000)

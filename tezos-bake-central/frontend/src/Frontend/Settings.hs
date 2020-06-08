@@ -275,7 +275,7 @@ settingsTab = do
               elAttr "div" ("class" =: "ui tiny header" <> "style" =: "margin-bottom: 1rem") $ do
                 icon "upgrade-icon icon-arrow-up"
                 text ("Kiln " <> T.pack (showVersion v) <> " is available!")
-              let uri = "https://gitlab.com/obsidian.systems/kiln/releases"
+              let uri = "https://gitlab.com/obsidian.systems/kiln/-/releases"
               el "p" $ do
                 text "Release notes: "
                 hrefLink uri $ text uri
