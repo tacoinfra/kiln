@@ -15,7 +15,7 @@ If you have not done so already, we recommend you add our Nix caches to your Nix
 ### Cloning the repository
 
 ```shell
-git clone https://gitlab.com/obsidian.systems/kiln.git
+git clone https://gitlab.com/tezos-kiln/kiln.git
 cd kiln/
 ```
 
