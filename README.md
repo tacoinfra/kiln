@@ -1,8 +1,8 @@
 # Overview
 
-Kiln, by [Obsidian Systems](https://obsidian.systems/), is a tool for both baking and monitoring on the Tezos network. It provides a locally hosted graphical interface, binaries for tezos-client, tezos-node, tezos-baker, and tezos-endorser, and it builds a cache of chain data from the nodes to which it connects.
+Kiln is a tool for both baking and monitoring on the Tezos network. It provides a locally hosted graphical interface, binaries for tezos-client, tezos-node, tezos-baker, and tezos-endorser, and it builds a cache of chain data from the nodes to which it connects.
 
-**For step-by-step instructions on how to get started, see our medium post [How to Install Kiln and Bake on Ubuntu](https://medium.com/@obsidian.systems/how-to-install-kiln-and-bake-on-ubuntu-a13d17df63c).** We also post release notes to the [Obsidian Medium Account](https://medium.com/@obsidian.systems).
+**For step-by-step instructions on how to get started, see the medium post [How to Install Kiln and Bake on Ubuntu](https://medium.com/@obsidian.systems/how-to-install-kiln-and-bake-on-ubuntu-a13d17df63c).** Past release notes are available [here](https://medium.com/@obsidian.systems).
 
 ## System Requirements
 
@@ -30,10 +30,8 @@ Kiln bakes with a local node, which increases system requirements.
 
 # Obtaining Kiln
 
-Kiln can be built from source on linux distributions and Obsidian Systems provides:
+Kiln can be built from source on linux distributions and MacOS.
 * pre-built Docker images hosted on [Docker Hub](https://hub.docker.com/r/obsidiansystems/kiln/).
-* pre-built deb files
-* pre-built ova files
 
 Click the link in the left column to learn more about that Kiln distribution.
 
@@ -43,7 +41,7 @@ Click the link in the left column to learn more about that Kiln distribution.
 | [Docker](docs/distros/docker.md)                       | **No**               | Linux / Mac                     | Yes               |
 | [Linux Distribution](docs/distros/ubuntu.md) (.deb)    | Yes                  | Debian / Ubuntu                 | Yes               |
 | [VM Package](docs/distros/virtualmachine.md) (.ova)    | Yes                  | Any                             | Alpha Available   |
-| Mac Distribution                                       | Yes                  | Mac                             | Est. Q4 2019      |
+| [Mac Distribution](https://gitlab.com/tezos-kiln/kiln-macos-pkg/-/blob/master/README.md)| Yes                  | Mac OS Catalina                            | Yes|
 
 # Using Kiln to Bake
 
@@ -106,7 +104,7 @@ Once you’ve added at least one node or a Public Node, the Dashboard header wil
 
 * *Building from Source - The best place to start is [Tezos’ Documentation](http://tezos.gitlab.io/master/introduction/howtoget.html#build-from-sources). There are also several community guides, some of which you can find [here](https://docs.google.com/document/d/1iu-5j8vnnK00-t0CIQcbMDSz5PbEHI09YsKp8utEaj0/edit).*
 * *Using Docker - The docker image for Tezos can be found on [DockerHub](https://hub.docker.com/r/tezos/tezos/). They also provide a [simple script](http://tezos.gitlab.io/master/introduction/howtoget.html#docker-images) for retrieving the images. We do not yet have instructions on connecting the Tezos node and baking monitor Docker containers, but you can either set this up yourself or connect our Docker container to a node you built from source.*
-* *Using Obsidian’s Tezos Baking Platform - See the Tezos Baking Platform's [UsingTezos.md](https://gitlab.com/obsidian.systems/tezos-baking-platform/blob/develop/UsingTezos.md) for instructions.*
+* *Using Tezos Baking Platform - See the Tezos Baking Platform's [UsingTezos.md](https://gitlab.com/tezos-kiln/tezos-baking-platform/-/blob/develop/UsingTezos.md) for instructions.*
 
 ### Adding public nodes
 
@@ -134,4 +132,4 @@ There are instances where Kiln’s front end will stop updating, but the backend
 
 # Contact Us
 
-We encourage users to join our Baker Slack (by emailing us for an invite at tezos@obsidian.systems) to provide feedback and let us know what improvements you’d like to see next!
+Users can join Tezos Baking Slack (by emailing for an invite at joinslack@tezos-kiln.org) to provide feedback. 
