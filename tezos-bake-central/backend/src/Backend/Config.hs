@@ -81,6 +81,7 @@ defaultNodeConfigFile = NodeConfigFile
     }
   , _nodeConfigFile_log = Nothing
   , _nodeConfigFile_shell = Nothing
+  , _nodeConfigFile_network = "mainnet"
   }
 
 data NodeConfigRPC = NodeConfigRPC
@@ -177,6 +178,7 @@ data NodeConfigFile = NodeConfigFile
   , _nodeConfigFile_rpc :: !(Maybe NodeConfigRPC)
   , _nodeConfigFile_log :: !(Maybe NodeConfigLog)
   , _nodeConfigFile_shell :: !(Maybe NodeConfigShell)
+  , _nodeConfigFile_network :: !Text
   }
 
 data BinaryPaths = BinaryPaths

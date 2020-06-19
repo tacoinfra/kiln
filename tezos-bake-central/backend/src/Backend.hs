@@ -64,6 +64,7 @@ import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
 import System.Directory (doesDirectoryExist, renameDirectory)
 import System.Environment (getArgs, getProgName, withArgs)
+import System.Exit (die)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
@@ -79,7 +80,8 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common (worker', workerWithDelay)
-import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir)
+import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
+                      , _nodeConfigFile_network)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NodeCmd (bakerDaemonProcess, handleExportLogs, internalNodeWorker)
@@ -372,6 +374,13 @@ backendImpl cfg serve = do
 
     resetLedgerQueue logger db
 
+    let networkNameError _chainId = "This chain id: (" <> T.unpack (toBase58Text _chainId) <> ") does not correspond to either mainnet or carthagenet."
+
+    networkName <- case chain of
+        Right c -> liftIO $
+              maybe (die $ networkNameError c) pure $ fmap showNamedChain $ identifyChain c
+        Left c -> pure $ showNamedChain c
+
     let
       minLevel :: RawLevel
       minLevel = 2
@@ -381,7 +390,8 @@ backendImpl cfg serve = do
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
         , _appConfig_kilnNodeNetPort = kilnNodeNetPort
         , _appConfig_kilnDataDir = kilnDataDir
-        , _appConfig_kilnNodeConfig = defaultNodeConfigFile
+        , _appConfig_kilnNodeConfig =
+          defaultNodeConfigFile { _nodeConfigFile_network = networkName }
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
         , _appConfig_binaryPaths = binaryPaths
