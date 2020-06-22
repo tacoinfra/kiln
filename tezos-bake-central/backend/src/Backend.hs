@@ -64,7 +64,6 @@ import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
 import System.Directory (doesDirectoryExist, renameDirectory)
 import System.Environment (getArgs, getProgName, withArgs)
-import System.Exit (die)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
@@ -374,14 +373,14 @@ backendImpl cfg serve = do
 
     resetLedgerQueue logger db
 
-    let networkNameError _chainId = "This chain id: (" <> T.unpack (toBase58Text _chainId) <> ") does not correspond to either mainnet or carthagenet."
-
-    networkName <- case chain of
-        Right c -> liftIO $
-              maybe (die $ networkNameError c) pure $ fmap showNamedChain $ identifyChain c
-        Left c -> pure $ showNamedChain c
-
     let
+
+      networkName :: Maybe Text
+      networkName = either
+        (pure . showNamedChain)
+        (fmap showNamedChain . identifyChain)
+        chain
+
       minLevel :: RawLevel
       minLevel = 2
 
