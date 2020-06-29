@@ -204,31 +204,40 @@ let
         ./backend --kiln-data-dir='${data-dir}' \$@
       '';
 
-      kiln-shell-mainnet-rc = pkgs.writeText "bashrc" ''
+      kiln-shell-multinetwork-rc = pkgs.writeText "bashrc" ''
         function tezos-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/mainnet-tezos-client $@
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/multinetwork-tezos-client $@
         }
         function tezos-admin-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/mainnet-tezos-admin-client $@
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/multinetwork-tezos-admin-client $@
         }
       '';
 
-      kiln-shell-babylonnet-rc = pkgs.writeText "bashrc" ''
-        function tezos-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/babylonnet-tezos-client $@
-        }
-        function tezos-admin-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/babylonnet-tezos-admin-client $@
-        }
-      '';
-      kiln-shell-zeronet-rc = pkgs.writeText "bashrc" ''
-        function tezos-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/zeronet-tezos-client $@
-        }
-        function tezos-admin-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/zeronet-tezos-admin-client $@
-        }
-      '';
+      # kiln-shell-multinetwork-rc = pkgs.writeText "bashrc" ''
+      #   function tezos-client {
+      #     unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/mainnet-tezos-client $@
+      #   }
+      #   function tezos-admin-client {
+      #     unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/mainnet-tezos-admin-client $@
+      #   }
+      # '';
+
+      # kiln-shell-babylonnet-rc = pkgs.writeText "bashrc" ''
+      #   function tezos-client {
+      #     unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/babylonnet-tezos-client $@
+      #   }
+      #   function tezos-admin-client {
+      #     unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/babylonnet-tezos-admin-client $@
+      #   }
+      # '';
+      # kiln-shell-zeronet-rc = pkgs.writeText "bashrc" ''
+      #   function tezos-client {
+      #     unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/zeronet-tezos-client $@
+      #   }
+      #   function tezos-admin-client {
+      #     unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/zeronet-tezos-admin-client $@
+      #   }
+      # '';
 
       # Since gargoyle (or rather postgresql) can only work if invoked by a non-root user
       # We need to do a nested unshare (after doing mount) to change to a non-root shell
@@ -270,24 +279,24 @@ let
         #!/usr/bin/env bash
         if [[ \$# -eq 0 ]] ; then
         	echo \"Starting kiln-shell for mainnet.\"
-        	echo \"To run kiln-shell for other network, please specify 'kiln-shell babylonnet' or 'kiln-shell zeronet'.\"
-          bash --rcfile ${nix-store-root}/${kiln-shell-mainnet-rc}
+        	# echo \"To run kiln-shell for other network, please specify 'kiln-shell babylonnet' or 'kiln-shell zeronet'.\"
+          bash --rcfile ${nix-store-root}/${kiln-shell-multinetwork-rc}
         else
         	case \$1 in
         		mainnet)
         			echo \"Starting kiln-shell for mainnet.\"
-              bash --rcfile ${nix-store-root}/${kiln-shell-mainnet-rc}
+              bash --rcfile ${nix-store-root}/${kiln-shell-multinetwork-rc}
         			;;
-        		zeronet)
-        			echo \"Starting kiln-shell for zeronet.\"
-              bash --rcfile ${nix-store-root}/${kiln-shell-zeronet-rc}
-        			;;
-        		babylonnet)
-        			echo \"Starting kiln-shell for babylonnet.\"
-              bash --rcfile ${nix-store-root}/${kiln-shell-babylonnet-rc}
-        			;;
+        		# zeronet)
+        			# echo \"Starting kiln-shell for zeronet.\"
+              # bash --rcfile ${nix-store-root}/${kiln-shell-zeronet-rc}
+        			# ;;
+        		# babylonnet)
+        			# echo \"Starting kiln-shell for babylonnet.\"
+              # bash --rcfile ${nix-store-root}/${kiln-shell-babylonnet-rc}
+        			# ;;
         		*)
-        			echo \"Unknown argument, specify mainnet, zeronet or babylonnet\"
+        			echo \"Unknown argument, specify mainnet\"
         			exit 1
         			;;
         	esac
