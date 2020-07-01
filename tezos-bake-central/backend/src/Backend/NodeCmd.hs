@@ -60,10 +60,11 @@ needsCarthageStorageUpgrade :: Version -> Bool
 needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 
 nodePaths :: NamedChain -> FilePath
-nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
-nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
-nodePaths NamedChain_Babylonnet = $(staticWhich "babylonnet-tezos-node")
-nodePaths NamedChain_Carthagenet = $(staticWhich "carthagenet-tezos-node")
+nodePaths NamedChain_Mainnet = $(staticWhich "multinetwork-tezos-node")
+nodePaths _ = error "You shouldn't get here."
+-- nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
+-- nodePaths NamedChain_Babylonnet = $(staticWhich "babylonnet-tezos-node")
+-- nodePaths NamedChain_Carthagenet = $(staticWhich "carthagenet-tezos-node")
 
 bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)

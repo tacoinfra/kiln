@@ -14,7 +14,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits-serokell.nix {
         inherit pkgs;
         serokell-tezos-binaries = import ../dep/serokell-tezos-binaries;
-    # nodeKit = if tezosScopedKit != null then tezosScopedKit else imprort ./import ./scoped-tzkits.nix {
+    # nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits.nix {
       # inherit pkgs;
       # tezos-baking-platform = import ../dep/tezos-baking-platform {};
     };

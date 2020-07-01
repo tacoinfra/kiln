@@ -1,10 +1,10 @@
-{pkgs, serokell-tezos-binaries-path }:
+{pkgs, serokell-tezos-binaries }:
 
 let
-  binaries-path = serokell-tezos-binaries-path;
+  binaries = serokell-tezos-binaries;
   in pkgs.runCommand "serokell-tezos-binaries" {} ''
   mkdir -p $out/bin
-  for bin in $(ls ${binaries-path}) ; do
-    ln -s ${binaries-path}/$bin $out/bin/multinetwork-$bin
+  for bin in $(ls ${binaries}) ; do
+    ln -s ${binaries}/$bin $out/bin/multinetwork-$bin
   done
   ''

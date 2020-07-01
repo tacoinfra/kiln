@@ -269,7 +269,7 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db chain = runLo
             -- unless (doC || wasConnected) $ $(logWarn) ("Baking rights approaching at level " <> tshow lvl <> ". Kiln last saw that the ledger was disconnected!")
             pure doC
           -- If we have no rights but a baker, we may as well check because the rights are coming
-          _ -> pure True 
+          _ -> pure True
         when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db chain
 
 withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
@@ -329,10 +329,11 @@ clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
 clientPath :: Either NamedChain BinaryPaths -> FilePath
 clientPath = \case
   Right (BinaryPaths _ c _) -> c
-  Left NamedChain_Mainnet -> $(staticWhich "mainnet-tezos-client")
-  Left NamedChain_Zeronet -> $(staticWhich "zeronet-tezos-client")
-  Left NamedChain_Babylonnet -> $(staticWhich "babylonnet-tezos-client")
-  Left NamedChain_Carthagenet -> $(staticWhich "carthagenet-tezos-client")
+  Left NamedChain_Mainnet -> $(staticWhich "multinetwork-tezos-client")
+  _ -> error "shouldn't get here"
+  -- Left NamedChain_Zeronet -> $(staticWhich "zeronet-tezos-client")
+  -- Left NamedChain_Babylonnet -> $(staticWhich "babylonnet-tezos-client")
+  -- Left NamedChain_Carthagenet -> $(staticWhich "carthagenet-tezos-client")
 
 
 {- Example output from `list connected ledgers`
