@@ -61,6 +61,7 @@ needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 
 nodePaths :: NamedChain -> FilePath
 nodePaths NamedChain_Mainnet = $(staticWhich "multinetwork-tezos-node")
+nodePaths NamedChain_Carthagenet = $(staticWhich "multinetwork-tezos-node")
 nodePaths _ = error "You shouldn't get here."
 -- nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
 -- nodePaths NamedChain_Babylonnet = $(staticWhich "babylonnet-tezos-node")
@@ -84,22 +85,35 @@ getPath f paths = \case
 -- binary expects a .tezos-node/<chain_id>/protocol dir
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
 tezosBinaryPaths :: NamedChain -> NonEmpty (ProtocolHash, FilePath, FilePath)
-tezosBinaryPaths NamedChain_Babylonnet  =
-  ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
-  , $(staticWhich "babylonnet-tezos-baker-005-PsBabyM1")
-  , $(staticWhich "babylonnet-tezos-endorser-005-PsBabyM1")
-  ) :|
-    []
+tezosBinaryPaths NamedChain_Babylonnet = error "not supported"
 tezosBinaryPaths _ =
-  ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
-  , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
-  , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
+  ( "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+  , $(staticWhich "multinetwork-tezos-baker-006-PsCARTHA")
+  , $(staticWhich "multinetwork-tezos-endorser-006-PsCARTHA")
   ) :|
-    [ ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
-      , $(staticWhich "carthagenet-tezos-baker-006-PsCARTHA")
-      , $(staticWhich "carthagenet-tezos-endorser-006-PsCARTHA")
-      )
-    ]
+  [ ( "PtCarthavAMoXqbjBPVgDCRd5LgT7qqKWUPXnYii3xCaHRBMfHH"
+    , $(staticWhich "multinetwork-tezos-baker-006-PsCARTHA")
+    , $(staticWhich "multinetwork-tezos-endorser-006-PsCARTHA")
+    )
+  ]
+
+-- tezosBinaryPaths :: NamedChain -> NonEmpty (ProtocolHash, FilePath, FilePath)
+-- tezosBinaryPaths NamedChain_Babylonnet  =
+--   ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+--   , $(staticWhich "babylonnet-tezos-baker-005-PsBabyM1")
+--   , $(staticWhich "babylonnet-tezos-endorser-005-PsBabyM1")
+--   ) :|
+--     []
+-- tezosBinaryPaths _ =
+--   ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
+--   , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
+--   , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
+--   ) :|
+--     [ ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
+--       , $(staticWhich "carthagenet-tezos-baker-006-PsCARTHA")
+--       , $(staticWhich "carthagenet-tezos-endorser-006-PsCARTHA")
+--       )
+--     ]
 
 -- TODO: use postgres for "process-id's"
 
