@@ -4,18 +4,15 @@
 }:
 let
   inherit (obelisk.reflex-platform) hackGet;
-  # obApp = distMethod: import ./tezos-bake-central { inherit system distMethod tezosScopedKit; supportGargoyle = false; };
-  # obAppGargoyle = distMethod: import ./tezos-bake-central { inherit system distMethod tezosScopedKit; supportGargoyle = true; };
+
   obApp = distMethod: import ./tezos-bake-central {
     inherit system distMethod;
-    # inherit tezosScopedKit;
-    tezosScopedKit = serokell-tezosScopedKit;
+    tezosScopedKit = tezosScopedKit_;
     supportGargoyle = false;
   };
   obAppGargoyle = distMethod: import ./tezos-bake-central {
     inherit system distMethod;
-    # inherit tezosScopedKit;
-    tezosScopedKit = serokell-tezosScopedKit;
+    tezosScopedKit = tezosScopedKit_;
     supportGargoyle = true;
   };
 
@@ -31,10 +28,10 @@ let
     inherit pkgs tezos-baking-platform;
   };
 
-  serokell-tezos-binaries = import dep/serokell-tezos-binaries;
+  tezos-binaries =  import dep/platform-specific-binaries.nix {};
 
-  serokell-tezosScopedKit = import ./tezos-bake-central/scoped-tzkits-serokell.nix {
-    inherit pkgs serokell-tezos-binaries;
+  tezosScopedKit_ = import ./tezos-bake-central/scoped-tzkits-serokell.nix {
+    inherit pkgs tezos-binaries;
   };
 
   dockerExe = let exe = (obApp distroMethods.docker).linuxExe; in pkgs.runCommand "dockerExe" {} ''
@@ -223,15 +220,10 @@ in (obApp distroMethods.source) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle distroMethods.linuxPackage;
-    # nodeKit = tezosScopedKit;
-    nodeKit = serokell-tezosScopedKit;
+    nodeKit = tezosScopedKit_;
     pkgName = "kiln";
     version = "0.8.1"; # TODO: Calculate this
   }).kiln-debian;
 
-  inherit tezosScopedKit;
-
-  inherit serokell-tezosScopedKit;
-
-  testing = obApp distroMethods.source;
+  inherit tezosScopedKit_;
 }

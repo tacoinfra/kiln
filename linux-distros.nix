@@ -287,14 +287,6 @@ let
         			echo \"Starting kiln-shell for mainnet.\"
               bash --rcfile ${nix-store-root}/${kiln-shell-multinetwork-rc}
         			;;
-        		# zeronet)
-        			# echo \"Starting kiln-shell for zeronet.\"
-              # bash --rcfile ${nix-store-root}/${kiln-shell-zeronet-rc}
-        			# ;;
-        		# babylonnet)
-        			# echo \"Starting kiln-shell for babylonnet.\"
-              # bash --rcfile ${nix-store-root}/${kiln-shell-babylonnet-rc}
-        			# ;;
         		*)
         			echo \"Unknown argument, specify mainnet\"
         			exit 1

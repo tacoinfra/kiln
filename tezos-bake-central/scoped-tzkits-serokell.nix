@@ -1,8 +1,8 @@
-{pkgs, serokell-tezos-binaries }:
+{pkgs, tezos-binaries }:
 
 let
-  binaries = serokell-tezos-binaries;
-  in pkgs.runCommand "serokell-tezos-binaries" {} ''
+  binaries = tezos-binaries;
+  in pkgs.runCommand "tezosScopedKit_" {} ''
   mkdir -p $out/bin
   for bin in $(ls ${binaries}) ; do
     chmod 755 ${binaries}/$bin
