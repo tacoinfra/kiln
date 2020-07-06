@@ -13,10 +13,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite = obelisk;
     nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits-serokell.nix {
         inherit pkgs;
-        serokell-tezos-binaries = import ../dep/serokell-tezos-binaries;
-    # nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits.nix {
-      # inherit pkgs;
-      # tezos-baking-platform = import ../dep/tezos-baking-platform {};
+        tezos-binaries = import ../dep/platform-specific-binaries.nix {};
     };
 
     hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {

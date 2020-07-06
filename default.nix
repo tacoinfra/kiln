@@ -220,10 +220,15 @@ in (obApp distroMethods.source) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle distroMethods.linuxPackage;
-    nodeKit = tezosScopedKit_;
+    nodeKit = import ./tezos-bake-central/scoped-tzkits-serokell.nix
+            { inherit pkgs;
+              tezos-binaries = import dep/platform-specific-binaries.nix { system = "x86_64-linux";};
+              };
     pkgName = "kiln";
     version = "0.8.1"; # TODO: Calculate this
   }).kiln-debian;
 
   inherit tezosScopedKit_;
+
+  inherit tezos-baking-platform;
 }
