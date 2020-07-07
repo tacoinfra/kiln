@@ -82,33 +82,10 @@ getPath f paths = \case
 tezosBinaryPaths :: NamedChain -> NonEmpty (ProtocolHash, FilePath, FilePath)
 tezosBinaryPaths NamedChain_Babylonnet = error "not supported"
 tezosBinaryPaths _ =
-  ( "Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd"
+  ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
   , $(staticWhich "multinetwork-tezos-baker-006-PsCARTHA")
   , $(staticWhich "multinetwork-tezos-endorser-006-PsCARTHA")
-  ) :|
-  [ ( "PtCarthavAMoXqbjBPVgDCRd5LgT7qqKWUPXnYii3xCaHRBMfHH"
-    , $(staticWhich "multinetwork-tezos-baker-006-PsCARTHA")
-    , $(staticWhich "multinetwork-tezos-endorser-006-PsCARTHA")
-    )
-  ]
-
--- tezosBinaryPaths :: NamedChain -> NonEmpty (ProtocolHash, FilePath, FilePath)
--- tezosBinaryPaths NamedChain_Babylonnet  =
---   ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
---   , $(staticWhich "babylonnet-tezos-baker-005-PsBabyM1")
---   , $(staticWhich "babylonnet-tezos-endorser-005-PsBabyM1")
---   ) :|
---     []
--- tezosBinaryPaths _ =
---   ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
---   , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
---   , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
---   ) :|
---     [ ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
---       , $(staticWhich "carthagenet-tezos-baker-006-PsCARTHA")
---       , $(staticWhich "carthagenet-tezos-endorser-006-PsCARTHA")
---       )
---     ]
+  ) :| []
 
 -- TODO: use postgres for "process-id's"
 
