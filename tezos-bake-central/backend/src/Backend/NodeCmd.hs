@@ -59,13 +59,8 @@ import ExtraPrelude
 needsCarthageStorageUpgrade :: Version -> Bool
 needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 
-nodePaths :: NamedChain -> FilePath
-nodePaths NamedChain_Mainnet = $(staticWhich "multinetwork-tezos-node")
-nodePaths NamedChain_Carthagenet = $(staticWhich "multinetwork-tezos-node")
-nodePaths _ = error "You shouldn't get here."
--- nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
--- nodePaths NamedChain_Babylonnet = $(staticWhich "babylonnet-tezos-node")
--- nodePaths NamedChain_Carthagenet = $(staticWhich "carthagenet-tezos-node")
+multinetworkNodePath :: FilePath
+multinetworkNodePath = $(staticWhich "multinetwork-tezos-node")
 
 bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)
@@ -144,7 +139,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
         return (nid, pid)
 
   let
-    nodePath = either nodePaths _binaryPaths_nodePath namedChainOrPaths
+    nodePath = either (const multinetworkNodePath) _binaryPaths_nodePath namedChainOrPaths
     nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     nodeNetPort = show $ _appConfig_kilnNodeNetPort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
