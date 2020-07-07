@@ -347,9 +347,6 @@ appSideFooter =
                     elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
                   _ -> pure ()
 
-        hrefLink "https://gitlab.com/obsidian.systems/kiln" $
-          elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") blank
-
 appHeader
   :: forall r m t.
     ( MonadAppWidget t m, MonadJSM (Performable m)
@@ -648,7 +645,7 @@ kilnUpdateAlert v = do
     body = el "div" $ do
       el "p" $ do
         text "This may be a crucial update that provides functionality to support upcoming Tezos protocol changes. Please check the release notes for details on the importance of this update: "
-        let url = "https://gitlab.com/obsidian.systems/kiln/-/releases"
+        let url = "https://gitlab.com/tezos-kiln/kiln/-/releases"
         elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
       el "p" $ do
         resolve <- divClass "buttons" $ uiButtonM "primary" $ do
@@ -1601,7 +1598,10 @@ publicNodeOptions = do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ SemUi.Dyn (bool "" "icon icon-check" <$> pnActiveDyn)) blank
         dynText $ bool (if pn == PublicNode_Obsidian then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
-        divClass "header" $ text $ publicNodeShortName pn
+        divClass "header" $ text $ case pn of
+            -- this is just a temporary fix
+            PublicNode_Obsidian -> "Archival Node"
+            _ -> publicNodeShortName pn
         divClass "description" $ describePublicNode pn
 
     let toggled = if pn == PublicNode_Obsidian
@@ -1918,7 +1918,11 @@ nodesTab =
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             let
-              title = dyn_ $ ffor source $ \n -> text (publicNodeShortName n)
+              title = dyn_ $ ffor source $ \n -> text $ case n of
+                    -- this is just a temporary fix
+                    PublicNode_Obsidian -> "Archival Node"
+                    _ -> publicNodeShortName n
+
 
               publicNodeMenu :: m ()
               publicNodeMenu = do
