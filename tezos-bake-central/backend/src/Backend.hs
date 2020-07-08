@@ -11,6 +11,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -471,7 +472,9 @@ backendImpl cfg serve = do
       when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
-      for_ maybeNamedChainOrPaths $ \v -> do
+      let toMaybe = either (const Nothing) Just
+
+      for_ maybeNamedChainOrPaths $ \(toMaybe -> v) -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
         addFinalizer =<< protocolMonitorWorker dataSrc db
         addFinalizer =<< bakerDaemonProcess appConfig logger db v
