@@ -5,14 +5,14 @@
 let
   inherit (obelisk.reflex-platform) hackGet;
 
-  obApp = distMethod: import ./tezos-bake-central {
+  obApp = distMethod: system_: import ./tezos-bake-central {
     inherit system distMethod;
-    tezosScopedKit = tezosScopedKit_;
+    tezosScopedKit = tezosScopedKit_ { system = system_;};
     supportGargoyle = false;
   };
-  obAppGargoyle = distMethod: import ./tezos-bake-central {
+  obAppGargoyle = distMethod: system_: import ./tezos-bake-central {
     inherit system distMethod;
-    tezosScopedKit = tezosScopedKit_;
+    tezosScopedKit = tezosScopedKit_ { system = system_;};
     supportGargoyle = true;
   };
 
@@ -28,13 +28,12 @@ let
     inherit pkgs tezos-baking-platform;
   };
 
-  tezos-binaries =  import dep/platform-specific-binaries.nix {};
-
-  tezosScopedKit_ = import ./tezos-bake-central/scoped-tzkits-serokell.nix {
-    inherit pkgs tezos-binaries;
+  tezosScopedKit_ = system_ : import ./tezos-bake-central/scoped-tzkits-serokell.nix {
+    inherit pkgs;
+    tezos-binaries = (import dep/platform-specific-binaries.nix) system_;
   };
 
-  dockerExe = let exe = (obApp distroMethods.docker).linuxExe; in pkgs.runCommand "dockerExe" {} ''
+  dockerExe = let exe = (obApp distroMethods.docker "x86_64-linux").linuxExe; in pkgs.runCommand "dockerExe" {} ''
     mkdir "$out"
 
     cp '${exe}/backend' "$out/backend"
@@ -177,7 +176,7 @@ let
         after = [ "setupkiln.service" ];
         restartIfChanged = true;
         preStart = ''
-          ln -sft . '${(obAppGargoyle distroMethods.source).exe}'/*
+          ln -sft . '${(obAppGargoyle distroMethods.source "x86_64-linux").exe}'/*
           mkdir -p log
         '';
         script = ''
@@ -199,12 +198,12 @@ let
     KILN_INSTALL_PATH="''${1:-app}"
     echo "Installing Kiln in directory: $KILN_INSTALL_PATH"
     mkdir -p "$KILN_INSTALL_PATH"
-    ln -sf '${(obAppGargoyle distroMethods.source).exe}'/* "$KILN_INSTALL_PATH"
+    ln -sf '${(obAppGargoyle distroMethods.source system).exe}'/* "$KILN_INSTALL_PATH"
     echo "Install Complete!"
     echo "'cd \"$KILN_INSTALL_PATH\"' and run './backend' to run kiln with default settings."
   '';
 
-in (obApp distroMethods.source) // {
+in (obApp distroMethods.source system) // {
   tests = import ./tests { inherit obelisk pkgs; };
 
   inherit pkgs dockerExe kilnVMConfig dockerImage installKiln;
@@ -219,11 +218,8 @@ in (obApp distroMethods.source) // {
 
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
-    obApp = obAppGargoyle distroMethods.linuxPackage;
-    nodeKit = import ./tezos-bake-central/scoped-tzkits-serokell.nix
-            { inherit pkgs;
-              tezos-binaries = import dep/platform-specific-binaries.nix { system = "x86_64-linux";};
-              };
+    obApp = obAppGargoyle distroMethods.linuxPackage "x86_64-linux";
+    nodeKit = tezosScopedKit_ { system = "x86_64-linux";};
     pkgName = "kiln";
     version = "0.8.1"; # TODO: Calculate this
   }).kiln-debian;
