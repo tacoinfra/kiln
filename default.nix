@@ -124,7 +124,7 @@ let
 
       security.sudo.wheelNeedsPassword = false;
       networking.firewall.enable = false;
-      environment.systemPackages = [ upgradeKilnVM pkgs.firefox ((import dep/platform-specific-binaries.nix) system_) ];
+      environment.systemPackages = [ upgradeKilnVM pkgs.firefox ((import dep/platform-specific-binaries.nix) "x86_64-linux") ];
       services.udev.extraRules = ''
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="2b7c", MODE="0660", GROUP="users"
