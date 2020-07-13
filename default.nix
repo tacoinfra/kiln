@@ -22,13 +22,7 @@ let
     linuxPackage = "linux-package";
   };
 
-  tezos-baking-platform_ = import dep/tezos-baking-platform {};
-
-  tezosScopedKit_ = import ./tezos-bake-central/scoped-tzkits-to-delete.nix {
-    inherit pkgs tezos-baking-platform_;
-  };
-
-  tezosScopedKit = system_ : import ./tezos-bake-central/scoped-tzkits.nix {
+  tezosScopedKit = {system_ ? system} : import ./tezos-bake-central/scoped-tzkits.nix {
     inherit pkgs;
     tezos-binaries = (import dep/platform-specific-binaries.nix) system_;
   };
@@ -130,7 +124,7 @@ let
 
       security.sudo.wheelNeedsPassword = false;
       networking.firewall.enable = false;
-      environment.systemPackages = [ upgradeKilnVM pkgs.firefox tezos-baking-platform_.tezos.mainnet.kit ];
+      environment.systemPackages = [ upgradeKilnVM pkgs.firefox ((import dep/platform-specific-binaries.nix) system_) ];
       services.udev.extraRules = ''
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="2b7c", MODE="0660", GROUP="users"
