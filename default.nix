@@ -8,13 +8,13 @@ let
   obApp = distMethod: system_: import ./tezos-bake-central {
     inherit distMethod;
     system = system_;
-    tezosScopedKit = tezosScopedKit { system = system_;};
+    tezosScopedKit = tezosScopedKit system_;
     supportGargoyle = false;
   };
   obAppGargoyle = distMethod: system_: import ./tezos-bake-central {
     inherit distMethod;
     system = system_;
-    tezosScopedKit = tezosScopedKit { system = system_;};
+    tezosScopedKit = tezosScopedKit system_;
     supportGargoyle = true;
   };
 
