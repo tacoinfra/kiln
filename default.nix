@@ -6,12 +6,14 @@ let
   inherit (obelisk.reflex-platform) hackGet;
 
   obApp = distMethod: system_: import ./tezos-bake-central {
-    inherit system distMethod;
+    inherit distMethod;
+    system = system_;
     tezosScopedKit = tezosScopedKit { system = system_;};
     supportGargoyle = false;
   };
   obAppGargoyle = distMethod: system_: import ./tezos-bake-central {
-    inherit system distMethod;
+    inherit distMethod;
+    system = system_;
     tezosScopedKit = tezosScopedKit { system = system_;};
     supportGargoyle = true;
   };
@@ -22,7 +24,7 @@ let
     linuxPackage = "linux-package";
   };
 
-  tezosScopedKit = {system_ ? system} : import ./tezos-bake-central/scoped-tzkits.nix {
+  tezosScopedKit = system_: import ./tezos-bake-central/scoped-tzkits.nix {
     inherit pkgs;
     tezos-binaries = (import dep/platform-specific-binaries.nix) system_;
   };
