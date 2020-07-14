@@ -11,10 +11,9 @@ obelisk.project ./. ({ pkgs, ... }@args:
   let
     inherit (obelisk.reflex-platform) hackGet;
     rhyolite = obelisk;
-    nodeKit = if tezosScopedKit != null then tezosScopedKit else import ./scoped-tzkits-serokell.nix {
-        inherit pkgs;
-        tezos-binaries = import ../dep/platform-specific-binaries.nix {};
-    };
+    nodeKit = if tezosScopedKit != null
+            then tezosScopedKit
+            else import ../dep/platform-specific-binaries.nix { inherit system pkgs;};
 
     hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {
       src = pkgs.lib.cleanSourceWith {

@@ -24,10 +24,7 @@ let
     linuxPackage = "linux-package";
   };
 
-  tezosScopedKit = system_: import ./tezos-bake-central/scoped-tzkits.nix {
-    inherit pkgs;
-    tezos-binaries = (import dep/platform-specific-binaries.nix) system_;
-  };
+  tezosScopedKit = system_:  import dep/platform-specific-binaries.nix { system = system_ ;inherit pkgs; };
 
   dockerExe = let exe = (obApp distroMethods.docker "x86_64-linux").linuxExe; in pkgs.runCommand "dockerExe" {} ''
     mkdir "$out"
@@ -126,7 +123,7 @@ let
 
       security.sudo.wheelNeedsPassword = false;
       networking.firewall.enable = false;
-      environment.systemPackages = [ upgradeKilnVM pkgs.firefox ((import dep/platform-specific-binaries.nix) "x86_64-linux") ];
+      environment.systemPackages = [ upgradeKilnVM pkgs.firefox (tezosScopedKit "x86_64-linux") ];
       services.udev.extraRules = ''
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="2b7c", MODE="0660", GROUP="users"
@@ -220,6 +217,7 @@ in (obApp distroMethods.source system) // {
     version = "0.8.2"; # TODO: Calculate this
   }).kiln-debian;
 
-  inherit tezosScopedKit;
+  tezosKit = tezosScopedKit system;
+  # inherit tezosScopedKit;
 
 }
