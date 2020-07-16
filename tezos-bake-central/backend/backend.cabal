@@ -22,6 +22,7 @@ library
     , base16-bytestring
     , base58-bytestring
     , bytestring
+    , bytestring-lexing
     -- , Chart
     -- , Chart-diagrams
     , clientsession

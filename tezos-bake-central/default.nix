@@ -66,7 +66,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
       silently = pkgs.haskell.lib.dontCheck super.silently;
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-      tezos-bake-monitor-lib = checkHlint (dontHaddock super.tezos-bake-monitor-lib);
+      tezos-bake-monitor-lib = dontHaddock super.tezos-bake-monitor-lib;
       tezos-noderpc = checkHlint( dontHaddock super.tezos-noderpc);
     });
   }) // {

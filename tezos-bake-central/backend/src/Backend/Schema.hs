@@ -35,6 +35,10 @@ module Backend.Schema
   , Only(..)
   ) where
 
+import Data.ByteString.Lex.Integral
+import Data.ByteString.Builder
+import Data.ByteString.Lazy (toStrict)
+
 import Control.Lens (Field1, Field2)
 import Data.Time (UTCTime, NominalDiffTime)
 import Data.Aeson (FromJSON, ToJSON)
@@ -457,7 +461,7 @@ instance PersistField PeriodSequence where
   persistName _ = "PeriodSequence"
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
-  dbType p x = dbType p (error "dbType for PeriodSequence forced" :: Json (NonEmpty TezosWord64))
+  dbType p x = dbType p (error "dbType for PeriodSequence forced" :: Json (NonEmpty TezosInt64))
 
 instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
@@ -472,7 +476,7 @@ instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
 instance NeverNull RawLevel
 instance NeverNull Tez
-instance NeverNull TezosWord64
+instance NeverNull TezosInt64
 instance NeverNull Version
 instance NeverNull VeryBlockLike
 
@@ -498,8 +502,8 @@ instance {-PrimitivePersistField a =>-} PersistField (HashedValue t) where
   fromPersistValues = (fmap.first) (HashedValue . toShort) . primFromPersistValue
   dbType p _ = dbType p (error "dbType for HashedValue forced" :: ByteString)
 
-deriving instance ToField TezosWord64
-deriving instance FromField TezosWord64
+deriving instance ToField TezosInt64
+deriving instance FromField TezosInt64
 
 deriving instance ToField RawLevel
 deriving instance FromField RawLevel
@@ -507,9 +511,12 @@ deriving instance FromField RawLevel
 deriving instance ToField Cycle
 deriving instance FromField Cycle
 
-instance PrimitivePersistField TezosWord64 where
-  toPrimitivePersistValue x (TezosWord64 v) = toPrimitivePersistValue x v
-  fromPrimitivePersistValue x v = TezosWord64 $ fromPrimitivePersistValue x v
+deriving instance ToField TezosBigNum
+deriving instance FromField TezosBigNum
+
+instance PrimitivePersistField TezosInt64 where
+  toPrimitivePersistValue x (StringEncode v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = StringEncode $ fromPrimitivePersistValue x v
 
 instance PrimitivePersistField RawLevel where
   toPrimitivePersistValue x (RawLevel v) = toPrimitivePersistValue x v
@@ -523,11 +530,20 @@ instance PrimitivePersistField (HashedValue t) where
   toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x $ fromShort v
   fromPrimitivePersistValue x v = HashedValue $ toShort $ fromPrimitivePersistValue x v
 
-instance PersistField TezosWord64 where
-  persistName _ = "TezosWord64"
-  toPersistValues = primToPersistValue . unTezosWord64
-  fromPersistValues = (fmap . first) TezosWord64 . primFromPersistValue
-  dbType p (TezosWord64 x) = dbType p x
+instance PrimitivePersistField TezosBigNum where
+  toPrimitivePersistValue x (StringEncode v) =
+    toPrimitivePersistValue x (toStrict $ toLazyByteString $ integerDec v)
+  fromPrimitivePersistValue x v = StringEncode $ readInteger $ fromPrimitivePersistValue x v
+    where
+      readInteger = maybe err fst . readSigned @Integer readDecimal
+        where
+          err = error "PrimitivePersistField:TezosBigNum: couldn't parse bytestring"
+
+instance PersistField TezosInt64 where
+  persistName _ = "TezosInt64"
+  toPersistValues = primToPersistValue . unStringEncode
+  fromPersistValues = (fmap . first) StringEncode . primFromPersistValue
+  dbType p (StringEncode x) = dbType p x
 
 instance PersistField RawLevel where
   persistName _ = "RawLevel"
@@ -540,6 +556,16 @@ instance PersistField Cycle where
   toPersistValues (Cycle x) = primToPersistValue x
   fromPersistValues = (fmap . first) Cycle . primFromPersistValue
   dbType p (Cycle x) = dbType p x
+
+instance PersistField TezosBigNum where
+  persistName _ = "TezosBigNum"
+  toPersistValues x = primToPersistValue x
+  fromPersistValues = (fmap . first) (StringEncode . convert) . primFromPersistValue
+    where
+      convert t = case readSigned @Integer readDecimal t of
+        Just (x, _) -> x
+        Nothing -> error "PersistField:TezosBigNum: Could not parse bytestring"
+  dbType p (StringEncode x) = dbType p (toStrict $ toLazyByteString $ integerDec x)
 
 instance PrimitivePersistField Version where
   toPrimitivePersistValue x v = toPrimitivePersistValue x (Version.showVersion v)
