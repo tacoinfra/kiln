@@ -55,10 +55,9 @@ import ExtraPrelude
 handleSnapshotUpload
   :: AppConfig
   -> NodeDataSource
-  -> Either NamedChain a
   -> MVar ()
   -> Snap.Snap ()
-handleSnapshotUpload appConfig nds chain lockMVar = do
+handleSnapshotUpload appConfig nds lockMVar = do
   liftIO $ createDirectoryIfMissing True uploadTmpLocation
     `catch` (\(e :: IOException) -> runLoggingEnv logger $ $(logWarn) ("Make dir failed: " <> tshow uploadTmpLocation <> "\nError: " <> tshow e))
   void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
@@ -115,7 +114,7 @@ handleSnapshotUpload appConfig nds chain lockMVar = do
             renameFile fp storePath
             forkIO $ withLockRelease $ do
               let timeoutSeconds = 60*60*10
-              timeout' timeoutSeconds (runLoggingEnv logger $ importSnapshotData appConfig nds chain sm smId) >>= \case
+              timeout' timeoutSeconds (runLoggingEnv logger $ importSnapshotData appConfig nds sm smId) >>= \case
                 Just _ -> pure ()
                 Nothing -> runLoggingEnv logger $ flip finally (removeFileLogging storePath) $ do
                   $(logError) "Could not import snapshot: Timeout"
@@ -148,18 +147,18 @@ importSnapshotData
   :: (MonadLogger m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
   => AppConfig
   -> NodeDataSource
-  -> Either NamedChain a
   -> SnapshotMeta
   -> Key SnapshotMeta BackendSpecific
   -> m ()
-importSnapshotData appConfig nds chain sm smId = do
+importSnapshotData appConfig nds sm smId = do
   let
     logger = _nodeDataSource_logger nds
-    nodePath = either nodePaths (const $ nodePaths NamedChain_Mainnet) chain
+    nodePath = multinetworkNodePath
     dataDir = nodeDataDir appConfig
     storePath = T.unpack $ _snapshotMeta_storePath sm
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
+
   $(logDebug) "importSnapshotData: cleaning old data dir"
   cleanupDir dataDir
 
@@ -185,7 +184,7 @@ importSnapshotData appConfig nds chain sm smId = do
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
       updateState NodeProcessState_ImportFailed
 
-    procSpec = (Process.proc nodePath ["snapshot", "import", storePath, "--data-dir", dataDir])
+    procSpec configFile = (Process.proc nodePath ["snapshot", "import", storePath, "--data-dir", dataDir,"--config-file", configFile])
       { Process.std_out = Process.CreatePipe
       , Process.std_err = Process.CreatePipe
       }
@@ -238,8 +237,9 @@ importSnapshotData appConfig nds chain sm smId = do
                         updateState NodeProcessState_ImportComplete
                 ExitFailure _ -> inDb $ importFailed "importSnapshotData failed: " stderr
 
-  runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec)
-  liftIO $ Process.withCreateProcess procSpec procMonitor
+  liftIO $ withNodeConfig appConfig $ \configFile -> do
+    runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec configFile)
+    Process.withCreateProcess (procSpec configFile) procMonitor
 
   removeFileLogging storePath
 

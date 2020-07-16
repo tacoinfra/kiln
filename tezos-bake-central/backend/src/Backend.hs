@@ -11,6 +11,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -79,7 +80,8 @@ import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common (worker', workerWithDelay)
-import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir)
+import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
+                      , _nodeConfigFile_network)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NodeCmd (bakerDaemonProcess, handleExportLogs, internalNodeWorker)
@@ -373,6 +375,13 @@ backendImpl cfg serve = do
     resetLedgerQueue logger db
 
     let
+
+      networkName :: Maybe Text
+      networkName = either
+        (pure . showNamedChain)
+        (fmap showNamedChain . identifyChain)
+        chain
+
       minLevel :: RawLevel
       minLevel = 2
 
@@ -381,7 +390,8 @@ backendImpl cfg serve = do
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
         , _appConfig_kilnNodeNetPort = kilnNodeNetPort
         , _appConfig_kilnDataDir = kilnDataDir
-        , _appConfig_kilnNodeConfig = defaultNodeConfigFile
+        , _appConfig_kilnNodeConfig =
+          defaultNodeConfigFile { _nodeConfigFile_network = networkName }
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
         , _appConfig_binaryPaths = binaryPaths
@@ -462,7 +472,9 @@ backendImpl cfg serve = do
       when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
-      for_ maybeNamedChainOrPaths $ \v -> do
+      let toMaybe = either (const Nothing) Just
+
+      for_ maybeNamedChainOrPaths $ \(toMaybe -> v) -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
         addFinalizer =<< protocolMonitorWorker dataSrc db
         addFinalizer =<< bakerDaemonProcess appConfig logger db v
@@ -472,7 +484,7 @@ backendImpl cfg serve = do
       liftIO $ serve $ \case
         BackendRoute_Missing :=> _ -> pure ()
         BackendRoute_Listen :=> _ -> handleListen
-        BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc chain snapshotUploadLock
+        BackendRoute_SnapshotUpload :=> _ -> handleSnapshotUpload appConfig dataSrc snapshotUploadLock
         BackendRoute_PublicCacheApi :=> _
           | serveNodeCache -> v3PublicApi dataSrc
           | otherwise -> return ()

@@ -1,7 +1,7 @@
 {
-  "url": "https://gitlab.com/obsidian.systems/tezos-bake-monitor-lib",
-  "rev": "9cb2e734cf53d4c20a4d2518ec01f95a86dc1f6d",
-  "sha256": "1svr67zfhwlpw77wxy44ik9x3x806qi311y7fmymhcki8f0x4pca",
+  "url": "https://gitlab.com/tezos-kiln/tezos-bake-monitor-lib",
+  "rev": "3c43f748d6e54746d571c68444e2fe23599d22a4",
+  "sha256": "1lcmxzw35vgxbisvpkvild9h3dp3zzfvx5ihlvrsjfihfh6ck33b",
   "fetchSubmodules": false,
-  "branch": "kiln"
+  "branch": "update-baking-rights-full"
 }

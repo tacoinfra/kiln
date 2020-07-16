@@ -46,7 +46,7 @@ import System.Which (staticWhich)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
-import Tezos.Types (ProtocolHash, NamedChain(..))
+import Tezos.Types (ProtocolHash)
 
 import Backend.CachedNodeRPC
 import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
@@ -59,11 +59,8 @@ import ExtraPrelude
 needsCarthageStorageUpgrade :: Version -> Bool
 needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 
-nodePaths :: NamedChain -> FilePath
-nodePaths NamedChain_Mainnet = $(staticWhich "mainnet-tezos-node")
-nodePaths NamedChain_Zeronet = $(staticWhich "zeronet-tezos-node")
-nodePaths NamedChain_Babylonnet = $(staticWhich "babylonnet-tezos-node")
-nodePaths NamedChain_Carthagenet = $(staticWhich "carthagenet-tezos-node")
+multinetworkNodePath :: FilePath
+multinetworkNodePath = $(staticWhich "multinetwork-tezos-node")
 
 bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)
@@ -82,29 +79,18 @@ getPath f paths = \case
 -- You cannot use a mainnet binary against a babylonnet node because the mainnet
 -- binary expects a .tezos-node/<chain_id>/protocol dir
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
-tezosBinaryPaths :: NamedChain -> NonEmpty (ProtocolHash, FilePath, FilePath)
-tezosBinaryPaths NamedChain_Babylonnet  =
-  ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
-  , $(staticWhich "babylonnet-tezos-baker-005-PsBabyM1")
-  , $(staticWhich "babylonnet-tezos-endorser-005-PsBabyM1")
-  ) :|
-    []
-tezosBinaryPaths _ =
-  ( "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
-  , $(staticWhich "mainnet-tezos-baker-005-PsBabyM1")
-  , $(staticWhich "mainnet-tezos-endorser-005-PsBabyM1")
-  ) :|
-    [ ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
-      , $(staticWhich "carthagenet-tezos-baker-006-PsCARTHA")
-      , $(staticWhich "carthagenet-tezos-endorser-006-PsCARTHA")
-      )
-    ]
+tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
+tezosBinaryPaths =
+  ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
+  , $(staticWhich "multinetwork-tezos-baker-006-PsCARTHA")
+  , $(staticWhich "multinetwork-tezos-endorser-006-PsCARTHA")
+  ) :| []
 
 -- TODO: use postgres for "process-id's"
 
 internalNodeWorker :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> Either NamedChain BinaryPaths -> m (IO ())
-internalNodeWorker appConfig logger db namedChainOrPaths = do
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> Maybe BinaryPaths -> m (IO ())
+internalNodeWorker appConfig logger db maybePaths = do
   -- Always create a NodeInternal and corresponsing ProcessData
   (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -129,7 +115,7 @@ internalNodeWorker appConfig logger db namedChainOrPaths = do
         return (nid, pid)
 
   let
-    nodePath = either nodePaths _binaryPaths_nodePath namedChainOrPaths
+    nodePath = maybe multinetworkNodePath _binaryPaths_nodePath maybePaths
     nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     nodeNetPort = show $ _appConfig_kilnNodeNetPort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
@@ -208,8 +194,8 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> Either NamedChain BinaryPaths -> m (IO ())
-bakerDaemonProcess appConfig logger db namedChainOrPaths = do
+  => AppConfig -> LoggingEnv -> Pool Postgresql -> Maybe BinaryPaths -> m (IO ())
+bakerDaemonProcess appConfig logger db maybePaths = do
   (nodePPid, bdid) <- runLoggingEnv logger $ runDb (Identity db) $ do
     -- nodePPid should always be a Just value
     nodePPid <- project1 (NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
@@ -277,7 +263,7 @@ bakerDaemonProcess appConfig logger db namedChainOrPaths = do
       ! #mkNotify Nothing
     bakerPw = pw (bakerPath paths, bakerArgs) ! #logNamespace "kiln-baker"
     endorserPw = pw (endorserPath paths, endorserArgs) ! #logNamespace "kiln-endorser"
-    paths = either tezosBinaryPaths _binaryPaths_bakerEndorserPaths namedChainOrPaths
+    paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.
