@@ -1,7 +1,7 @@
 {
-  "url": "https://gitlab.com/obsidian.systems/tezos-bake-monitor-lib",
-  "rev": "9cb2e734cf53d4c20a4d2518ec01f95a86dc1f6d",
-  "sha256": "1svr67zfhwlpw77wxy44ik9x3x806qi311y7fmymhcki8f0x4pca",
+  "url": "https://gitlab.com/tezos-kiln/tezos-bake-monitor-lib",
+  "rev": "37c32df250197de0363272990826a6ef1ecc1686",
+  "sha256": "00zz64yynfsg2pwxmzypgbmnmpwg4k6nan5nsxnkvrg3x7f03ji8",
   "fetchSubmodules": false,
-  "branch": "kiln"
+  "branch": "develop"
 }
