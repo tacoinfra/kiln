@@ -10,9 +10,10 @@ stdenv.mkDerivation rec {
       };
 
   installPhase = ''
+  mkdir -p $out/bin
   for bin in $(ls ${src}/7.2/bin) ; do
-    cp ${src}/7.2/bin/$bin $out/$bin
-    chmod +x $out/$bin
+    cp ${src}/7.2/bin/$bin $out/bin/$bin
+    chmod +x $out/bin/$bin
   done
   '';
   }
