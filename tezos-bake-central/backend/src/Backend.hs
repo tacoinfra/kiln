@@ -230,7 +230,7 @@ backendImpl cfg serve = do
   !(obsidianApi :: Maybe (NonEmpty URI)) <- firstOption
     [ pure $ getOption $ _opts_obsidianApiUri cfg
     , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.obsidianApiUri
-    , pure $ getPublicNodeUri PublicNode_Obsidian =<< maybeNamedChain
+    , pure $ getPublicNodeUri PublicNode_Archival =<< maybeNamedChain
     ]
 
   !(nodes :: Maybe (Map.Map URI (Maybe Text))) <- liftA2 (<|>)
@@ -253,7 +253,7 @@ backendImpl cfg serve = do
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
     publicDataSources' = catMaybes
       [ (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
-      , (,,) <$> pure PublicNode_Obsidian <*> pure chain <*> obsidianApi
+      , (,,) <$> pure PublicNode_Archival <*> pure chain <*> obsidianApi
       ]
 
   publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
@@ -351,7 +351,7 @@ backendImpl cfg serve = do
             }
 
     runLoggingEnv logger $ runDb (Identity db) $ do
-      let publicNode = PublicNode_Obsidian
+      let publicNode = PublicNode_Archival
           enabled = enableOsPublicNode
       cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
         project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
