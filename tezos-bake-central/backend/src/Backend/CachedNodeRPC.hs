@@ -1286,6 +1286,9 @@ cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc 
         RpcError_UnexpectedStatus _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
         RpcError_HttpException e -> "RPC Exception (The Node is unreachable) " <> tshow e
         RpcError_NonJSON e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
+        -- Need to investigate if this is the best way to describe
+        -- this error.
+        RpcError_Rejected e -> "The RPC was rejected. Here are the reasons:" <> T.pack (show e)
       CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
       CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
       CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
