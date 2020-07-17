@@ -1,6 +1,6 @@
 # Virtual Machine
 
-Obsidian Systems provides Kiln virtual machine releases as a `.ova` file, which can be found at https://gitlab.com/obsidian.systems/kiln/-/releases beginning with `v0.5.2`.
+Obsidian Systems provided Kiln virtual machine releases as a `.ova` file, which can be found at https://gitlab.com/obsidian.systems/kiln/-/releases beginning with `v0.5.2`.
 The VM has been tested on VirtualBox only, on the host OS: Windows, Mac and Ubuntu.
 But this might work with other VM software like VMWare, and other hosts.
 
@@ -14,7 +14,7 @@ But this might work with other VM software like VMWare, and other hosts.
     - NixOS: `nix-env -iA nixpkgs.virtualbox`
     - Ubuntu: `apt-get install virtualbox-qt`
 
-- Download the `kiln-vm.ova` file from the Kiln release page, and import this in VirtualBox from the “File” -> "Import Appliance" option.
+- Download the `kiln-vm.ova` file from the [Kiln releases][3] page, and import this in VirtualBox from the “File” -> "Import Appliance" option.
 
     - During import step you can configure the number of processors and memory for the VM
     - It is recommended to increase the processor value to at least 2.
@@ -116,3 +116,4 @@ Specify the target location in the next dialog.
 
 [1]: https://www.virtualbox.org/wiki/Downloads
 [2]: https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md
+[3]: https://gitlab.com/tezos-kiln/kiln/-/

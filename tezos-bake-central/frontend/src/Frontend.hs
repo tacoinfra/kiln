@@ -347,9 +347,6 @@ appSideFooter =
                     elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
                   _ -> pure ()
 
-        hrefLink "https://gitlab.com/obsidian.systems/kiln" $
-          elAttr "img" ("src" =: static @"images/ObsidianSystemsLogo-ICFP2017.svg" <> "class" =: "credits-obsidian") blank
-
 appHeader
   :: forall r m t.
     ( MonadAppWidget t m, MonadJSM (Performable m)
@@ -519,7 +516,7 @@ nodesTabOrWelcome = do
       onlyOsPubNode = ffor2 publicNodesMaybe mUsingOsPubNode $ liftA2 $ \pNodes usingOs -> usingOs &&
         (length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1)
           && maybe False (_publicNodeConfig_enabled . snd)
-            (headMay (filter ((== PublicNode_Obsidian) . fst) $ MMap.assocs pNodes))
+            (headMay (filter ((== PublicNode_Archival) . fst) $ MMap.assocs pNodes))
   haveBakersHaveNodesMaybe <- holdUniqDyn $
     (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe onlyOsPubNode
 
@@ -648,7 +645,7 @@ kilnUpdateAlert v = do
     body = el "div" $ do
       el "p" $ do
         text "This may be a crucial update that provides functionality to support upcoming Tezos protocol changes. Please check the release notes for details on the importance of this update: "
-        let url = "https://gitlab.com/obsidian.systems/kiln/-/releases"
+        let url = "https://gitlab.com/tezos-kiln/kiln/-/releases"
         elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
       el "p" $ do
         resolve <- divClass "buttons" $ uiButtonM "primary" $ do
@@ -1581,30 +1578,30 @@ publicNodeOptions :: MonadAppWidget t m => m ()
 publicNodeOptions = do
   let
     publicNodesInOrder =
-      [ PublicNode_Obsidian
+      [ PublicNode_Archival
       , PublicNode_Blockscale
       ]
 
     describePublicNode = \case
-      PublicNode_Obsidian -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
+      PublicNode_Archival -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
       PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
 
   pncDyn <- watchPublicNodeConfig
   divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
     let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
-        activeClass = if pn == PublicNode_Obsidian
+        activeClass = if pn == PublicNode_Archival
           then constDyn "active"
           else bool "" "active" <$> pnActiveDyn
     (element', ()) <- SemUi.ui' "div"
         (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> SemUi.Dyn activeClass) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
         SemUi.ui "i" (def & SemUi.elConfigClasses .~ SemUi.Dyn (bool "" "icon icon-check" <$> pnActiveDyn)) blank
-        dynText $ bool (if pn == PublicNode_Obsidian then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
+        dynText $ bool (if pn == PublicNode_Archival then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
       divClass "twelve wide column" $ do
         divClass "header" $ text $ publicNodeShortName pn
         divClass "description" $ describePublicNode pn
 
-    let toggled = if pn == PublicNode_Obsidian
+    let toggled = if pn == PublicNode_Archival
           then never
           else not . isPublicNodeEnabled pn <$> current pncDyn  <@ domEvent Click element'
     void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
@@ -1918,12 +1915,13 @@ nodesTab =
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
             let
-              title = dyn_ $ ffor source $ \n -> text (publicNodeShortName n)
+              title = dyn_ $ ffor source $ \n -> text $ publicNodeShortName n
+
 
               publicNodeMenu :: m ()
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                dyn_ $ ffor source $ \s -> if s == PublicNode_Obsidian
+                dyn_ $ ffor source $ \s -> if s == PublicNode_Archival
                   then osPublicNodeRemoveMessage
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
@@ -2001,7 +1999,7 @@ nodesTab =
           let
             stat = getNetworkStats <$> node
             showSpeed c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then fromIntegral >>> humanBytes >>> (<> "/s") else const "-"
-            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then unTezosWord64 >>> fromIntegral >>> humanBytes else const "-"
+            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then unStringEncode >>> fromIntegral >>> humanBytes else const "-"
 
           divClass "stats" $ do
             divClass "column heading" $ do
