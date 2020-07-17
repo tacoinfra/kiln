@@ -330,7 +330,7 @@ clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
 clientPath :: Maybe BinaryPaths -> FilePath
 clientPath = \case
   Just (BinaryPaths _ c _) -> c
-  Nothing -> $(staticWhich "multinetwork-tezos-client")
+  Nothing -> $(staticWhich "tezos-client")
 
 {- Example output from `list connected ledgers`
 Found a Tezos Baking 1.5.0 (commit v1.4.3-19-g55cc026d) application running on Ledger Nano S at [0003:0007:00].

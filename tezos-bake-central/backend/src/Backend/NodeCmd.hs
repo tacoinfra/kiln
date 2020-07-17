@@ -59,8 +59,8 @@ import ExtraPrelude
 needsCarthageStorageUpgrade :: Version -> Bool
 needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 
-multinetworkNodePath :: FilePath
-multinetworkNodePath = $(staticWhich "multinetwork-tezos-node")
+nixNodePath :: FilePath
+nixNodePath = $(staticWhich "tezos-node")
 
 bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
 bakerPath = getPath (view _2)
@@ -82,8 +82,8 @@ getPath f paths = \case
 tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
 tezosBinaryPaths =
   ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
-  , $(staticWhich "multinetwork-tezos-baker-006-PsCARTHA")
-  , $(staticWhich "multinetwork-tezos-endorser-006-PsCARTHA")
+  , $(staticWhich "tezos-baker-006-PsCARTHA")
+  , $(staticWhich "tezos-endorser-006-PsCARTHA")
   ) :| []
 
 -- TODO: use postgres for "process-id's"
@@ -115,7 +115,7 @@ internalNodeWorker appConfig logger db maybePaths = do
         return (nid, pid)
 
   let
-    nodePath = maybe multinetworkNodePath _binaryPaths_nodePath maybePaths
+    nodePath = maybe nixNodePath _binaryPaths_nodePath maybePaths
     nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     nodeNetPort = show $ _appConfig_kilnNodeNetPort appConfig
     nodeExtraArgs = maybe [] (words . T.unpack) $ _appConfig_kilnNodeCustomArgs appConfig
