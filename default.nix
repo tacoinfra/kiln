@@ -212,7 +212,7 @@ in (obApp distroMethods.source system) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle distroMethods.linuxPackage "x86_64-linux";
-    nodeKit = tezosScopedKit { system = "x86_64-linux";};
+    nodeKit = tezosScopedKit "x86_64-linux";
     pkgName = "kiln";
     version = "0.8.2"; # TODO: Calculate this
   }).kiln-debian;
