@@ -201,11 +201,6 @@ in (obApp distroMethods.source system) // {
 
   inherit pkgs dockerExe kilnVMConfig dockerImage installKiln;
 
-  server = import ./public-nodes {
-    inherit pkgs obelisk;
-    app = obApp distroMethods.source;
-  };
-
   kilnVM = kilnVMConfig.config.system.build.virtualBoxOVA;
   kilnVMSystem = kilnVMConfig.system;
 
