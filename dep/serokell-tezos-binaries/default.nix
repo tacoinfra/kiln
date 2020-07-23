@@ -1,7 +1,7 @@
 { stdenv }:
 
 stdenv.mkDerivation rec {
-  name = "tezos-binaries-${version}";
+  name = "tezos-${version}";
   version = "7.2-1";
 
   src = builtins.fetchTarball {
@@ -12,8 +12,8 @@ stdenv.mkDerivation rec {
   installPhase = ''
   mkdir -p $out/bin
   for bin in $(ls ${src}) ; do
-    cp ${src}/$bin $out/bin/multinetwork-$bin
-    chmod +x $out/bin/multinetwork-$bin
+    cp ${src}/$bin $out/bin/$bin
+    chmod +x $out/bin/$bin
   done
   '';
   }

@@ -206,10 +206,10 @@ let
 
       kiln-shell-multinetwork-rc = pkgs.writeText "bashrc" ''
         function tezos-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/multinetwork-tezos-client $@
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/tezos-client $@
         }
         function tezos-admin-client {
-          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/multinetwork-tezos-admin-client $@
+          unshare --mount --map-root-user kiln-do-mount-and-pivot ${nodeKit}/bin/tezos-admin-client $@
         }
       '';
 

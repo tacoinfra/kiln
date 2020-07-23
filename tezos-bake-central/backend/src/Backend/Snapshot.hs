@@ -153,7 +153,7 @@ importSnapshotData
 importSnapshotData appConfig nds sm smId = do
   let
     logger = _nodeDataSource_logger nds
-    nodePath = multinetworkNodePath
+    nodePath = nixNodePath
     dataDir = nodeDataDir appConfig
     storePath = T.unpack $ _snapshotMeta_storePath sm
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
