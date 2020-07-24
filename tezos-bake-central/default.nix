@@ -70,7 +70,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       tezos-bake-monitor-lib = let test-runner = if runTests then x: x else dontCheck;
                                    haddock-build = if buildHaddock then x: x else dontHaddock;
         in test-runner (haddock-build super.tezos-bake-monitor-lib);
-      tezos-noderpc = let haddock-build then x: x else dontHaddock;
+      tezos-noderpc = let haddock-build = if buildHaddock then x: x else dontHaddock;
         in checkHlint (haddock-build super.tezos-noderpc);
     });
   }) // {
