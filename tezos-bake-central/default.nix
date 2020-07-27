@@ -4,6 +4,7 @@
 , distMethod ? null
 , tezosScopedKit ? null
 , runTests ? false
+, buildHaddock ? false
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
@@ -67,8 +68,10 @@ obelisk.project ./. ({ pkgs, ... }@args:
       silently = pkgs.haskell.lib.dontCheck super.silently;
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
       tezos-bake-monitor-lib = let test-runner = if runTests then x: x else dontCheck;
-        in test-runner (dontHaddock super.tezos-bake-monitor-lib);
-      tezos-noderpc = checkHlint( dontHaddock super.tezos-noderpc);
+                                   haddock-build = if buildHaddock then x: x else dontHaddock;
+        in test-runner (haddock-build super.tezos-bake-monitor-lib);
+      tezos-noderpc = let haddock-build = if buildHaddock then x: x else dontHaddock;
+        in checkHlint (haddock-build super.tezos-noderpc);
     });
   }) // {
     dev.extraGhciArgs = ["-fobject-code"];
