@@ -1,7 +1,7 @@
 {
   "url": "https://gitlab.com/tezos-kiln/tezos-bake-monitor-lib",
-  "rev": "70e088f6e03f6db3d6b5d33641abe0e1623348cd",
-  "sha256": "0y1j6qs12zvk8020k71ryawl2m2iix4chrszignmz52vws44gfxs",
+  "rev": "167c079c890d957c1b79eb49d6e54f97e247f86d",
+  "sha256": "1mgj6db0w6zpvxflg72w9cnfh1x2rxz51xhw9hr97ii7av2g8bjn",
   "fetchSubmodules": false,
-  "branch": "add-giganode-sources"
+  "branch": "keep-tezosword64"
 }
