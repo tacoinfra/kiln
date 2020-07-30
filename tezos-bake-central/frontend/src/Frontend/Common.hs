@@ -95,6 +95,9 @@ urlLink = hrefLink . Uri.render
 hrefLink :: DomBuilder t m => Text -> m a -> m a
 hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener")
 
+blackhrefLink :: DomBuilder t m => Text -> m a -> m a
+blackhrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener" <> "style" =: "color:  #000000")
+
 tez :: Tez -> Text
 tez t = let (w, p, tz) = tez' t
          in w <> p <> tz
