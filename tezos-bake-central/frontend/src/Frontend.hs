@@ -291,7 +291,7 @@ appSideHeader =
     $ do
         SemUi.header def $ do
           kilnLogo
-          text appName
+          (blackhrefLink "https://tezos-kiln.org/" $ text appName)
         SemUi.menu
           (def
             & SemUi.menuConfig_vertical SemUi.|~ True
