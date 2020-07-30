@@ -1999,7 +1999,7 @@ nodesTab =
           let
             stat = getNetworkStats <$> node
             showSpeed c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then fromIntegral >>> humanBytes >>> (<> "/s") else const "-"
-            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then unStringEncode >>> fromIntegral >>> humanBytes else const "-"
+            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then unTezosWord64 >>> fromIntegral >>> humanBytes else const "-"
 
           divClass "stats" $ do
             divClass "column heading" $ do

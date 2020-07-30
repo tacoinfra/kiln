@@ -19,6 +19,7 @@ module Backend where
 
 import Control.Concurrent.MVar (MVar, newEmptyMVar)
 import Control.Concurrent.STM (atomically, newTQueueIO, newTVarIO, readTQueue)
+import Control.Error (hush)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
@@ -472,9 +473,7 @@ backendImpl cfg serve = do
       when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
 
-      let toMaybe = either (const Nothing) Just
-
-      for_ maybeNamedChainOrPaths $ \(toMaybe -> v) -> do
+      for_ maybeNamedChainOrPaths $ \(hush -> v) -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
         addFinalizer =<< protocolMonitorWorker dataSrc db
         addFinalizer =<< bakerDaemonProcess appConfig logger db v
