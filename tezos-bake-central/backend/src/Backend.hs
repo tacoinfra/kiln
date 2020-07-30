@@ -108,7 +108,7 @@ import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
 import Common.Route (AppRoute, BackendRoute (..), fullRouteEncoder)
 import Common.Schema
-import Common.URI (Port, mkRootUri)
+import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
 
@@ -245,12 +245,6 @@ backendImpl cfg serve = do
   !(ledgerCheckDelay :: Maybe NominalDiffTime) <- liftA2 (<|>)
     (pure $ _opts_ledgerCheckDelaySeconds cfg)
     (getConfigFromFile (Just . Config.parseSecondsUnsafe) $ configPath Config.ledgerCheckDelay)
-
-  !(nodeForQuery :: Maybe URI) <- liftA2 (<|>)
-    (pure $ _opts_nodeForQuery cfg)
-    (getConfigFromFile (hush . mkRootUri) $ configPath Config.nodeForQuery)
-
-  print nodeForQuery
 
   -- Force the check delay so that an error is thrown early
   -- Exceptions in non-strict languages are terrabad
@@ -420,7 +414,7 @@ backendImpl cfg serve = do
         , _nodeDataSource_ioQueue = ioQueue
         , _nodeDataSource_osPublicNode = if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
-        , _nodeDataSource_nodeForQuery = nodeForQuery
+        , _nodeDataSource_nodeForQuery = Nothing
         }
 
     withTermination $ \addFinalizer -> do
@@ -566,7 +560,6 @@ data Opts = Opts
   , _opts_kilnDataDir :: !(Maybe FilePath)
   , _opts_binaryPaths :: !(Maybe Text)
   , _opts_ledgerCheckDelaySeconds :: !(Maybe NominalDiffTime)
-  , _opts_nodeForQuery :: !(Maybe URI)
   }
 makeLenses ''Opts
 
@@ -592,14 +585,13 @@ instance Semigroup Opts where
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     , _opts_ledgerCheckDelaySeconds = rightBiased (<|>) _opts_ledgerCheckDelaySeconds
-    , _opts_nodeForQuery = rightBiased (<|>) _opts_nodeForQuery
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
@@ -664,8 +656,6 @@ optsArgDescr =
 
   , mkReqArg Config.ledgerCheckDelay "SECONDS" (set opts_ledgerCheckDelaySeconds . Just . Config.parseSecondsUnsafe)
       "Check ledger connectivity every X seconds (off by default)"
-  , mkReqArg Config.nodeForQuery "URI" (set opts_nodeForQuery . Just . Config.parseRootURIUnsafe)
-      "Specify an alternative node to query instead of archival node."
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

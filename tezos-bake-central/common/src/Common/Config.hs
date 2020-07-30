@@ -70,9 +70,6 @@ enableOsPublicNode = "enable-obsidian-node"
 ledgerCheckDelay :: FilePath
 ledgerCheckDelay = "ledger-check-delay"
 
-nodeForQuery :: FilePath
-nodeForQuery = "node-for-query"
-
 parseSecondsUnsafe :: Text -> NominalDiffTime
 parseSecondsUnsafe = unsafeParse "seconds" $ \a -> case readMaybe (T.unpack a) of
   Nothing -> Left "Not a number of seconds"
