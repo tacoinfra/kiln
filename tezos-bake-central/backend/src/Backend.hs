@@ -591,7 +591,28 @@ instance Semigroup Opts where
       rightBiased binOp f = (binOp `on` f) b a
 
 instance Monoid Opts where
-  mempty = Opts Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing mempty mempty mempty mempty mempty Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = Opts
+    { _opts_pgConnectionString = Nothing
+      , _opts_route = Nothing
+      , _opts_emailFromAddress = Nothing
+      , _opts_chain = Nothing
+      , _opts_checkForUpgrade = Nothing
+      , _opts_upgradeBranch = Nothing
+      , _opts_serveNodeCache = Nothing
+      , _opts_enableOsPublicNode = Nothing
+      , _opts_tzscanApiUri     = mempty
+      , _opts_blockscaleApiUri = mempty
+      , _opts_obsidianApiUri   = mempty
+      , _opts_nodes = mempty
+      , _opts_bakers = mempty
+      , _opts_networkGitLabProjectId = Nothing
+      , _opts_kilnNodeRpcPort = Nothing
+      , _opts_kilnNodeNetPort = Nothing
+      , _opts_kilnNodeCustomArgs = Nothing
+      , _opts_kilnDataDir = Nothing
+      , _opts_binaryPaths = Nothing
+      , _opts_ledgerCheckDelaySeconds = Nothing
+      }
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
 optsArgDescr =
