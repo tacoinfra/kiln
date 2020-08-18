@@ -448,7 +448,7 @@ iconDyn :: (DomBuilder t m, PostBuild t m) => Dynamic t Text -> m ()
 iconDyn iDyn = elDynAttr "i" (ffor iDyn $ \i -> "class" =: iconClass i) blank
 
 kilnLogo :: DomBuilder t m => m ()
-kilnLogo = elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") blank
+kilnLogo = blackhrefLink "https://tezos-kiln.org/" $ elAttr "img" ("src" =: static @"images/logo.svg" <> "class" =: "app-logo") blank
 
 -- | Terrible hack.
 updatedWithInit :: PostBuild t m => Dynamic t a -> m (Event t a)
