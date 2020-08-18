@@ -421,16 +421,16 @@ instance ToField UpgradeCheckError where
   toField v = toField (show v)
 
 instance FromField UpgradeCheckError where
-  fromField f b = read <$> fromField f b
+  fromField f = maybe (fail "Invalid value for UpgradeCheckError") pure . readMaybe <=< fromField f
 
 instance ToField NamedChain where
   toField v = toField (show v)
 
 instance FromField NamedChain where
-  fromField f b = read <$> fromField f b
+  fromField f = maybe (fail "Invalid value for NamedChain") pure . readMaybe <=< fromField f
 
 instance FromField ProcessState where
-  fromField f b = read <$> fromField f b
+  fromField f = maybe (fail "Invalid value for ProcessState") pure . readMaybe <=< fromField f
 
 instance ToField ProcessState where
   toField v = toField (show v)
