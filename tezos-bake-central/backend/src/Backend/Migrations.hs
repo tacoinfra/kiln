@@ -85,6 +85,8 @@ preMigrate chainId =
   >=> migrateErrorLogBakerMissedTimestamp
   >=> migrateProtocolIndexKey
   >=> migrateSnapshotMetaControl
+  >=> deleteObsidianPublicNodeConfigs
+  >=> deleteObsidianPublicNodeHeads
   >=> deleteTzScanPublicNodeConfigs
   >=> deleteTzScanPublicNodeHeads
 
@@ -514,6 +516,27 @@ migrateSnapshotMetaControl ta = do
               TRUNCATE TABLE "SnapshotMeta";
             |]
           getTableAnalysis
+    _ -> pure ta
+
+-- See note below at deleteTzScanPublicNodeConfigs. Similar issue.
+deleteObsidianPublicNodeConfigs :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+deleteObsidianPublicNodeConfigs ta = do
+  let table = (Nothing, "PublicNodeConfig")
+  analyzeTable ta table >>= \case
+    Just _ -> do
+        void [traceExecuteQ| DELETE FROM "PublicNodeConfig" WHERE "source" = 'PublicNode_Obsidian' |]
+        pure ta
+    _ -> pure ta
+
+
+-- See note below deleteTzScanPublicNodeConfigs. Similar issue.
+deleteObsidianPublicNodeHeads :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+deleteObsidianPublicNodeHeads ta = do
+  let table = (Nothing, "PublicNodeHead")
+  analyzeTable ta table >>= \case
+    Just _ -> do
+        void [traceExecuteQ| DELETE FROM "PublicNodeHead" WHERE "source" = 'PublicNode_Obsidian' |]
+        pure ta
     _ -> pure ta
 
 -- Without deleting these entries with TzScan entries, you get a really nasty crash
