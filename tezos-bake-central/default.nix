@@ -5,6 +5,7 @@
 , tezosScopedKit ? null
 , runTests ? false
 , buildHaddock ? false
+, closure-compiler-settings ? "ADVANCED" # set this to null to skip closure-compiler step
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
@@ -36,9 +37,12 @@ obelisk.project ./. ({ pkgs, ... }@args:
         ${preConfigure}
       '';
     });
+    haddock-build = if buildHaddock then pkgs.haskell.lib.doHaddock else pkgs.haskell.lib.dontHaddock;
+    test-runner = if runTests then pkgs.haskell.lib.doCheck else pkgs.haskell.lib.dontCheck;
   in {
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     # staticFilesImpure = toString ./result-static;
+    __closureCompilerOptimizationLevel = closure-compiler-settings;
     packages = {
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
       functor-infix = hackGet dep/functor-infix;
@@ -52,9 +56,9 @@ obelisk.project ./. ({ pkgs, ... }@args:
     };
 
     overrides = pkgs.lib.composeExtensions rhyolite.haskellOverrides (self: super: with pkgs.haskell.lib; {
-      common = checkHlint (hsOnly (if distMethod == null
+      common = haddock-build (checkHlint (hsOnly (if distMethod == null
         then super.common
-        else enableCabalFlag super.common distMethod));
+        else enableCabalFlag super.common distMethod)));
       backend = checkHlint (hsOnly (overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
       })));
@@ -67,11 +71,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
       semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
       silently = pkgs.haskell.lib.dontCheck super.silently;
       terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-      tezos-bake-monitor-lib = let test-runner = if runTests then x: x else dontCheck;
-                                   haddock-build = if buildHaddock then x: x else dontHaddock;
-        in test-runner (haddock-build super.tezos-bake-monitor-lib);
-      tezos-noderpc = let haddock-build = if buildHaddock then x: x else dontHaddock;
-        in checkHlint (haddock-build super.tezos-noderpc);
+      tezos-bake-monitor-lib = test-runner (haddock-build super.tezos-bake-monitor-lib);
+      tezos-noderpc = checkHlint (haddock-build super.tezos-noderpc);
     });
   }) // {
     dev.extraGhciArgs = ["-fobject-code"];
