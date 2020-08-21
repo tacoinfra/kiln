@@ -5,7 +5,7 @@
 , tezosScopedKit ? null
 , runTests ? false
 , buildHaddock ? false
-, closure-compiler-settings ? "ADVANCED" # set this to null to skip closure-compiler step
+, closure-compiler-setting ? "SIMPLE" # set this to null to skip closure-compiler step
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
@@ -42,7 +42,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
   in {
     staticFiles = pkgs.callPackage ./static { pkgs = obelisk.nixpkgs; };
     # staticFilesImpure = toString ./result-static;
-    __closureCompilerOptimizationLevel = closure-compiler-settings;
+    __closureCompilerOptimizationLevel = closure-compiler-setting;
     packages = {
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
       functor-infix = hackGet dep/functor-infix;
