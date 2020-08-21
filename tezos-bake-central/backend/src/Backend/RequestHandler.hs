@@ -61,12 +61,11 @@ import ExtraPrelude
 requestHandler
   :: forall m. (MonadBaseNoPureAborts IO m, MonadIO m)
   => AppConfig
-  -> Text
   -> Address
   -> NodeDataSource
   -> [DataSource]
   -> RequestHandler (ApiRequest () PublicRequest PrivateRequest) m
-requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
+requestHandler appConfig emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
@@ -327,7 +326,7 @@ requestHandler appConfig upgradeBranch emailFromAddr nds publicNodeSources =
 
       PublicRequest_CheckForUpgrade ->
         void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) $
-          void $ updateUpstreamVersion upgradeBranch (_nodeDataSource_httpMgr nds) inDb
+          void $ updateUpstreamVersion (_nodeDataSource_httpMgr nds) inDb
 
       PublicRequest_DismissUpgradeAlert -> inDb $ do
         update [ UpstreamVersion_dismissedField =. True ] CondEmpty
