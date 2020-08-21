@@ -21,7 +21,6 @@ import Data.Maybe
 import Data.Pool (Pool)
 import Data.String.Here.Interpolated (i)
 import qualified Data.Text as T
-import Data.Text.Encoding (decodeUtf8)
 import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql
@@ -52,20 +51,19 @@ upgradeCheckWorker
   :: MonadIO m
   => NamedChain
   -> Text
-  -> Text
   -> NominalDiffTime
   -> LoggingEnv
   -> Http.Manager
   -> Pool Postgresql
   -> AppConfig
   -> m (IO ())
-upgradeCheckWorker chain gitLabProjectId upgradeBranch delay logger httpMgr db appConfig = do
+upgradeCheckWorker chain gitLabProjectId delay logger httpMgr db appConfig = do
   liftIO $ runLoggingEnv logger $ runDb (Identity db) $ clearUnrelatedNetworkUpdateError chain
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
     fetchNodeVersions httpMgr db
     notifyChainUpgrade chain gitLabProjectId httpMgr db appConfig
-    void $ updateUpstreamVersion upgradeBranch httpMgr (runDb (Identity db))
+    void $ updateUpstreamVersion httpMgr (runDb (Identity db))
 
 notifyChainUpgrade
   :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
@@ -158,12 +156,11 @@ fetchNodeVersions httpMgr db = do
 
 updateUpstreamVersion
   :: (MonadIO m, PersistBackend db)
-  => Text
-  -> Http.Manager
+  => Http.Manager
   -> (forall a. db a -> m a)
   -> m ()
-updateUpstreamVersion upgradeBranch httpMgr inDb =
-  inDb . setUpstreamVersion =<< runExceptT (getUpstreamVersion upgradeBranch httpMgr)
+updateUpstreamVersion httpMgr inDb =
+  inDb . setUpstreamVersion =<< runExceptT (getUpstreamVersion httpMgr)
 
 setUpstreamVersion :: (PersistBackend m) => Either UpgradeCheckError V.Version -> m ()
 setUpstreamVersion v = do
@@ -206,26 +203,19 @@ getTezosBranch httpMgr projectId branch = do
 gitlabApiBaseUrl :: Text
 gitlabApiBaseUrl = "https://gitlab.com/api/v4"
 
-upstreamGitLab :: Text -> Text
-upstreamGitLab branch = gitlabApiBaseUrl <> "/projects/6318296/repository/files/tezos-bake-central%2Fbackend%2Fbackend.cabal/raw?ref=" <> branch
+releaseGitLab :: Text
+releaseGitLab = gitlabApiBaseUrl <> "/projects/19392551/releases"
 
-getUpstreamVersion :: (MonadError UpgradeCheckError m, MonadIO m) => Text -> Http.Manager -> m V.Version
-getUpstreamVersion upgradeBranch httpMgr = do
+getUpstreamVersion :: (MonadError UpgradeCheckError m, MonadIO m) => Http.Manager -> m V.Version
+getUpstreamVersion httpMgr = do
   resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $
-    Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack $ upstreamGitLab upgradeBranch))
+    Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack releaseGitLab))
   case resp' of
     Left _ -> throwError UpgradeCheckError_UpstreamUnreachable
     Right resp -> case Http.getResponseStatusCode resp of
-      200 -> case parseCabalFileVersion $ decodeUtf8 $ Bz.toStrict $ Http.getResponseBody resp of
+      {- the releases are sorted in descending order based on
+      "released_at", hence we get the first. -}
+      200 -> case Http.getResponseBody resp ^? nth 0 . key "tag_name" . _String >>= parseVersion of
         Nothing -> throwError UpgradeCheckError_UpstreamUnparseable
         Just x -> pure x
       _ -> throwError UpgradeCheckError_UpstreamMissing
-
-parseCabalFileVersion :: Text -> Maybe V.Version
-parseCabalFileVersion cabalFile =
-  join $ lookup "version" $
-    (T.toLower . T.strip *** parseVersion . T.strip) . breakOnNoDelim ':' <$> T.lines cabalFile
-
--- | Like 'breakOn' but does not keep delimiter.
-breakOnNoDelim :: Char -> Text -> (Text, Text)
-breakOnNoDelim delim = second (T.drop 1) . T.breakOn (T.singleton delim)

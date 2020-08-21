@@ -179,10 +179,6 @@ backendImpl cfg serve = do
     (pure $ _opts_checkForUpgrade cfg)
     (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
 
-  !(upgradeBranch :: Text) <- fmap (fromMaybe Config.upgradeBranchDefault) $ liftA2 (<|>)
-    (pure $ _opts_upgradeBranch cfg)
-    (getConfigFromFile Just $ configPath Config.upgradeBranch)
-
   !(pgConnStringFile :: Maybe FilePath) <- do
     let fileName = configPath Config.pgConnectionString
     inFile <- getConfigFromFile Just fileName
@@ -427,7 +423,7 @@ backendImpl cfg serve = do
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
           , Config._frontendConfig_chainId = chainId
-          , Config._frontendConfig_upgradeBranch = if checkForUpgrade then Just upgradeBranch else Nothing
+          , Config._frontendConfig_checkForUpgrade = checkForUpgrade
           , Config._frontendConfig_appVersion = version
           , Config._frontendConfig_usingOsPublicNode = isJust $ _nodeDataSource_osPublicNode dataSrc
           , Config._frontendConfig_logExportAvailable = logExportAvailable
@@ -452,7 +448,7 @@ backendImpl cfg serve = do
 
       let withWs = RhyoliteWs.withWebsocketsConnectionLogging @Snap.Snap (\str e -> runLoggingEnv logger $ $logError $ T.pack $ "Websocket error: " <> str <> " " <> show e)
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs "v3" RhyoliteApp.functorFromWire db
-        (requestHandler appConfig upgradeBranch emailFromAddress dataSrc publicDataSources)
+        (requestHandler appConfig emailFromAddress dataSrc publicDataSources)
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
@@ -471,7 +467,7 @@ backendImpl cfg serve = do
         -- Square roots of rationals are the most effective for this because number theory.
 
       when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
-        addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId upgradeBranch (60 * 60) logger httpMgr db appConfig
+        addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChainOrPaths $ \(hush -> v) -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
@@ -545,7 +541,6 @@ data Opts = Opts
   , _opts_emailFromAddress :: !(Maybe Text)
   , _opts_chain :: !(Maybe (Either NamedChain ChainId))
   , _opts_checkForUpgrade :: !(Maybe Bool)
-  , _opts_upgradeBranch :: !(Maybe Text)
   , _opts_serveNodeCache :: !(Maybe Bool)
   , _opts_enableOsPublicNode :: !(Maybe Bool)
   , _opts_tzscanApiUri     :: !(Option (NonEmpty URI))
@@ -570,7 +565,6 @@ instance Semigroup Opts where
     , _opts_emailFromAddress = rightBiased (<|>) _opts_emailFromAddress
     , _opts_chain = rightBiased (<|>) _opts_chain
     , _opts_checkForUpgrade = rightBiased (<|>) _opts_checkForUpgrade
-    , _opts_upgradeBranch = rightBiased (<|>) _opts_upgradeBranch
     , _opts_serveNodeCache = rightBiased (<|>) _opts_serveNodeCache
     , _opts_enableOsPublicNode = rightBiased (<|>) _opts_enableOsPublicNode
     , _opts_tzscanApiUri = rightBiased (<|>) _opts_tzscanApiUri
@@ -597,7 +591,6 @@ instance Monoid Opts where
       , _opts_emailFromAddress = Nothing
       , _opts_chain = Nothing
       , _opts_checkForUpgrade = Nothing
-      , _opts_upgradeBranch = Nothing
       , _opts_serveNodeCache = Nothing
       , _opts_enableOsPublicNode = Nothing
       , _opts_tzscanApiUri     = mempty
@@ -627,10 +620,6 @@ optsArgDescr =
   , mkReqArg Config.checkForUpgrade "BOOL" (set opts_checkForUpgrade . Just . Config.parseBool) $
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
-
-  , mkReqArg Config.upgradeBranch "BRANCH" (set opts_upgradeBranch . Just) $
-      "Upstream Git branch to use for checking upgrades. If blank, use contents of '" <> configPath Config.upgradeBranch <>
-      "'. If that is blank, default to '" <> T.unpack Config.upgradeBranchDefault <> "'."
 
   , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseChainOrError) $
       "Name of a network (mainnet, babylonnet, carthagenet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>

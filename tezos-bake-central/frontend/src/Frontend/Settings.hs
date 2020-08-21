@@ -32,7 +32,7 @@ import Common.Api
 import Common.App
 import Common.Distribution
 import Common.Config (HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
-                      frontendConfig_upgradeBranch)
+                      frontendConfig_checkForUpgrade)
 import Common.Schema
 import ExtraPrelude
 import Frontend.Common
@@ -84,7 +84,7 @@ settingsTab = do
     currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
     divClass "soft-heading" $ text $ "Kiln Version " <> T.pack (showVersion currentVersion)
 
-    enableUpgradeCheck <- isJust <$> asks (^. frontendConfig . frontendConfig_upgradeBranch)
+    enableUpgradeCheck <- asks (^. frontendConfig . frontendConfig_checkForUpgrade)
     when enableUpgradeCheck upgradeOptions
 
   SemUi.divider def

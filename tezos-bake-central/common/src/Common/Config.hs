@@ -26,7 +26,7 @@ import Common.URI (Port, mkRootUri)
 import ExtraPrelude
 
 changelogUrl :: Text -> Text
-changelogUrl branch = "https://gitlab.com/obsidian.systems/kiln/tree/" <> UriEncode.encodeText branch <> "/CHANGELOG.md"
+changelogUrl branch = "https://gitlab.com/tezos-kiln/kiln/tree/" <> UriEncode.encodeText branch <> "/CHANGELOG.md"
 
 pgConnectionString :: FilePath
 pgConnectionString = "pg-connection"
@@ -193,7 +193,7 @@ parsePortUnsafe = unsafeParse "port number" $ \a -> case readMaybe (T.unpack a) 
 data FrontendConfig = FrontendConfig
   { _frontendConfig_chain :: !(Either NamedChain ChainId)
   , _frontendConfig_chainId :: !ChainId
-  , _frontendConfig_upgradeBranch :: !(Maybe Text)
+  , _frontendConfig_checkForUpgrade :: !Bool
   , _frontendConfig_appVersion :: !Version
   , _frontendConfig_usingOsPublicNode :: !Bool
   , _frontendConfig_logExportAvailable :: !Bool
