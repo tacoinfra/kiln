@@ -1,6 +1,7 @@
 { system ? builtins.currentSystem
 , obelisk ? (import tezos-bake-central/.obelisk/impl { inherit system; })
 , pkgs ? obelisk.reflex-platform.nixpkgs
+, closure-compiler-setting ? "SIMPLE" # set this to null to skip closure-compiler step
 }:
 let
   inherit (obelisk.reflex-platform) hackGet;
@@ -10,12 +11,14 @@ let
     system = system_;
     tezosScopedKit = tezosScopedKit system_;
     supportGargoyle = false;
+    inherit closure-compiler-setting;
   };
   obAppGargoyle = distMethod: system_: import ./tezos-bake-central {
     inherit distMethod;
     system = system_;
     tezosScopedKit = tezosScopedKit system_;
     supportGargoyle = true;
+    inherit closure-compiler-setting;
   };
 
   distroMethods = {

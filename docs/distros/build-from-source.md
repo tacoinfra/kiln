@@ -34,6 +34,26 @@ You can also specify a custom directory as an argument to this command
 ```shell
 $(nix-build -A installKiln --no-out-link)/bin/install-kiln kiln-latest
 ```
+#### Optional: Optimize the build
+
+During the build, the google closure compiler is used to optimize the
+javascript code for the frontend. By default, the "SIMPLE" setting has
+been chosen for the kiln build. This setting has been chosen as a
+balance between build speed and optimizations (Note: "SIMPLE" is the
+default setting for the Google Closure Compiler). However, for the
+interested this can be changed if they would like to experiment with
+different build settings. For no optimizations to be
+applied to javascript code, invoke the following command:
+
+```shell
+$(nix-build -A installKiln --arg closure-compiler-setting null --no-out-link)/bin/install-kiln kiln-latest
+```
+
+For aggressive optimizations to be applied, use the "ADVANCED" setting:
+
+```shell
+$(nix-build -A installKiln --arg closure-compiler-setting \"ADVANCED\" --no-out-link)/bin/install-kiln kiln-latest
+```
 
 ### Starting the monitor
 
