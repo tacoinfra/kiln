@@ -59,13 +59,13 @@ obelisk.project ./. ({ pkgs, ... }@args:
       common = haddock-build (checkHlint (hsOnly (if distMethod == null
         then super.common
         else enableCabalFlag super.common distMethod)));
-      backend = checkHlint (hsOnly (overrideCabal super.backend (drv:{
+      backend = haddock-build (checkHlint (hsOnly (overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
-      })));
+      }))));
       base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
       email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
       extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
-      frontend = checkHlint (hsOnly super.frontend);
+      frontend = haddock-build (checkHlint (hsOnly super.frontend));
       markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
       memory = dontCheck (self.callHackage "memory" "0.14.17" {});
       semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
