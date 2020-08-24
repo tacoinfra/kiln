@@ -354,6 +354,6 @@ networkUpdateDescription namedChain = (,)
   ("New Tezos '" <> name <> "' software version.")
   (mconcat
     [ "There is a new version of the ", name
-    , " software available on GitLab. To find further information about this release check Obsidian's Baker Slack channel, the Tezos Riot chat, or other social channels."
+    , " software available on GitLab. To find further information about this release, check the Tezos Baking Slack channel, the Tezos Riot chat, or other social channels."
     ])
   where name = showNamedChain namedChain
