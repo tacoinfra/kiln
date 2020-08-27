@@ -1197,7 +1197,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
     disclaimer next = Workflow $ do
       elClass "h5" "ui header" $ text "Kiln Baking Disclaimer"
       divClass "explanation" $ do
-        el "p" $ text "Obsidian Systems LLC has taken great care to create a baking product which is robust and effective. However, Obsidian Systems cannot make any guarantees in regards to baking success."
+        el "p" $ text "The development team has taken great care to create a baking product which is robust and effective. However, we cannot make any guarantees in regards to baking success."
 
         el "p" $ text "To the maximum extent permitted by applicable law, we are not liable to any extent for any loss, damage, liability, expense or claim you suffer as a result of, but not limited to:"
         el "ul" $ traverse_ (el "li" . text)
