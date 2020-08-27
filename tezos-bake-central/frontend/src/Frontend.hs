@@ -674,7 +674,7 @@ welcomeScreen hasOsPubNode = mdo
       divClass "welcome-description" $ do
         el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
         el "p" $ text $ "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
-          <> (if hasOsPubNode then " The Obsidian public node has been added to provide a baseline source of network data." else "")
+          <> (if hasOsPubNode then " The Archival node, by Obsidian, has been added to provide a baseline source of network data." else "")
         el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
       pure $ domEvent Click closeEl
 
