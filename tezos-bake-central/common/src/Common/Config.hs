@@ -61,10 +61,6 @@ upgradeBranchDefault = "master"
 networkGitLabProjectIdDefault :: Text
 networkGitLabProjectIdDefault = "3836952"
 
-{- This obviously needs to change with each release -}
-tezosReleaseTagDefault :: Text
-tezosReleaseTagDefault = "v7.3"
-
 serveNodeCache :: FilePath
 serveNodeCache = "serve-node-cache"
 

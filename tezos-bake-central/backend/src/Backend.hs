@@ -191,8 +191,7 @@ backendImpl cfg serve = do
     (pure $ _opts_networkGitLabProjectId cfg)
     (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
 
-  !(tezosReleaseTag :: Maybe Text) <- fmap (pure Config.tezosReleaseTagDefault <|>) $ liftA2 (<|>)
-    (pure $ _opts_tezosReleaseTag cfg)
+  !(tezosReleaseTag :: Maybe Text) <- liftA2 (<|>) (pure $ _opts_tezosReleaseTag cfg)
     (getConfigFromFile Just $ configPath Config.tezosReleaseTag)
 
   !(kilnNodeRpcPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeRpcPort) $ liftA2 (<|>)

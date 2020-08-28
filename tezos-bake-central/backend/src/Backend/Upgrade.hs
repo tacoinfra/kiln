@@ -1,3 +1,4 @@
+
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -7,11 +8,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Backend.Upgrade where
 
+import Control.Error
 import Control.Exception.Safe (try)
-import Control.Lens (findOf)
+import Control.Lens (findOf, maximumByOf)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (MonadLogger, logError, logInfo, logWarn)
@@ -19,9 +22,11 @@ import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
 import qualified Data.Map as Map
 import Data.Maybe
+import Data.Ord
 import Data.Pool (Pool)
 import Data.String.Here.Interpolated (i)
 import qualified Data.Text as T
+import qualified Data.Text.Read  as T
 import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql
@@ -199,16 +204,29 @@ getTezosBranch httpMgr projectId mrelease = do
   let url = gitlabApiBaseUrl <> "/projects/" <> projectId <> "/releases"
       getReleaseCommit :: AsValue s => s -> Maybe Text
       getReleaseCommit = case mrelease of
-        Nothing -> (^? nth 0 . key "commit" . key "id" . _String)
-        Just release -> findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> (^? key "commit" . key "id" . _String)
+        Nothing ->
+            maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> (^? key "commit" . key "id" . _String)
+        Just release ->
+            findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> (^? key "commit" . key "id" . _String)
   resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $
     Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack url))
   return $ case resp' of
     Left ex -> Left $ T.pack $ show ex
     Right body -> case getReleaseCommit $ Http.getResponseBody body of
          Nothing -> let msg = "No commit found"
-           in Left $ maybe (msg <> " at latest release.") (\s -> msg <> " found for this release: " <> s <> ".") mrelease
+           in Left $ case mrelease of
+                Nothing -> msg <> " at latest release."
+                Just s -> msg <> " found for this release: " <> s <> "."
          Just commit -> Right commit
+
+parseMajorMinorVersion :: Text -> Either String (Int,Int)
+parseMajorMinorVersion version = do
+  (leadingv, rest1) <- maybe (Left "Can't parse") Right $ T.uncons version
+  guard $ leadingv == 'v'
+  (major, rest2) <- T.decimal @Int rest1
+  (minor, rest3) <- T.decimal @Int . T.drop 1 $ rest2
+  guard $ T.null rest3
+  return (major, minor)
 
 gitlabApiBaseUrl :: Text
 gitlabApiBaseUrl = "https://gitlab.com/api/v4"
