@@ -11,6 +11,7 @@
 module Backend.Upgrade where
 
 import Control.Exception.Safe (try)
+import Control.Lens (findOf)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (MonadLogger, logError, logInfo, logWarn)
@@ -50,6 +51,7 @@ import Tezos.NodeRPC
 upgradeCheckWorker
   :: MonadIO m
   => NamedChain
+  -> Maybe Text
   -> Text
   -> NominalDiffTime
   -> LoggingEnv
@@ -57,24 +59,25 @@ upgradeCheckWorker
   -> Pool Postgresql
   -> AppConfig
   -> m (IO ())
-upgradeCheckWorker chain gitLabProjectId delay logger httpMgr db appConfig = do
+upgradeCheckWorker chain mrelease gitLabProjectId delay logger httpMgr db appConfig = do
   liftIO $ runLoggingEnv logger $ runDb (Identity db) $ clearUnrelatedNetworkUpdateError chain
   workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
     fetchNodeVersions httpMgr db
-    notifyChainUpgrade chain gitLabProjectId httpMgr db appConfig
+    notifyChainUpgrade chain mrelease gitLabProjectId httpMgr db appConfig
     void $ updateUpstreamVersion httpMgr (runDb (Identity db))
 
 notifyChainUpgrade
   :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
   => NamedChain
+  -> Maybe Text
   -> Text
   -> Http.Manager
   -> Pool Postgresql
   -> AppConfig
   -> m ()
-notifyChainUpgrade namedChain gitLabProjectId httpMgr db appConfig =
-  getTezosBranch httpMgr gitLabProjectId (showNamedChain namedChain) >>= \case
+notifyChainUpgrade namedChain mrelease gitLabProjectId httpMgr db appConfig =
+  getTezosBranch httpMgr gitLabProjectId mrelease >>= \case
     Left err -> $(logError) err -- TODO use proper log message
     Right commitId -> runDb (Identity db) $ do
       mLastCommit <- getLatestNamedChainUpgradeLog namedChain
@@ -189,16 +192,23 @@ setUpstreamVersion v = do
         ]
       getId existingId >>= traverse_ (notify NotifyTag_UpstreamVersion . (existingId,))
 
-getTezosBranch :: (MonadIO m) => Http.Manager -> Text -> Text -> m (Either Text Text)
-getTezosBranch httpMgr projectId branch = do
-  let url = gitlabApiBaseUrl <> "/projects/" <> projectId <> "/repository/branches/" <> branch
-  resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $ do
+{- If we don't specify, then just get the latest release, hence the  -}
+{- maybe type. -}
+getTezosBranch :: (MonadIO m) => Http.Manager -> Text -> Maybe Text -> m (Either Text Text)
+getTezosBranch httpMgr projectId mrelease = do
+  let url = gitlabApiBaseUrl <> "/projects/" <> projectId <> "/releases"
+      getReleaseCommit :: AsValue s => s -> Maybe Text
+      getReleaseCommit = case mrelease of
+        Nothing -> (^? nth 0 . key "commit" . key "id" . _String)
+        Just release -> findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> (^? key "commit" . key "id" . _String)
+  resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $
     Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack url))
   return $ case resp' of
     Left ex -> Left $ T.pack $ show ex
-    Right body -> case Http.getResponseBody body ^? key "commit" . key "id" . _String of
-      Nothing -> Left "No commit found for this branch"
-      Just commit -> Right commit
+    Right body -> case getReleaseCommit $ Http.getResponseBody body of
+         Nothing -> let msg = "No commit found"
+           in Left $ maybe (msg <> " at latest release.") (\s -> msg <> " found for this release: " <> s <> ".") mrelease
+         Just commit -> Right commit
 
 gitlabApiBaseUrl :: Text
 gitlabApiBaseUrl = "https://gitlab.com/api/v4"

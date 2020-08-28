@@ -191,6 +191,10 @@ backendImpl cfg serve = do
     (pure $ _opts_networkGitLabProjectId cfg)
     (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
 
+  !(tezosReleaseTag :: Maybe Text) <- fmap (pure Config.tezosReleaseTagDefault <|>) $ liftA2 (<|>)
+    (pure $ _opts_tezosReleaseTag cfg)
+    (getConfigFromFile Just $ configPath Config.tezosReleaseTag)
+
   !(kilnNodeRpcPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeRpcPort) $ liftA2 (<|>)
     (pure $ _opts_kilnNodeRpcPort cfg)
     (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodeRpcPort)
@@ -467,7 +471,7 @@ backendImpl cfg serve = do
         -- Square roots of rationals are the most effective for this because number theory.
 
       when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
-        addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId (60 * 60) logger httpMgr db appConfig
+        addFinalizer =<< upgradeCheckWorker namedChain tezosReleaseTag networkGitLabProjectId (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChainOrPaths $ \(hush -> v) -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
@@ -549,6 +553,7 @@ data Opts = Opts
   , _opts_nodes :: !(Option (Map.Map URI (Maybe Text)))
   , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
+  , _opts_tezosReleaseTag :: !(Maybe Text)
   , _opts_kilnNodeRpcPort :: !(Maybe Port)
   , _opts_kilnNodeNetPort :: !(Maybe Port)
   , _opts_kilnNodeCustomArgs :: !(Maybe Text)
@@ -573,6 +578,7 @@ instance Semigroup Opts where
     , _opts_nodes = rightBiased (<>) _opts_nodes -- Last alias (or lack of) wins
     , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
+    , _opts_tezosReleaseTag = rightBiased (<|>) _opts_tezosReleaseTag
     , _opts_kilnNodeRpcPort = rightBiased (<|>) _opts_kilnNodeRpcPort
     , _opts_kilnNodeNetPort = rightBiased (<|>) _opts_kilnNodeNetPort
     , _opts_kilnNodeCustomArgs = rightBiased (<|>) _opts_kilnNodeCustomArgs
@@ -599,6 +605,7 @@ instance Monoid Opts where
       , _opts_nodes = mempty
       , _opts_bakers = mempty
       , _opts_networkGitLabProjectId = Nothing
+      , _opts_tezosReleaseTag = Nothing
       , _opts_kilnNodeRpcPort = Nothing
       , _opts_kilnNodeNetPort = Nothing
       , _opts_kilnNodeCustomArgs = Nothing
