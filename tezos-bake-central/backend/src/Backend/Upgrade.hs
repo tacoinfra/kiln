@@ -224,8 +224,10 @@ parseMajorMinorVersion version = do
   (leadingv, rest1) <- maybe (Left "Can't parse") Right $ T.uncons version
   guard $ leadingv == 'v'
   (major, rest2) <- T.decimal @Int rest1
-  (minor, rest3) <- T.decimal @Int . T.drop 1 $ rest2
-  guard $ T.null rest3
+  (dot, rest3) <- maybe (Left "Missing dot") Right $ T.uncons rest2
+  guard $ dot == '.'
+  (minor, rest4) <- T.decimal @Int $ rest3
+  guard $ T.null rest4
   return (major, minor)
 
 gitlabApiBaseUrl :: Text
