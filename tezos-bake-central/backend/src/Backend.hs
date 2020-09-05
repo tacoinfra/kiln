@@ -333,7 +333,7 @@ backendImpl cfg serve = do
               { _nodeExternalData_address = newAddress
               , _nodeExternalData_alias = alias
               , _nodeExternalData_minPeerConnections = Nothing
-              , _nodeExternalData_commitHash = Nothing
+              , _nodeExternalData_nodeVersion = Nothing
               }
             }
 
@@ -418,10 +418,10 @@ backendImpl cfg serve = do
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
-      addFinalizer <=< workerWithDelay (pure 10) $ const $
+      addFinalizer <=< workerWithDelay "clearMailQueueWithDynamicEmail" (pure 10) $ const $
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
-      addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
+      addFinalizer <=< worker' "readNodeDataSourceIOQueue" $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
       let
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain

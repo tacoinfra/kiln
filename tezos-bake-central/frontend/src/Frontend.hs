@@ -977,8 +977,25 @@ liveErrorsWidget = void $ do
               header "Node is not running the latest software."
               nodeLabel n
               el "div" $ text $
-                "This node is running the node software with hash: '" <> _errorLogNodeVersionMismatch_nodeHash log <> "'."
-                  <> "The latest software version has hash: '" <> _errorLogNodeVersionMismatch_latestHash log <> "'."
+                case (_errorLogNodeVersionMismatch_nodeHash log, _errorLogNodeVersionMismatch_latestHash log) of
+                  (TezosVersion Nothing nodeHash, TezosVersion Nothing latestHash) ->
+                    "This node is running the node software with hash: '" <> nodeHash <> "'."
+                    <> " The latest software version has hash: '" <> latestHash <> "'."
+                  (TezosVersion (Just nodeVersion) nodeHash, TezosVersion (Just latestVersion) latestHash) ->
+                    "This node is running the node software at version: "
+                    <> printMajorMinor nodeVersion <> " at hash: '" <> nodeHash <> "'."
+                    <> " The latest software version is " <> printMajorMinor latestVersion
+                    <> " at  hash: '" <> latestHash <> "'."
+                  (TezosVersion Nothing nodeHash, TezosVersion (Just latestVersion) latestHash) ->
+                    "This node is running the node software with hash: " <> nodeHash <> "'."
+                    <> " The node version is unavailable. "
+                    <> " The latest software version is " <> printMajorMinor latestVersion
+                    <> " at  hash: '" <> latestHash <> "'."
+                  (TezosVersion (Just nodeVersion) nodeHash, TezosVersion Nothing latestHash) ->
+                    "This node is running the node software at version: "
+                    <> printMajorMinor nodeVersion <> " at hash: '" <> nodeHash <> "'."
+                    <> " The latest software version has hash: " <> latestHash <> "'."
+                    <> " The latest fully specified version is not available."
 
         LogTag_Baker blt -> case blt of
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError
@@ -1039,6 +1056,16 @@ liveErrorsWidget = void $ do
       header $ _bakerErrorDescriptions_title dsc <> "."
       divClass "alert-entity" $ dyn_ $ ffor bakersDyn $ maybe blank (bakerSummaryLabel pkh) . MMap.lookup pkh
       el "div" $ text $ _bakerErrorDescriptions_notification dsc
+
+printMajorMinor :: NodeVersion -> Text
+printMajorMinor n = case _nodeVersion_version n of
+  MajorMinorVersion major minor additionalinfo ->
+    case additionalinfo of
+      Development -> T.pack (show major) <> "." <> T.pack (show minor) <> "-dev"
+      ReleaseCandidate rc ->
+          T.pack (show major) <> "." <> T.pack (show minor) <> "-rc" <> T.pack (show rc)
+      Release -> T.pack (show major) <> "." <> T.pack (show minor)
+
 
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol

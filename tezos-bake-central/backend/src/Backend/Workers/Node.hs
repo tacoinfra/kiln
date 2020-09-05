@@ -98,7 +98,7 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
     newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
       headBlockHeader <- withExceptT Right $ do
-        -- Only OS public node can do a NodeQuery_BlockHeader, and that will be automatically chosen 
+        -- Only OS public node can do a NodeQuery_BlockHeader, and that will be automatically chosen
         -- to do the query if there are no other nodes/the query is not cached.
         -- Also dont specify the nodeAddr for the OS public node here, as the OS public node query logic is special
         -- and doesn't work like usual node RPC.
@@ -285,7 +285,7 @@ nodeWorker
 nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ withTermination $ \addFinalizer -> do
   nodePool :: MVar (Map URI (IO ())) <- newMVar mempty
   let httpMgr = _nodeDataSource_httpMgr nds
-  workerWithDelay (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+  workerWithDelay "nodeWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
     $(logDebug) "Update node cycle."
 
     -- read the persistent list of nodes
@@ -380,7 +380,7 @@ publicNodesWorker
 publicNodesWorker nds = foldMap workerForSource
   where
     workerForSource :: DataSource -> IO (IO ())
-    workerForSource source = worker' $ do
+    workerForSource source = worker' "publicNodesWorker" $ do
       let (pn, chain, _) = source
       updateDataSource nds source
 
@@ -476,7 +476,7 @@ nodeAlertWorker
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-nodeAlertWorker nds appConfig db = worker' $ waitForNewHead nds >>= \latestHead -> do
+nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nds >>= \latestHead -> do
   nodeHeadHashes <- fmap (Map.mapMaybe $ view $ _3 . nodeDetailsData_headBlockHash) $ runLoggingEnv (_nodeDataSource_logger nds) $ getNodes db (Not (isFieldNothing (NodeDetails_dataField ~> NodeDetailsData_headBlockHashSelector)))
 
   ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
@@ -554,7 +554,7 @@ amendmentProcessWorker
   -> NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-amendmentProcessWorker appConfig nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   (latestBlock, protoInfo) <- throwing $ runNodeQueryT $ liftA2 (,)
     (nodeQueryDataSourceSafe $ NodeQuery_Block (latestHead ^. hash))
     (getProtocolConstants $ Left $ latestHead ^. hash)
@@ -824,7 +824,7 @@ protocolMonitorWorker
   :: NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-protocolMonitorWorker nds db = worker' $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
     getProtocol = getProtocol' >>= \case

@@ -74,7 +74,7 @@ import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
 import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
-import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
+import Database.PostgreSQL.Simple.ToField (toJSONField, ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
 import Language.Haskell.TH (conE)
@@ -405,6 +405,18 @@ instance PrimitivePersistField NamedChainOrChainId where
 instance ToField NamedChainOrChainId where
   toField (NamedChainOrChainId v) = toField (showChain v)
 
+instance PrimitivePersistField TezosVersion where
+  toPrimitivePersistValue p tv = toPrimitivePersistValue p $ Aeson.encode tv
+  fromPrimitivePersistValue p v = either (error . toMsg) id $ Aeson.eitherDecode' $ fromPrimitivePersistValue p v
+    {- informative message -}
+    where toMsg s = "PrimitivePersistField(TezosVersion) error " <> s
+
+instance PersistField TezosVersion where
+  persistName _ = "TezosVersion"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p x = DbTypePrimitive DbBlob False Nothing Nothing
+
 instance ToField PublicNode where
   toField = toField . show
 
@@ -441,6 +453,12 @@ instance FromField ProcessControl where
 instance ToField ProcessControl where
   toField v = toField (show v)
 
+instance ToField TezosVersion where
+  toField = toJSONField
+
+instance FromField TezosVersion where
+  fromField = fromJSONField
+
 instance FromField VotingPeriodKind where
   fromField f = maybe (fail "Invalid value for VotingPeriodKind") pure . readMaybe <=< fromField f
 
@@ -472,6 +490,7 @@ instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
 instance NeverNull RawLevel
 instance NeverNull Tez
+instance NeverNull TezosVersion
 instance NeverNull TezosWord64
 instance NeverNull Version
 instance NeverNull VeryBlockLike

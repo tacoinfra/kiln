@@ -22,6 +22,7 @@ import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
 import Safe
 import Tezos.Types (ChainId)
 
+import Common.Schema (Node, Id, TezosVersion(..))
 import ExtraPrelude
 
 type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger m, MonadIO m)
@@ -57,7 +58,10 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogMultipleBakersForSameBaker") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNetworkUpdate") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNetworkUpdate") "commit"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeInvalidPeerCount") "id"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeVersionMismatch") "latestHash"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeVersionMismatch") "nodeHash"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "alias"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "address"
@@ -89,6 +93,38 @@ preMigrate chainId =
   >=> deleteObsidianPublicNodeHeads
   >=> deleteTzScanPublicNodeConfigs
   >=> deleteTzScanPublicNodeHeads
+  >=> migrateNodeExternalDataCommitHash
+
+migrateNodeExternalDataCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateNodeExternalDataCommitHash ta = do
+  let table = QualifiedIdentifier Nothing "NodeExternal"
+  analyzedTable' <- analyzeTable ta (convQN table)
+  let hasCommitHash = any ((== "data#data#commitHash") . colName) . tableColumns
+      hasNodeVersion = any ((== "data#data#nodeVersion") . colName) . tableColumns
+  case analyzedTable' of
+    Nothing -> pure ta
+    Just analyzedTable -> case hasCommitHash analyzedTable && not (hasNodeVersion analyzedTable) of
+        False -> pure ta
+        True -> do
+            -- add column data#data#nodeVersion
+            void [traceExecuteQ|ALTER TABLE "NodeExternal" ADD COLUMN "data#data#nodeVersion" VARCHAR;|]
+            -- get contents from data#data#commitHash into Haskell
+            liftIO $ mapM_ (putStrLn . colName) (tableColumns analyzedTable)
+            liftIO $ mapM_ print (tableReferences analyzedTable)
+            (idsHashes :: [(Id Node, Text)]) <- [queryQ|SELECT "id", "data#data#commitHash" FROM "NodeExternal";|]
+            -- create TezosVersion data in Haskell
+            let idsVersions = fmap (fmap (TezosVersion Nothing)) idsHashes
+            -- put into data#data#nodeVersion
+            for_ idsVersions $ \(nodeId, version) ->
+                [traceExecuteQ|
+                    UPDATE "NodeExternal"
+                    SET "data#data#nodeVersion" = ?version
+                    WHERE "id" = ?nodeId;
+                |]
+            -- delete column data#data#commitHash from
+            void [traceExecuteQ|ALTER TABLE "NodeExternal" DROP COLUMN "data#data#commitHash";|]
+            getTableAnalysis
+
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do

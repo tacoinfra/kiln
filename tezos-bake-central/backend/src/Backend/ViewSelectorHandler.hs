@@ -742,16 +742,16 @@ getNodeAddresses
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
   ext :: Map.Map (WithInfinity (Id Node)) NodeExternalData <- [queryQ|
-      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections", n."data#data#commitHash"
+      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections", n."data#data#nodeVersion"
       FROM "NodeExternal" n
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . fmap (\(nid', uri, alias, mpc, mch) -> (Bounded nid',
+    <&> Map.fromList . fmap (\(nid', uri, alias, mpc, mversion) -> (Bounded nid',
     NodeExternalData
       { _nodeExternalData_address = uri
       , _nodeExternalData_alias = alias
       , _nodeExternalData_minPeerConnections = mpc
-      , _nodeExternalData_commitHash = mch
+      , _nodeExternalData_nodeVersion = mversion
       }))
   int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
       SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend

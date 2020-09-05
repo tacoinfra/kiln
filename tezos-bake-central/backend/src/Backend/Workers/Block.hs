@@ -51,7 +51,7 @@ blockWorker
 blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let chainId = _nodeDataSource_chain nds
   let claimTimeout = "15 seconds" :: Text
-  workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
+  workerWithDelay "blockWorker" (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     queuedBlockOrNot :: Either CacheError [BlockTodo] <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
       (headBlock, _) <- getLatestProtocolConstants
       cutoffLevel <- rightsContextLevel (headBlock ^. hash) (headBlock ^. level)

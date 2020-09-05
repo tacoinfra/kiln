@@ -12,21 +12,22 @@
 
 module Backend.Upgrade where
 
-import Control.Error
+import Control.Error hiding (err, isRight)
 import Control.Exception.Safe (try)
 import Control.Lens (findOf, maximumByOf)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (MonadLogger, logError, logInfo, logWarn)
+import Data.Aeson
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
 import qualified Data.Map as Map
-import Data.Maybe
 import Data.Ord
 import Data.Pool (Pool)
 import Data.String.Here.Interpolated (i)
 import qualified Data.Text as T
 import qualified Data.Text.Read  as T
+import Data.Text.Encoding
 import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql
@@ -66,7 +67,7 @@ upgradeCheckWorker
   -> m (IO ())
 upgradeCheckWorker chain mrelease gitLabProjectId delay logger httpMgr db appConfig = do
   liftIO $ runLoggingEnv logger $ runDb (Identity db) $ clearUnrelatedNetworkUpdateError chain
-  workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
+  workerWithDelay "upgradeCheckWorker" (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
     fetchNodeVersions httpMgr db
     notifyChainUpgrade chain mrelease gitLabProjectId httpMgr db appConfig
@@ -82,23 +83,23 @@ notifyChainUpgrade
   -> AppConfig
   -> m ()
 notifyChainUpgrade namedChain mrelease gitLabProjectId httpMgr db appConfig =
-  getTezosBranch httpMgr gitLabProjectId mrelease >>= \case
+  getTezosReleaseCommit httpMgr gitLabProjectId mrelease >>= \case
     Left err -> $(logError) err -- TODO use proper log message
-    Right commitId -> runDb (Identity db) $ do
-      mLastCommit <- getLatestNamedChainUpgradeLog namedChain
+    Right version -> runDb (Identity db) $ do
+      mLastVersion <- getLatestNamedChainUpgradeLog namedChain
       -- Although we are reporting ErrorLogNetworkUpdate, it is currently not used in frontend
       -- the only effect it has is to send an email
-      when (preview (_Just . _3) mLastCommit /= Just commitId) $ reportNew mLastCommit commitId
-      flip runReaderT appConfig $ reportNodeVersionMismatch commitId
+      when (preview (_Just . _3) mLastVersion /= Just version) $ reportNew mLastVersion version
+      flip runReaderT appConfig $ reportNodeVersionMismatch version
   where
-    reportNew mLastCommit commitId = do
+    reportNew mLastVersion version = do
       now <- getTime
-      forM_ mLastCommit $ \case
+      forM_ mLastVersion $ \case
         (logId, Nothing, _) -> update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` [fromId (logId :: Id ErrorLog)])
         _ -> return ()
       let errorLog = ErrorLog
             { _errorLog_started = now
-            , _errorLog_stopped = if isNothing mLastCommit then Just now else Nothing
+            , _errorLog_stopped = if isNothing mLastVersion then Just now else Nothing
             , _errorLog_lastSeen = now
             , _errorLog_noticeSentAt = Just now
             , _errorLog_chainId = _appConfig_chainId appConfig
@@ -107,34 +108,35 @@ notifyChainUpgrade namedChain mrelease gitLabProjectId httpMgr db appConfig =
       _ <- insert ErrorLogNetworkUpdate
         { _errorLogNetworkUpdate_log = eid
         , _errorLogNetworkUpdate_namedChain = namedChain
-        , _errorLogNetworkUpdate_commit = commitId
+        , _errorLogNetworkUpdate_version = version
         , _errorLogNetworkUpdate_gitLabProjectId = gitLabProjectId
         }
       notifyDefault (Id eid :: Id ErrorLogNetworkUpdate)
       -- Only send an email when we get a new value, not when we initially
       -- populate the cache.
-      when (isJust mLastCommit) $ do
+      when (isJust mLastVersion) $ do
         let (header, bodyFirstPara) = networkUpdateDescription namedChain
         flip runReaderT appConfig $ queueAlert (Just eid) $ Alert Unresolved header $ T.unlines
+          -- Need to change this, since the updates don't come on each branch.
           [ bodyFirstPara
           , "Get the new software here  🡒  " <> "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain
           ]
 
-    reportNodeVersionMismatch commitId = do
-      dontMatch <- project (NodeExternal_idField, NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_commitHashSelector)
+    reportNodeVersionMismatch version = do
+      dontMatch <- project (NodeExternal_idField, NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector)
         (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False
-        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_commitHashSelector /=. Just commitId
-        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_commitHashSelector /=. (Nothing :: Maybe Text))
+        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector /=. Just version
+        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector /=. (Nothing :: Maybe TezosVersion))
       match <- project NodeExternal_idField
         (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False
-        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_commitHashSelector ==. Just commitId)
-      for_ dontMatch $ \(nodeId, mNodeHash) -> for_ mNodeHash (reportNodeVersionMismatchError nodeId commitId)
+        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector ==. Just version)
+      for_ dontMatch $ \(nodeId, mNodeHash) -> for_ mNodeHash (reportNodeVersionMismatchError nodeId version)
       for_ match clearNodeVersionMismatchError
 
-getLatestNamedChainUpgradeLog :: (PersistBackend m, PostgresRaw m) => NamedChain -> m (Maybe (Id ErrorLog, Maybe UTCTime, Text))
+getLatestNamedChainUpgradeLog :: (PersistBackend m, PostgresRaw m) => NamedChain -> m (Maybe (Id ErrorLog, Maybe UTCTime, TezosVersion))
 getLatestNamedChainUpgradeLog namedChain =
   listToMaybe <$> [queryQ|
-    SELECT el.id, el.stopped AT TIME ZONE 'UTC', elua.commit
+    SELECT el.id, el.stopped AT TIME ZONE 'UTC', elua.version
     FROM "ErrorLogNetworkUpdate" elua
     JOIN "ErrorLog" el
     ON elua.log = el.id
@@ -154,12 +156,24 @@ fetchNodeVersions httpMgr db = do
     (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False)
 
   ifor_ extNodes $ \nodeId nodeData -> do
-    mHash :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
-      nodeRPC $ plainNodeRequest Http.methodGet "/monitor/commit_hash"
-    case mHash of
-      Left e -> $(logWarn) [i|fetchNodeVersions: could not fetch node commit hash: ${e}|]
-      Right hash' -> runDb (Identity db) $ update
-        [NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_commitHashSelector =. Just hash']
+
+    mTezosVersion'' :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
+      nodeRPC $ plainNodeRequest Http.methodGet "/version"
+
+    let mTezosVersion' :: Either RpcError TezosVersion  = do
+        a <- mTezosVersion''
+        let bytes = Bz.fromChunks . pure . encodeUtf8 $ a
+        first (`RpcError_NonJSON` bytes) $ eitherDecode' bytes
+
+    mTezosVersion <- if isRight mTezosVersion' then pure mTezosVersion' else do
+        mHash :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
+            nodeRPC $ plainNodeRequest Http.methodGet "/monitor/commit_hash"
+        pure $ fmap (TezosVersion Nothing) mHash
+
+    case mTezosVersion of
+      Left e -> $(logWarn) [i|fetchNodeVersions: could not fetch node version: ${e}|]
+      Right tv -> runDb (Identity db) $ update
+        [NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector =. Just tv]
         (NodeExternal_idField `in_` [nodeId])
 
 updateUpstreamVersion
@@ -199,8 +213,8 @@ setUpstreamVersion v = do
 
 {- If we don't specify, then just get the latest release, hence the  -}
 {- maybe type. -}
-getTezosBranch :: (MonadIO m) => Http.Manager -> Text -> Maybe Text -> m (Either Text Text)
-getTezosBranch httpMgr projectId mrelease = do
+getTezosReleaseCommit :: (MonadIO m) => Http.Manager -> Text -> Maybe Text -> m (Either Text TezosVersion)
+getTezosReleaseCommit httpMgr projectId mrelease = do
   let url = gitlabApiBaseUrl <> "/projects/" <> projectId <> "/releases"
       getReleaseCommit :: AsValue s => s -> Maybe Text
       getReleaseCommit = case mrelease of
@@ -217,7 +231,7 @@ getTezosBranch httpMgr projectId mrelease = do
            in Left $ case mrelease of
                 Nothing -> msg <> " at latest release."
                 Just s -> msg <> " found for this release: " <> s <> "."
-         Just commit -> Right commit
+         Just commit -> Right $ TezosVersion Nothing commit
 
 parseMajorMinorVersion :: Text -> Either String (Int,Int)
 parseMajorMinorVersion version = do

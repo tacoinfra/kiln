@@ -388,7 +388,8 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
 reportNodeVersionMismatchError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, HasAppConfig a, MonadReader a m
      , SqlDb (PhantomDb m))
-  => Id Node -> Text -> Text -> m ()
+  -- => Id Node -> Text -> Text -> m ()
+  => Id Node -> TezosVersion -> TezosVersion -> m ()
 reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDeleted nodeId) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   -- Not filtering on "stopped", consider previously reported/dismissed alerts also

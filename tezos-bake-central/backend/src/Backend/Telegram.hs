@@ -231,7 +231,7 @@ emptyTelegramMessageQueue
   -> LoggingEnv
   -> Pool Postgresql
   -> IO (IO ())
-emptyTelegramMessageQueue httpMgr logger db = workerWithDelay (pure 1) $ const $ runLoggingEnv logger $ do
+emptyTelegramMessageQueue httpMgr logger db = workerWithDelay "emptyTelegramMessageQueue" (pure 1) $ const $ runLoggingEnv logger $ do
   messages <- runDb (Identity db) [queryQ|
     SELECT tmq.id, tmq.message, tr."chatId", tc."botApiKey"
     FROM "TelegramMessageQueue" tmq

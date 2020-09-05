@@ -85,7 +85,7 @@ processWorker
   -> "pidToRunAfter" :! Maybe (Id ProcessData)
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
   -> m (IO ())
-processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg pidToRunAfter) (Arg makeNotify) = worker' $ do
+processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg pidToRunAfter) (Arg makeNotify) = worker' "processWorker" $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
     inDb $ updateState ProcessState_Initializing

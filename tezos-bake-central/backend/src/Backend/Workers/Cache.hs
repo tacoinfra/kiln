@@ -49,7 +49,7 @@ classifyCacheEntry chainId expireTime (q :=> Compose cx) =
       Just $ Right $ q :=> Compose cx
 
 cacheWorker :: NominalDiffTime -> NodeDataSource -> IO (IO ())
-cacheWorker delay dsrc = workerWithDelay (pure delay) $ \_ -> do
+cacheWorker delay dsrc = workerWithDelay "cacheWorker" (pure delay) $ \_ -> do
   let maxTTL = delay * 2
   expireTime <- addUTCTime maxTTL <$> getCurrentTime
   compactCache expireTime dsrc

@@ -82,7 +82,7 @@ tezosClientWorker
   -> Maybe BinaryPaths
   -> IO (IO ())
 tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = runLoggingEnv logger $ do
-  workerWithDelay (pure delay) $ const $ runLoggingEnv logger $ do
+  workerWithDelay "tezosClientWorker" (pure delay) $ const $ runLoggingEnv logger $ do
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
 
     mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty

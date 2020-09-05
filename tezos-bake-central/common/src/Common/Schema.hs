@@ -40,6 +40,7 @@ module Common.Schema
   , Id
   ) where
 
+import Control.Applicative
 import Control.Exception.Safe (Exception, SomeException)
 import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
@@ -60,7 +61,7 @@ import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
 import Data.Sequence (Seq)
 import Data.Some (Some(..))
 import Data.Text (Text)
-import Data.Int (Int64)
+import Data.Int (Int32, Int64)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
@@ -264,11 +265,137 @@ instance HasId NodeExternal where
   -- Should be the same as `IdData NodeExternalData` always.
   type IdData NodeExternal = Id Node
 
+{-
+
+{
+  "version": {
+    "major": 7,
+    "minor": 2,
+    "additional_info": "release"
+  },
+  "network_version": {
+    "chain_name": "TEZOS_ALPHANET_CARTHAGE_2019-11-28T13:02:13Z",
+    "distributed_db_version": 0,
+    "p2p_version": 1
+  },
+  "commit_info": {
+    "commit_hash": "6b9f3bc3",
+    "commit_date": "6b9f3bc3"
+  }
+}
+
+-}
+
+data TezosVersion = TezosVersion
+  { _tezosVersion_nodeVersion :: !(Maybe NodeVersion)
+  , _tezosVersion_commitHash :: !Text
+  } deriving (Generic, Ord, Read, Show)
+
+instance Eq TezosVersion where
+  TezosVersion Nothing c1 == TezosVersion (Just _) c2 = c1 == c2
+  TezosVersion (Just _) c1 == TezosVersion Nothing c2 = c1 == c2
+  TezosVersion rest1 c1 == TezosVersion rest2 c2 = c1 == c2 && rest1 ==  rest2
+
+instance Aeson.ToJSON TezosVersion where
+  toJSON tv = case _tezosVersion_nodeVersion tv of
+    Nothing -> Aeson.String $ _tezosVersion_commitHash tv
+    Just nv -> case Aeson.toJSON nv of
+        Aeson.Object o ->
+            let f e = case e of
+                  Aeson.Object v ->
+                    Aeson.Object $ HashMap.insert "commit_hash" (Aeson.String $ _tezosVersion_commitHash tv) v
+                  _ -> error "impossible case"
+            in Aeson.Object $ HashMap.adjust f "commit_info" o
+        _ -> error "impossible case"
+
+instance Aeson.FromJSON TezosVersion where
+  parseJSON v = Aeson.withText "TezosNodeVersion" (pure . TezosVersion Nothing) v <|> Aeson.withObject "TezosVersion" go v
+    where
+     go o = do
+        majMinVer :: MajorMinorVersion <- o Aeson..: "version"
+        networkVer :: NetworkVersion <- o Aeson..: "network_version"
+        cHash :: Text <- o Aeson..: "commit_info" >>= \oo -> oo Aeson..: "commit_hash"
+        cDate :: Text <- o Aeson..: "commit_info" >>= \oo -> oo Aeson..: "commit_date"
+        return $ flip TezosVersion cHash $ Just $ NodeVersion
+          {
+              _nodeVersion_version = majMinVer
+            , _nodeVersion_networkVersion = networkVer
+            , _nodeVersion_commitInfo = CommitInfo cDate
+          }
+
+data NodeVersion = NodeVersion
+     { _nodeVersion_version :: !MajorMinorVersion
+     , _nodeVersion_networkVersion :: !NetworkVersion
+     , _nodeVersion_commitInfo :: !CommitInfo
+     } deriving (Eq, Generic, Ord, Read, Show)
+
+data MajorMinorVersion = MajorMinorVersion
+     { _majorMinorVersion_major :: !Int32
+     , _majorMinorVersion_minor :: !Int32
+     , _majorMinorVersion_additional_info :: !AdditionalInfo
+     } deriving (Eq, Generic, Ord, Read, Show)
+
+data AdditionalInfo =
+  Development
+  | ReleaseCandidate !Int
+  {-
+  The release candidate number type could be TezosWord64, but that
+  type doesn't have a Read instance and I don't think the precision
+  inherent in the TezosWord64 type is necessary to have here.
+  -}
+  | Release
+  deriving (Eq, Generic, Ord, Read, Show)
+
+instance Aeson.ToJSON AdditionalInfo where
+  toJSON = \case
+    Development -> Aeson.String "dev"
+    ReleaseCandidate rc -> Aeson.object ["rc" Aeson..= rc]
+    Release -> Aeson.String "release"
+
+instance Aeson.FromJSON AdditionalInfo where
+  parseJSON v =
+    Aeson.withText "Development" (\text -> if text == "dev" then pure Development else empty) v
+    <|> Aeson.withObject "ReleaseCandidate" (\ob -> ReleaseCandidate <$> ob Aeson..: "rc") v
+    <|> Aeson.withText "Release" (\text -> if text == "release" then pure Release else empty) v
+
+data NetworkVersion = NetworkVersion
+  { _networkVersion_chainName :: !Text -- This is not quite synonymous with the usual chainName or chainId.
+  , _networkVersion_distributedDbVersion :: !Word16
+  , _networkVersion_p2pVersion :: !Word16
+  } deriving (Eq, Generic, Ord, Read, Show)
+
+instance Aeson.ToJSON NetworkVersion where
+  toJSON nv = Aeson.object
+    [ "chain_name" Aeson..= _networkVersion_chainName nv
+    , "distributed_db_version" Aeson..= _networkVersion_distributedDbVersion nv
+    , "p2p_version" Aeson..= _networkVersion_p2pVersion nv
+    ]
+
+instance Aeson.FromJSON NetworkVersion where
+  parseJSON = Aeson.withObject "NetworkVersion" $ \o -> NetworkVersion
+    <$> o Aeson..: "chain_name"
+    <*> o Aeson..: "distributed_db_version"
+    <*> o Aeson..: "p2p_version"
+
+networkVersion_chainName :: Functor f => (Text -> f Text) -> NetworkVersion -> f NetworkVersion
+networkVersion_chainName f s = (\u -> s {_networkVersion_chainName = u}) <$> f (_networkVersion_chainName s)
+
+networkVersion_distributedDbVersion :: Functor f => (Word16 -> f Word16) -> NetworkVersion -> f NetworkVersion
+networkVersion_distributedDbVersion f s = (\u -> s {_networkVersion_distributedDbVersion = u}) <$> f (_networkVersion_distributedDbVersion s)
+
+networkVersion_p2pVersion :: Functor f => (Word16 -> f Word16) -> NetworkVersion -> f NetworkVersion
+networkVersion_p2pVersion f s = (\u -> s {_networkVersion_p2pVersion = u}) <$> f (_networkVersion_p2pVersion s)
+
+data CommitInfo = CommitInfo
+     { _commitInfo_commitDate :: !Text
+     } deriving (Eq, Generic, Ord, Read, Show)
+
 data NodeExternalData = NodeExternalData
   { _nodeExternalData_address :: !URI
   , _nodeExternalData_alias :: !(Maybe Text)
   , _nodeExternalData_minPeerConnections :: !(Maybe Int)
-  , _nodeExternalData_commitHash :: !(Maybe Text)
+  , _nodeExternalData_nodeVersion :: !(Maybe TezosVersion)
+  -- , _nodeExternalData_commitHash :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeExternalData where
@@ -665,7 +792,7 @@ instance HasId MailServerConfig
 data ErrorLogNetworkUpdate = ErrorLogNetworkUpdate
   { _errorLogNetworkUpdate_log :: !(Id ErrorLog)
   , _errorLogNetworkUpdate_namedChain :: !NamedChain
-  , _errorLogNetworkUpdate_commit :: !Text
+  , _errorLogNetworkUpdate_version :: !TezosVersion
   , _errorLogNetworkUpdate_gitLabProjectId :: !Text
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNetworkUpdate where
@@ -688,8 +815,8 @@ instance HasId ErrorLogInaccessibleNode where
 data ErrorLogNodeVersionMismatch = ErrorLogNodeVersionMismatch
   { _errorLogNodeVersionMismatch_log :: !(Id ErrorLog)
   , _errorLogNodeVersionMismatch_node :: !(Id Node)
-  , _errorLogNodeVersionMismatch_latestHash :: !Text
-  , _errorLogNodeVersionMismatch_nodeHash :: !Text
+  , _errorLogNodeVersionMismatch_latestHash :: !TezosVersion
+  , _errorLogNodeVersionMismatch_nodeHash :: !TezosVersion
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeVersionMismatch where
   type IdData ErrorLogNodeVersionMismatch = Id ErrorLog
@@ -1166,3 +1293,17 @@ instance Aeson.FromJSON ProtocolIndex where
     jc :: Aeson.Value <- o Aeson..: "constants"
     let o' = HashMap.insert "json_constants" jc o
     $(Aeson.mkParseJSON tezosJsonOptions ''ProtocolIndex) (Aeson.Object o')
+
+makePrisms ''AdditionalInfo
+
+concat <$> traverse (deriveJSON $ defaultTezosCompatJsonOptions { Aeson.omitNothingFields = True })
+  [ 'NodeVersion
+  , 'MajorMinorVersion
+  , 'CommitInfo
+  ]
+
+concat <$> traverse makeLenses
+  [ ''NodeVersion
+  , ''MajorMinorVersion
+  , ''CommitInfo
+  ]
