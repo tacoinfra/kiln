@@ -635,7 +635,7 @@ optsArgDescr =
       "Serve Node Cache.  Default disabled."
 
   , mkReqArg Config.enableOsPublicNode "BOOL" (set opts_enableOsPublicNode . Just . Config.parseBool)
-      "Enables the Public Node provided by Obsidian Systems.  Default Enabled."
+      "Enables the Public Archival Node provided by Obsidian Systems.  Default Enabled."
 
   , mkReqArg Config.tzscanApiUri "URL" (set opts_tzscanApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom tzscan API URL.  Default none."
