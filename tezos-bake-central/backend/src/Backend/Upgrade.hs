@@ -168,7 +168,7 @@ fetchNodeVersions httpMgr db = do
     mTezosVersion <- if isRight mTezosVersion' then pure mTezosVersion' else do
         mHash :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
             nodeRPC $ plainNodeRequest Http.methodGet "/monitor/commit_hash"
-        pure $ fmap (TezosVersion Nothing) mHash
+        pure $ fmap (TezosVersion . Left) mHash
 
     case mTezosVersion of
       Left e -> $(logWarn) [i|fetchNodeVersions: could not fetch node version: ${e}|]
@@ -231,7 +231,7 @@ getTezosReleaseCommit httpMgr projectId mrelease = do
            in Left $ case mrelease of
                 Nothing -> msg <> " at latest release."
                 Just s -> msg <> " found for this release: " <> s <> "."
-         Just commit -> Right $ TezosVersion Nothing commit
+         Just commit -> Right $ TezosVersion (Left commit)
 
 parseMajorMinorVersion :: Text -> Either String (Int,Int)
 parseMajorMinorVersion version = do
@@ -240,7 +240,7 @@ parseMajorMinorVersion version = do
   (major, rest2) <- T.decimal @Int rest1
   (dot, rest3) <- maybe (Left "Missing dot") Right $ T.uncons rest2
   guard $ dot == '.'
-  (minor, rest4) <- T.decimal @Int $ rest3
+  (minor, rest4) <- T.decimal @Int rest3
   guard $ T.null rest4
   return (major, minor)
 

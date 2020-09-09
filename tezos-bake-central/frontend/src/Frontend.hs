@@ -977,23 +977,23 @@ liveErrorsWidget = void $ do
               header "Node is not running the latest software."
               nodeLabel n
               el "div" $ text $
-                case (_errorLogNodeVersionMismatch_nodeHash log, _errorLogNodeVersionMismatch_latestHash log) of
-                  (TezosVersion Nothing nodeHash, TezosVersion Nothing latestHash) ->
+                case (_errorLogNodeVersionMismatch_nodeVersion log, _errorLogNodeVersionMismatch_latestVersion log) of
+                  (TezosVersion (Left nodeHash), TezosVersion (Left latestHash)) ->
                     "This node is running the node software with hash: '" <> nodeHash <> "'."
                     <> " The latest software version has hash: '" <> latestHash <> "'."
-                  (TezosVersion (Just nodeVersion) nodeHash, TezosVersion (Just latestVersion) latestHash) ->
+                  (TezosVersion (Right nv), TezosVersion (Right lnv)) ->
                     "This node is running the node software at version: "
-                    <> printMajorMinor nodeVersion <> " at hash: '" <> nodeHash <> "'."
-                    <> " The latest software version is " <> printMajorMinor latestVersion
-                    <> " at  hash: '" <> latestHash <> "'."
-                  (TezosVersion Nothing nodeHash, TezosVersion (Just latestVersion) latestHash) ->
+                    <> printMajorMinor nv <> " at hash: '" <> _commitInfo_commitHash (_nodeVersion_commitInfo nv) <> "'."
+                    <> " The latest software version is " <> printMajorMinor lnv
+                    <> " at  hash: '" <> _commitInfo_commitHash (_nodeVersion_commitInfo lnv) <> "'."
+                  (TezosVersion (Left nodeHash), TezosVersion (Right lnv)) ->
                     "This node is running the node software with hash: " <> nodeHash <> "'."
                     <> " The node version is unavailable. "
-                    <> " The latest software version is " <> printMajorMinor latestVersion
-                    <> " at  hash: '" <> latestHash <> "'."
-                  (TezosVersion (Just nodeVersion) nodeHash, TezosVersion Nothing latestHash) ->
+                    <> " The latest software version is " <> printMajorMinor lnv
+                    <> " at  hash: '" <> _commitInfo_commitHash (_nodeVersion_commitInfo lnv) <> "'."
+                  (TezosVersion (Right nv), TezosVersion (Left latestHash)) ->
                     "This node is running the node software at version: "
-                    <> printMajorMinor nodeVersion <> " at hash: '" <> nodeHash <> "'."
+                    <> printMajorMinor nv <> " at hash: '" <> _commitInfo_commitHash (_nodeVersion_commitInfo nv) <> "'."
                     <> " The latest software version has hash: " <> latestHash <> "'."
                     <> " The latest fully specified version is not available."
 

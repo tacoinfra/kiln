@@ -265,63 +265,19 @@ instance HasId NodeExternal where
   -- Should be the same as `IdData NodeExternalData` always.
   type IdData NodeExternal = Id Node
 
-{-
-
-{
-  "version": {
-    "major": 7,
-    "minor": 2,
-    "additional_info": "release"
-  },
-  "network_version": {
-    "chain_name": "TEZOS_ALPHANET_CARTHAGE_2019-11-28T13:02:13Z",
-    "distributed_db_version": 0,
-    "p2p_version": 1
-  },
-  "commit_info": {
-    "commit_hash": "6b9f3bc3",
-    "commit_date": "6b9f3bc3"
-  }
-}
-
--}
-
-data TezosVersion = TezosVersion
-  { _tezosVersion_nodeVersion :: !(Maybe NodeVersion)
-  , _tezosVersion_commitHash :: !Text
-  } deriving (Generic, Ord, Read, Show)
+newtype TezosVersion = TezosVersion { getTezosVersion :: Either Text NodeVersion }
+  deriving (Generic, Ord, Read, Show, Typeable)
 
 instance Eq TezosVersion where
-  TezosVersion Nothing c1 == TezosVersion (Just _) c2 = c1 == c2
-  TezosVersion (Just _) c1 == TezosVersion Nothing c2 = c1 == c2
-  TezosVersion rest1 c1 == TezosVersion rest2 c2 = c1 == c2 && rest1 ==  rest2
+  TezosVersion (Left c) == TezosVersion (Right nv) = c == _commitInfo_commitHash (_nodeVersion_commitInfo nv)
+  TezosVersion (Right nv) == TezosVersion (Left c) = c == _commitInfo_commitHash (_nodeVersion_commitInfo nv)
+  TezosVersion a == TezosVersion b = a == b
 
 instance Aeson.ToJSON TezosVersion where
-  toJSON tv = case _tezosVersion_nodeVersion tv of
-    Nothing -> Aeson.String $ _tezosVersion_commitHash tv
-    Just nv -> case Aeson.toJSON nv of
-        Aeson.Object o ->
-            let f e = case e of
-                  Aeson.Object v ->
-                    Aeson.Object $ HashMap.insert "commit_hash" (Aeson.String $ _tezosVersion_commitHash tv) v
-                  _ -> error "impossible case"
-            in Aeson.Object $ HashMap.adjust f "commit_info" o
-        _ -> error "impossible case"
+  toJSON = either Aeson.String Aeson.toJSON . getTezosVersion
 
 instance Aeson.FromJSON TezosVersion where
-  parseJSON v = Aeson.withText "TezosNodeVersion" (pure . TezosVersion Nothing) v <|> Aeson.withObject "TezosVersion" go v
-    where
-     go o = do
-        majMinVer :: MajorMinorVersion <- o Aeson..: "version"
-        networkVer :: NetworkVersion <- o Aeson..: "network_version"
-        cHash :: Text <- o Aeson..: "commit_info" >>= \oo -> oo Aeson..: "commit_hash"
-        cDate :: Text <- o Aeson..: "commit_info" >>= \oo -> oo Aeson..: "commit_date"
-        return $ flip TezosVersion cHash $ Just $ NodeVersion
-          {
-              _nodeVersion_version = majMinVer
-            , _nodeVersion_networkVersion = networkVer
-            , _nodeVersion_commitInfo = CommitInfo cDate
-          }
+  parseJSON v = TezosVersion <$> (Aeson.withText "TezosNodeVerison" (pure . Left) v <|> fmap Right (Aeson.parseJSON v))
 
 data NodeVersion = NodeVersion
      { _nodeVersion_version :: !MajorMinorVersion
@@ -388,6 +344,7 @@ networkVersion_p2pVersion f s = (\u -> s {_networkVersion_p2pVersion = u}) <$> f
 
 data CommitInfo = CommitInfo
      { _commitInfo_commitDate :: !Text
+     , _commitInfo_commitHash :: !Text
      } deriving (Eq, Generic, Ord, Read, Show)
 
 data NodeExternalData = NodeExternalData
@@ -395,7 +352,6 @@ data NodeExternalData = NodeExternalData
   , _nodeExternalData_alias :: !(Maybe Text)
   , _nodeExternalData_minPeerConnections :: !(Maybe Int)
   , _nodeExternalData_nodeVersion :: !(Maybe TezosVersion)
-  -- , _nodeExternalData_commitHash :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeExternalData where
@@ -815,8 +771,8 @@ instance HasId ErrorLogInaccessibleNode where
 data ErrorLogNodeVersionMismatch = ErrorLogNodeVersionMismatch
   { _errorLogNodeVersionMismatch_log :: !(Id ErrorLog)
   , _errorLogNodeVersionMismatch_node :: !(Id Node)
-  , _errorLogNodeVersionMismatch_latestHash :: !TezosVersion
-  , _errorLogNodeVersionMismatch_nodeHash :: !TezosVersion
+  , _errorLogNodeVersionMismatch_latestVersion :: !TezosVersion
+  , _errorLogNodeVersionMismatch_nodeVersion :: !TezosVersion
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeVersionMismatch where
   type IdData ErrorLogNodeVersionMismatch = Id ErrorLog

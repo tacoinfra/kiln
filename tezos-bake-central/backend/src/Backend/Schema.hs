@@ -41,6 +41,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.GADT (deriveJSONGADT)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Short (fromShort, toShort)
 import Data.Constraint (Dict(..))
@@ -57,6 +58,7 @@ import qualified Data.Sequence as Seq
 import Data.Some (Some(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Text.Encoding.Error as T
 import qualified Data.Text.Lazy as LT
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -74,7 +76,7 @@ import qualified Database.Groundhog.Postgresql.Array as Groundhog
 import Database.Groundhog.TH (groundhog)
 import Database.PostgreSQL.Simple (Binary (..), Only (..), fromBinary, (:.)(..) )
 import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
-import Database.PostgreSQL.Simple.ToField (toJSONField, ToField (toField), Action(Plain))
+import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
 import Language.Haskell.TH (conE)
@@ -406,16 +408,15 @@ instance ToField NamedChainOrChainId where
   toField (NamedChainOrChainId v) = toField (showChain v)
 
 instance PrimitivePersistField TezosVersion where
-  toPrimitivePersistValue p tv = toPrimitivePersistValue p $ Aeson.encode tv
-  fromPrimitivePersistValue p v = either (error . toMsg) id $ Aeson.eitherDecode' $ fromPrimitivePersistValue p v
-    {- informative message -}
+  toPrimitivePersistValue p tv = toPrimitivePersistValue p $ T.decodeUtf8With T.lenientDecode $ B.concat $ LBS.toChunks $ Aeson.encode tv
+  fromPrimitivePersistValue p v = either (error . toMsg) id $ Aeson.eitherDecode' $ trace . show <*> id $ LBS.fromChunks $ pure $ T.encodeUtf8 $ fromPrimitivePersistValue p v
     where toMsg s = "PrimitivePersistField(TezosVersion) error " <> s
 
 instance PersistField TezosVersion where
   persistName _ = "TezosVersion"
-  toPersistValues = primToPersistValue
-  fromPersistValues = primFromPersistValue
-  dbType p x = DbTypePrimitive DbBlob False Nothing Nothing
+  toPersistValues =primToPersistValue
+  fromPersistValues =primFromPersistValue
+  dbType p x = DbTypePrimitive DbString False Nothing Nothing
 
 instance ToField PublicNode where
   toField = toField . show
@@ -454,10 +455,10 @@ instance ToField ProcessControl where
   toField v = toField (show v)
 
 instance ToField TezosVersion where
-  toField = toJSONField
+  toField = toField @Text . T.decodeUtf8 . B.concat . LBS.toChunks . Aeson.encode
 
 instance FromField TezosVersion where
-  fromField = fromJSONField
+  fromField f = fromField f >=> either (conversionError . userError) pure . Aeson.eitherDecode' @TezosVersion . LBS.fromChunks . pure . T.encodeUtf8
 
 instance FromField VotingPeriodKind where
   fromField f = maybe (fail "Invalid value for VotingPeriodKind") pure . readMaybe <=< fromField f
