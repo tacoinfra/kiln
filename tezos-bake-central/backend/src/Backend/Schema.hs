@@ -409,7 +409,7 @@ instance ToField NamedChainOrChainId where
 
 instance PrimitivePersistField TezosVersion where
   toPrimitivePersistValue p tv = toPrimitivePersistValue p $ T.decodeUtf8With T.lenientDecode $ B.concat $ LBS.toChunks $ Aeson.encode tv
-  fromPrimitivePersistValue p v = either (error . toMsg) id $ Aeson.eitherDecode' $ trace . show <*> id $ LBS.fromChunks $ pure $ T.encodeUtf8 $ fromPrimitivePersistValue p v
+  fromPrimitivePersistValue p v = either (error . toMsg) id $ Aeson.eitherDecode' $ LBS.fromChunks $ pure $ T.encodeUtf8 $ fromPrimitivePersistValue p v
     where toMsg s = "PrimitivePersistField(TezosVersion) error " <> s
 
 instance PersistField TezosVersion where
