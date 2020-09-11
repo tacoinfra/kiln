@@ -201,6 +201,8 @@ data FrontendConfig = FrontendConfig
   , _frontendConfig_usingOsPublicNode :: !Bool
   , _frontendConfig_logExportAvailable :: !Bool
   , _frontendConfig_ledgerConnectedChecks :: !Bool
+  , _frontendConfig_tezosGitlabProjectId :: !Text
+  , _frontendConfig_tezosRelease :: !(Maybe Text)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 class HasFrontendConfig r where

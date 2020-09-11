@@ -390,7 +390,7 @@ reportNodeVersionMismatchError
      , SqlDb (PhantomDb m))
   -- => Id Node -> Text -> Text -> m ()
   => Id Node -> TezosVersion -> TezosVersion -> m ()
-reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDeleted nodeId) $ do
+reportNodeVersionMismatchError nodeId latestVersion nodeVersion = when' (nodeNotDeleted nodeId) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   -- Not filtering on "stopped", consider previously reported/dismissed alerts also
   -- and dont report again if already reported for the given hash mismatch
@@ -399,8 +399,8 @@ reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDelete
       FROM "ErrorLog" el
       JOIN "ErrorLogNodeVersionMismatch" t ON t.log = el.id
       JOIN "NodeExternal" n ON n.id = t.node
-     WHERE t."latestHash" = ?latestHash
-       AND t."nodeHash" = ?nodeHash
+     WHERE t."latestVersion" = ?latestVersion
+       AND t."nodeVersion" = ?nodeVersion
        AND t.node = ?nodeId
        AND NOT n."data#deleted"
        AND el."chainId" = ?chainId
@@ -411,8 +411,8 @@ reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDelete
   oldLogs :: [Id ErrorLogNodeVersionMismatch] <- stripOnly <$> [queryQ|
     UPDATE "ErrorLog" el SET stopped = NOW()
       FROM "ErrorLogNodeVersionMismatch" t
-     WHERE t."latestHash" != ?latestHash
-       AND t."nodeHash" = ?nodeHash
+     WHERE t."latestVersion" != ?latestVersion
+       AND t."nodeVersion" = ?nodeVersion
        AND t.log = el.id
        AND t.node = ?nodeId
        AND el.stopped IS NULL
@@ -420,7 +420,7 @@ reportNodeVersionMismatchError nodeId latestHash nodeHash = when' (nodeNotDelete
     RETURNING t.log |]
   for_ oldLogs notifyDefault
   case existingLog of
-    Nothing -> void $ insertErrorLog $ \logId -> ErrorLogNodeVersionMismatch logId nodeId latestHash nodeHash
+    Nothing -> void $ insertErrorLog $ \logId -> ErrorLogNodeVersionMismatch logId nodeId latestVersion nodeVersion
     Just _ -> pure ()
 
 clearNodeVersionMismatchError

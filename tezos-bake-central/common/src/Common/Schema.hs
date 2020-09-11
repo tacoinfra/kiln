@@ -273,23 +273,20 @@ instance Eq TezosVersion where
   TezosVersion (Right nv) == TezosVersion (Left c) = c == _commitInfo_commitHash (_nodeVersion_commitInfo nv)
   TezosVersion a == TezosVersion b = a == b
 
-instance Aeson.ToJSON TezosVersion where
-  toJSON = either Aeson.String Aeson.toJSON . getTezosVersion
-
-instance Aeson.FromJSON TezosVersion where
-  parseJSON v = TezosVersion <$> (Aeson.withText "TezosNodeVerison" (pure . Left) v <|> fmap Right (Aeson.parseJSON v))
+instance Aeson.ToJSON TezosVersion
+instance Aeson.FromJSON TezosVersion
 
 data NodeVersion = NodeVersion
      { _nodeVersion_version :: !MajorMinorVersion
      , _nodeVersion_networkVersion :: !NetworkVersion
      , _nodeVersion_commitInfo :: !CommitInfo
-     } deriving (Eq, Generic, Ord, Read, Show)
+     } deriving (Eq, Ord, Read, Show)
 
 data MajorMinorVersion = MajorMinorVersion
      { _majorMinorVersion_major :: !Int32
      , _majorMinorVersion_minor :: !Int32
      , _majorMinorVersion_additional_info :: !AdditionalInfo
-     } deriving (Eq, Generic, Ord, Read, Show)
+     } deriving (Eq, Ord, Read, Show)
 
 data AdditionalInfo =
   Development
@@ -319,6 +316,10 @@ data NetworkVersion = NetworkVersion
   , _networkVersion_distributedDbVersion :: !Word16
   , _networkVersion_p2pVersion :: !Word16
   } deriving (Eq, Generic, Ord, Read, Show)
+
+{- These aeson instances and lenses were written because the auto  -}
+{- derivation mechanism wasn't behaving properly and it is just easier-}
+{- to write what is needed for this simple type.}-}
 
 instance Aeson.ToJSON NetworkVersion where
   toJSON nv = Aeson.object

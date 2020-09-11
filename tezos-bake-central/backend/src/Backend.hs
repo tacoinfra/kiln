@@ -431,6 +431,8 @@ backendImpl cfg serve = do
           , Config._frontendConfig_usingOsPublicNode = isJust $ _nodeDataSource_osPublicNode dataSrc
           , Config._frontendConfig_logExportAvailable = logExportAvailable
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
+          , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
+          , Config._frontendConfig_tezosRelease = tezosReleaseTag
           }
 
       -- migrate old kiln storage

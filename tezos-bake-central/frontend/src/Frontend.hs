@@ -69,6 +69,8 @@ import qualified Text.URI as Uri
 import Tezos.Common.NodeRPC.Sources
 import Tezos.Types
 
+import Backend.Upgrade (getRelease, getReleaseTag)
+
 import Common (humanBytes)
 import Common (unixEpoch, uriHostPortPath)
 import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHeadMessage,
@@ -82,7 +84,8 @@ import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
-                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable)
+                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable
+                      , frontendConfig_tezosGitlabProjectId, frontendConfig_tezosRelease)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -210,6 +213,7 @@ appMain
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
+    , HasJSContext (Performable m)
     )
   => m ()
 appMain = do
@@ -349,7 +353,7 @@ appSideFooter =
 
 appHeader
   :: forall r m t.
-    ( MonadAppWidget t m, MonadJSM (Performable m)
+    ( MonadAppWidget t m, MonadJSM (Performable m), HasJSContext (Performable m)
     , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
     )
   => m (Event t ())
@@ -363,6 +367,20 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
   divClass "topbar" $ do
     divClass "ui horizontal list" $ do
       (latestHead, knownProto) <- watchHeadWithProtocol
+
+      ev <- getPostBuild
+
+      projId <- asks (^. frontendConfig . frontendConfig_tezosGitlabProjectId)
+      mrelease <- asks (^. frontendConfig . frontendConfig_tezosRelease)
+
+      let toRequest = XhrRequest "GET" ("https://gitlab.com/api/v4/projects/" <> projId <> "/releases") def
+          showMajorMinor (a, b) = T.pack (show a) <> "." <> T.pack (show b)
+
+      versionReq' <-
+        (_xhrResponse_responseText >=> getRelease mrelease getReleaseTag) <$$> performRequestAsync (toRequest <$ ev)
+
+      versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
+
       let infoItem faded title body = divClass "item" $
             elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
               divClass "header" $ text title
@@ -383,6 +401,13 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
               & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
               & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
               )
+
+      divClass "item" $ divClass "withRightIcon" $ do
+        divClass "content" $ do
+            divClass "header" $ text "XTZ Version"
+            divClass "description" $ dyn_ . ffor versionReq $ \case
+                Nothing -> text "Unavailable"
+                Just v -> text v
 
       cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
       whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
@@ -590,8 +615,8 @@ globalAlerts = do
     SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
 networkUpdateAlertBanner :: (MonadAppWidget t m) => NamedChain -> NonEmpty (NodeExternalData, ErrorLogNodeVersionMismatch) -> m ()
-networkUpdateAlertBanner namedChain elogs = do
-  let (header, bodyFirstPara) = networkUpdateDescription namedChain
+networkUpdateAlertBanner _namedChain elogs = do
+  let (header, bodyFirstPara) = networkUpdateDescription
   renderResolvableSplashAlert
     (fmap (\(_, elog) -> LogTag_Node NodeLogTag_VersionMismatch :=> Const (_errorLogNodeVersionMismatch_log elog)) elogs)
     (icon "icon-alert-badge big blue")
@@ -602,7 +627,7 @@ networkUpdateAlertBanner namedChain elogs = do
       el "p" $ do
         text "Get the new software here "
         elClass "i" "ui icon small icon-arrow-right" blank
-        let url = "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain -- FIXME the url should be based on the project id
+        let url = "https://gitlab.com/tezos/tezos/-/releases"
         elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
       el "p" $ el "strong" $ text "Kiln has detected these nodes are not running the latest software:"
       el "p" $ el "ul" $ do
@@ -1745,16 +1770,19 @@ nodesTab =
           ebn <- snd <$$$$> watchErrorsByNode everythingWindow
 
           let
-            withSeverity e m = (_alertMetaData_severity $ getAlertMetaData e, m)
+            withSeverity e = \case
+                Just m -> Just (_alertMetaData_severity $ getAlertMetaData e, m)
+                Nothing -> Nothing
+
             errorMessages nodeId = do
               unresolvedAlertsForThisNode <- holdUniqDyn $ foldMap toList . MMap.lookup nodeId <$> ebn
-              pure $ ffor unresolvedAlertsForThisNode $ fmap $ \(lTag :=> Identity log) -> withSeverity lTag $ case lTag of
-                NodeLogTag_InaccessibleNode -> text "Unable to connect."
-                NodeLogTag_NodeWrongChain -> text "On wrong network."
-                NodeLogTag_NodeInvalidPeerCount -> text "Node has too few peers."
-                NodeLogTag_BadNodeHead -> text $
+              pure $ ffor unresolvedAlertsForThisNode $ mapMaybe $ \(lTag :=> Identity log) -> withSeverity lTag $ case lTag of
+                NodeLogTag_InaccessibleNode -> Just $ text "Unable to connect."
+                NodeLogTag_NodeWrongChain -> Just $ text "On wrong network."
+                NodeLogTag_NodeInvalidPeerCount -> Just $ text "Node has too few peers."
+                NodeLogTag_BadNodeHead -> Just $ text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."
-                NodeLogTag_VersionMismatch -> text "Running old software."
+                NodeLogTag_VersionMismatch -> Nothing
 
           void $ listWithKey external $ \nodeId vDyn -> do
             let
@@ -1770,6 +1798,7 @@ nodesTab =
 
             errors <- errorMessages nodeId
             nodeDetails <- watchNodeDetails nodeId
+            tezosVersion <- watchTezosVersion nodeId
             standardNodeTile
               (dynText titleUniq)
               (dynText $ fromMaybe nbsp <$> subtitleUniq)
@@ -1781,6 +1810,7 @@ nodesTab =
               (Just $ (=<<) _nodeDetailsData_peerCount)
               (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat)
               nodeDetails
+              tezosVersion
 
           void $ listWithKey internal $ \nodeId nodeData -> do
             errors <- errorMessages nodeId
@@ -1878,6 +1908,7 @@ nodesTab =
                   (Just $ (=<<) _nodeDetailsData_peerCount . snd)
                   (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat . snd)
                   ((,) <$> nodeData <*> nodeDetails)
+                  (pure Nothing)
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
               nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections
@@ -1963,6 +1994,7 @@ nodesTab =
               Nothing
               Nothing
               vDyn
+              (pure Nothing)
 
     tileHeader
       :: m () -- ^ Title
@@ -1995,8 +2027,9 @@ nodesTab =
             <*> maybe (pure 0) (fmap length) mErrors
       iconDyn $ ("tiny circle " <>) <$> color
 
-    tileBlockStats getBlock node = do
+    tileBlockStats getBlock node version = do
       b <- maybeDyn $ getBlock <$> node
+      v <- maybeDyn version
       divClass "soft-heading" $
         withPlaceholder' "Connecting..." $ withMaybeDyn b display (unRawLevel . view level)
       text "#"
@@ -2012,6 +2045,31 @@ nodesTab =
           el "dt" (text "Baked")
           el "dd" $ do
             withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
+
+        el "div" $ do
+            el "dt" (text "Version")
+            let ppVersion (TezosVersion tv) = case tv of
+                    Left c -> T.take 4 c
+                    Right nv -> T.pack (show (_majorMinorVersion_major (_nodeVersion_version nv)))
+                     <> "."
+                     <> T.pack (show (_majorMinorVersion_minor (_nodeVersion_version nv)))
+
+            el "dd" $ withPlaceholder' "Software version cannot be retrieved." $ do
+
+               let dynTip vv = flip (tooltipped TooltipPos_BottomLeft) (dynText $ ppVersion <$> vv) $ do
+                    el "dl" $ do
+                        el "dt" $ text "Commit Hash"
+                        el "dd" $ do
+                            let commitHash = either id (_commitInfo_commitHash . _nodeVersion_commitInfo) . getTezosVersion <$> vv
+                            dynText commitHash
+                        el "dt" $ text "Version number"
+                        el "dd" $ do
+                            let getMajor = T.pack . show . _majorMinorVersion_major . _nodeVersion_version
+                                getMinor = T.pack . show . _majorMinorVersion_minor . _nodeVersion_version
+                                showV x = getMajor x <> "." <> getMinor x
+                                majorMinor = either (const "Unavailable") showV . getTezosVersion <$> vv
+                            dynText majorMinor
+               withMaybeDyn v dynTip id
 
     tileConnectionStats connected' getPeerCount' getNetworkStats' node =
       if isNothing connected' && isNothing getPeerCount' && isNothing getNetworkStats'
@@ -2056,12 +2114,13 @@ nodesTab =
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
+      -> Dynamic t (Maybe TezosVersion) -- ^ Node version (only available for external nodes)
       -> m ()
-    standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node = do
+    standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node nodeVersion = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
       nodeTileWithSections $
         [ tileHeader title subtitle (Just menuContents) badge errors'
-        , tileBlockStats getBlock node
+        , tileBlockStats getBlock node nodeVersion
         ]
         <> toList (tileConnectionStats connected getPeerCount' getNetworkStats' node)
 

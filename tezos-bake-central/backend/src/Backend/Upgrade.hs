@@ -115,11 +115,11 @@ notifyChainUpgrade namedChain mrelease gitLabProjectId httpMgr db appConfig =
       -- Only send an email when we get a new value, not when we initially
       -- populate the cache.
       when (isJust mLastVersion) $ do
-        let (header, bodyFirstPara) = networkUpdateDescription namedChain
+        let (header, bodyFirstPara) = networkUpdateDescription
         flip runReaderT appConfig $ queueAlert (Just eid) $ Alert Unresolved header $ T.unlines
           -- Need to change this, since the updates don't come on each branch.
           [ bodyFirstPara
-          , "Get the new software here  🡒  " <> "https://gitlab.com/tezos/tezos/tree/" <> showNamedChain namedChain
+          , "Get the new software here  🡒  " <> "https://gitlab.com/tezos/tezos/-/releases"
           ]
 
     reportNodeVersionMismatch version = do
@@ -216,22 +216,28 @@ setUpstreamVersion v = do
 getTezosReleaseCommit :: (MonadIO m) => Http.Manager -> Text -> Maybe Text -> m (Either Text TezosVersion)
 getTezosReleaseCommit httpMgr projectId mrelease = do
   let url = gitlabApiBaseUrl <> "/projects/" <> projectId <> "/releases"
-      getReleaseCommit :: AsValue s => s -> Maybe Text
-      getReleaseCommit = case mrelease of
-        Nothing ->
-            maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> (^? key "commit" . key "id" . _String)
-        Just release ->
-            findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> (^? key "commit" . key "id" . _String)
+      getCommit = (^? key "commit" . key "id" . _String)
   resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $
     Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack url))
   return $ case resp' of
     Left ex -> Left $ T.pack $ show ex
-    Right body -> case getReleaseCommit $ Http.getResponseBody body of
+    Right body -> case getRelease mrelease getCommit $ Http.getResponseBody body of
          Nothing -> let msg = "No commit found"
            in Left $ case mrelease of
                 Nothing -> msg <> " at latest release."
                 Just s -> msg <> " found for this release: " <> s <> "."
          Just commit -> Right $ TezosVersion (Left commit)
+
+
+getReleaseTag :: Value -> Maybe (Int, Int)
+getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
+
+getRelease :: AsValue s => Maybe Text -> (Value -> Maybe c) -> s -> Maybe c
+getRelease mr f = case mr of
+   Nothing ->
+       maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> f
+   Just release ->
+       findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> f
 
 parseMajorMinorVersion :: Text -> Either String (Int,Int)
 parseMajorMinorVersion version = do

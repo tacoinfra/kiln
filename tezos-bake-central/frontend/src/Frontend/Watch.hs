@@ -120,6 +120,17 @@ watchNodeDetails nid = do
     }
   return $ ffor theView $ \v' -> MMap.lookup nid $ getRangeView' (_bakeView_nodeDetails v')
 
+watchTezosVersion :: (MonadAppWidget t m) => Id Node -> m (Dynamic t (Maybe TezosVersion))
+watchTezosVersion nid = do
+  nodeAddrs' <- watchNodeAddresses
+  return $ ffor nodeAddrs' $ \nodeAddrs ->
+    case MMap.lookup nid nodeAddrs of
+        Just ns  -> case _nodeSummary_node ns of
+            Left external -> _nodeExternalData_nodeVersion external
+            Right _internal -> Nothing
+        Nothing -> Nothing
+
+
 watchBakerAddresses :: MonadAppWidget t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
 watchBakerAddresses = do
   theView <- watchViewSelector . pure $ mempty
