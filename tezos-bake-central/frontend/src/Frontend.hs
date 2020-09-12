@@ -2011,7 +2011,7 @@ nodesTab =
             let
               title = dyn_ $ ffor source $ \n -> text $ publicNodeShortName n
 
-              uri = ffor2  source chain $ \s c ->  maybe "" (Uri.render . NEL.head) (c >>= getPublicNodeUri s)
+              uri = ffor2 source chain $ \s c ->  maybe "" (Uri.render . NEL.head) (c >>= getPublicNodeUri s)
 
               publicNodeMenu :: m ()
               publicNodeMenu = do
@@ -2021,15 +2021,15 @@ nodesTab =
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             let versionRequest l = XhrRequest "GET" (l <> "version") def
-                commitRequest l = XhrRequest "GET" (l <> "version") def
+                commitRequest l = XhrRequest "GET" (l <> "monitor/commit_hash") def
 
             ev <- getPostBuild
 
-            vd <- (decodeXhrResponse @TezosVersion) <$$> performRequestAsync (attachPromptlyDynWith (\u _ -> versionRequest u) uri ev)
+            vd <- decodeXhrResponse @TezosVersion <$$> performRequestAsync (attachPromptlyDynWith (\u _ -> versionRequest u) uri ev)
 
             version <- holdDyn Nothing vd
 
-            cd <- (decodeXhrResponse @TezosVersion) <$$> performRequestAsync (attachPromptlyDynWith (\u _ -> commitRequest u) uri ev)
+            cd <- decodeXhrResponse @TezosVersion <$$> performRequestAsync (attachPromptlyDynWith (\u _ -> commitRequest u) uri ev)
 
             commit <- holdDyn Nothing cd
 
