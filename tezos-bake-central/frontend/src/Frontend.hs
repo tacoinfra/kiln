@@ -21,11 +21,13 @@
 
 module Frontend where
 
-import Control.Lens (imap, to, (<>~))
+import Control.Lens (imap, to, (<>~), findOf, maximumByOf)
 import Control.Monad (unless)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
+import qualified Data.Aeson as A
+import Data.Aeson.Lens
 import Data.Constraint.Extras
 import Data.Default
 import qualified Data.Dependent.Map as DMap
@@ -37,11 +39,12 @@ import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
-import Data.Ord (Down (..))
+import Data.Ord (comparing, Down (..))
 import qualified Data.Set as Set
 import Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Text.Read  as T
 import qualified Data.Time as Time
 import Data.Version
 import Data.Word (Word64)
@@ -67,9 +70,10 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Common.NodeRPC.Sources
+import Tezos.Common.Chain
 import Tezos.Types
 
-import Backend.Upgrade (getRelease, getReleaseTag)
+
 
 import Common (humanBytes)
 import Common (unixEpoch, uriHostPortPath)
@@ -256,6 +260,8 @@ appSidebar
   :: ( MonadAppWidget t m
      , MonadAppWidget t (ModalM m)
      , MonadJSM (ModalM m)
+     , MonadJSM (Performable m)
+     , HasJSContext (Performable m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
      , HasFrontendConfig r, MonadReader r m, HasModal t m
@@ -326,7 +332,7 @@ appGutter =
         bakersList
         nodesList
 
-appSideFooter :: (MonadAppWidget t m, RouteConstraints t AppRoute m, MonadReader r m, HasFrontendConfig r) => m ()
+appSideFooter :: (MonadAppWidget t m, HasJSContext (Performable m), MonadJSM (Performable m), RouteConstraints t AppRoute m, MonadReader r m, HasFrontendConfig r) => m ()
 appSideFooter =
   SemUi.segment
     (def
@@ -351,9 +357,53 @@ appSideFooter =
                     elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
                   _ -> pure ()
 
+              ev <- getPostBuild
+
+              projId <- asks (^. frontendConfig . frontendConfig_tezosGitlabProjectId)
+              mrelease <- asks (^. frontendConfig . frontendConfig_tezosRelease)
+
+              let toRequest = XhrRequest "GET" releaseLink def
+                  showMajorMinor (a, b) = T.pack (show a) <> "." <> T.pack (show b)
+                  releaseLink = "https://gitlab.com/api/v4/projects/" <> projId <> "/releases"
+                  gitLink = "https://gitlab.com/tezos/tezos/-/releases"
+
+              versionReq' <-
+                (_xhrResponse_responseText >=> getRelease mrelease getReleaseTag) <$$> performRequestAsync (toRequest <$ ev)
+
+              versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
+
+              dyn_ $ ffor versionReq $ el "div" . maybe (text "The latest tezos version is unavailable.")
+                  (\v -> hrefLink (gitLink <> "/v" <> v) $ el "small" $ text $ "The latest tezos version is " <> v <> ".")
+
+getReleaseTag :: A.Value -> Maybe (Int, Int)
+getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
+
+hush :: Either b a -> Maybe a
+hush = \case
+    Left _ -> Nothing
+    Right r -> Just r
+
+getRelease :: AsValue s => Maybe Text -> (A.Value -> Maybe c) -> s -> Maybe c
+getRelease mr f = case mr of
+   Nothing ->
+       maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> f
+   Just release ->
+       findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> f
+
+parseMajorMinorVersion :: Text -> Either String (Int,Int)
+parseMajorMinorVersion version = do
+  (leadingv, rest1) <- maybe (Left "Can't parse") Right $ T.uncons version
+  guard $ leadingv == 'v'
+  (major, rest2) <- T.decimal @Int rest1
+  (dot, rest3) <- maybe (Left "Missing dot") Right $ T.uncons rest2
+  guard $ dot == '.'
+  (minor, rest4) <- T.decimal @Int rest3
+  guard $ T.null rest4
+  return (major, minor)
+
 appHeader
   :: forall r m t.
-    ( MonadAppWidget t m, MonadJSM (Performable m), HasJSContext (Performable m)
+    ( MonadAppWidget t m, MonadJSM (Performable m)
     , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
     )
   => m (Event t ())
@@ -367,19 +417,6 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
   divClass "topbar" $ do
     divClass "ui horizontal list" $ do
       (latestHead, knownProto) <- watchHeadWithProtocol
-
-      ev <- getPostBuild
-
-      projId <- asks (^. frontendConfig . frontendConfig_tezosGitlabProjectId)
-      mrelease <- asks (^. frontendConfig . frontendConfig_tezosRelease)
-
-      let toRequest = XhrRequest "GET" ("https://gitlab.com/api/v4/projects/" <> projId <> "/releases") def
-          showMajorMinor (a, b) = T.pack (show a) <> "." <> T.pack (show b)
-
-      versionReq' <-
-        (_xhrResponse_responseText >=> getRelease mrelease getReleaseTag) <$$> performRequestAsync (toRequest <$ ev)
-
-      versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
 
       let infoItem faded title body = divClass "item" $
             elDynAttr "div" (bool Map.empty ("class" =: "faded") <$> faded) $ divClass "content" $ do
@@ -401,13 +438,6 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
               & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
               & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
               )
-
-      divClass "item" $ divClass "withRightIcon" $ do
-        divClass "content" $ do
-            divClass "header" $ text "XTZ Version"
-            divClass "description" $ dyn_ . ffor versionReq $ \case
-                Nothing -> text "Unavailable"
-                Just v -> text v
 
       cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
       whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
@@ -503,6 +533,7 @@ appContentArea
     , MonadJSM (ModalM m)
     , MonadJSM (Performable (ModalM m))
     , HasJSContext (Performable (ModalM m))
+    , HasJSContext (Performable m)
     , MonadReader r (ModalM m)
     )
   => m ()
@@ -523,6 +554,8 @@ nodesTabOrWelcome
     , MonadJSM (Performable (ModalM m))
     , HasJSContext (Performable (ModalM m))
     , MonadReader r (ModalM m)
+    , HasJSContext (Performable m)
+    , MonadJSM (Performable m)
     )
   => m ()
 nodesTabOrWelcome = do
@@ -1694,6 +1727,8 @@ nodesTab
     , MonadJSM (Performable (ModalM m))
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadAppWidget  t (ModalM m)
+    , HasJSContext (Performable m)
+    , MonadJSM (Performable m)
     )
   => m ()
 nodesTab =
@@ -1972,9 +2007,11 @@ nodesTab =
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
+            chain <- (either Just identifyChain . getNamedChainOrChainId) <$$> holdUniqDyn (_publicNodeHead_chain <$> vDyn)
             let
               title = dyn_ $ ffor source $ \n -> text $ publicNodeShortName n
 
+              uri = ffor2  source chain $ \s c ->  maybe "" (Uri.render . NEL.head) (c >>= getPublicNodeUri s)
 
               publicNodeMenu :: m ()
               publicNodeMenu = do
@@ -1982,6 +2019,19 @@ nodesTab =
                 dyn_ $ ffor source $ \s -> if s == PublicNode_Archival
                   then osPublicNodeRemoveMessage
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
+
+            let versionRequest l = XhrRequest "GET" (l <> "version") def
+                commitRequest l = XhrRequest "GET" (l <> "version") def
+
+            ev <- getPostBuild
+
+            vd <- (decodeXhrResponse @TezosVersion) <$$> performRequestAsync (attachPromptlyDynWith (\u _ -> versionRequest u) uri ev)
+
+            version <- holdDyn Nothing vd
+
+            cd <- (decodeXhrResponse @TezosVersion) <$$> performRequestAsync (attachPromptlyDynWith (\u _ -> commitRequest u) uri ev)
+
+            commit <- holdDyn Nothing cd
 
             standardNodeTile
               title
@@ -1994,7 +2044,7 @@ nodesTab =
               Nothing
               Nothing
               vDyn
-              (pure Nothing)
+              (liftA2 (<|>) version commit)
 
     tileHeader
       :: m () -- ^ Title
@@ -2047,29 +2097,29 @@ nodesTab =
             withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
 
         el "div" $ do
+            el "dt" (text "Commit")
+            let commitHash = either id (_commitInfo_commitHash . _nodeVersion_commitInfo) . getTezosVersion
+                commitLink = "https://gitlab.com/tezos/tezos/-/commit/"
+                displayLinkText dd = dyn_ $ ffor dd $ \c ->
+                    hrefLink (commitLink <> c) (text $ T.take 8 c)
+
+            el "dd" $ withPlaceholder' "?" $  withMaybeDyn v displayLinkText commitHash
+
+        el "div" $ do
             el "dt" (text "Version")
-            let ppVersion (TezosVersion tv) = case tv of
-                    Left c -> T.take 4 c
-                    Right nv -> T.pack (show (_majorMinorVersion_major (_nodeVersion_version nv)))
-                     <> "."
-                     <> T.pack (show (_majorMinorVersion_minor (_nodeVersion_version nv)))
+            let getMajor = T.pack . show . _majorMinorVersion_major . _nodeVersion_version
+                getMinor = T.pack . show . _majorMinorVersion_minor . _nodeVersion_version
+                showV x = getMajor x <> "." <> getMinor x
+                majorMinor = either (const "?") showV . getTezosVersion
+                gitLink = "https://gitlab.com/tezos/tezos/-/releases"
+                displayLinkText dd = dyn_ $ ffor dd $ \vv ->
+                    {- there's probably a cleaner way to do this, but
+                    this will suffice for now -}
+                    if vv == "?" then text vv else hrefLink (gitLink <> "/v" <> vv) (text vv)
 
-            el "dd" $ withPlaceholder' "Software version cannot be retrieved." $ do
+            el "dd" $
+              withPlaceholder' "?" $ withMaybeDyn v displayLinkText majorMinor
 
-               let dynTip vv = flip (tooltipped TooltipPos_BottomLeft) (dynText $ ppVersion <$> vv) $ do
-                    el "dl" $ do
-                        el "dt" $ text "Commit Hash"
-                        el "dd" $ do
-                            let commitHash = either id (_commitInfo_commitHash . _nodeVersion_commitInfo) . getTezosVersion <$> vv
-                            dynText commitHash
-                        el "dt" $ text "Version number"
-                        el "dd" $ do
-                            let getMajor = T.pack . show . _majorMinorVersion_major . _nodeVersion_version
-                                getMinor = T.pack . show . _majorMinorVersion_minor . _nodeVersion_version
-                                showV x = getMajor x <> "." <> getMinor x
-                                majorMinor = either (const "Unavailable") showV . getTezosVersion <$> vv
-                            dynText majorMinor
-               withMaybeDyn v dynTip id
 
     tileConnectionStats connected' getPeerCount' getNetworkStats' node =
       if isNothing connected' && isNothing getPeerCount' && isNothing getNetworkStats'

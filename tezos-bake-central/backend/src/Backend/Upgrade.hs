@@ -27,7 +27,6 @@ import Data.Pool (Pool)
 import Data.String.Here.Interpolated (i)
 import qualified Data.Text as T
 import qualified Data.Text.Read  as T
-import Data.Text.Encoding
 import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql
@@ -157,18 +156,13 @@ fetchNodeVersions httpMgr db = do
 
   ifor_ extNodes $ \nodeId nodeData -> do
 
-    mTezosVersion'' :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
+    mTezosVersion' :: Either RpcError TezosVersion <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
       nodeRPC $ plainNodeRequest Http.methodGet "/version"
 
-    let mTezosVersion' :: Either RpcError TezosVersion  = do
-        a <- mTezosVersion''
-        let bytes = Bz.fromChunks . pure . encodeUtf8 $ a
-        first (`RpcError_NonJSON` bytes) $ eitherDecode' bytes
-
     mTezosVersion <- if isRight mTezosVersion' then pure mTezosVersion' else do
-        mHash :: Either RpcError Text <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
+        mHash :: Either RpcError TezosVersion <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
             nodeRPC $ plainNodeRequest Http.methodGet "/monitor/commit_hash"
-        pure $ fmap (TezosVersion . Left) mHash
+        pure mHash
 
     case mTezosVersion of
       Left e -> $(logWarn) [i|fetchNodeVersions: could not fetch node version: ${e}|]

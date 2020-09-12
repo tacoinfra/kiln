@@ -351,7 +351,7 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
 -- doing the link.
 networkUpdateDescription :: (Text, Text)
 networkUpdateDescription = (,)
-  ("New Tezos software version.")
+  "New Tezos software version."
   (mconcat
     [ "There is a new version of the "
     , " software available on GitLab. To find further information about this release, check the Tezos Baking Slack channel, the Tezos Riot chat, or other social channels."

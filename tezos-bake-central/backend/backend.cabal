@@ -95,6 +95,7 @@ library
     , snap-loader-static
     , snap-server
     , stm
+    , string-conv
     , svg-builder
     , template-haskell
     , temporary

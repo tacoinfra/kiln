@@ -266,15 +266,18 @@ instance HasId NodeExternal where
   type IdData NodeExternal = Id Node
 
 newtype TezosVersion = TezosVersion { getTezosVersion :: Either Text NodeVersion }
-  deriving (Generic, Ord, Read, Show, Typeable)
+  deriving (Ord, Read, Show, Typeable)
+
+instance Aeson.FromJSON TezosVersion where
+  parseJSON v = TezosVersion <$> (Aeson.withText "TezosNodeVersion" (pure . Left) v <|> fmap Right (Aeson.parseJSON v))
+
+instance Aeson.ToJSON TezosVersion where
+  toJSON = either Aeson.String Aeson.toJSON . getTezosVersion
 
 instance Eq TezosVersion where
   TezosVersion (Left c) == TezosVersion (Right nv) = c == _commitInfo_commitHash (_nodeVersion_commitInfo nv)
   TezosVersion (Right nv) == TezosVersion (Left c) = c == _commitInfo_commitHash (_nodeVersion_commitInfo nv)
   TezosVersion a == TezosVersion b = a == b
-
-instance Aeson.ToJSON TezosVersion
-instance Aeson.FromJSON TezosVersion
 
 data NodeVersion = NodeVersion
      { _nodeVersion_version :: !MajorMinorVersion

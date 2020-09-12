@@ -46,6 +46,7 @@ library
     , IntervalMap
     , jsaddle
     , lens
+    , lens-aeson
     , modern-uri
     , monoidal-containers
     , mtl

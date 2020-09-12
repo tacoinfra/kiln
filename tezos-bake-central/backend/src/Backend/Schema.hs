@@ -56,6 +56,7 @@ import Data.Int (Int64)
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
 import Data.Some (Some(..))
+import Data.String.Conv
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
@@ -455,10 +456,10 @@ instance ToField ProcessControl where
   toField v = toField (show v)
 
 instance ToField TezosVersion where
-  toField = toField @Text . T.decodeUtf8 . B.concat . LBS.toChunks . Aeson.encode
+  toField = toField @Text . toS . Aeson.encode
 
 instance FromField TezosVersion where
-  fromField f = fromField f >=> either (conversionError . userError) pure . Aeson.eitherDecode' @TezosVersion . LBS.fromChunks . pure . T.encodeUtf8
+  fromField f = fromField @Text f >=> either (conversionError . userError) pure . Aeson.eitherDecode' @TezosVersion . toS
 
 instance FromField VotingPeriodKind where
   fromField f = maybe (fail "Invalid value for VotingPeriodKind") pure . readMaybe <=< fromField f
