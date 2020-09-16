@@ -28,6 +28,7 @@ import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
 import qualified Data.Aeson as A
 import Data.Aeson.Lens
+import Data.Bool (bool)
 import Data.Constraint.Extras
 import Data.Default
 import qualified Data.Dependent.Map as DMap
@@ -89,7 +90,7 @@ import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
                       frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable
-                      , frontendConfig_tezosGitlabProjectId, frontendConfig_tezosRelease)
+                      , frontendConfig_tezosGitlabProjectId, frontendConfig_tezosRelease, frontendConfig_kilnNodeRpcPort)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -1834,6 +1835,7 @@ nodesTab =
             errors <- errorMessages nodeId
             nodeDetails <- watchNodeDetails nodeId
             tezosVersion <- watchTezosVersion nodeId
+
             standardNodeTile
               (dynText titleUniq)
               (dynText $ fromMaybe nbsp <$> subtitleUniq)
@@ -1928,7 +1930,27 @@ nodesTab =
 
               workingTile :: m ()
               workingTile = do
+
+                rpcPort <- T.pack . show <$> asks (^. frontendConfig . frontendConfig_kilnNodeRpcPort)
+
+                -- TODO: This could be a configurable setting if kiln
+                -- users would like.
+                let internalUri = "http://127.0.0.1"
+                    versionRequest = XhrRequest "GET" (internalUri <> ":" <> rpcPort <> "/" <> "version") def
+                    commitRequest = XhrRequest "GET" (internalUri <>  ":" <> rpcPort <> "/" <> "monitor/commit_hash") def
+
+                ev <- getPostBuild
+
+                vd <- decodeXhrResponse @TezosVersion <$$> performRequestAsync (versionRequest <$ ev)
+
+                cd <- decodeXhrResponse @TezosVersion <$$> performRequestAsync (commitRequest <$ ev)
+
+                version <- holdDyn Nothing vd
+
                 nodeDetails <- watchNodeDetails nodeId
+
+                commit <- holdDyn Nothing cd
+
                 standardNodeTile @(ProcessData, Maybe NodeDetailsData)
                   title
                   subtitle
@@ -1943,7 +1965,7 @@ nodesTab =
                   (Just $ (=<<) _nodeDetailsData_peerCount . snd)
                   (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat . snd)
                   ((,) <$> nodeData <*> nodeDetails)
-                  (pure Nothing)
+                  (liftA2 (<|>) version commit)
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
               nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections
@@ -2020,8 +2042,9 @@ nodesTab =
                   then osPublicNodeRemoveMessage
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
-            let versionRequest l = XhrRequest "GET" (l <> "version") def
-                commitRequest l = XhrRequest "GET" (l <> "monitor/commit_hash") def
+            let dropSlash = T.dropWhileEnd (== '/')
+                versionRequest l = XhrRequest "GET" (dropSlash l <> "/version") def
+                commitRequest l = XhrRequest "GET" (dropSlash l <> "/monitor/commit_hash") def
 
             ev <- getPostBuild
 

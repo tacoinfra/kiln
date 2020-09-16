@@ -385,13 +385,19 @@ backendImpl cfg serve = do
       minLevel :: RawLevel
       minLevel = 2
 
+      -- changeRPCConf conf = conf
+            -- { _nodeConfigRPC_corsHeaders =
+
+            -- }
+
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
         , _appConfig_kilnNodeNetPort = kilnNodeNetPort
         , _appConfig_kilnDataDir = kilnDataDir
         , _appConfig_kilnNodeConfig =
-          defaultNodeConfigFile { _nodeConfigFile_network = networkName }
+          defaultNodeConfigFile {_nodeConfigFile_network = networkName}
+
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
         , _appConfig_binaryPaths = binaryPaths
@@ -433,6 +439,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
           , Config._frontendConfig_tezosRelease = tezosReleaseTag
+          , Config._frontendConfig_kilnNodeRpcPort = kilnNodeRpcPort
           }
 
       -- migrate old kiln storage

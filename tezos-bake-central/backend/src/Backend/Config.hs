@@ -74,8 +74,9 @@ defaultNodeConfigFile = NodeConfigFile
   , _nodeConfigFile_dataDir = Just "tezos-node"
   , _nodeConfigFile_rpc = Just NodeConfigRPC
     { _nodeConfigRPC_listenAddr = Just "127.0.0.1"
-    , _nodeConfigRPC_corsOrigin = Nothing
-    , _nodeConfigRPC_corsHeaders = Nothing
+    , _nodeConfigRPC_corsOrigin = Just ["*"]
+    , _nodeConfigRPC_corsHeaders = Just ["Access-Control-Allow-Methods: GET"]
+    -- Nothing
     , _nodeConfigRPC_crt = Nothing
     , _nodeConfigRPC_key = Nothing
     }

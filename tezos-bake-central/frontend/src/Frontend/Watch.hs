@@ -130,7 +130,6 @@ watchTezosVersion nid = do
             Right _internal -> Nothing
         Nothing -> Nothing
 
-
 watchBakerAddresses :: MonadAppWidget t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
 watchBakerAddresses = do
   theView <- watchViewSelector . pure $ mempty

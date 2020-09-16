@@ -43,7 +43,7 @@ import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
-import qualified Network.HTTP.Types.Method as Http (methodGet)
+-- import qualified Network.HTTP.Types.Method as Http (methodGet)
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
@@ -293,8 +293,8 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
     theseNodeRecords <- getNodes db CondEmpty
 
     -- give them all a chance to
-    ifor_ theseNodeRecords $ \nodeId (Node, node, nodeDetails) ->
-      updateNetworkStats appConfig httpMgr db nodeId node nodeDetails >>= \case
+    ifor_ theseNodeRecords $ \nodeId (Node, node, nodeDetails) -> updateNetworkStats appConfig httpMgr db nodeId node nodeDetails
+      {- >>= \case
         Left _e -> do
             -- Touching headBlock frequently may get us rate limited,
             -- commitHash may be less controversial
@@ -304,6 +304,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
             unless (isRight eCommitHash) (inDb $ reportInaccessibleNodeError nodeId)
         Right () -> pure () -- We'll rely on the block monitor to clear this error
+        -}
 
     let theseNodes = Map.fromList $ fmap (\(id_, (_, nE, _)) -> (nodeData_address appConfig nE, (id_, nodeData_alias nE))) $ Map.toList theseNodeRecords
 
