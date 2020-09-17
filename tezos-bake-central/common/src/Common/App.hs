@@ -279,6 +279,8 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (ComposeSelector (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
+  , _bakeViewSelector_nodeVersions :: !(RangeSelector' (Id Node) (Maybe TezosVersion) a)
+  , _bakeViewSelector_publicVersions :: !(RangeSelector' PublicNode (Maybe TezosVersion) a)
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
   , _bakeViewSelector_parameters :: !(MapSelector ProtocolHash ProtocolIndex a)
   , _bakeViewSelector_latestHead :: !(MaybeSelector (WithProtocolHash VeryBlockLike) a)
@@ -323,6 +325,8 @@ data BakeView a = BakeView
   , _bakeView_errors :: !(MonoidalMap AlertsFilter (ComposeView (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
+  , _bakeView_nodeVersions :: !(RangeView' (Id Node) (Maybe TezosVersion) a)
+  , _bakeView_publicVersions :: !(RangeView' PublicNode (Maybe TezosVersion) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
   , _bakeView_parameters :: !(Common.Vassal.View (MapSelector ProtocolHash ProtocolIndex) a)
   , _bakeView_latestHead :: !(MaybeView (WithProtocolHash VeryBlockLike) a)
@@ -375,7 +379,6 @@ nodeIdForNodeErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
   NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_node
   NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_node
   NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_node
-  NodeLogTag_VersionMismatch -> _errorLogNodeVersionMismatch_node
 
 bakerErrorViewOnly :: ErrorLogView -> Maybe BakerErrorLogView
 bakerErrorViewOnly = \case
@@ -411,7 +414,6 @@ errorLogIdForNodeLogTag = \case
   NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_log
   NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_log
   NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_log
-  NodeLogTag_VersionMismatch -> _errorLogNodeVersionMismatch_log
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog
 errorLogIdForErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
@@ -436,6 +438,8 @@ cropBakeView vs v = BakeView
   { _bakeView_config = cropView (_bakeViewSelector_config vs) (_bakeView_config v)
   , _bakeView_parameters = cropView (_bakeViewSelector_parameters vs) (_bakeView_parameters v)
   , _bakeView_nodeAddresses = cropView (_bakeViewSelector_nodeAddresses vs) (_bakeView_nodeAddresses v)
+  , _bakeView_nodeVersions = cropView (_bakeViewSelector_nodeVersions vs) (_bakeView_nodeVersions v)
+  , _bakeView_publicVersions = cropView (_bakeViewSelector_publicVersions vs) (_bakeView_publicVersions v)
   , _bakeView_publicNodeConfig = cropView (_bakeViewSelector_publicNodeConfig vs) (_bakeView_publicNodeConfig v)
   , _bakeView_publicNodeHeads = cropView (_bakeViewSelector_publicNodeHeads vs) (_bakeView_publicNodeHeads v)
   , _bakeView_nodeDetails = cropView (_bakeViewSelector_nodeDetails vs) (_bakeView_nodeDetails v)
@@ -478,6 +482,8 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_bakerStats = mapMaybe f $ _bakeViewSelector_bakerStats a
     , _bakeViewSelector_mailServer = mapMaybe f $ _bakeViewSelector_mailServer a
     , _bakeViewSelector_nodeAddresses = mapMaybe f $ _bakeViewSelector_nodeAddresses a
+    , _bakeViewSelector_nodeVersions = mapMaybe f $ _bakeViewSelector_nodeVersions a
+    , _bakeViewSelector_publicVersions = mapMaybe f $ _bakeViewSelector_publicVersions a
     , _bakeViewSelector_errors = (fmap.mapMaybe) f $ _bakeViewSelector_errors a
     , _bakeViewSelector_latestHead = mapMaybe f $ _bakeViewSelector_latestHead a
     , _bakeViewSelector_amendment = mapMaybe f $ _bakeViewSelector_amendment a
@@ -512,6 +518,8 @@ instance Filterable BakeView where
     , _bakeView_bakerStats = mapMaybe f $ _bakeView_bakerStats a
     , _bakeView_mailServer = mapMaybe f $ _bakeView_mailServer a
     , _bakeView_nodeAddresses = mapMaybe f $ _bakeView_nodeAddresses a
+    , _bakeView_nodeVersions = mapMaybe f $ _bakeView_nodeVersions a
+    , _bakeView_publicVersions = mapMaybe f $ _bakeView_publicVersions a
     , _bakeView_errors = (fmap.mapMaybe) f $ _bakeView_errors a
     , _bakeView_latestHead = mapMaybe f $ _bakeView_latestHead a
     , _bakeView_amendment = mapMaybe f $ _bakeView_amendment a
@@ -551,6 +559,8 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_bakerStats = (<>) (_bakeViewSelector_bakerStats u) (_bakeViewSelector_bakerStats v)
     , _bakeViewSelector_mailServer = (<>) (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = (<>) (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
+    , _bakeViewSelector_nodeVersions = (<>) (_bakeViewSelector_nodeVersions u) (_bakeViewSelector_nodeVersions v)
+    , _bakeViewSelector_publicVersions = (<>) (_bakeViewSelector_publicVersions u) (_bakeViewSelector_publicVersions v)
     , _bakeViewSelector_errors = (<>) (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
     , _bakeViewSelector_latestHead = (<>) (_bakeViewSelector_latestHead u) (_bakeViewSelector_latestHead v)
     , _bakeViewSelector_amendment = (<>) (_bakeViewSelector_amendment u) (_bakeViewSelector_amendment v)
@@ -585,6 +595,8 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_bakerStats = Compose mempty
     , _bakeViewSelector_mailServer = mempty
     , _bakeViewSelector_nodeAddresses = mempty
+    , _bakeViewSelector_nodeVersions = mempty
+    , _bakeViewSelector_publicVersions = mempty
     , _bakeViewSelector_errors = mempty
     , _bakeViewSelector_latestHead = mempty
     , _bakeViewSelector_amendment = mempty
@@ -625,6 +637,8 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     -- , _bakeView_graphs = mempty
     -- , _bakeView_summaryGraph = mempty
     , _bakeView_nodeAddresses = mempty
+    , _bakeView_nodeVersions = mempty
+    , _bakeView_publicVersions = mempty
     , _bakeView_errors = mempty
     , _bakeView_latestHead = mempty
     , _bakeView_amendment = mempty
@@ -661,6 +675,8 @@ instance Semigroup a => Semigroup (BakeView a) where
     -- , _bakeView_summaryGraph = _bakeView_summaryGraph u <> _bakeView_summaryGraph v
     -- , _bakeView_graphs = _bakeView_graphs u <> _bakeView_graphs v
     , _bakeView_nodeAddresses = _bakeView_nodeAddresses u <> _bakeView_nodeAddresses v
+    , _bakeView_nodeVersions = _bakeView_nodeVersions u <> _bakeView_nodeVersions v
+    , _bakeView_publicVersions = _bakeView_publicVersions u <> _bakeView_publicVersions v
     , _bakeView_errors = _bakeView_errors u <> _bakeView_errors v
     , _bakeView_latestHead = _bakeView_latestHead u <> _bakeView_latestHead v
     , _bakeView_amendment = _bakeView_amendment u <> _bakeView_amendment v

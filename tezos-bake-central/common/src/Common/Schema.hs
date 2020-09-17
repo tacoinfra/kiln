@@ -355,7 +355,6 @@ data NodeExternalData = NodeExternalData
   { _nodeExternalData_address :: !URI
   , _nodeExternalData_alias :: !(Maybe Text)
   , _nodeExternalData_minPeerConnections :: !(Maybe Int)
-  , _nodeExternalData_nodeVersion :: !(Maybe TezosVersion)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeExternalData where
@@ -772,15 +771,6 @@ data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
 instance HasId ErrorLogInaccessibleNode where
   type IdData ErrorLogInaccessibleNode = Id ErrorLog
 
-data ErrorLogNodeVersionMismatch = ErrorLogNodeVersionMismatch
-  { _errorLogNodeVersionMismatch_log :: !(Id ErrorLog)
-  , _errorLogNodeVersionMismatch_node :: !(Id Node)
-  , _errorLogNodeVersionMismatch_latestVersion :: !TezosVersion
-  , _errorLogNodeVersionMismatch_nodeVersion :: !TezosVersion
-  } deriving (Eq, Ord, Generic, Typeable, Show)
-instance HasId ErrorLogNodeVersionMismatch where
-  type IdData ErrorLogNodeVersionMismatch = Id ErrorLog
-
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
   { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
   , _errorLogNodeWrongChain_node :: !(Id Node)
@@ -1006,7 +996,6 @@ data NodeLogTag a where
   NodeLogTag_NodeWrongChain :: NodeLogTag ErrorLogNodeWrongChain
   NodeLogTag_NodeInvalidPeerCount :: NodeLogTag ErrorLogNodeInvalidPeerCount
   NodeLogTag_BadNodeHead :: NodeLogTag ErrorLogBadNodeHead
-  NodeLogTag_VersionMismatch :: NodeLogTag ErrorLogNodeVersionMismatch
 
 deriving instance Eq (NodeLogTag a)
 deriving instance Ord (NodeLogTag a)
@@ -1062,7 +1051,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
-  , ''ErrorLogNodeVersionMismatch
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
   , ''InternalNodeFailureReason
@@ -1175,7 +1163,6 @@ instance UniverseSome NodeLogTag where
     , Some NodeLogTag_NodeWrongChain
     , Some NodeLogTag_NodeInvalidPeerCount
     , Some NodeLogTag_BadNodeHead
-    , Some NodeLogTag_VersionMismatch
     ]
 
 instance UniverseSome BakerLogTag where
@@ -1234,7 +1221,6 @@ errorLogNames =
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInvalidPeerCount
-  , ''ErrorLogNodeVersionMismatch
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
   ]

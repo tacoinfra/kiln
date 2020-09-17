@@ -17,14 +17,12 @@ import Control.Exception.Safe (try)
 import Control.Lens (findOf, maximumByOf)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (MonadLogger, logError, logInfo, logWarn)
+import Control.Monad.Logger (MonadLogger, logError, logInfo)
 import Data.Aeson
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
-import qualified Data.Map as Map
 import Data.Ord
 import Data.Pool (Pool)
-import Data.String.Here.Interpolated (i)
 import qualified Data.Text as T
 import qualified Data.Text.Read  as T
 import Data.Time (NominalDiffTime, UTCTime)
@@ -34,12 +32,10 @@ import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
-import qualified Network.HTTP.Types.Method as Http (methodGet)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
-import qualified Text.URI as Uri
 
 import Backend.Alerts
 import Backend.Alerts.Common
@@ -51,7 +47,6 @@ import Common.Schema
 import Common.Alerts
 import ExtraPrelude
 import Tezos.Types
-import Tezos.NodeRPC
 
 upgradeCheckWorker
   :: MonadIO m
@@ -68,7 +63,6 @@ upgradeCheckWorker chain mrelease gitLabProjectId delay logger httpMgr db appCon
   liftIO $ runLoggingEnv logger $ runDb (Identity db) $ clearUnrelatedNetworkUpdateError chain
   workerWithDelay "upgradeCheckWorker" (pure delay) $ const $ runLoggingEnv logger $ do
     $(logInfo) "Checking for newer version"
-    fetchNodeVersions httpMgr db
     notifyChainUpgrade chain mrelease gitLabProjectId httpMgr db appConfig
     void $ updateUpstreamVersion httpMgr (runDb (Identity db))
 
@@ -89,7 +83,6 @@ notifyChainUpgrade namedChain mrelease gitLabProjectId httpMgr db appConfig =
       -- Although we are reporting ErrorLogNetworkUpdate, it is currently not used in frontend
       -- the only effect it has is to send an email
       when (preview (_Just . _3) mLastVersion /= Just version) $ reportNew mLastVersion version
-      flip runReaderT appConfig $ reportNodeVersionMismatch version
   where
     reportNew mLastVersion version = do
       now <- getTime
@@ -121,17 +114,6 @@ notifyChainUpgrade namedChain mrelease gitLabProjectId httpMgr db appConfig =
           , "Get the new software here  🡒  " <> "https://gitlab.com/tezos/tezos/-/releases"
           ]
 
-    reportNodeVersionMismatch version = do
-      dontMatch <- project (NodeExternal_idField, NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector)
-        (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False
-        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector /=. Just version
-        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector /=. (Nothing :: Maybe TezosVersion))
-      match <- project NodeExternal_idField
-        (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False
-        &&. NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector ==. Just version)
-      for_ dontMatch $ \(nodeId, mNodeHash) -> for_ mNodeHash (reportNodeVersionMismatchError nodeId version)
-      for_ match clearNodeVersionMismatchError
-
 getLatestNamedChainUpgradeLog :: (PersistBackend m, PostgresRaw m) => NamedChain -> m (Maybe (Id ErrorLog, Maybe UTCTime, TezosVersion))
 getLatestNamedChainUpgradeLog namedChain =
   listToMaybe <$> [queryQ|
@@ -143,32 +125,6 @@ getLatestNamedChainUpgradeLog namedChain =
     ORDER BY el.started DESC
     LIMIT 1
     |]
-
-fetchNodeVersions
-  :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
-  => Http.Manager
-  -> Pool Postgresql
-  -> m ()
-fetchNodeVersions httpMgr db = do
-  extNodes <- runDb (Identity db) $ Map.fromList <$> project
-    (NodeExternal_idField, NodeExternal_dataField ~> DeletableRow_dataSelector)
-    (NodeExternal_dataField ~> DeletableRow_deletedSelector ==. False)
-
-  ifor_ extNodes $ \nodeId nodeData -> do
-
-    mTezosVersion' :: Either RpcError TezosVersion <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
-      nodeRPC $ plainNodeRequest Http.methodGet "/version"
-
-    mTezosVersion <- if isRight mTezosVersion' then pure mTezosVersion' else do
-        mHash :: Either RpcError TezosVersion <- runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData ^. nodeExternalData_address)) $ do
-            nodeRPC $ plainNodeRequest Http.methodGet "/monitor/commit_hash"
-        pure mHash
-
-    case mTezosVersion of
-      Left e -> $(logWarn) [i|fetchNodeVersions: could not fetch node version: ${e}|]
-      Right tv -> runDb (Identity db) $ update
-        [NodeExternal_dataField ~> DeletableRow_dataSelector ~> NodeExternalData_nodeVersionSelector =. Just tv]
-        (NodeExternal_idField `in_` [nodeId])
 
 updateUpstreamVersion
   :: (MonadIO m, PersistBackend db)

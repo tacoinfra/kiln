@@ -22,7 +22,6 @@ import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
 import Safe
 import Tezos.Types (ChainId)
 
-import Common.Schema (ErrorLog, Node, Id, TezosVersion(..))
 import ExtraPrelude
 
 type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger m, MonadIO m)
@@ -57,7 +56,6 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "alias"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogMultipleBakersForSameBaker") "id"
-  >=> migrateErrorLogNetworkUpdateCommitHash
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNetworkUpdate") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeInvalidPeerCount") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "id"
@@ -91,130 +89,6 @@ preMigrate chainId =
   >=> deleteObsidianPublicNodeHeads
   >=> deleteTzScanPublicNodeConfigs
   >=> deleteTzScanPublicNodeHeads
-  >=> migrateNodeExternalDataCommitHash
-  >=> migrateErrorLogNodeVersionMismatchLatestHash
-  >=> migrateErrorLogNodeVersionMismatchNodeHash
-
-migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
-migrateErrorLogNetworkUpdateCommitHash ta = do
-  let table = QualifiedIdentifier Nothing "ErrorLogNetworkUpdate"
-  analyzedTable' <- analyzeTable ta (convQN table)
-  let hasCommit = any ((== "commit") . colName)  . tableColumns
-      hasVersion = any ((== "version") . colName) . tableColumns
-  case analyzedTable' of
-    Nothing -> pure ta
-    Just analyzedTable -> case hasCommit analyzedTable && not (hasVersion analyzedTable) of
-        False -> pure ta
-        True -> do
-            void [traceExecuteQ|ALTER TABLE "ErrorLogNetworkUpdate" ADD COLUMN "version" VARCHAR;|]
-
-            (idsHashes :: [(Id ErrorLog, Text)]) <-
-                [queryQ|SELECT "log", "commit" FROM "ErrorLogNetworkUpdate";|]
-
-            let idsVersions = fmap (fmap (TezosVersion . Left)) idsHashes
-
-            for_ idsVersions $ \(logg, version) -> do
-                [traceExecuteQ|
-                    UPDATE "ErrorLogNetworkUpdate"
-                    SET "version" = ?version
-                    WHERE "log" = ?logg;
-                |]
-
-            void [traceExecuteQ|ALTER TABLE "ErrorLogNetworkUpdate" DROP COLUMN "commit";|]
-            void [traceExecuteQ|ALTER TABLE "ErrorLogNetworkUpdate" ALTER COLUMN "version" SET NOT NULL;|]
-            getTableAnalysis
-
-migrateErrorLogNodeVersionMismatchNodeHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
-migrateErrorLogNodeVersionMismatchNodeHash ta = do
-  let table = QualifiedIdentifier Nothing "ErrorLogNodeVersionMismatch"
-  analyzedTable' <- analyzeTable ta (convQN table)
-  let hasNodeHash = any ((== "nodeHash") . colName) . tableColumns
-      hasNodeVersion = any ((== "nodeVersion") . colName) . tableColumns
-      okCond t = hasNodeHash t && not (hasNodeVersion t)
-  case analyzedTable' of
-    Nothing -> pure ta
-    Just analyzedTable -> case okCond analyzedTable of
-        False -> pure ta
-        True -> do
-            void [traceExecuteQ|ALTER TABLE "ErrorLogNodeVersionMismatch" ADD COLUMN "nodeVersion" VARCHAR;|]
-
-            (idsHashes :: [(Id ErrorLog, Text)]) <-
-                [queryQ|SELECT "log", "nodeHash" FROM "ErrorLogNodeVersionMismatch";|]
-
-            let idsVersions = fmap (fmap (TezosVersion . Left)) idsHashes
-
-            for_ idsVersions $ \(logg, nodeVersion) -> do
-                [traceExecuteQ|
-                    UPDATE "ErrorLogNodeVersionMismatch"
-                    SET "nodeVersion" = ?nodeVersion
-                    WHERE "log" = ?logg;
-                |]
-
-            void [traceExecuteQ|ALTER TABLE "ErrorLogNodeVersionMismatch" DROP COLUMN "nodeHash";|]
-            void [traceExecuteQ|ALTER TABLE "ErrorLogNodeVersionMismatch" ALTER COLUMN "nodeVersion" SET NOT NULL;|]
-            getTableAnalysis
-
-migrateErrorLogNodeVersionMismatchLatestHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
-migrateErrorLogNodeVersionMismatchLatestHash ta = do
-  let table = QualifiedIdentifier Nothing "ErrorLogNodeVersionMismatch"
-  analyzedTable' <- analyzeTable ta (convQN table)
-  let hasLatestHash = any ((== "latestHash") . colName)  . tableColumns
-      hasLatestVersion = any ((== "latestVersion") . colName) . tableColumns
-      okCond t =
-        hasLatestHash t && not (hasLatestVersion t)
-  case analyzedTable' of
-    Nothing -> pure ta
-    Just analyzedTable -> case okCond analyzedTable of
-        False -> pure ta
-        True -> do
-            void [traceExecuteQ|ALTER TABLE "ErrorLogNodeVersionMismatch" ADD COLUMN "latestVersion" VARCHAR;|]
-
-            (idsHashes :: [(Id ErrorLog, Text)]) <-
-                [queryQ|SELECT "log", "latestHash" FROM "ErrorLogNodeVersionMismatch";|]
-
-            let idsVersions = fmap (fmap (TezosVersion . Left)) idsHashes
-
-            for_ idsVersions $ \(logg, latestVersion) -> do
-                [traceExecuteQ|
-                    UPDATE "ErrorLogNodeVersionMismatch"
-                    SET "latestVersion" = ?latestVersion
-                    WHERE "log" = ?logg;
-                |]
-
-            void
-                [traceExecuteQ|ALTER TABLE "ErrorLogNodeVersionMismatch" DROP COLUMN "latestHash";|]
-            void
-                [traceExecuteQ|ALTER TABLE "ErrorLogNodeVersionMismatch" ALTER COLUMN "latestVersion" SET NOT NULL;|]
-            getTableAnalysis
-
-migrateNodeExternalDataCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
-migrateNodeExternalDataCommitHash ta = do
-  let table = QualifiedIdentifier Nothing "NodeExternal"
-  analyzedTable' <- analyzeTable ta (convQN table)
-  let hasCommitHash = any ((== "data#data#commitHash") . colName) . tableColumns
-      hasNodeVersion = any ((== "data#data#nodeVersion") . colName) . tableColumns
-  case analyzedTable' of
-    Nothing -> pure ta
-    Just analyzedTable -> case hasCommitHash analyzedTable && not (hasNodeVersion analyzedTable) of
-        False -> pure ta
-        True -> do
-
-            void [traceExecuteQ|ALTER TABLE "NodeExternal" ADD COLUMN "data#data#nodeVersion" VARCHAR;|]
-
-            (idsHashes :: [(Id Node, Maybe Text)]) <-
-                [queryQ|SELECT "id", "data#data#commitHash" FROM "NodeExternal";|]
-
-            let idsVersions = fmap (fmap (fmap (TezosVersion . Left))) idsHashes
-
-            for_ idsVersions $ \(nodeId, version) -> do
-                [traceExecuteQ|
-                    UPDATE "NodeExternal"
-                    SET "data#data#nodeVersion" = ?version
-                    WHERE "id" = ?nodeId;
-                |]
-
-            void [traceExecuteQ|ALTER TABLE "NodeExternal" DROP COLUMN "data#data#commitHash";|]
-            getTableAnalysis
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do

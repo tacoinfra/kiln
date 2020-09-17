@@ -122,13 +122,17 @@ watchNodeDetails nid = do
 
 watchTezosVersion :: (MonadAppWidget t m) => Id Node -> m (Dynamic t (Maybe TezosVersion))
 watchTezosVersion nid = do
-  nodeAddrs' <- watchNodeAddresses
-  return $ ffor nodeAddrs' $ \nodeAddrs ->
-    case MMap.lookup nid nodeAddrs of
-        Just ns  -> case _nodeSummary_node ns of
-            Left external -> _nodeExternalData_nodeVersion external
-            Right _internal -> Nothing
-        Nothing -> Nothing
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_nodeVersions = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' -> join . MMap.lookup nid $ getRangeView' (_bakeView_nodeVersions v')
+
+watchPublicVersion :: (MonadAppWidget t m) => Dynamic t PublicNode -> m (Dynamic t (Maybe TezosVersion))
+watchPublicVersion dpn = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_publicVersions = viewRangeAll 1
+    }
+  return $ ffor2 theView dpn $ \v' pn -> join . MMap.lookup pn $ getRangeView' (_bakeView_publicVersions v')
 
 watchBakerAddresses :: MonadAppWidget t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
 watchBakerAddresses = do
@@ -253,9 +257,7 @@ watchCollectiveNodesStatus alertWindow = do
                      . nodeSummaryStateIfInternal)
         <$> dNodes
   let nodeTags = DMap.fromList $ map (\(Some t) -> LogTag_Node t :=> Const ()) $ universe \\
-                   [ Some NodeLogTag_NodeInvalidPeerCount
-                   , Some NodeLogTag_VersionMismatch
-                   ]
+                   [Some NodeLogTag_NodeInvalidPeerCount]
   dXs <- watchErrorsByTag (pure $ Just AlertsFilter_UnresolvedOnly) (constDyn nodeTags) alertWindow
   let ebn :: (Dynamic t (MonoidalMap (Id Node) (NonEmpty ErrorLog)))
       ebn = ffor dXs $ \xs -> MMap.fromListWith (<>)

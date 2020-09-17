@@ -11,6 +11,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wall -Werror -Wno-redundant-constraints #-}
 
@@ -19,12 +20,14 @@ module Backend.ViewSelectorHandler where
 import Control.Concurrent.STM (atomically)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger
-import Control.Exception.Safe (MonadMask)
+import Control.Exception.Safe (try, MonadMask)
 import Control.Monad.Trans.State (StateT(..))
 import Control.Monad.Trans.State (evalStateT)
 import Control.Monad.Trans.State (modify)
+import Data.Aeson (decode')
 import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
+import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Functor.Identity (Identity (..))
@@ -32,7 +35,7 @@ import Data.Functor.Apply (liftF2)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Dependent.Sum (DSum(..))
-import Data.List (intersperse, minimumBy, maximumBy, foldl')
+import Data.List (dropWhileEnd, intersperse, minimumBy, maximumBy, foldl')
 import qualified Data.List.NonEmpty as NEL
 import Data.Maybe (mapMaybe)
 import qualified Data.Map as Map
@@ -71,6 +74,8 @@ import Database.Groundhog.Generic.Sql (tableName)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import qualified Database.PostgreSQL.Simple as Pg
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
@@ -79,8 +84,10 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Safe (maximumMay)
 import Safe (minimumByMay)
+import Text.URI (render, URI)
 
 import Tezos.Types
+import Tezos.Common.NodeRPC.Sources (PublicNode(..), getPublicNodeUri)
 
 import Backend.CachedNodeRPC
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)
@@ -89,13 +96,13 @@ import Common.Alerts(AlertsFilter(..))
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import qualified Common.AppendIntervalMap as AppendIMap
-import Common.Config (FrontendConfig)
+import Common.Config (FrontendConfig(..))
 import Common.Schema
 import Common.Vassal
 import ExtraPrelude
 
 viewSelectorHandler
-  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m)
+  :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m, Show a)
   => FrontendConfig
   -> Maybe NamedChain
   -> NodeDataSource
@@ -320,12 +327,28 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
           )
     pure rangeView
 
+  let nodeVersionsVS = _bakeViewSelector_nodeVersions vs
+      internalURI = _nodeDataSource_kilnNodeUri nds
+      mgr = _nodeDataSource_httpMgr nds
+
+  nodeVersions <- toRangeView nodeVersionsVS <$> getNodeVersions mgr internalURI Nothing
+
+  let toChain = either Just identifyChain . getNamedChainOrChainId
+      publicVersionsVS = _bakeViewSelector_publicVersions vs
+      publicUri s c = (s, maybe "" (render . NEL.head) (c >>= getPublicNodeUri s))
+
+  xs :: [(PublicNode, Text)] <- fmap (liftA2 publicUri _publicNodeHead_source (toChain . _publicNodeHead_chain) ) <$> select CondEmpty
+
+  publicVersions <- toRangeView publicVersionsVS <$> getPublicVersions mgr xs
+
   return BakeView
     { _bakeView_config = config
     , _bakeView_parameters = parameters
     , _bakeView_publicNodeConfig = publicNodeConfig
     , _bakeView_publicNodeHeads = publicNodeHeads
     , _bakeView_nodeAddresses = nodeAddresses
+    , _bakeView_nodeVersions = nodeVersions
+    , _bakeView_publicVersions = publicVersions
     , _bakeView_nodeDetails = nodeDetails
     , _bakeView_bakerAddresses = bakerAddresses
     , _bakeView_bakerAlerts = bakerAlerts
@@ -736,22 +759,62 @@ getBakerAddresses nds bid = do
 
   return result
 
+getNodeVersions
+  :: forall m. (Monad m, MonadIO m, PostgresRaw m, MonadLogger m, PersistBackend m)
+  => Http.Manager
+  -> URI
+  -> Maybe (Id Node)
+  -> m [(WithInfinity (Id Node), Maybe TezosVersion)]
+getNodeVersions httpMgr internalUri = getNodeAddresses >=> (mapM . mapM) retrieveVersion
+  where
+    retrieveVersion :: Deletable NodeSummary -> m (Maybe TezosVersion)
+    retrieveVersion dn = case getFirst dn of
+       Nothing -> pure Nothing
+       Just ns -> case _nodeSummary_node ns of
+        Right _internal -> versionWorker httpMgr $ T.unpack $ render internalUri
+        Left (_nodeExternalData_address -> extUri) -> versionWorker httpMgr (T.unpack $ render extUri)
+
+getPublicVersions :: MonadIO m => Http.Manager -> [(PublicNode, Text)] -> m [(WithInfinity PublicNode, Maybe TezosVersion)]
+getPublicVersions httpMgr = mapM go
+  where
+    go (p,uri) = (Bounded p,) <$> versionWorker httpMgr (T.unpack uri)
+
+versionWorker :: MonadIO m => Http.Manager -> String -> m (Maybe TezosVersion)
+versionWorker httpMgr baseUrl = do
+    let versionUrl = ensure baseUrl "version"
+
+    versionResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
+        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest versionUrl)
+
+    either (const doCommit) (maybe doCommit return . decode' . Http.getResponseBody) versionResp'
+
+  where
+    ensure :: String -> String -> String
+    ensure base path = dropWhileEnd (== '/') base <> "/" <> path
+
+    doCommit = do
+        let commitUrl = ensure baseUrl "monitor/commit_hash"
+
+        commitResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
+            liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest commitUrl)
+
+        return $ either (const Nothing) (decode' . Http.getResponseBody) commitResp'
+
 getNodeAddresses
   :: forall m. (Monad m, PostgresRaw m, MonadLogger m, PersistBackend m)
   => Maybe (Id Node)
   -> m [(WithInfinity (Id Node), Deletable NodeSummary)]
 getNodeAddresses nid = do
   ext :: Map.Map (WithInfinity (Id Node)) NodeExternalData <- [queryQ|
-      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections", n."data#data#nodeVersion"
+      SELECT n.id, n."data#data#address", n."data#data#alias", n."data#data#minPeerConnections"
       FROM "NodeExternal" n
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . fmap (\(nid', uri, alias, mpc, mversion) -> (Bounded nid',
+    <&> Map.fromList . fmap (\(nid', uri, alias, mpc) -> (Bounded nid',
     NodeExternalData
       { _nodeExternalData_address = uri
       , _nodeExternalData_alias = alias
       , _nodeExternalData_minPeerConnections = mpc
-      , _nodeExternalData_nodeVersion = mversion
       }))
   int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
       SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend

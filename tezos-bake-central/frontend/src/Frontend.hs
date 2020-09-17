@@ -82,7 +82,7 @@ import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHea
                       bakerAccusedDescriptions, bakerDeactivatedDescriptions,
                       bakerDeactivationRiskDescriptions, bakerGroupedMissedDescriptions,
                       bakerInsufficientFundsDescriptions, bakerLedgerDisconnectedDescriptions,
-                      bakerMissedDescriptions, bakerVotingReminderDescriptions, networkUpdateDescription,
+                      bakerMissedDescriptions, bakerVotingReminderDescriptions,
                       standardTimeFormat)
 import Common.Api
 import Common.App
@@ -90,7 +90,7 @@ import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
                       frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable
-                      , frontendConfig_tezosGitlabProjectId, frontendConfig_tezosRelease, frontendConfig_kilnNodeRpcPort)
+                      , frontendConfig_tezosGitlabProjectId, frontendConfig_tezosRelease)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -534,7 +534,6 @@ appContentArea
     , MonadJSM (ModalM m)
     , MonadJSM (Performable (ModalM m))
     , HasJSContext (Performable (ModalM m))
-    , HasJSContext (Performable m)
     , MonadReader r (ModalM m)
     )
   => m ()
@@ -555,8 +554,6 @@ nodesTabOrWelcome
     , MonadJSM (Performable (ModalM m))
     , HasJSContext (Performable (ModalM m))
     , MonadReader r (ModalM m)
-    , HasJSContext (Performable m)
-    , MonadJSM (Performable m)
     )
   => m ()
 nodesTabOrWelcome = do
@@ -603,34 +600,18 @@ globalAlerts
     )
   => m ()
 globalAlerts = do
-  mChain <- asks $ preview (frontendConfig . frontendConfig_chain . _Left)
   nodeAlerts <- do
-    nodesDyn <- watchNodeAddresses
     relevantAlerts <- watchErrorsByTag
       (pure $ Just AlertsFilter_UnresolvedOnly)
-      (pure $ DMap.fromList $
-        [LogTag_Node NodeLogTag_VersionMismatch :=> Const () | isJust mChain] <>
-        [LogTag_InternalNodeFailed :=> Const ()]
-      )
+      (pure $ DMap.fromList [LogTag_InternalNodeFailed :=> Const ()])
       everythingWindow
-
-    verMismatchBanner <- fmap (fromMaybe $ pure Nothing) $ for mChain $ \chain -> do
-      let externalNodes = filterLeft . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
-      logs <- holdUniqDyn $ ffor2 externalNodes relevantAlerts $ \nodes xs -> NEL.nonEmpty $ toList $ fforMaybe xs $ \case
-        (ErrorLog { _errorLog_stopped = Nothing }, LogTag_Node NodeLogTag_VersionMismatch :=> Identity ua) ->
-          (,ua) <$> Map.lookup (_errorLogNodeVersionMismatch_node ua) nodes
-        _ -> Nothing
-      pure $ networkUpdateAlertBanner chain <$$> logs
 
     internalNodeFailedLog :: Dynamic t (Maybe ErrorLogInternalNodeFailed) <-
       holdUniqDyn $ ffor relevantAlerts $ \xs -> listToMaybe $ toList $ fforMaybe xs $ \case
         (ErrorLog { _errorLog_stopped = Nothing }, LogTag_InternalNodeFailed :=> Identity e) -> Just e
         _ -> Nothing
 
-    pure
-      [ verMismatchBanner
-      , fmap internalNodeFailedAlertBanner <$> internalNodeFailedLog
-      ]
+    pure [fmap internalNodeFailedAlertBanner <$> internalNodeFailedLog]
 
   currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
   upstreamVersion <- watchUpstreamVersion
@@ -647,29 +628,6 @@ globalAlerts = do
     allAlerts = catMaybes <$> sequence (updateAlert : nodeAlerts)
   dyn_ $ ffor allAlerts $ traverse_ $ divClass "dashboard-section dashboard-section-global-alerts" . \m -> do
     SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
-
-networkUpdateAlertBanner :: (MonadAppWidget t m) => NamedChain -> NonEmpty (NodeExternalData, ErrorLogNodeVersionMismatch) -> m ()
-networkUpdateAlertBanner _namedChain elogs = do
-  let (header, bodyFirstPara) = networkUpdateDescription
-  renderResolvableSplashAlert
-    (fmap (\(_, elog) -> LogTag_Node NodeLogTag_VersionMismatch :=> Const (_errorLogNodeVersionMismatch_log elog)) elogs)
-    (icon "icon-alert-badge big blue")
-    (text header)
-    Nothing
-    (do
-      el "p" $ text bodyFirstPara
-      el "p" $ do
-        text "Get the new software here "
-        elClass "i" "ui icon small icon-arrow-right" blank
-        let url = "https://gitlab.com/tezos/tezos/-/releases"
-        elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text url
-      el "p" $ el "strong" $ text "Kiln has detected these nodes are not running the latest software:"
-      el "p" $ el "ul" $ do
-        for_ elogs $ \(NodeExternalData address mAlias _ _, _) -> el "li" $ do
-          let host = uriHostPortPath address
-          text $ maybe host (\alias -> alias <> " (" <> host <> ")") mAlias
-      el "p" $ text "Kiln cannot detect which version bakers are running. It is recommended to update your bakers if needed."
-    )
 
 internalNodeFailedAlertBanner
   :: ( MonadAppWidget t m
@@ -812,7 +770,6 @@ instance HasAlertMetaData (NodeLogTag a) where
     NodeLogTag_NodeWrongChain -> def
     NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
     NodeLogTag_BadNodeHead -> def
-    NodeLogTag_VersionMismatch -> def { _alertMetaData_isUserResolvable = True, _alertMetaData_severity = AlertSeverity_Info }
 
 instance HasAlertMetaData (DSum BakerLogTag a) where
   getAlertMetaData (logTag :=> _) = getAlertMetaData logTag
@@ -1006,7 +963,7 @@ liveErrorsWidget = void $ do
             NodeLogTag_InaccessibleNode ->
               case _nodeSummary_node n of
                 Right _ -> blank
-                Left (NodeExternalData address alias _ _) -> do
+                Left (NodeExternalData address alias _) -> do
                   header $ "Unable to connect to node" <> maybe "" (" " <>) alias <> " at " <> uriHostPortPath address <> "."
                   nodeLabel n
 
@@ -1031,30 +988,6 @@ liveErrorsWidget = void $ do
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
-
-            NodeLogTag_VersionMismatch -> do
-              header "Node is not running the latest software."
-              nodeLabel n
-              el "div" $ text $
-                case (_errorLogNodeVersionMismatch_nodeVersion log, _errorLogNodeVersionMismatch_latestVersion log) of
-                  (TezosVersion (Left nodeHash), TezosVersion (Left latestHash)) ->
-                    "This node is running the node software with hash: '" <> nodeHash <> "'."
-                    <> " The latest software version has hash: '" <> latestHash <> "'."
-                  (TezosVersion (Right nv), TezosVersion (Right lnv)) ->
-                    "This node is running the node software at version: "
-                    <> printMajorMinor nv <> " at hash: '" <> _commitInfo_commitHash (_nodeVersion_commitInfo nv) <> "'."
-                    <> " The latest software version is " <> printMajorMinor lnv
-                    <> " at  hash: '" <> _commitInfo_commitHash (_nodeVersion_commitInfo lnv) <> "'."
-                  (TezosVersion (Left nodeHash), TezosVersion (Right lnv)) ->
-                    "This node is running the node software with hash: " <> nodeHash <> "'."
-                    <> " The node version is unavailable. "
-                    <> " The latest software version is " <> printMajorMinor lnv
-                    <> " at  hash: '" <> _commitInfo_commitHash (_nodeVersion_commitInfo lnv) <> "'."
-                  (TezosVersion (Right nv), TezosVersion (Left latestHash)) ->
-                    "This node is running the node software at version: "
-                    <> printMajorMinor nv <> " at hash: '" <> _commitInfo_commitHash (_nodeVersion_commitInfo nv) <> "'."
-                    <> " The latest software version has hash: " <> latestHash <> "'."
-                    <> " The latest fully specified version is not available."
 
         LogTag_Baker blt -> case blt of
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError
@@ -1728,8 +1661,6 @@ nodesTab
     , MonadJSM (Performable (ModalM m))
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadAppWidget  t (ModalM m)
-    , HasJSContext (Performable m)
-    , MonadJSM (Performable m)
     )
   => m ()
 nodesTab =
@@ -1818,7 +1749,6 @@ nodesTab =
                 NodeLogTag_NodeInvalidPeerCount -> Just $ text "Node has too few peers."
                 NodeLogTag_BadNodeHead -> Just $ text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."
-                NodeLogTag_VersionMismatch -> Nothing
 
           void $ listWithKey external $ \nodeId vDyn -> do
             let
@@ -1931,25 +1861,9 @@ nodesTab =
               workingTile :: m ()
               workingTile = do
 
-                rpcPort <- T.pack . show <$> asks (^. frontendConfig . frontendConfig_kilnNodeRpcPort)
-
-                -- TODO: This could be a configurable setting if kiln
-                -- users would like.
-                let internalUri = "http://127.0.0.1"
-                    versionRequest = XhrRequest "GET" (internalUri <> ":" <> rpcPort <> "/" <> "version") def
-                    commitRequest = XhrRequest "GET" (internalUri <>  ":" <> rpcPort <> "/" <> "monitor/commit_hash") def
-
-                ev <- getPostBuild
-
-                vd <- decodeXhrResponse @TezosVersion <$$> performRequestAsync (versionRequest <$ ev)
-
-                cd <- decodeXhrResponse @TezosVersion <$$> performRequestAsync (commitRequest <$ ev)
-
-                version <- holdDyn Nothing vd
+                version <- watchTezosVersion nodeId
 
                 nodeDetails <- watchNodeDetails nodeId
-
-                commit <- holdDyn Nothing cd
 
                 standardNodeTile @(ProcessData, Maybe NodeDetailsData)
                   title
@@ -1965,7 +1879,7 @@ nodesTab =
                   (Just $ (=<<) _nodeDetailsData_peerCount . snd)
                   (Just $ maybe (NetworkStat 0 0 0 0) _nodeDetailsData_networkStat . snd)
                   ((,) <$> nodeData <*> nodeDetails)
-                  (liftA2 (<|>) version commit)
+                  version
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
               nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections
@@ -2029,11 +1943,8 @@ nodesTab =
 
           void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
             source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
-            chain <- (either Just identifyChain . getNamedChainOrChainId) <$$> holdUniqDyn (_publicNodeHead_chain <$> vDyn)
             let
               title = dyn_ $ ffor source $ \n -> text $ publicNodeShortName n
-
-              uri = ffor2 source chain $ \s c ->  maybe "" (Uri.render . NEL.head) (c >>= getPublicNodeUri s)
 
               publicNodeMenu :: m ()
               publicNodeMenu = do
@@ -2042,19 +1953,7 @@ nodesTab =
                   then osPublicNodeRemoveMessage
                   else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
-            let dropSlash = T.dropWhileEnd (== '/')
-                versionRequest l = XhrRequest "GET" (dropSlash l <> "/version") def
-                commitRequest l = XhrRequest "GET" (dropSlash l <> "/monitor/commit_hash") def
-
-            ev <- getPostBuild
-
-            vd <- decodeXhrResponse @TezosVersion <$$> performRequestAsync (attachPromptlyDynWith (\u _ -> versionRequest u) uri ev)
-
-            version <- holdDyn Nothing vd
-
-            cd <- decodeXhrResponse @TezosVersion <$$> performRequestAsync (attachPromptlyDynWith (\u _ -> commitRequest u) uri ev)
-
-            commit <- holdDyn Nothing cd
+            version <- watchPublicVersion source
 
             standardNodeTile
               title
@@ -2067,7 +1966,7 @@ nodesTab =
               Nothing
               Nothing
               vDyn
-              (liftA2 (<|>) version commit)
+              version
 
     tileHeader
       :: m () -- ^ Title

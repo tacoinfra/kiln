@@ -385,60 +385,6 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
       nodeName <> " is on correct network"
 
-reportNodeVersionMismatchError
-  :: ( Monad m, PersistBackend m, PostgresLargeObject m, HasAppConfig a, MonadReader a m
-     , SqlDb (PhantomDb m))
-  -- => Id Node -> Text -> Text -> m ()
-  => Id Node -> TezosVersion -> TezosVersion -> m ()
-reportNodeVersionMismatchError nodeId latestVersion nodeVersion = when' (nodeNotDeleted nodeId) $ do
-  chainId <- _appConfig_chainId <$> askAppConfig
-  -- Not filtering on "stopped", consider previously reported/dismissed alerts also
-  -- and dont report again if already reported for the given hash mismatch
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogNodeVersionMismatch) <- listToMaybe <$> [queryQ|
-    SELECT el.id, t.log
-      FROM "ErrorLog" el
-      JOIN "ErrorLogNodeVersionMismatch" t ON t.log = el.id
-      JOIN "NodeExternal" n ON n.id = t.node
-     WHERE t."latestVersion" = ?latestVersion
-       AND t."nodeVersion" = ?nodeVersion
-       AND t.node = ?nodeId
-       AND NOT n."data#deleted"
-       AND el."chainId" = ?chainId
-     ORDER BY el."lastSeen" DESC, el.started DESC
-     LIMIT 1
-    |]
-  -- If we have unresolved alerts for a different/older hash, then auto-resolve them
-  oldLogs :: [Id ErrorLogNodeVersionMismatch] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = NOW()
-      FROM "ErrorLogNodeVersionMismatch" t
-     WHERE t."latestVersion" != ?latestVersion
-       AND t."nodeVersion" = ?nodeVersion
-       AND t.log = el.id
-       AND t.node = ?nodeId
-       AND el.stopped IS NULL
-       AND el."chainId" = ?chainId
-    RETURNING t.log |]
-  for_ oldLogs notifyDefault
-  case existingLog of
-    Nothing -> void $ insertErrorLog $ \logId -> ErrorLogNodeVersionMismatch logId nodeId latestVersion nodeVersion
-    Just _ -> pure ()
-
-clearNodeVersionMismatchError
-  :: ( Monad m, PersistBackend m, PostgresLargeObject m
-     , SqlDb (PhantomDb m)
-     , MonadReader a m, HasAppConfig a) => Id Node -> m ()
-clearNodeVersionMismatchError nodeId = when' (nodeNotDeleted nodeId) $ do
-  chainId <- _appConfig_chainId <$> askAppConfig
-  lids :: [Id ErrorLogNodeVersionMismatch] <- stripOnly <$> [queryQ|
-    UPDATE "ErrorLog" el SET stopped = NOW()
-      FROM "ErrorLogNodeVersionMismatch" t
-    WHERE t.log = el.id
-      AND t.node = ?nodeId
-      AND el.stopped IS NULL
-      AND el."chainId" = ?chainId
-    RETURNING t.log |]
-  for_ lids notifyDefault
-
 reportNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
       MonadLogger m, SqlDb (PhantomDb m))

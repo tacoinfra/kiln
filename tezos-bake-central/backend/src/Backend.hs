@@ -333,7 +333,6 @@ backendImpl cfg serve = do
               { _nodeExternalData_address = newAddress
               , _nodeExternalData_alias = alias
               , _nodeExternalData_minPeerConnections = Nothing
-              , _nodeExternalData_nodeVersion = Nothing
               }
             }
 
@@ -439,7 +438,6 @@ backendImpl cfg serve = do
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
           , Config._frontendConfig_tezosRelease = tezosReleaseTag
-          , Config._frontendConfig_kilnNodeRpcPort = kilnNodeRpcPort
           }
 
       -- migrate old kiln storage
