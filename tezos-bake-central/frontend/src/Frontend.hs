@@ -373,8 +373,8 @@ appSideFooter =
 
               versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
 
-              dyn_ $ ffor versionReq $ el "div" . maybe (text "The latest tezos version is unavailable.")
-                  (\v -> hrefLink (gitLink <> "/v" <> v) $ el "small" $ text $ "The latest tezos version is " <> v <> ".")
+              dyn_ $ ffor versionReq $ el "div" . maybe (text "Latest Tezos Release: Unavailable.")
+                  (\v -> hrefLink (gitLink <> "/v" <> v) $ elAttr "small" ("style" =: "position: absolute; left:30px;") $ text $ "Latest Tezos Release: " <> v)
 
 getReleaseTag :: A.Value -> Maybe (Int, Int)
 getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
@@ -1028,12 +1028,10 @@ liveErrorsWidget = void $ do
             blockHashLinkAs (pure lastBlockHash) (text $ tshow lastLevel)
 
         LogTag_NetworkUpdate -> do
-          let
-            ErrorLogNetworkUpdate { _errorLogNetworkUpdate_namedChain = namedChain } = log
-            chainText = "'" <> showNamedChain namedChain <> "'"
-          header $ T.unwords ["New", chainText, "version."]
+
+          header "New Tezos version."
           el "div" $ do
-            text $ "There is a new version of the " <> chainText <> " software available on GitLab."
+            text $ "There is a new version of the Tezos software available on GitLab."
 
         LogTag_InternalNodeFailed -> case _errorLogInternalNodeFailed_reason log of
           InternalNodeFailureReason_CarthageUpgrade -> do
@@ -1652,6 +1650,17 @@ tileMenuEntryModal txt modal = do
   open <- tileMenuEntry txt
   tellModal $ open $> modal
 
+ppTezosVersion :: TezosVersion -> Text
+ppTezosVersion = either id showV . getTezosVersion
+  where
+    showV x = getMajor x <> "." <> getMinor x <> getAdditionalInfo x
+    getMajor = T.pack . show . _majorMinorVersion_major . _nodeVersion_version
+    getMinor = T.pack . show . _majorMinorVersion_minor . _nodeVersion_version
+    getAdditionalInfo = flip (.) (_majorMinorVersion_additional_info . _nodeVersion_version) $ \case
+        Development -> "-dev"
+        ReleaseCandidate rc -> "-rc" <> (T.pack $ show rc)
+        Release -> mempty
+
 nodesTab
   :: forall r m t.
     ( MonadAppWidget t m
@@ -1883,7 +1892,7 @@ nodesTab =
 
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
               nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections
-                [ tileHeader title subtitle menu badge Nothing
+                [ tileHeader title subtitle menu badge Nothing (pure Nothing)
                 , divClass "internal-node-tile-body" $ do
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
                     case nodeState of
@@ -1974,8 +1983,9 @@ nodesTab =
       -> Maybe (m ()) -- ^ Tile menu contents
       -> m () -- ^ Status badge
       -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this node
+      -> Dynamic t (Maybe TezosVersion)
       -> m ()
-    tileHeader title subtitle menuContents badge errors' = do
+    tileHeader title subtitle menuContents badge errors' version = do
       case menuContents of
         Nothing -> divClass "tile-header-spacing" blank
         Just c -> tileMenu c
@@ -1983,7 +1993,28 @@ nodesTab =
         badge
         title
         divClass "secondary-name" subtitle
+      divClass "ui center aligned container" $ tileVersion version
       tileErrors errors'
+
+    tileVersion vv = do
+        v <- maybeDyn vv
+        let gitLink = "https://gitlab.com/tezos/tezos/-/releases/"
+            commitHash = either id (_commitInfo_commitHash . _nodeVersion_commitInfo) . getTezosVersion
+            commitLink = "https://gitlab.com/tezos/tezos/-/commit/"
+            -- withQuestionMark f txt
+                --- | txt == "-" = "?"
+            wrapParens ver c
+                | ver /= c = "(" <> T.take 8 c <> ")"
+                | otherwise = T.take 8 c
+            displayLinkText vc = dyn_ $ ffor vc $ \(ver,c) -> do
+                -- if ver == c, then ver would be a commit hash
+                when (ver /= c) $ do
+                  hrefLink (gitLink <> ver) (text ver)
+                  text " "
+                hrefLink (commitLink <> c) (text $ wrapParens ver c)
+
+
+        el "div" $ withPlaceholder $ withMaybeDyn v displayLinkText ((,) <$> ppTezosVersion <*> commitHash)
 
     tileErrors = traverse_ $ \errors ->
       dyn_ $ ffor errors $ traverse_ $ \(severity, m) ->
@@ -1999,9 +2030,9 @@ nodesTab =
             <*> maybe (pure 0) (fmap length) mErrors
       iconDyn $ ("tiny circle " <>) <$> color
 
-    tileBlockStats getBlock node version = do
+    tileBlockStats getBlock node = do
       b <- maybeDyn $ getBlock <$> node
-      v <- maybeDyn version
+
       divClass "soft-heading" $
         withPlaceholder' "Connecting..." $ withMaybeDyn b display (unRawLevel . view level)
       text "#"
@@ -2017,31 +2048,6 @@ nodesTab =
           el "dt" (text "Baked")
           el "dd" $ do
             withPlaceholder $ withMaybeDyn b (localHumanizedTimestamp $ pure $ pure "Block Header Timestamp") (view timestamp)
-
-        el "div" $ do
-            el "dt" (text "Commit")
-            let commitHash = either id (_commitInfo_commitHash . _nodeVersion_commitInfo) . getTezosVersion
-                commitLink = "https://gitlab.com/tezos/tezos/-/commit/"
-                displayLinkText dd = dyn_ $ ffor dd $ \c ->
-                    hrefLink (commitLink <> c) (text $ T.take 8 c)
-
-            el "dd" $ withPlaceholder' "?" $  withMaybeDyn v displayLinkText commitHash
-
-        el "div" $ do
-            el "dt" (text "Version")
-            let getMajor = T.pack . show . _majorMinorVersion_major . _nodeVersion_version
-                getMinor = T.pack . show . _majorMinorVersion_minor . _nodeVersion_version
-                showV x = getMajor x <> "." <> getMinor x
-                majorMinor = either (const "?") showV . getTezosVersion
-                gitLink = "https://gitlab.com/tezos/tezos/-/releases"
-                displayLinkText dd = dyn_ $ ffor dd $ \vv ->
-                    {- there's probably a cleaner way to do this, but
-                    this will suffice for now -}
-                    if vv == "?" then text vv else hrefLink (gitLink <> "/v" <> vv) (text vv)
-
-            el "dd" $
-              withPlaceholder' "?" $ withMaybeDyn v displayLinkText majorMinor
-
 
     tileConnectionStats connected' getPeerCount' getNetworkStats' node =
       if isNothing connected' && isNothing getPeerCount' && isNothing getNetworkStats'
@@ -2091,8 +2097,8 @@ nodesTab =
     standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node nodeVersion = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
       nodeTileWithSections $
-        [ tileHeader title subtitle (Just menuContents) badge errors'
-        , tileBlockStats getBlock node nodeVersion
+        [ tileHeader title subtitle (Just menuContents) badge errors' nodeVersion
+        , tileBlockStats getBlock node
         ]
         <> toList (tileConnectionStats connected getPeerCount' getNetworkStats' node)
 
