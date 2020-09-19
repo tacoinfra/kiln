@@ -2009,7 +2009,7 @@ nodesTab =
             displayLinkText vc = dyn_ $ ffor vc $ \(ver,c) -> do
                 -- if ver == c, then ver would be a commit hash
                 when (ver /= c) $ do
-                  hrefLink (gitLink <> ver) (text $ "v" <> ver)
+                  hrefLink (gitLink <> "v" <> ver) (text ver)
                   text " "
                 hrefLink (commitLink <> c) (text $ wrapParens ver c)
 
