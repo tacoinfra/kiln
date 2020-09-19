@@ -69,7 +69,6 @@ removeNodeDbImpl = \case
           NodeLogTag_NodeWrongChain -> deleteLogs tag ErrorLogNodeWrongChain_nodeField
           NodeLogTag_BadNodeHead -> deleteLogs tag ErrorLogBadNodeHead_nodeField
           NodeLogTag_NodeInvalidPeerCount -> deleteLogs tag ErrorLogNodeInvalidPeerCount_nodeField
-          NodeLogTag_VersionMismatch -> deleteLogs tag ErrorLogNodeVersionMismatch_nodeField
 
       internalNodeLogIds <- do
         -- TODO: Groundhog doesn't typecheck

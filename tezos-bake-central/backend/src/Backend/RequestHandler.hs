@@ -152,7 +152,6 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                     { _nodeExternalData_address = addr
                     , _nodeExternalData_alias = alias
                     , _nodeExternalData_minPeerConnections = minPeerConn
-                    , _nodeExternalData_commitHash = Nothing
                     }
                 node = NodeExternal
                   { _nodeExternal_id = nid

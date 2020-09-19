@@ -76,6 +76,7 @@ defaultNodeConfigFile = NodeConfigFile
     { _nodeConfigRPC_listenAddr = Just "127.0.0.1"
     , _nodeConfigRPC_corsOrigin = Nothing
     , _nodeConfigRPC_corsHeaders = Nothing
+    -- Nothing
     , _nodeConfigRPC_crt = Nothing
     , _nodeConfigRPC_key = Nothing
     }

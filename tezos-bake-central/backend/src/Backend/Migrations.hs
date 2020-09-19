@@ -22,6 +22,7 @@ import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
 import Safe
 import Tezos.Types (ChainId)
 
+import Common.Schema (ErrorLog, Id, TezosVersion(..))
 import ExtraPrelude
 
 type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger m, MonadIO m)
@@ -56,6 +57,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "alias"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogInaccessibleNode") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogMultipleBakersForSameBaker") "id"
+  >=> migrateErrorLogNetworkUpdateCommitHash
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNetworkUpdate") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeInvalidPeerCount") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "id"
@@ -89,6 +91,36 @@ preMigrate chainId =
   >=> deleteObsidianPublicNodeHeads
   >=> deleteTzScanPublicNodeConfigs
   >=> deleteTzScanPublicNodeHeads
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "NodeExternal") "data#data#commitHash"
+
+migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateErrorLogNetworkUpdateCommitHash ta = do
+  let table = QualifiedIdentifier Nothing "ErrorLogNetworkUpdate"
+  analyzedTable' <- analyzeTable ta (convQN table)
+  let hasCommit = any ((== "commit") . colName)  . tableColumns
+      hasVersion = any ((== "version") . colName) . tableColumns
+  case analyzedTable' of
+    Nothing -> pure ta
+    Just analyzedTable -> case hasCommit analyzedTable && not (hasVersion analyzedTable) of
+        False -> pure ta
+        True -> do
+            void [traceExecuteQ|ALTER TABLE "ErrorLogNetworkUpdate" ADD COLUMN "version" VARCHAR;|]
+
+            (idsHashes :: [(Id ErrorLog, Text)]) <-
+                [queryQ|SELECT "log", "commit" FROM "ErrorLogNetworkUpdate";|]
+
+            let idsVersions = fmap (fmap (TezosVersion . Left)) idsHashes
+
+            for_ idsVersions $ \(logg, version) -> do
+                [traceExecuteQ|
+                    UPDATE "ErrorLogNetworkUpdate"
+                    SET "version" = ?version
+                    WHERE "log" = ?logg;
+                |]
+
+            void [traceExecuteQ|ALTER TABLE "ErrorLogNetworkUpdate" DROP COLUMN "commit";|]
+            void [traceExecuteQ|ALTER TABLE "ErrorLogNetworkUpdate" ALTER COLUMN "version" SET NOT NULL;|]
+            getTableAnalysis
 
 migrateParameters :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateParameters ta = do

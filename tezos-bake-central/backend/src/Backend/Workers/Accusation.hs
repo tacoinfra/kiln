@@ -36,7 +36,7 @@ accusationWorker
   -> IO (IO ())
 accusationWorker delay nds appConfig = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let chainId = _nodeDataSource_chain nds
-  workerWithDelay (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
+  workerWithDelay "accusationWorker" (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
     $(logDebug) "Check accusations cycle."
 
     either ($(logErrorSH) . cacheErrorLogMessage "Accusation Worker") pure <=< flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do

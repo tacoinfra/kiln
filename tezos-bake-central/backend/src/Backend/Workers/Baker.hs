@@ -76,7 +76,7 @@ bakerRightsWorker
   :: forall m. MonadIO m
   => NodeDataSource
   -> m (IO ())
-bakerRightsWorker nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ do
     (headBlock, protoInfo, cycleHashes) <- runNodeQueryT $ do
       (headBlock, protoInfo) <- getLatestProtocolConstants
@@ -234,7 +234,7 @@ bakerWorker
   => AppConfig
   -> NodeDataSource
   -> m (IO ())
-bakerWorker appConfig nds = worker' $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   let db = _nodeDataSource_pool nds
 
   res <- flip runReaderT nds $ runExceptT $ do

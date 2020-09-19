@@ -41,6 +41,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.GADT (deriveJSONGADT)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Short (fromShort, toShort)
 import Data.Constraint (Dict(..))
@@ -55,8 +56,10 @@ import Data.Int (Int64)
 import Data.Maybe (fromJust)
 import qualified Data.Sequence as Seq
 import Data.Some (Some(..))
+import Data.String.Conv
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Text.Encoding.Error as T
 import qualified Data.Text.Lazy as LT
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -202,7 +205,6 @@ instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
 instance HasDefaultNotify (Id ErrorLogInternalNodeFailed)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
-instance HasDefaultNotify (Id ErrorLogNodeVersionMismatch)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogVotingReminder)
 instance HasDefaultNotify (Id ProtocolIndex)
@@ -210,8 +212,6 @@ instance HasDefaultNotify (Id ProtocolIndex)
 instance HasNotification NotifyTag ProtocolIndex where
   notification _ = NotifyTag_ProtocolIndex
 
-instance HasNotification NotifyTag ErrorLogNodeVersionMismatch where
-  notification _ = mkNodeNotify NodeLogTag_VersionMismatch
 instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
 instance HasNotification NotifyTag ErrorLogNodeInvalidPeerCount where
@@ -405,6 +405,17 @@ instance PrimitivePersistField NamedChainOrChainId where
 instance ToField NamedChainOrChainId where
   toField (NamedChainOrChainId v) = toField (showChain v)
 
+instance PrimitivePersistField TezosVersion where
+  toPrimitivePersistValue p tv = toPrimitivePersistValue p $ T.decodeUtf8With T.lenientDecode $ B.concat $ LBS.toChunks $ Aeson.encode tv
+  fromPrimitivePersistValue p v = either (error . toMsg) id $ Aeson.eitherDecode' $ LBS.fromChunks $ pure $ T.encodeUtf8 $ fromPrimitivePersistValue p v
+    where toMsg s = "PrimitivePersistField(TezosVersion) error " <> s
+
+instance PersistField TezosVersion where
+  persistName _ = "TezosVersion"
+  toPersistValues =primToPersistValue
+  fromPersistValues =primFromPersistValue
+  dbType p x = DbTypePrimitive DbString False Nothing Nothing
+
 instance ToField PublicNode where
   toField = toField . show
 
@@ -441,6 +452,12 @@ instance FromField ProcessControl where
 instance ToField ProcessControl where
   toField v = toField (show v)
 
+instance ToField TezosVersion where
+  toField = toField @Text . toS . Aeson.encode
+
+instance FromField TezosVersion where
+  fromField f = fromField @Text f >=> either (conversionError . userError) pure . Aeson.eitherDecode' @TezosVersion . toS
+
 instance FromField VotingPeriodKind where
   fromField f = maybe (fail "Invalid value for VotingPeriodKind") pure . readMaybe <=< fromField f
 
@@ -472,6 +489,7 @@ instance NeverNull NetworkStat
 instance NeverNull PublicKeyHash
 instance NeverNull RawLevel
 instance NeverNull Tez
+instance NeverNull TezosVersion
 instance NeverNull TezosWord64
 instance NeverNull Version
 instance NeverNull VeryBlockLike
@@ -1040,17 +1058,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogInsufficientFundsId
             type: primary
             fields: [_errorLogInsufficientFunds_log]
-  - entity: ErrorLogNodeVersionMismatch
-    autoKey: null
-    keys:
-      - name: ErrorLogNodeVersionMismatchId
-        default: true
-    constructors:
-      - name: ErrorLogNodeVersionMismatch
-        uniques:
-          - name: ErrorLogNodeVersionMismatchId
-            type: primary
-            fields: [_errorLogNodeVersionMismatch_log]
   - entity: ErrorLogNodeWrongChain
     autoKey: null
     keys:
@@ -1235,9 +1242,6 @@ instance DefaultKeyId ErrorLogBakerDeactivationRisk where
 instance DefaultKeyId ErrorLogInsufficientFunds where
   toIdData _ (ErrorLogInsufficientFundsIdKey eid) = eid
   fromIdData _ = ErrorLogInsufficientFundsIdKey
-instance DefaultKeyId ErrorLogNodeVersionMismatch where
-  toIdData _ (ErrorLogNodeVersionMismatchIdKey eid) = eid
-  fromIdData _ = ErrorLogNodeVersionMismatchIdKey
 instance DefaultKeyId ErrorLogNodeWrongChain where
   toIdData _ (ErrorLogNodeWrongChainIdKey eid) = eid
   fromIdData _ = ErrorLogNodeWrongChainIdKey
@@ -1296,7 +1300,6 @@ nodeLogAssume = \case
   NodeLogTag_NodeWrongChain -> id
   NodeLogTag_NodeInvalidPeerCount -> id
   NodeLogTag_BadNodeHead -> id
-  NodeLogTag_VersionMismatch -> id
 
 bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
 bakerLogAssume = \case
@@ -1345,7 +1348,6 @@ nodeLogDep = \case
   NodeLogTag_NodeWrongChain -> depNodeAlert ErrorLogNodeWrongChain_nodeField
   NodeLogTag_NodeInvalidPeerCount -> depNodeAlert ErrorLogNodeInvalidPeerCount_nodeField
   NodeLogTag_BadNodeHead -> depNodeAlert ErrorLogBadNodeHead_nodeField
-  NodeLogTag_VersionMismatch -> depNodeAlert ErrorLogNodeVersionMismatch_nodeField
   where
     depNodeAlert f = Related f ForeignKey_AutoId
 
@@ -1387,7 +1389,6 @@ instance ArgDict c NotifyTag where
     , c (Id ErrorLogInternalNodeFailed)
     , c (Id ErrorLogNetworkUpdate)
     , c (Id ErrorLogNodeInvalidPeerCount)
-    , c (Id ErrorLogNodeVersionMismatch)
     , c (Id ErrorLogNodeWrongChain)
     , c (Id ErrorLogVotingReminder)
     , c (Id UpstreamVersion, UpstreamVersion)
@@ -1429,7 +1430,6 @@ instance ArgDict c NotifyTag where
         NodeLogTag_NodeWrongChain -> Dict
         NodeLogTag_NodeInvalidPeerCount -> Dict
         NodeLogTag_BadNodeHead -> Dict
-        NodeLogTag_VersionMismatch -> Dict
       LogTag_Baker t -> case t of
         BakerLogTag_BakerLedgerDisconnected -> Dict
         BakerLogTag_BakerMissed -> Dict

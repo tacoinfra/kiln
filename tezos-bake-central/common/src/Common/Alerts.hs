@@ -17,7 +17,7 @@ import Data.Time (UTCTime, TimeZone)
 import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..), NamedChain, showNamedChain)
+import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
 import Common (nominalDiffTimeToSeconds)
@@ -349,11 +349,10 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
 
 -- Skip the final sentence as there is no easy way to abstract over doing or not
 -- doing the link.
-networkUpdateDescription :: NamedChain -> (Text, Text)
-networkUpdateDescription namedChain = (,)
-  ("New Tezos '" <> name <> "' software version.")
+networkUpdateDescription :: (Text, Text)
+networkUpdateDescription = (,)
+  "New Tezos software version."
   (mconcat
-    [ "There is a new version of the ", name
+    [ "There is a new version of the "
     , " software available on GitLab. To find further information about this release, check the Tezos Baking Slack channel, the Tezos Riot chat, or other social channels."
     ])
-  where name = showNamedChain namedChain

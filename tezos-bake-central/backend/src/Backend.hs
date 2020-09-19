@@ -191,6 +191,9 @@ backendImpl cfg serve = do
     (pure $ _opts_networkGitLabProjectId cfg)
     (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
 
+  !(tezosReleaseTag :: Maybe Text) <- liftA2 (<|>) (pure $ _opts_tezosReleaseTag cfg)
+    (getConfigFromFile Just $ configPath Config.tezosReleaseTag)
+
   !(kilnNodeRpcPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeRpcPort) $ liftA2 (<|>)
     (pure $ _opts_kilnNodeRpcPort cfg)
     (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodeRpcPort)
@@ -330,7 +333,6 @@ backendImpl cfg serve = do
               { _nodeExternalData_address = newAddress
               , _nodeExternalData_alias = alias
               , _nodeExternalData_minPeerConnections = Nothing
-              , _nodeExternalData_commitHash = Nothing
               }
             }
 
@@ -382,13 +384,19 @@ backendImpl cfg serve = do
       minLevel :: RawLevel
       minLevel = 2
 
+      -- changeRPCConf conf = conf
+            -- { _nodeConfigRPC_corsHeaders =
+
+            -- }
+
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
         , _appConfig_kilnNodeNetPort = kilnNodeNetPort
         , _appConfig_kilnDataDir = kilnDataDir
         , _appConfig_kilnNodeConfig =
-          defaultNodeConfigFile { _nodeConfigFile_network = networkName }
+          defaultNodeConfigFile {_nodeConfigFile_network = networkName}
+
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
         , _appConfig_binaryPaths = binaryPaths
@@ -415,10 +423,10 @@ backendImpl cfg serve = do
 
     withTermination $ \addFinalizer -> do
       -- Start a thread to send queued emails
-      addFinalizer <=< workerWithDelay (pure 10) $ const $
+      addFinalizer <=< workerWithDelay "clearMailQueueWithDynamicEmail" (pure 10) $ const $
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
-      addFinalizer <=< worker' $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
+      addFinalizer <=< worker' "readNodeDataSourceIOQueue" $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
       let
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = chain
@@ -428,6 +436,8 @@ backendImpl cfg serve = do
           , Config._frontendConfig_usingOsPublicNode = isJust $ _nodeDataSource_osPublicNode dataSrc
           , Config._frontendConfig_logExportAvailable = logExportAvailable
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
+          , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
+          , Config._frontendConfig_tezosRelease = tezosReleaseTag
           }
 
       -- migrate old kiln storage
@@ -467,7 +477,7 @@ backendImpl cfg serve = do
         -- Square roots of rationals are the most effective for this because number theory.
 
       when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
-        addFinalizer =<< upgradeCheckWorker namedChain networkGitLabProjectId (60 * 60) logger httpMgr db appConfig
+        addFinalizer =<< upgradeCheckWorker namedChain tezosReleaseTag networkGitLabProjectId (60 * 60) logger httpMgr db appConfig
 
       for_ maybeNamedChainOrPaths $ \(hush -> v) -> do
         addFinalizer =<< internalNodeWorker appConfig logger db v
@@ -549,6 +559,7 @@ data Opts = Opts
   , _opts_nodes :: !(Option (Map.Map URI (Maybe Text)))
   , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
+  , _opts_tezosReleaseTag :: !(Maybe Text)
   , _opts_kilnNodeRpcPort :: !(Maybe Port)
   , _opts_kilnNodeNetPort :: !(Maybe Port)
   , _opts_kilnNodeCustomArgs :: !(Maybe Text)
@@ -573,6 +584,7 @@ instance Semigroup Opts where
     , _opts_nodes = rightBiased (<>) _opts_nodes -- Last alias (or lack of) wins
     , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
+    , _opts_tezosReleaseTag = rightBiased (<|>) _opts_tezosReleaseTag
     , _opts_kilnNodeRpcPort = rightBiased (<|>) _opts_kilnNodeRpcPort
     , _opts_kilnNodeNetPort = rightBiased (<|>) _opts_kilnNodeNetPort
     , _opts_kilnNodeCustomArgs = rightBiased (<|>) _opts_kilnNodeCustomArgs
@@ -599,6 +611,7 @@ instance Monoid Opts where
       , _opts_nodes = mempty
       , _opts_bakers = mempty
       , _opts_networkGitLabProjectId = Nothing
+      , _opts_tezosReleaseTag = Nothing
       , _opts_kilnNodeRpcPort = Nothing
       , _opts_kilnNodeNetPort = Nothing
       , _opts_kilnNodeCustomArgs = Nothing

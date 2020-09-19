@@ -65,6 +65,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
       email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
       extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
+      lens-aeson = dontCheck super.lens-aeson;
       frontend = haddock-build (checkHlint (hsOnly super.frontend));
       markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
       memory = dontCheck (self.callHackage "memory" "0.14.17" {});
