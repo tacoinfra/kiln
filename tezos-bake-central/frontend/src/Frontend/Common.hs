@@ -413,6 +413,7 @@ tzStatsBlockUri chain path = (`appendPaths` [path]) $ case chain of
   NamedChain_Carthagenet -> [uri|http://carthagenet.tzstats.com/|]
   NamedChain_Zeronet -> [uri|http://zeronet.tzstats.com/|]
   NamedChain_Mainnet -> [uri|http://tzstats.com/|]
+  NamedChain_Delphinet -> [uri|http://delphinet.tzstats.com/|]
 
 blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t Text -> m a -> m a
 blockExplorerLink dPath f = do
