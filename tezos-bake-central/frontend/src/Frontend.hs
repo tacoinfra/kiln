@@ -1031,7 +1031,7 @@ liveErrorsWidget = void $ do
 
           header "New Tezos version."
           el "div" $ do
-            text $ "There is a new version of the Tezos software available on GitLab."
+            text "There is a new version of the Tezos software available on GitLab."
 
         LogTag_InternalNodeFailed -> case _errorLogInternalNodeFailed_reason log of
           InternalNodeFailureReason_CarthageUpgrade -> do
@@ -1658,7 +1658,7 @@ ppTezosVersion = either id showV . getTezosVersion
     getMinor = T.pack . show . _majorMinorVersion_minor . _nodeVersion_version
     getAdditionalInfo = flip (.) (_majorMinorVersion_additional_info . _nodeVersion_version) $ \case
         Development -> "-dev"
-        ReleaseCandidate rc -> "-rc" <> (T.pack $ show rc)
+        ReleaseCandidate rc -> "-rc" <> T.pack (show rc)
         Release -> mempty
 
 nodesTab
