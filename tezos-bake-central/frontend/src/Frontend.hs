@@ -373,7 +373,7 @@ appSideFooter =
 
               versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
 
-              dyn_ $ ffor versionReq $ el "div" . maybe (text "Latest Tezos Release: Unavailable.")
+              dyn_ $ ffor versionReq $ elAttr "div" ("style" =: "margin-bottom: 1rem;") . maybe (text "Latest Tezos Release: Unavailable.")
                   (\v -> hrefLink (gitLink <> "/v" <> v) $ elAttr "small" ("style" =: "position: absolute; left:30px;") $ text $ "Latest Tezos Release: " <> v)
 
 getReleaseTag :: A.Value -> Maybe (Int, Int)
@@ -1993,9 +1993,10 @@ nodesTab =
         badge
         title
         divClass "secondary-name" subtitle
-      divClass "ui center aligned container" $ tileVersion version
+      divClass "ui left aligned container" $ tileVersion version
       tileErrors errors'
 
+    tileVersion :: Dynamic t (Maybe (Maybe TezosVersion)) -> m ()
     tileVersion vv = do
         v <- maybeDyn vv
         let gitLink = "https://gitlab.com/tezos/tezos/-/releases/"
