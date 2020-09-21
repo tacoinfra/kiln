@@ -120,19 +120,19 @@ watchNodeDetails nid = do
     }
   return $ ffor theView $ \v' -> MMap.lookup nid $ getRangeView' (_bakeView_nodeDetails v')
 
-watchTezosVersion :: (MonadAppWidget t m) => Id Node -> m (Dynamic t (Maybe TezosVersion))
+watchTezosVersion :: (MonadAppWidget t m) => Id Node -> m (Dynamic t (Maybe (Maybe TezosVersion)))
 watchTezosVersion nid = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeVersions = viewRangeAll 1
     }
-  return $ ffor theView $ \v' -> join . MMap.lookup nid $ getRangeView' (_bakeView_nodeVersions v')
+  return $ ffor theView $ \v' -> MMap.lookup nid $ getRangeView' (_bakeView_nodeVersions v')
 
-watchPublicVersion :: (MonadAppWidget t m) => Dynamic t PublicNode -> m (Dynamic t (Maybe TezosVersion))
+watchPublicVersion :: (MonadAppWidget t m) => Dynamic t PublicNode -> m (Dynamic t (Maybe (Maybe TezosVersion)))
 watchPublicVersion dpn = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_publicVersions = viewRangeAll 1
     }
-  return $ ffor2 theView dpn $ \v' pn -> join . MMap.lookup pn $ getRangeView' (_bakeView_publicVersions v')
+  return $ ffor2 theView dpn $ \v' pn -> MMap.lookup pn $ getRangeView' (_bakeView_publicVersions v')
 
 watchBakerAddresses :: MonadAppWidget t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
 watchBakerAddresses = do

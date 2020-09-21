@@ -1983,7 +1983,7 @@ nodesTab =
       -> Maybe (m ()) -- ^ Tile menu contents
       -> m () -- ^ Status badge
       -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this node
-      -> Dynamic t (Maybe TezosVersion)
+      -> Dynamic t (Maybe (Maybe TezosVersion))
       -> m ()
     tileHeader title subtitle menuContents badge errors' version = do
       case menuContents of
@@ -2007,15 +2007,18 @@ nodesTab =
             wrapParens ver c
                 | ver /= c = "(" <> T.take 8 c <> ")"
                 | otherwise = T.take 8 c
-            displayLinkText vc = dyn_ $ ffor vc $ \(ver,c) -> do
-                -- if ver == c, then ver would be a commit hash
-                when (ver /= c) $ do
-                  hrefLink (gitLink <> "v" <> ver) (text ver)
-                  text " "
-                hrefLink (commitLink <> c) (text $ wrapParens ver c)
+            displayLinkText vc = dyn_ $ ffor vc $ \case
+                Right (ver,c) -> do
+                    -- if ver == c, then ver would be a commit hash
+                    when (ver /= c) $ do
+                      hrefLink (gitLink <> "v" <> ver) (text ver)
+                      text " "
+                    hrefLink (commitLink <> c) (text $ wrapParens ver c)
+                Left t -> text t
+            pp = maybe (Left "?") (Right  . ((,) <$> ppTezosVersion <*> commitHash))
 
 
-        el "div" $ withPlaceholder $ withMaybeDyn v displayLinkText ((,) <$> ppTezosVersion <*> commitHash)
+        el "div" $ withPlaceholder $ withMaybeDyn v displayLinkText pp
 
     tileErrors = traverse_ $ \errors ->
       dyn_ $ ffor errors $ traverse_ $ \(severity, m) ->
@@ -2093,7 +2096,7 @@ nodesTab =
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
-      -> Dynamic t (Maybe TezosVersion) -- ^ Node version (only available for external nodes)
+      -> Dynamic t (Maybe (Maybe TezosVersion))
       -> m ()
     standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node nodeVersion = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
