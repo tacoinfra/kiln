@@ -270,6 +270,7 @@ appSidebar
      )
   => m ()
 appSidebar = do
+  chain <- asks (^. frontendConfig . frontendConfig_chain)
   SemUi.segment
     (def
       & SemUi.classes SemUi.|~ "app-sidebar"
@@ -278,7 +279,7 @@ appSidebar = do
       )
     $ do
         appSideHeader
-        appGutter
+        appGutter chain
         appSideFooter
 
 routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
@@ -322,8 +323,8 @@ appGutter
      , HasJSContext (Performable (ModalM m))
      , HasModal t m
      )
-  => m ()
-appGutter =
+  => Either NamedChain ChainId -> m ()
+appGutter chain =
   SemUi.segment
     (def
       & SemUi.classes SemUi.|~ "app-gutter"
@@ -331,7 +332,7 @@ appGutter =
       )
     $ do
         bakersList
-        nodesList
+        nodesList chain
 
 appSideFooter :: (MonadAppWidget t m, HasJSContext (Performable m), MonadJSM (Performable m), RouteConstraints t AppRoute m, MonadReader r m, HasFrontendConfig r) => m ()
 appSideFooter =
@@ -373,7 +374,7 @@ appSideFooter =
 
               versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
 
-              dyn_ $ ffor versionReq $ el "div" . maybe (text "Latest Tezos Release: Unavailable.")
+              dyn_ $ ffor versionReq $ elAttr "div" ("style" =: "margin-bottom: 1rem;") . maybe (text "Latest Tezos Release: Unavailable.")
                   (\v -> hrefLink (gitLink <> "/v" <> v) $ elAttr "small" ("style" =: "position: absolute; left:30px;") $ text $ "Latest Tezos Release: " <> v)
 
 getReleaseTag :: A.Value -> Maybe (Int, Int)
@@ -611,7 +612,9 @@ globalAlerts = do
         (ErrorLog { _errorLog_stopped = Nothing }, LogTag_InternalNodeFailed :=> Identity e) -> Just e
         _ -> Nothing
 
-    pure [fmap internalNodeFailedAlertBanner <$> internalNodeFailedLog]
+    chain <- asks (^. frontendConfig . frontendConfig_chain)
+
+    pure [fmap (internalNodeFailedAlertBanner chain) <$> internalNodeFailedLog]
 
   currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
   upstreamVersion <- watchUpstreamVersion
@@ -636,8 +639,8 @@ internalNodeFailedAlertBanner
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
      )
-  => ErrorLogInternalNodeFailed -> m ()
-internalNodeFailedAlertBanner e = case _errorLogInternalNodeFailed_reason e of
+  => Either NamedChain ChainId -> ErrorLogInternalNodeFailed -> m ()
+internalNodeFailedAlertBanner chain e = case _errorLogInternalNodeFailed_reason e of
   InternalNodeFailureReason_CarthageUpgrade -> renderSplashAlert
     (icon "icon-warning big red")
     (text "Kiln Node is Outdated and Must be Recreated")
@@ -650,7 +653,7 @@ internalNodeFailedAlertBanner e = case _errorLogInternalNodeFailed_reason e of
 
       resolve <- divClass "buttons" $ uiButtonM "primary" $ text "Remove and Recreate Node"
       deleted <- requestingIdentity $ resolve $> public (PublicRequest_RemoveNode $ Right ())
-      tellModal $ deleted $> cancelableModalWithClasses addNodeModal
+      tellModal $ deleted $> cancelableModalWithClasses (addNodeModal chain)
     )
 
   InternalNodeFailureReason_Unknown _ -> pure () -- TODO: Might be useful...
@@ -1392,8 +1395,8 @@ nodesList ::
   , MonadJSM (Performable (ModalM m))
   , HasJSContext (Performable (ModalM m))
   )
-  => m ()
-nodesList = do
+  => Either NamedChain ChainId -> m ()
+nodesList chain = do
   nodes <- ffor
     watchNodeAddresses
     $ fmap $ fmap $ \ns ->
@@ -1403,7 +1406,10 @@ nodesList = do
         (_nodeSummary_alertCount ns)
       , isRight $ _nodeSummary_node ns
       )
-  sidebarList "Node" nodes addNodeModal
+  sidebarList "Node" nodes (addNodeModal chain)
+
+publicNodeAvailable :: PublicNode -> Either NamedChain ChainId -> Bool
+publicNodeAvailable pn chain = foldr (const $ const True) False $ either Just identifyChain chain >>= getPublicNodeUri pn
 
 addNodeModal ::
   ( MonadAppWidget t m
@@ -1411,8 +1417,8 @@ addNodeModal ::
   , MonadJSM (Performable m)
   , HasJSContext (Performable m)
   )
-  => Event t () -> m (Dynamic t [Text], Event t ())
-addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (c, close <> switch (current e))
+  => Either NamedChain ChainId -> Event t () -> m (Dynamic t [Text], Event t ())
+addNodeModal chain close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (c, close <> switch (current e))
 
   where
     splash = Workflow $ do
@@ -1420,7 +1426,8 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
       divClass "ui grid stackable divided" $ do
         startNodeEv <- addInternal
         e <- addExternal
-        addPublic
+        let anyPublicNodesAvailable = any (`publicNodeAvailable` chain) [PublicNode_Archival, PublicNode_Blockscale]
+        bool noPublic addPublic anyPublicNodesAvailable
         pure ((pure "add-node", e), startNodeWorkflow splash <$ startNodeEv)
 
       where
@@ -1428,12 +1435,19 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
           elClass "h5" "ui header" $ text header
           divClass "explanation" $ text explanation
 
+        noPublic = do
+            divClass "add-public column" $ section
+                "Cannot connect to a  public node"
+                "If you are seeing this message, you are most likely on a new network.\
+                \ The urls of these public nodes are not yet known. When these become\
+                \ available, Kiln will be updated accordingly."
+
         addPublic = do
           divClass "add-public column" $ do
             section
               "Connect to a Public Node"
               "We recommend adding all public nodes to enhance monitoring accuracy."
-            publicNodeOptions
+            publicNodeOptions chain
 
         addInternal = do
           divClass "add-internal column" $ do
@@ -1591,10 +1605,10 @@ osPublicNodeRemoveMessage = do
   let url = "https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
-publicNodeOptions :: MonadAppWidget t m => m ()
-publicNodeOptions = do
+publicNodeOptions :: MonadAppWidget t m => Either NamedChain ChainId -> m ()
+publicNodeOptions chain = do
   let
-    publicNodesInOrder =
+    publicNodesInOrder = filter (`publicNodeAvailable` chain)
       [ PublicNode_Archival
       , PublicNode_Blockscale
       ]
@@ -1983,7 +1997,7 @@ nodesTab =
       -> Maybe (m ()) -- ^ Tile menu contents
       -> m () -- ^ Status badge
       -> Maybe (Dynamic t [(AlertSeverity, m ())]) -- ^ (Optional) Function to build list of error messages for this node
-      -> Dynamic t (Maybe TezosVersion)
+      -> Dynamic t (Maybe (Maybe TezosVersion))
       -> m ()
     tileHeader title subtitle menuContents badge errors' version = do
       case menuContents of
@@ -1993,9 +2007,10 @@ nodesTab =
         badge
         title
         divClass "secondary-name" subtitle
-      divClass "ui center aligned container" $ tileVersion version
+      divClass "ui left aligned container" $ tileVersion version
       tileErrors errors'
 
+    tileVersion :: Dynamic t (Maybe (Maybe TezosVersion)) -> m ()
     tileVersion vv = do
         v <- maybeDyn vv
         let gitLink = "https://gitlab.com/tezos/tezos/-/releases/"
@@ -2006,15 +2021,18 @@ nodesTab =
             wrapParens ver c
                 | ver /= c = "(" <> T.take 8 c <> ")"
                 | otherwise = T.take 8 c
-            displayLinkText vc = dyn_ $ ffor vc $ \(ver,c) -> do
-                -- if ver == c, then ver would be a commit hash
-                when (ver /= c) $ do
-                  hrefLink (gitLink <> "v" <> ver) (text ver)
-                  text " "
-                hrefLink (commitLink <> c) (text $ wrapParens ver c)
+            displayLinkText vc = dyn_ $ ffor vc $ \case
+                Right (ver,c) -> do
+                    -- if ver == c, then ver would be a commit hash
+                    when (ver /= c) $ do
+                      hrefLink (gitLink <> "v" <> ver) (text ver)
+                      text " "
+                    hrefLink (commitLink <> c) (text $ wrapParens ver c)
+                Left t -> text t
+            pp = maybe (Left "?") (Right  . ((,) <$> ppTezosVersion <*> commitHash))
 
 
-        el "div" $ withPlaceholder $ withMaybeDyn v displayLinkText ((,) <$> ppTezosVersion <*> commitHash)
+        el "div" $ withPlaceholder $ withMaybeDyn v displayLinkText pp
 
     tileErrors = traverse_ $ \errors ->
       dyn_ $ ffor errors $ traverse_ $ \(severity, m) ->
@@ -2092,7 +2110,7 @@ nodesTab =
       -> Maybe (a -> Maybe Word64) -- ^ (Optional) Function to get the peer count of the node
       -> Maybe (a -> NetworkStat) -- ^ (Optional) Function to get the network stats of the node
       -> Dynamic t a -- ^ Node
-      -> Dynamic t (Maybe TezosVersion) -- ^ Node version (only available for external nodes)
+      -> Dynamic t (Maybe (Maybe TezosVersion))
       -> m ()
     standardNodeTile title subtitle menuContents getBlock errors' connected internalState getPeerCount' getNetworkStats' node nodeVersion = do
       let badge = tileBadgeImpliedByErrors errors' $ fmap (<$> node) internalState
