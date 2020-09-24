@@ -334,7 +334,15 @@ appGutter chain =
         bakersList
         nodesList chain
 
-appSideFooter :: (MonadAppWidget t m, HasJSContext (Performable m), MonadJSM (Performable m), RouteConstraints t AppRoute m, MonadReader r m, HasFrontendConfig r) => m ()
+appSideFooter
+  :: (MonadAppWidget t m
+     , HasJSContext (Performable m)
+     , MonadJSM (Performable m)
+     , RouteConstraints t AppRoute m
+     , MonadReader r m
+     , HasFrontendConfig r
+     )
+     => m ()
 appSideFooter =
   SemUi.segment
     (def
@@ -375,7 +383,9 @@ appSideFooter =
               versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
 
               dyn_ $ ffor versionReq $ elAttr "div" ("style" =: "margin-bottom: 1rem;") . maybe (text "Latest Tezos Release: Unavailable.")
-                  (\v -> hrefLink (gitLink <> "/v" <> v) $ elAttr "small" ("style" =: "position: absolute; left:30px;") $ text $ "Latest Tezos Release: " <> v)
+                  (\v -> hrefLink (gitLink <> "/v" <> v) $
+                         elAttr "small" ("style" =: "position: absolute; left:30px;") $
+                         text $ "Latest Tezos Release: " <> v)
 
 getReleaseTag :: A.Value -> Maybe (Int, Int)
 getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
