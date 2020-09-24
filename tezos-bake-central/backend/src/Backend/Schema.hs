@@ -412,8 +412,8 @@ instance PrimitivePersistField TezosVersion where
 
 instance PersistField TezosVersion where
   persistName _ = "TezosVersion"
-  toPersistValues =primToPersistValue
-  fromPersistValues =primFromPersistValue
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
   dbType p x = DbTypePrimitive DbString False Nothing Nothing
 
 instance ToField PublicNode where
