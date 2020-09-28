@@ -16,8 +16,11 @@
 
 module Backend.Workers.Node where
 
+import Data.Word
+
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
+import Control.Lens (set)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
@@ -199,36 +202,43 @@ updateNetworkStats
   -> NodeData
   -> NodeDetailsData
   -> m (Either RpcError ())
-updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
-  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ do
-    connections <- nodeRPC rConnections
-    networkStat <- nodeRPC rNetworkStat
-    pure $ before
-      { _nodeDetailsData_peerCount = Just connections
-      , _nodeDetailsData_networkStat = networkStat
-      }
+updateNetworkStats appConfig httpMgr db nid node before = do
 
-  let
-    inDb = runDb (Identity db)
+    eConnections :: Either RpcError Word64 <- runNodeRPC (nodeRPC rConnections)
+    eNetworkStat :: Either RpcError NetworkStat <- runNodeRPC (nodeRPC rNetworkStat)
 
-  -- We will rely on the block monitor to clear any inaccessible endpoint errors
-  -- for this node.m
-  when (before /= after) $ lift $ inDb $ do
-    let
-      minPeerCount = nodeData_minPeerConnections node
-    for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
-      flip runReaderT appConfig $
-        if peerCount < fromIntegral minPeerCount
-          then reportNodeInvalidPeerCountError nid minPeerCount peerCount
-          else clearNodeInvalidPeerCountError nid
+    let after = update' (update' before nodeDetailsData_peerCount (Just <$> eConnections)) nodeDetailsData_networkStat eNetworkStat
 
-    let p = (NodeDetails_dataField ~>)
-    update
-      [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
-      , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
-      ]
-      (NodeDetails_idField ==. nid)
-    project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
+    runExceptT $ do
+        let inDb = runDb (Identity db)
+
+        -- We will rely on the block monitor to clear any inaccessible endpoint errors
+        -- for this node.m
+        when (before /= after) $ lift $ inDb $ do
+          let
+            minPeerCount = nodeData_minPeerConnections node
+          for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
+            flip runReaderT appConfig $
+              if peerCount < fromIntegral minPeerCount
+                then reportNodeInvalidPeerCountError nid minPeerCount peerCount
+                else clearNodeInvalidPeerCountError nid
+
+          let p = (NodeDetails_dataField ~>)
+          update
+            [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
+            , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
+            ]
+            (NodeDetails_idField ==. nid)
+          project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
+
+
+  where
+
+    update' b lens = either (const b) (\x -> set lens x b)
+
+    runNodeRPC :: ReaderT NodeRPCContext (ExceptT RpcError m) a -> m (Either RpcError a)
+    runNodeRPC = runExceptT . flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node))
+
 
 type NodeData = Either (Id ProcessData) NodeExternalData
 nodeData_address :: AppConfig -> NodeData -> URI
