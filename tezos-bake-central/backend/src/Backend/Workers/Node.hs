@@ -196,10 +196,30 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
     writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds Nothing nodeAddr headBlockInfo
 
 publicVersionMonitor :: NodeDataSource -> PublicNode -> Either NamedChain ChainId -> IO ()
-publicVersionMonitor _nds _pn _chainId = undefined
+publicVersionMonitor nds pn chainId = do
+    let db = _nodeDataSource_pool nds
+        httpMgr = _nodeDataSource_httpMgr nds
+        safeHead = foldr (const . Just) Nothing
+        muri = either Just identifyChain chainId >>= getPublicNodeUri pn >>= safeHead
+    runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+        $(logDebug) $ fold
+          [ "With network ("
+          , showChain chainId
+          , ") discovering public node's("
+          , publicNodeShortName pn
+          , ") version at uri"
+          , maybe "<unknown>" Uri.render muri
+          ]
 
-nodeVersionMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> IO ()
-nodeVersionMonitor nds _appConfig nodeAddr nodeId = do
+        case muri of
+          Just uri -> do
+            version <- liftIO $ versionWorker httpMgr (T.unpack $ Uri.render uri)
+            notify NotifyTag_NodeVersion (Left pn, version)
+          Nothing -> notify NotifyTag_NodeVersion (Left pn, Nothing)
+
+
+nodeVersionMonitor :: NodeDataSource -> URI -> Id Node -> IO ()
+nodeVersionMonitor nds nodeAddr nodeId = do
   let db = _nodeDataSource_pool nds
       httpMgr = _nodeDataSource_httpMgr nds
   runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
@@ -218,9 +238,7 @@ versionWorker httpMgr baseUrl = do
     versionResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
         liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest versionUrl)
 
-    res <- either (const doCommit) (maybe doCommit return . decode' . Http.getResponseBody) versionResp'
-
-    return res
+    either (const doCommit) (maybe doCommit return . decode' . Http.getResponseBody) versionResp'
 
   where
     ensure :: String -> String -> String
@@ -406,7 +424,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
           nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
 
-          nodeVersionMonitor nds appConfig nodeAddr nodeId
+          nodeVersionMonitor nds nodeAddr nodeId
 
         liftIO (nodeQuery rChain) >>= inDb . \case
           Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
