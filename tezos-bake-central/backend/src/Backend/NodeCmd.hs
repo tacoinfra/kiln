@@ -80,11 +80,15 @@ getPath f paths = \case
 -- binary expects a .tezos-node/<chain_id>/protocol dir
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
 tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
-tezosBinaryPaths =
-  ( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
+tezosBinaryPaths = NonEmpty.fromList
+  [( "PsCARTHAGazKbHtnKfLzQg3kms52kSRpgnDY982a9oYsSXRLQEb"
   , $(staticWhich "tezos-baker-006-PsCARTHA")
   , $(staticWhich "tezos-endorser-006-PsCARTHA")
-  ) :| []
+  ),
+  ( "PsDELPH1Kxsxt8f9eWbxQeRxkjfbxoqM52jvs5Y5fBxWWh4ifpo"
+  , $(staticWhich "tezos-baker-007-PsDELPH1")
+  , $(staticWhich "tezos-endorser-007-PsDELPH1")
+  )]
 
 -- TODO: use postgres for "process-id's"
 

@@ -270,17 +270,39 @@ appSidebar
      )
   => m ()
 appSidebar = do
-  chain <- asks (^. frontendConfig . frontendConfig_chain)
-  SemUi.segment
-    (def
-      & SemUi.classes SemUi.|~ "app-sidebar"
-      & SemUi.segmentConfig_vertical SemUi.|~ True
-      & SemUi.segmentConfig_basic SemUi.|~ True
-      )
-    $ do
-        appSideHeader
-        appGutter chain
-        appSideFooter
+    chain <- asks (^. frontendConfig . frontendConfig_chain)
+    SemUi.segment
+      (def
+        & SemUi.classes SemUi.|~ "app-sidebar"
+        & SemUi.segmentConfig_vertical SemUi.|~ True
+        & SemUi.segmentConfig_basic SemUi.|~ True
+        )
+      $ do
+          appSideHeader
+          appGutter chain
+          appSideFooter
+          displayLatestRelease
+  where
+    displayLatestRelease = do
+        ev <- getPostBuild
+
+        projId <- asks (^. frontendConfig . frontendConfig_tezosGitlabProjectId)
+        mrelease <- asks (^. frontendConfig . frontendConfig_tezosRelease)
+
+        let toRequest = XhrRequest "GET" releaseLink def
+            showMajorMinor (a, b) = T.pack (show a) <> "." <> T.pack (show b)
+            releaseLink = "https://gitlab.com/api/v4/projects/" <> projId <> "/releases"
+            gitLink = "https://gitlab.com/tezos/tezos/-/releases"
+
+        versionReq' <-
+          (_xhrResponse_responseText >=> getRelease mrelease getReleaseTag) <$$> performRequestAsync (toRequest <$ ev)
+
+        versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
+
+        dyn_ $ ffor versionReq $ elAttr "div" ("style" =: "margin-bottom: 1rem;") . maybe (text "Latest Tezos Release: Unavailable.")
+            (\v -> hrefLink (gitLink <> "/v" <> v) $
+                   elAttr "small" ("style" =: "position: absolute; left:30px;") $
+                   text $ "Latest Tezos Release: " <> v)
 
 routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
                => R r -> (e -> ch -> m a) -> e -> ch -> m a
@@ -336,8 +358,6 @@ appGutter chain =
 
 appSideFooter
   :: (MonadAppWidget t m
-     , HasJSContext (Performable m)
-     , MonadJSM (Performable m)
      , RouteConstraints t AppRoute m
      , MonadReader r m
      , HasFrontendConfig r
@@ -366,26 +386,6 @@ appSideFooter =
                   Just uv | Just v <- _upstreamVersion_version uv , v > currentVersion ->
                     elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
                   _ -> pure ()
-
-              ev <- getPostBuild
-
-              projId <- asks (^. frontendConfig . frontendConfig_tezosGitlabProjectId)
-              mrelease <- asks (^. frontendConfig . frontendConfig_tezosRelease)
-
-              let toRequest = XhrRequest "GET" releaseLink def
-                  showMajorMinor (a, b) = T.pack (show a) <> "." <> T.pack (show b)
-                  releaseLink = "https://gitlab.com/api/v4/projects/" <> projId <> "/releases"
-                  gitLink = "https://gitlab.com/tezos/tezos/-/releases"
-
-              versionReq' <-
-                (_xhrResponse_responseText >=> getRelease mrelease getReleaseTag) <$$> performRequestAsync (toRequest <$ ev)
-
-              versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
-
-              dyn_ $ ffor versionReq $ elAttr "div" ("style" =: "margin-bottom: 1rem;") . maybe (text "Latest Tezos Release: Unavailable.")
-                  (\v -> hrefLink (gitLink <> "/v" <> v) $
-                         elAttr "small" ("style" =: "position: absolute; left:30px;") $
-                         text $ "Latest Tezos Release: " <> v)
 
 getReleaseTag :: A.Value -> Maybe (Int, Int)
 getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
