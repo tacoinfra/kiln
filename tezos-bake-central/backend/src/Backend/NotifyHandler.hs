@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -26,6 +27,7 @@ import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 
+import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Backend.CachedNodeRPC
@@ -82,7 +84,23 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_PeriodPromotionVote :=> Identity ma -> handlePeriodPromotionVote ma
     NotifyTag_BakerVote :=> Identity ma -> handleBakerVote ma
     NotifyTag_BakerRegistered :=> Identity (pkh, b) -> handleBakerRegistered pkh b
+    NotifyTag_NodeVersion :=> Identity (nid, mtzversion) -> handleTezosVersion mtzversion nid
   where
+
+
+    nodeVersionsVS = _bakeViewSelector_nodeVersions aggVS
+
+    publicVersionsVS = _bakeViewSelector_publicVersions aggVS
+
+    publicNodesVS = _bakeViewSelector_publicNodeConfig aggVS
+
+    handleTezosVersion :: Applicative m' => Maybe TezosVersion -> Either PublicNode (Id Node) -> m' (BakeView a)
+    handleTezosVersion tv  = \case
+        Left publicNode -> whenM (viewSelects publicNode publicNodesVS) $
+            pure $ mempty { _bakeView_publicVersions = toRangeView publicVersionsVS [(Bounded publicNode, tv)] }
+        Right nid -> whenM (viewSelects (Bounded nid) nodeAddressesVS) $
+            pure $ mempty { _bakeView_nodeVersions = toRangeView nodeVersionsVS [(Bounded nid, tv)] }
+
     latestHeadVS = _bakeViewSelector_latestHead aggVS
 
     connectedLedgerVS = _bakeViewSelector_connectedLedger aggVS

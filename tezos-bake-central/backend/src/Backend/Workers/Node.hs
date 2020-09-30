@@ -18,15 +18,20 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
+import Control.Exception.Safe (try)
+import Control.Lens (set)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
+import Data.Aeson (decode')
 import Data.Align
+import qualified Data.ByteString.Lazy as LB
 import Data.Foldable (foldl', length)
 import Data.Functor.Apply
 import qualified Data.LCA.Online.Polymorphic as LCA
+import Data.List (dropWhileEnd)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -38,11 +43,13 @@ import Data.String.Here.Interpolated (i)
 import Data.These
 import Data.Time (NominalDiffTime, diffUTCTime)
 import qualified Data.Text as T
+import Data.Word
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Simple as Http
 -- import qualified Network.HTTP.Types.Method as Http (methodGet)
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -190,6 +197,63 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
   atomically $ do
     writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds Nothing nodeAddr headBlockInfo
 
+publicVersionMonitor :: NodeDataSource -> PublicNode -> Either NamedChain ChainId -> IO ()
+publicVersionMonitor nds pn chainId = do
+    let db = _nodeDataSource_pool nds
+        httpMgr = _nodeDataSource_httpMgr nds
+        safeHead = foldr (const . Just) Nothing
+        muri = either Just identifyChain chainId >>= getPublicNodeUri pn >>= safeHead
+    runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+        $(logDebug) $ fold
+          [ "With network ("
+          , showChain chainId
+          , ") discovering public node's("
+          , publicNodeShortName pn
+          , ") version at uri"
+          , maybe "<unknown>" Uri.render muri
+          ]
+
+        case muri of
+          Just uri -> do
+            version <- liftIO $ versionWorker httpMgr (T.unpack $ Uri.render uri)
+            notify NotifyTag_NodeVersion (Left pn, version)
+          Nothing -> notify NotifyTag_NodeVersion (Left pn, Nothing)
+
+
+nodeVersionMonitor :: NodeDataSource -> URI -> Id Node -> IO ()
+nodeVersionMonitor nds nodeAddr nodeId = do
+  let db = _nodeDataSource_pool nds
+      httpMgr = _nodeDataSource_httpMgr nds
+  runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+    $(logDebug) $ fold
+        [ "Discovering node's version "
+        , "at uri address: "
+        , Uri.render nodeAddr
+        ]
+    version <- liftIO $ versionWorker httpMgr (T.unpack $ Uri.render nodeAddr)
+    notify NotifyTag_NodeVersion (Right nodeId, version)
+
+versionWorker :: MonadIO m => Http.Manager -> String -> m (Maybe TezosVersion)
+versionWorker httpMgr baseUrl = do
+    let versionUrl = ensure baseUrl "version"
+
+    versionResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
+        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest versionUrl)
+
+    either (const doCommit) (maybe doCommit return . decode' . Http.getResponseBody) versionResp'
+
+  where
+    ensure :: String -> String -> String
+    ensure base path = dropWhileEnd (== '/') base <> "/" <> path
+
+    doCommit = do
+        let commitUrl = ensure baseUrl "monitor/commit_hash"
+
+        commitResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
+            liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest commitUrl)
+
+        return $ either (const Nothing) (decode' . Http.getResponseBody) commitResp'
+
 updateNetworkStats
   :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
   => AppConfig
@@ -199,36 +263,43 @@ updateNetworkStats
   -> NodeData
   -> NodeDetailsData
   -> m (Either RpcError ())
-updateNetworkStats appConfig httpMgr db nid node before = runExceptT $ do
-  after :: NodeDetailsData <- flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ do
-    connections <- nodeRPC rConnections
-    networkStat <- nodeRPC rNetworkStat
-    pure $ before
-      { _nodeDetailsData_peerCount = Just connections
-      , _nodeDetailsData_networkStat = networkStat
-      }
+updateNetworkStats appConfig httpMgr db nid node before = do
 
-  let
-    inDb = runDb (Identity db)
+    eConnections :: Either RpcError Word64 <- runNodeRPC (nodeRPC rConnections)
+    eNetworkStat :: Either RpcError NetworkStat <- runNodeRPC (nodeRPC rNetworkStat)
 
-  -- We will rely on the block monitor to clear any inaccessible endpoint errors
-  -- for this node.m
-  when (before /= after) $ lift $ inDb $ do
-    let
-      minPeerCount = nodeData_minPeerConnections node
-    for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
-      flip runReaderT appConfig $
-        if peerCount < fromIntegral minPeerCount
-          then reportNodeInvalidPeerCountError nid minPeerCount peerCount
-          else clearNodeInvalidPeerCountError nid
+    let after = update' (update' before nodeDetailsData_peerCount (Just <$> eConnections)) nodeDetailsData_networkStat eNetworkStat
 
-    let p = (NodeDetails_dataField ~>)
-    update
-      [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
-      , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
-      ]
-      (NodeDetails_idField ==. nid)
-    project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
+    runExceptT $ do
+        let inDb = runDb (Identity db)
+
+        -- We will rely on the block monitor to clear any inaccessible endpoint errors
+        -- for this node.m
+        when (before /= after) $ lift $ inDb $ do
+          let
+            minPeerCount = nodeData_minPeerConnections node
+          for_ (_nodeDetailsData_peerCount after) $ \peerCount -> do
+            flip runReaderT appConfig $
+              if peerCount < fromIntegral minPeerCount
+                then reportNodeInvalidPeerCountError nid minPeerCount peerCount
+                else clearNodeInvalidPeerCountError nid
+
+          let p = (NodeDetails_dataField ~>)
+          update
+            [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
+            , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
+            ]
+            (NodeDetails_idField ==. nid)
+          project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
+
+
+  where
+
+    update' b lens = either (const b) (\x -> set lens x b)
+
+    runNodeRPC :: ReaderT NodeRPCContext (ExceptT RpcError m) a -> m (Either RpcError a)
+    runNodeRPC = runExceptT . flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node))
+
 
 type NodeData = Either (Id ProcessData) NodeExternalData
 nodeData_address :: AppConfig -> NodeData -> URI
@@ -362,6 +433,8 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
           nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
 
+          nodeVersionMonitor nds nodeAddr nodeId
+
         liftIO (nodeQuery rChain) >>= inDb . \case
           Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
           Right actualChainId
@@ -409,6 +482,8 @@ publicNodesWorker nds = foldMap workerForSource
                   x | x <= 0 -> timeBetweenBlocks / 2
                     | otherwise -> x
             pure secsTillNextBlock
+
+      publicVersionMonitor nds pn chain
 
       _ <- timeout' (fromMaybe 5 $ secsTillNextBlock ^? _Right . _Just) (waitForNewHead nds)
       threadDelay' 5 -- always give a little extra delay to make it more likely the public node reports the new block

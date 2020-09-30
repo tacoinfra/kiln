@@ -91,7 +91,7 @@ uriHostPortPath uri = auth <> path
       Right a -> Uri.unRText (Uri.authHost a) <> maybe "" (\p -> ":" <> tshow p) (Uri.authPort a)
     path = case Uri.uriPath uri of
       Nothing -> ""
-      Just (_, pieces) -> T.intercalate "/" $ toList $ Uri.unRText <$> pieces
+      Just (_, pieces) -> "/" <> (T.intercalate "/" $ toList $ Uri.unRText <$> pieces)
 
 defaultTezosCompatJsonOptions :: Aeson.Options
 defaultTezosCompatJsonOptions = Aeson.defaultOptions
