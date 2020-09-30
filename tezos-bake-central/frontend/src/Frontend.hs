@@ -1766,7 +1766,7 @@ nodesTab =
 
       -- Node tiles
       dyn_ $ ffor useBlocker $ \case
-        True -> welcomeScreen False
+        True -> divClass "app-content app-welcome" $ welcomeScreen False
         False -> divClass "ui stackable cards" $ do
           ebn <- snd <$$$$> watchErrorsByNode everythingWindow
 
