@@ -64,7 +64,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (MonadLogger, logDebug, logDebugNS, logDebugSH, logWarnSH)
+import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -1002,7 +1002,7 @@ nodeQueryImpl
   -> LoggingEnv
   -> NodeQuery a
   -> IO (Either CacheError (RpcResult a))
-nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger debugger *> case q of
+nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
   NodeQuery_ProtocolIndex protoHash -> nodeRPC' $ rProtocolIndex chainId protoHash
   NodeQuery_BakingRights branch targetLevel ->
@@ -1030,7 +1030,6 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
     nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO (RpcResult c)
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
-    debugger = logDebugNS "kiln-debugging" ("nodeQueryImpl called " <> T.pack (show q))
 
 nodeQueryOsPubNodeImpl
   :: forall a.
@@ -1278,18 +1277,19 @@ cacheErrorLogMessage
   -> CacheError
   -> Text
 cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc <> "' Reason: ") <>) $ prettyCacheError err
-  where
-    prettyCacheError = \case
-      CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
-      CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
-      CacheError_Timeout t -> "Timed out after " <> tshow t
-      CacheError_RpcError rpcErr -> case rpcErr of
-        RpcError_UnexpectedStatus _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
-        RpcError_HttpException e -> "RPC Exception (The Node is unreachable) " <> tshow e
-        RpcError_NonJSON e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
-      CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
-      CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
-      CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
+
+prettyCacheError :: CacheError -> Text
+prettyCacheError = \case
+  CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
+  CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
+  CacheError_Timeout t -> "Timed out after " <> tshow t
+  CacheError_RpcError rpcErr -> case rpcErr of
+    RpcError_UnexpectedStatus _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
+    RpcError_HttpException e -> "RPC Exception (The Node is unreachable) " <> tshow e
+    RpcError_NonJSON e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
+  CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
+  CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
+  CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
 
 noSuitableNodeLogMessage :: Text -> [(URI, UnsuitableNodeReason)] -> Text
 noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <> q <> "`. Nodes are [" <> (T.intercalate "," . fmap prettyUnsuitableReason $ reasons) <> "]"

@@ -20,7 +20,7 @@ import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Align
@@ -30,7 +30,7 @@ import qualified Data.LCA.Online.Polymorphic as LCA
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromJust, fromMaybe, listToMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import qualified Data.Set as S
@@ -732,8 +732,24 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
 
-    throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
-    throwing = fmap (either (error . T.unpack . cacheErrorLogMessage "amendmentProcessWorker") id) . flip runReaderT nds . runExceptT @CacheError
+    throwing :: (Monad m, MonadLogger m) => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
+    throwing = (>>= either logThenThrow pure) . flip runReaderT nds . runExceptT @CacheError
+    -- fmap (either (error . T.unpack . cacheErrorLogMessage "amendmentProcessWorker") id) . flip runReaderT nds . runExceptT @CacheError
+      where
+        matchesNonJSON = \case
+            RpcError_NonJSON e' bytes' -> Just (e', bytes')
+            _ -> Nothing
+
+        logThenThrow e' = do
+            let logMessage = cacheErrorLogMessage "amendmentProcessWorker" e'
+            logDebugNS "kiln-debugging" logMessage
+            error $ case e' of
+              CacheError_RpcError rpcError | isJust (matchesNonJSON rpcError) -> case fromJust (matchesNonJSON rpcError) of
+                    (e'', _bytes) -> "Node Query failed for 'amendmentProcessWorker' Reason: "
+                                  <> "The RPC returned a response that kiln did not understand. JSON Parse Error: "
+                                  <> e''
+                                  <> ". The response can be in found in the logs in namespace kiln-debugging."
+              _ -> T.unpack logMessage
 
     runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
