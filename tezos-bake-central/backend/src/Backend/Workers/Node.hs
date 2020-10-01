@@ -22,7 +22,7 @@ import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
@@ -807,8 +807,21 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
 
-    throwing :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
-    throwing = fmap (either (error . T.unpack . cacheErrorLogMessage "amendmentProcessWorker") id) . flip runReaderT nds . runExceptT @CacheError
+    throwing :: (Monad m, MonadLogger m) => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
+    throwing = (>>= either logThenThrow pure) . flip runReaderT nds . runExceptT @CacheError
+      where
+
+        logThenThrow e' = do
+            let logMessage = cacheErrorLogMessage "amendmentProcessWorker" e'
+            logDebugNS "kiln-debugging" logMessage
+            error $ case e' of
+              CacheError_RpcError (RpcError_NonJSON e'' _bytes) -> mconcat
+                                  ["Node Query failed for 'amendmentProcessWorker' Reason: "
+                                  , "The RPC returned a response that kiln did not understand. JSON Parse Error: "
+                                  , e''
+                                  , ". The response can be in found in the logs in namespace kiln-debugging."
+                                  ]
+              _ -> T.unpack logMessage
 
     runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
