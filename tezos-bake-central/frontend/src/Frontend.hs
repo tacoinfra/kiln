@@ -2586,7 +2586,7 @@ tileMenu content =
     pure ()
 
 waitingForResponse :: DomBuilder t m => m ()
-waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response."
+waitingForResponse = divClass "ui basic segment" $ divClass "ui active centered inline text loader" $ text "Waiting for response"
 
 semuiTab :: (DomBuilder t m, PostBuild t m, Eq k) => m () -> k -> Demux t k -> Dynamic t Enabled -> m (Event t k)
 semuiTab label k currentTab enabled =
