@@ -442,7 +442,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
             tooltipped TooltipPos_BottomLeft (protocolTooltip latestHead) $
               text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
-
+{-
         divClass "iconDiv" $
           dyn_ $ ffor disconnected $ flip when $ tooltipped TooltipPos_BottomCenter disconnectedTooltip $
             SemUi.icon "icon-disconnected"
@@ -450,6 +450,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
               & SemUi.iconConfig_color SemUi.|?~ SemUi.Red
               & SemUi.iconConfig_size SemUi.|?~ SemUi.Big
               )
+-}
 
       cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
       whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
@@ -494,7 +495,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
   headerBell
 
   where
-    disconnectedTooltip = divClass "disconnected-tooltip" $ do
+    _disconnectedTooltip = divClass "disconnected-tooltip" $ do
       el "p" $ divClass "tooltip-title" $ text "Disconnected from the blockchain."
       divClass "tooltip-description" $ do
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
@@ -1765,7 +1766,7 @@ nodesTab =
 
       -- Node tiles
       dyn_ $ ffor useBlocker $ \case
-        True -> waitingForResponse
+        True -> divClass "app-content app-welcome" $ welcomeScreen False
         False -> divClass "ui stackable cards" $ do
           ebn <- snd <$$$$> watchErrorsByNode everythingWindow
 
