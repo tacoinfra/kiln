@@ -1284,9 +1284,9 @@ prettyCacheError = \case
   CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
   CacheError_Timeout t -> "Timed out after " <> tshow t
   CacheError_RpcError rpcErr -> case rpcErr of
-    RpcError_UnexpectedStatus _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
-    RpcError_HttpException e -> "RPC Exception (The Node is unreachable) " <> tshow e
-    RpcError_NonJSON e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
+    RpcError_UnexpectedStatus _url _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
+    RpcError_HttpException _url e -> "RPC Exception (The Node is unreachable) " <> tshow e
+    RpcError_NonJSON _url e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
   CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
   CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
   CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
@@ -1315,7 +1315,16 @@ ancestors (RawLevel n) branch = do
   hist <- liftIO . readTVarIO =<< asks (_nodeDataSource_history . view nodeDataSource)
   case Map.lookup branch (_cachedHistory_blocks hist) of
     Just branchPath -> return $ fmap fst $ genericTake n $ LCA.toList branchPath
-    Nothing -> throwError $ RpcError_UnexpectedStatus 404 "NO BRANCH" ^. re asRpcError
+    Nothing -> throwError $ RpcError_UnexpectedStatus "View note in commments in source code(module Backend.CachedNodeRPC)" 404 "NO BRANCH" ^. re asRpcError
+
+{-
+
+*** COMMENT ABOUT ANCESTORS ***
+
+This function is not used by any other functions making nodeRPC calls.
+It seems like this function was used by Obsidian's own node's nodeRPC.
+
+-}
 
 {-
 calculateBakeEfficiency ::

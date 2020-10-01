@@ -80,7 +80,7 @@ blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds
       $(logDebug) $ "Scrape block " <> toBase58Text (_blockTodo_hash queuedBlock) <> "."
       couldBeBlock <- unliftEither $ nodeQueryDataSourceSafe $ NodeQuery_Block (_blockTodo_hash queuedBlock)
       case couldBeBlock of
-        Left (CacheError_RpcError (RpcError_UnexpectedStatus 404 _)) ->
+        Left (CacheError_RpcError (RpcError_UnexpectedStatus _url 404 _)) ->
           $(logDebugSH) ("blockWorker"::Text,"Error (404) in retrieving block from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
         Left (CacheError_NoSuitableNode q reasons) ->
           $(logDebugSH) ("blockWorker"::Text, noSuitableNodeLogMessage q reasons)
