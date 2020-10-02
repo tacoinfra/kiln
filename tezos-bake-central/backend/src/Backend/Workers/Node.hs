@@ -415,7 +415,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
             else do
               $(logInfo) [i|nodeWorker: fetching checkpoint for Node: ${nodeAddr}|]
               liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
-                Left (RpcError_UnexpectedStatus 404 _) -> pure (Just 0, mCurrentCycle)
+                Left (RpcError_UnexpectedStatus _url 404 _) -> pure (Just 0, mCurrentCycle)
                 Right checkpoint -> pure (Just $ _checkpoint_savePoint checkpoint, mCurrentCycle)
                 _ -> (Nothing, Nothing) <$ $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr}|]
 
@@ -815,8 +815,10 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
             let logMessage = cacheErrorLogMessage "amendmentProcessWorker" e'
             logDebugNS "kiln-debugging" logMessage
             error $ case e' of
-              CacheError_RpcError (RpcError_NonJSON e'' _bytes) -> mconcat
-                                  ["Node Query failed for 'amendmentProcessWorker' Reason: "
+              CacheError_RpcError (RpcError_NonJSON url e'' _bytes) -> mconcat
+                                  ["Node Query failed for 'amendmentProcessWorker' Reason at url ("
+                                  , T.unpack url
+                                  , "): "
                                   , "The RPC returned a response that kiln did not understand. JSON Parse Error: "
                                   , e''
                                   , ". The response can be in found in the logs in namespace kiln-debugging."
