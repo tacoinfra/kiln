@@ -7,12 +7,14 @@
 module Backend.Workers.Cache where
 
 import Control.Concurrent.STM (TVar, atomically, orElse)
-import Control.Monad.Logger (logDebug)
+import Control.Monad.Catch (catch, SomeException(..))
+import Control.Monad.Logger (logDebug, logDebugNS)
 import qualified Data.Aeson as Aeson
 import Data.Dependent.Map (DSum (..))
 import qualified Data.Dependent.Map as DMap
 import Data.Either (partitionEithers)
 import Data.Maybe (catMaybes)
+import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Rhyolite.Backend.DB (runDb)
@@ -83,3 +85,9 @@ compactCache expireTime dsrc = do
         , let k = _rawCacheEntry_key entry
         , let v = _rawCacheEntry_value entry
         ]
+        `catch`
+        (\(SomeException e) -> do
+            logDebugNS "kiln-debugging" (T.pack $ show e)
+            error "There was a key confilct during cache compaction. Please view the logs\
+            \ at namespace \"kiln-debugging\" for more information."
+        )
