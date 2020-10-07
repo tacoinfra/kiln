@@ -84,7 +84,7 @@ let
           do
             for match in $exclude
             do
-            if [[ ! $(basename $file) =~ $match]]
+            if [[ ! ($(basename $file) =~ $match) ]]
             then
               cp -prd $file $DEBDIR/${nix-store-root}/nix/store/
             fi
