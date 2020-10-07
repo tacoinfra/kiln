@@ -77,23 +77,19 @@ let
           # copy nix closure
           storePaths=$(${pkgs.perl}/bin/perl ${pkgs.pathsFromGraph} closure)
           mkdir -p $DEBDIR/${nix-store-root}/nix/store
-          cp -prd $storePaths $DEBDIR/${nix-store-root}/nix/store/
+          # cp -prd $storePaths $DEBDIR/${nix-store-root}/nix/store/
           # minize the closure size
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-ghc-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-gcc-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-python-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-perl-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-nodejs-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-webkitgtk-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-gst-plugins-base-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-gtk+3-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-cups-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-gdk-pixbuf-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-alsa-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-cairo-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-libvorbis-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-gstreamer-*
-          rm -rf $DEBDIR/${nix-store-root}/nix/store/*-cups-*
+          exclude = "ghc gcc python perl nodejs webkitgtk gst-plugins-base gtk+3 cups gdk-pixbuf alsa cairo libvorbis gstreamer cups"
+          for file in $storePaths/*
+          do
+            for match in $exclude
+            do
+            if [[ ! $(basename $file) =~ $match]]
+            then
+              cp -prd $file $DEBDIR/${nix-store-root}/nix/store/
+            fi
+            done
+          done
 
           chmod 0755 $DEBDIR/usr/bin/*
 
