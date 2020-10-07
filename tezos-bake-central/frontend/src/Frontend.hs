@@ -596,7 +596,7 @@ nodesTabOrWelcome = do
     Just (haveBakers, haveNodes, onlyOsNode) -> divClass "app-content" $ do
       when (onlyOsNode && not haveBakers) $ welcomeScreen True
       when haveBakers bakersTab
-      when haveNodes nodesTab
+      when haveNodes (nodesTab onlyOsNode)
 
 everythingWindow :: Applicative f => f (Set (ClosedInterval (WithInfinity a)))
 everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
@@ -1696,8 +1696,8 @@ nodesTab
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadAppWidget  t (ModalM m)
     )
-  => m ()
-nodesTab =
+  => Bool -> m ()
+nodesTab onlyOsNode =
   divClass "dashboard-section dashboard-section-nodes" $ do
     elClass "h4" "dashboard-section-title" $ text "Nodes"
     nodesDyn <- watchNodeAddresses
@@ -1766,7 +1766,9 @@ nodesTab =
 
       -- Node tiles
       dyn_ $ ffor useBlocker $ \case
-        True -> divClass "app-content app-welcome" $ welcomeScreen False
+        True -> case onlyOsNode of
+            False -> divClass "app-content app-welcome" $ welcomeScreen False
+            True -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
           ebn <- snd <$$$$> watchErrorsByNode everythingWindow
 
