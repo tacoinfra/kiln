@@ -87,6 +87,7 @@ let
             if [[ ! ($(basename $file) =~ $match) ]]
             then
               cp -prd $file $DEBDIR/${nix-store-root}/nix/store/
+              break
             fi
             done
           done
