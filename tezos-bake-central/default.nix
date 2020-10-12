@@ -61,6 +61,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
         else enableCabalFlag super.common distMethod)));
       backend = haddock-build (checkHlint (hsOnly (overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
+        postFixup = "rm -rf $out/lib $out/nix-support $out/share/doc";
       }))));
       base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
       email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
