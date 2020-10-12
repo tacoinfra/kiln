@@ -48,10 +48,10 @@ let
         *-gtk+3-*
         *-cups-*
         *-gdk-pixbuf-*
-        *-alsa -*
-        *-cairo -*
+        *-alsa-*
+        *-cairo-*
         *-libvorbis-*
-        *-gstreamer -*
+        *-gstreamer-*
       '';};
 
     in pkgs.stdenv.mkDerivation {
