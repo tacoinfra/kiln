@@ -36,6 +36,24 @@ let
         Description: ${description}
       ''; };
 
+      exclude = pkgs.writeTextFile { name = "exclude.txt"; text = ''
+        *-doc
+        *-ghc-*
+        *-gcc-*
+        *-python-*
+        *-perl-*
+        *-nodejs-*
+        *-webkitgtk-*
+        *-gst-plugins-base-*
+        *-gtk+3-*
+        *-cups-*
+        *-gdk-pixbuf-*
+        *-alsa -*
+        *-cairo -*
+        *-libvorbis-*
+        *-gstreamer -*
+      '';};
+
     in pkgs.stdenv.mkDerivation {
         name = "${pkgName}-${version}-debian-pkg";
         src = ./CHANGELOG.md;
@@ -77,19 +95,8 @@ let
           # copy nix closure
           storePaths=$(${pkgs.perl}/bin/perl ${pkgs.pathsFromGraph} closure)
           mkdir -p $DEBDIR/${nix-store-root}/nix/store
-          # cp -prd $storePaths $DEBDIR/${nix-store-root}/nix/store/
-          # minize the closure size
-          exclude = "ghc gcc python perl nodejs webkitgtk gst-plugins-base gtk+3 cups gdk-pixbuf alsa cairo libvorbis gstreamer cups"
-          for file in $storePaths/*
-          do
-            for match in $exclude
-            do
-            if [[ ! ($(basename $file) =~ $match) ]]
-            then
-              cp -prd $file $DEBDIR/${nix-store-root}/nix/store/
-            fi
-            done
-          done
+
+          ${pkgs.rsync}/bin/rsync --exclude-from ${exclude} -avlR $storePaths $DEBDIR/${nix-store-root}/nix/store/
 
           chmod 0755 $DEBDIR/usr/bin/*
 
