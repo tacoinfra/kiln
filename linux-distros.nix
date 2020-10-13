@@ -39,19 +39,14 @@ let
       exclude = pkgs.writeTextFile { name = "exclude.txt"; text = ''
         *-doc
         *-ghc-*
-        *-gcc-*
         *-python-*
         *-perl-*
         *-nodejs-*
-        *-webkitgtk-*
-        *-gst-plugins-base-*
-        *-gtk+3-*
         *-cups-*
-        *-gdk-pixbuf-*
         *-alsa-*
-        *-cairo-*
         *-libvorbis-*
-        *-gstreamer-*
+        *-gcc-7.3.0
+        *-linux-headers-*
       '';};
 
     in pkgs.stdenv.mkDerivation {
@@ -96,7 +91,7 @@ let
           storePaths=$(${pkgs.perl}/bin/perl ${pkgs.pathsFromGraph} closure)
           mkdir -p $DEBDIR/${nix-store-root}/nix/store
 
-          ${pkgs.rsync}/bin/rsync --exclude-from ${exclude} -avlR $storePaths $DEBDIR/${nix-store-root}/nix/store/
+          ${pkgs.rsync}/bin/rsync --exclude-from ${exclude} -avlR $storePaths $DEBDIR/${nix-store-root}
 
           chmod 0755 $DEBDIR/usr/bin/*
 
