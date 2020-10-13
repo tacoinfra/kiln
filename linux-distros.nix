@@ -39,19 +39,14 @@ let
       exclude = pkgs.writeTextFile { name = "exclude.txt"; text = ''
         *-doc
         *-ghc-*
-        *-gcc-*
         *-python-*
         *-perl-*
         *-nodejs-*
-        *-webkitgtk-*
-        *-gst-plugins-base-*
-        *-gtk+3-*
         *-cups-*
-        *-gdk-pixbuf-*
         *-alsa-*
-        *-cairo-*
         *-libvorbis-*
-        *-gstreamer-*
+        *-gcc-7.3.0
+        *-linux-headers-*
       '';};
 
     in pkgs.stdenv.mkDerivation {
