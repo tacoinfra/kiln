@@ -18,11 +18,18 @@ obelisk.project ./. ({ pkgs, ... }@args:
             then tezosScopedKit
             else import ../dep/platform-specific-binaries.nix { inherit system pkgs;};
 
-    hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {
+    hsOnly = super: component: pkg: pkg.overrideAttrs ({ src, ... }: {
       src = pkgs.lib.cleanSourceWith {
         filter = (name: type: type == "directory" || (!(pkgs.lib.hasSuffix ".hi" name) && !(pkgs.lib.hasSuffix ".o" name)));
         src = pkgs.lib.cleanSource src;
       };
+     disallowedReferences = [ super.tezos-bake-monitor-lib ];
+     postInstall = if component != null then ''
+     ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${super.tezos-bake-monitor-lib} $out/bin/${component}
+     ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${super.gargoyle-postgresql-nix} $out/bin/${component}
+     ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${pkgs.gmp} $out/bin/${component}
+     ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${pkgs.postgresql} $out/bin/${component}
+       '' else "";
     });
 
     checkHlint = pkg: pkg.overrideAttrs ({ preConfigure ? "", src, ... }: {
@@ -56,10 +63,10 @@ obelisk.project ./. ({ pkgs, ... }@args:
     };
 
     overrides = pkgs.lib.composeExtensions rhyolite.haskellOverrides (self: super: with pkgs.haskell.lib; {
-      common = haddock-build (checkHlint (hsOnly (if distMethod == null
+      common = haddock-build (checkHlint (hsOnly super null (if distMethod == null
         then super.common
         else enableCabalFlag super.common distMethod)));
-      backend = haddock-build (checkHlint (hsOnly (overrideCabal super.backend (drv:{
+      backend = haddock-build (checkHlint (hsOnly super "backend" (overrideCabal super.backend (drv:{
         librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
         postFixup = "rm -rf $out/lib $out/nix-support $out/share/doc";
       }))));
@@ -67,7 +74,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
       extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
       lens-aeson = dontCheck super.lens-aeson;
-      frontend = haddock-build (checkHlint (hsOnly super.frontend));
+      frontend = haddock-build (checkHlint (hsOnly super null super.frontend));
       markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
       memory = dontCheck (self.callHackage "memory" "0.14.17" {});
       semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);

@@ -216,6 +216,13 @@ in (obApp distroMethods.source system) // {
   }).kiln-debian;
 
   tezosKit = tezosScopedKit system;
-  # inherit tezosScopedKit;
 
+  # blessing = (obApp distroMethods.docker "x86_64-linux").linuxExe.overrideAttrs (drv: {
+  #   disallowedReferences = [ pkgs.haskell.compiler.ghc843 ];
+  #   postInstall = ''
+  #   ${pkgs.removeReferencesTo} -t ${pkgs.haskell.compiler.ghc843} $out
+  #   '';
+  #   });
+
+  # inherit tezosScopedKit;
 }
