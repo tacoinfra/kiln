@@ -19,14 +19,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
             then tezosScopedKit
             else import ../dep/platform-specific-binaries.nix { inherit system pkgs;};
 
-  # This is missing in pkgs.haskellPackages.
-    callHackageDirect = {pkg, ver, sha256}:
-      let pkgver = "${pkg}-${ver}";
-      in pkgs.haskellPackages.callCabal2nix pkg (pkgs.fetchzip {
-           url = "mirror://hackage/${pkgver}/${pkgver}.tar.gz";
-           inherit sha256;
-         });
-
     hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {
       src = pkgs.lib.cleanSourceWith {
         filter = (name: type: type == "directory" || (!(pkgs.lib.hasSuffix ".hi" name) && !(pkgs.lib.hasSuffix ".o" name)));
@@ -64,8 +56,8 @@ obelisk.project ./. ({ pkgs, ... }@args:
       tezos-noderpc = hackGet dep/tezos-bake-monitor-lib + "/tezos-noderpc";
     };
 
-    overrides = let
-        appOverlay = self: super: with pkgs.haskell.lib; {
+    overrides =
+     let appOverlay = self: super: with pkgs.haskell.lib; {
           common = haddock-build (checkHlint (hsOnly (if distMethod == null
             then super.common
             else enableCabalFlag super.common distMethod)));
@@ -85,19 +77,22 @@ obelisk.project ./. ({ pkgs, ... }@args:
           tezos-bake-monitor-lib = test-runner (haddock-build super.tezos-bake-monitor-lib);
           tezos-noderpc = checkHlint (haddock-build super.tezos-noderpc);
           };
+        # This explicit dependency may be taken out soon if the changes are accepted by Obsidian.
         gargoyleSrc = pkgs.fetchFromGitHub {
           owner = "obsidiansystems";
           repo = "gargoyle";
-          rev = "e3fa9a4aa6abbd70772a1bda95dc290ad79a1c58";
-          sha256 = "1p8yind2431ziw32mxcf37r2wwg11sbnmqhj447wrlddkx9pdf72";};
+          rev = "941ca7a25403bab4c719e669db36dc18b240b996";
+          sha256 = "18vvvp29ph112myxqmw4cgf1x6q0xs6jwdmg4k9fghcpav8acjd7";};
         gargoyleOverlay = import gargoyleSrc {};
-        baseoverlay = _ : _ : {
-          which = callHackageDirect { # I had to grab the definition from nixpkgs directly
-            pkg = "which";
-            ver = "0.1.0.0";
-            sha256 = "1c8svdiv378ps63lwn3aw7rv5wamlpmzgcn21r2pap4sx7p08892";
-          } {};};
-         in with pkgs.lib; foldr composeExtensions baseoverlay [ rhyolite.haskellOverrides appOverlay gargoyleOverlay ];
+        baseOverlay = self: super:
+            let callHackageDirect = {pkg,ver,sha256}:
+                let pkgver = "${pkg}-${ver}";
+                in self.callCabal2nix pkg (pkgs.fetchzip {
+                   url = "mirror://hackage/${pkgver}.tar.gz";
+                   inherit sha256;
+                   });
+            in { which = callHackageDirect { pkg = "which"; ver = "0.1.0.0"; sha256 = "1c8svdiv378ps63lwn3aw7rv5wamlpmzgcn21r2pap4sx7p08892";} {};};
+     in with pkgs.lib; foldr composeExtensions baseOverlay [ rhyolite.haskellOverrides appOverlay gargoyleOverlay ];
   }) // {
     dev.extraGhciArgs = ["-fobject-code"];
   }
