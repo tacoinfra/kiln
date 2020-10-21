@@ -217,6 +217,4 @@ in (obApp distroMethods.source system) // {
 
   tezosKit = tezosScopedKit system;
 
-  testing = (obAppGargoyle distroMethods.source system).exe;
-
 }
