@@ -217,12 +217,6 @@ in (obApp distroMethods.source system) // {
 
   tezosKit = tezosScopedKit system;
 
-  # blessing = (obApp distroMethods.docker "x86_64-linux").linuxExe.overrideAttrs (drv: {
-  #   disallowedReferences = [ pkgs.haskell.compiler.ghc843 ];
-  #   postInstall = ''
-  #   ${pkgs.removeReferencesTo} -t ${pkgs.haskell.compiler.ghc843} $out
-  #   '';
-  #   });
+  testing = (obAppGargoyle distroMethods.source system).exe;
 
-  # inherit tezosScopedKit;
 }

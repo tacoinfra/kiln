@@ -13,23 +13,25 @@ in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
     inherit (obelisk.reflex-platform) hackGet;
+
     rhyolite = obelisk;
     nodeKit = if tezosScopedKit != null
             then tezosScopedKit
             else import ../dep/platform-specific-binaries.nix { inherit system pkgs;};
 
-    hsOnly = super: component: pkg: pkg.overrideAttrs ({ src, ... }: {
+  # This is missing in pkgs.haskellPackages.
+    callHackageDirect = {pkg, ver, sha256}:
+      let pkgver = "${pkg}-${ver}";
+      in pkgs.haskellPackages.callCabal2nix pkg (pkgs.fetchzip {
+           url = "mirror://hackage/${pkgver}/${pkgver}.tar.gz";
+           inherit sha256;
+         });
+
+    hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {
       src = pkgs.lib.cleanSourceWith {
         filter = (name: type: type == "directory" || (!(pkgs.lib.hasSuffix ".hi" name) && !(pkgs.lib.hasSuffix ".o" name)));
         src = pkgs.lib.cleanSource src;
       };
-     disallowedReferences = [ super.tezos-bake-monitor-lib ];
-     postInstall = if component != null then ''
-     ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${super.tezos-bake-monitor-lib} $out/bin/${component}
-     ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${super.gargoyle-postgresql-nix} $out/bin/${component}
-     ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${pkgs.gmp} $out/bin/${component}
-     ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${pkgs.postgresql} $out/bin/${component}
-       '' else "";
     });
 
     checkHlint = pkg: pkg.overrideAttrs ({ preConfigure ? "", src, ... }: {
@@ -62,27 +64,40 @@ obelisk.project ./. ({ pkgs, ... }@args:
       tezos-noderpc = hackGet dep/tezos-bake-monitor-lib + "/tezos-noderpc";
     };
 
-    overrides = pkgs.lib.composeExtensions rhyolite.haskellOverrides (self: super: with pkgs.haskell.lib; {
-      common = haddock-build (checkHlint (hsOnly super null (if distMethod == null
-        then super.common
-        else enableCabalFlag super.common distMethod)));
-      backend = haddock-build (checkHlint (hsOnly super "backend" (overrideCabal super.backend (drv:{
-        librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
-        postFixup = "rm -rf $out/lib $out/nix-support $out/share/doc";
-      }))));
-      base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
-      email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
-      extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
-      lens-aeson = dontCheck super.lens-aeson;
-      frontend = haddock-build (checkHlint (hsOnly super null super.frontend));
-      markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
-      memory = dontCheck (self.callHackage "memory" "0.14.17" {});
-      semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
-      silently = pkgs.haskell.lib.dontCheck super.silently;
-      terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-      tezos-bake-monitor-lib = test-runner (haddock-build super.tezos-bake-monitor-lib);
-      tezos-noderpc = checkHlint (haddock-build super.tezos-noderpc);
-    });
+    overrides = let
+        appOverlay = self: super: with pkgs.haskell.lib; {
+          common = haddock-build (checkHlint (hsOnly (if distMethod == null
+            then super.common
+            else enableCabalFlag super.common distMethod)));
+          backend = haddock-build (checkHlint (hsOnly (overrideCabal super.backend (drv:{
+            librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
+          }))));
+          base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
+          email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
+          extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
+          lens-aeson = dontCheck super.lens-aeson;
+          frontend = haddock-build (checkHlint (hsOnly super.frontend));
+          markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
+          memory = dontCheck (self.callHackage "memory" "0.14.17" {});
+          semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
+          silently = pkgs.haskell.lib.dontCheck super.silently;
+          terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
+          tezos-bake-monitor-lib = test-runner (haddock-build super.tezos-bake-monitor-lib);
+          tezos-noderpc = checkHlint (haddock-build super.tezos-noderpc);
+          };
+        gargoyleSrc = pkgs.fetchFromGitHub {
+          owner = "obsidiansystems";
+          repo = "gargoyle";
+          rev = "e3fa9a4aa6abbd70772a1bda95dc290ad79a1c58";
+          sha256 = "1p8yind2431ziw32mxcf37r2wwg11sbnmqhj447wrlddkx9pdf72";};
+        gargoyleOverlay = import gargoyleSrc {};
+        baseoverlay = _ : _ : {
+          which = callHackageDirect { # I had to grab the definition from nixpkgs directly
+            pkg = "which";
+            ver = "0.1.0.0";
+            sha256 = "1c8svdiv378ps63lwn3aw7rv5wamlpmzgcn21r2pap4sx7p08892";
+          } {};};
+         in with pkgs.lib; foldr composeExtensions baseoverlay [ rhyolite.haskellOverrides appOverlay gargoyleOverlay ];
   }) // {
     dev.extraGhciArgs = ["-fobject-code"];
   }
