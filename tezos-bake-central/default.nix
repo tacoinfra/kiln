@@ -19,12 +19,20 @@ obelisk.project ./. ({ pkgs, ... }@args:
             then tezosScopedKit
             else import ../dep/platform-specific-binaries.nix { inherit system pkgs;};
 
-    hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {
+    hsOnly = attrs: pkg: pkg.overrideAttrs ({ src, ... }: {
       src = pkgs.lib.cleanSourceWith {
         filter = (name: type: type == "directory" || (!(pkgs.lib.hasSuffix ".hi" name) && !(pkgs.lib.hasSuffix ".o" name)));
         src = pkgs.lib.cleanSource src;
       };
-    });
+    } // attrs);
+
+    frontendOnly =
+        let attrs = {
+            postInstall  = ''
+             ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${pkgs.nodejs-slim} $out/bin/frontend
+             '';
+                };
+        in pkg: hsOnly attrs pkg;
 
     checkHlint = pkg: pkg.overrideAttrs ({ preConfigure ? "", src, ... }: {
       preConfigure = ''
@@ -58,17 +66,17 @@ obelisk.project ./. ({ pkgs, ... }@args:
 
     overrides =
      let appOverlay = self: super: with pkgs.haskell.lib; {
-          common = haddock-build (checkHlint (hsOnly (if distMethod == null
+          common = haddock-build (checkHlint (hsOnly {} (if distMethod == null
             then super.common
             else enableCabalFlag super.common distMethod)));
-          backend = haddock-build (checkHlint (hsOnly (overrideCabal super.backend (drv:{
+          backend = haddock-build (checkHlint (hsOnly {} (overrideCabal super.backend (drv:{
             librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
           }))));
           base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
           email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
           extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
           lens-aeson = dontCheck super.lens-aeson;
-          frontend = haddock-build (checkHlint (hsOnly super.frontend));
+          frontend = haddock-build (checkHlint (frontendOnly super.frontend));
           markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
           memory = dontCheck (self.callHackage "memory" "0.14.17" {});
           semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
