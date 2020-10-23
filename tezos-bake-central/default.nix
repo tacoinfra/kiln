@@ -85,13 +85,19 @@ obelisk.project ./. ({ pkgs, ... }@args:
           tezos-bake-monitor-lib = test-runner (haddock-build super.tezos-bake-monitor-lib);
           tezos-noderpc = checkHlint (haddock-build super.tezos-noderpc);
           };
+
+        postgresql-override = pkgs.postgresql.overrideAttrs (oldAttrs:
+            let libxml2-noPythonSupport = pkgs.libxml2.override { pythonSupport = false;};
+            in { buildInputs = builtins.filter (x: ! (pkgs.lib.hasPrefix "libxml2" x.name)) oldAttrs.buildInputs ++ [libxml2-noPythonSupport]; }
+            );
+
         # This explicit dependency may be taken out soon if the changes are accepted by Obsidian.
         gargoyleSrc = pkgs.fetchFromGitHub {
           owner = "obsidiansystems";
           repo = "gargoyle";
           rev = "941ca7a25403bab4c719e669db36dc18b240b996";
           sha256 = "18vvvp29ph112myxqmw4cgf1x6q0xs6jwdmg4k9fghcpav8acjd7";};
-        gargoyleOverlay = import gargoyleSrc {};
+        gargoyleOverlay = import gargoyleSrc { postgresql = postgresql-override;};
         baseOverlay = self: super:
             let callHackageDirect = {pkg,ver,sha256}:
                 let pkgver = "${pkg}-${ver}";
