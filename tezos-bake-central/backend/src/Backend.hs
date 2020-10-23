@@ -27,6 +27,7 @@ import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (LoggingT (..), MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
+import Data.Coerce (coerce)
 import Data.Dependent.Map (DSum (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
@@ -277,7 +278,7 @@ backendImpl cfg serve = do
             "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
           Right chainId -> pure chainId
 
-  withDb dbSpec $ \db -> withLoggingMinLevel Nothing loggingConfig $ do
+  withDb dbSpec $ \(coerce -> db) -> withLoggingMinLevel Nothing loggingConfig $ do
     logger <- askLogger
     $(logInfo) $ "Monitoring network " <> toBase58Text chainId
 

@@ -13,17 +13,26 @@ in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
     inherit (obelisk.reflex-platform) hackGet;
+
     rhyolite = obelisk;
     nodeKit = if tezosScopedKit != null
             then tezosScopedKit
             else import ../dep/platform-specific-binaries.nix { inherit system pkgs;};
 
-    hsOnly = pkg: pkg.overrideAttrs ({ src, ... }: {
+    hsOnly = attrs: pkg: pkg.overrideAttrs ({ src, ... }: {
       src = pkgs.lib.cleanSourceWith {
         filter = (name: type: type == "directory" || (!(pkgs.lib.hasSuffix ".hi" name) && !(pkgs.lib.hasSuffix ".o" name)));
         src = pkgs.lib.cleanSource src;
       };
-    });
+    } // attrs);
+
+    frontendOnly =
+        let attrs = {
+            postInstall  = ''
+             ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${pkgs.nodejs-slim} $out/bin/frontend
+             '';
+                };
+        in pkg: hsOnly attrs pkg;
 
     checkHlint = pkg: pkg.overrideAttrs ({ preConfigure ? "", src, ... }: {
       preConfigure = ''
@@ -55,27 +64,49 @@ obelisk.project ./. ({ pkgs, ... }@args:
       tezos-noderpc = hackGet dep/tezos-bake-monitor-lib + "/tezos-noderpc";
     };
 
-    overrides = pkgs.lib.composeExtensions rhyolite.haskellOverrides (self: super: with pkgs.haskell.lib; {
-      common = haddock-build (checkHlint (hsOnly (if distMethod == null
-        then super.common
-        else enableCabalFlag super.common distMethod)));
-      backend = haddock-build (checkHlint (hsOnly (overrideCabal super.backend (drv:{
-        librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
-        postFixup = "rm -rf $out/lib $out/nix-support $out/share/doc";
-      }))));
-      base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
-      email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
-      extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
-      lens-aeson = dontCheck super.lens-aeson;
-      frontend = haddock-build (checkHlint (hsOnly super.frontend));
-      markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
-      memory = dontCheck (self.callHackage "memory" "0.14.17" {});
-      semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
-      silently = pkgs.haskell.lib.dontCheck super.silently;
-      terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-      tezos-bake-monitor-lib = test-runner (haddock-build super.tezos-bake-monitor-lib);
-      tezos-noderpc = checkHlint (haddock-build super.tezos-noderpc);
-    });
+    overrides =
+     let appOverlay = self: super: with pkgs.haskell.lib; {
+          common = haddock-build (checkHlint (hsOnly {} (if distMethod == null
+            then super.common
+            else enableCabalFlag super.common distMethod)));
+          backend = haddock-build (checkHlint (hsOnly {} (overrideCabal super.backend (drv:{
+            librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
+          }))));
+          base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
+          email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
+          extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
+          lens-aeson = dontCheck super.lens-aeson;
+          frontend = haddock-build (checkHlint (frontendOnly super.frontend));
+          markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
+          memory = dontCheck (self.callHackage "memory" "0.14.17" {});
+          semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
+          silently = pkgs.haskell.lib.dontCheck super.silently;
+          terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
+          tezos-bake-monitor-lib = test-runner (haddock-build super.tezos-bake-monitor-lib);
+          tezos-noderpc = checkHlint (haddock-build super.tezos-noderpc);
+          };
+
+        postgresql-override = pkgs.postgresql.overrideAttrs (oldAttrs:
+            let libxml2-noPythonSupport = pkgs.libxml2.override { pythonSupport = false;};
+            in { buildInputs = builtins.filter (x: ! (pkgs.lib.hasPrefix "libxml2" x.name)) oldAttrs.buildInputs ++ [libxml2-noPythonSupport]; }
+            );
+
+        # This explicit dependency may be taken out soon if the changes are accepted by Obsidian.
+        gargoyleSrc = pkgs.fetchFromGitHub {
+          owner = "obsidiansystems";
+          repo = "gargoyle";
+          rev = "941ca7a25403bab4c719e669db36dc18b240b996";
+          sha256 = "18vvvp29ph112myxqmw4cgf1x6q0xs6jwdmg4k9fghcpav8acjd7";};
+        gargoyleOverlay = import gargoyleSrc { postgresql = postgresql-override;};
+        baseOverlay = self: super:
+            let callHackageDirect = {pkg,ver,sha256}:
+                let pkgver = "${pkg}-${ver}";
+                in self.callCabal2nix pkg (pkgs.fetchzip {
+                   url = "mirror://hackage/${pkgver}.tar.gz";
+                   inherit sha256;
+                   });
+            in { which = callHackageDirect { pkg = "which"; ver = "0.1.0.0"; sha256 = "1c8svdiv378ps63lwn3aw7rv5wamlpmzgcn21r2pap4sx7p08892";} {};};
+     in with pkgs.lib; foldr composeExtensions baseOverlay [ rhyolite.haskellOverrides appOverlay gargoyleOverlay ];
   }) // {
     dev.extraGhciArgs = ["-fobject-code"];
   }

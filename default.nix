@@ -216,6 +216,5 @@ in (obApp distroMethods.source system) // {
   }).kiln-debian;
 
   tezosKit = tezosScopedKit system;
-  # inherit tezosScopedKit;
 
 }
