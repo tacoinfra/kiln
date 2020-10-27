@@ -79,6 +79,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
           frontend = haddock-build (checkHlint (frontendOnly super.frontend));
           markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
           memory = dontCheck (self.callHackage "memory" "0.14.17" {});
+          reflex-dom-core = dontCheck super.reflex-dom-core;
           semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
           silently = pkgs.haskell.lib.dontCheck super.silently;
           terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
