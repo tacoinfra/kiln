@@ -6,10 +6,11 @@ To run the Docker image you need to have [Docker](https://www.docker.com/get-sta
 
 Before you can download and run the monitor, you'll need a [PostgreSQL](https://www.postgresql.org/) database that the monitor can use for storage.
 
-The easiest way to get a database running is with Docker. The following command will download the PostgreSQL Docker image (if it's not already downloaded) and start a database instance in the background on port `5432`. The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator.
+The easiest way to get a database running is with Docker. The following command will download the PostgreSQL Docker image (if it's not already downloaded) and start a database instance in the background on port `5432`.
+<!-- The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator. -->
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run --name kiln-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+docker run --name kiln-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
 ```
 
 (For anything serious you'll want to pick a better password than `mysecretpassword`.)
@@ -23,20 +24,20 @@ Now you can download and run the monitor like this:
 On Linux and macOS (Docker Toolbox):
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run  --tmpfs /tmp --network host --rm obsidiansystems/kiln:0.8.1 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+docker run  --tmpfs /tmp --network host --rm registry.gitlab.com/tezos-kiln/kiln:0.8.2 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 On macOS (Docker Desktop for Mac):
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run  --tmpfs /tmp -p 8000:8000 obsidiansystems/kiln:0.8.1 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
+docker run  --tmpfs /tmp -p 8000:8000 registry.gitlab.com/tezos-kiln/kiln:0.8.2 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
 
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
 
-Check out `docker run --rm obsidiansystems/kiln:0.8.1 --help` for more command-line options. For example, you can run the monitor on babylonnet by passing `--network=babylonnet`.
+Check out `docker run --rm registry.gitlab.com/tezos-kiln/kiln:0.8.2 --help` for more command-line options. For example, you can run the monitor on babylonnet by passing `--network=babylonnet`.
 
 ## Updating an older Docker container
 
@@ -65,9 +66,9 @@ pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres passw
 Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
-DOCKER_CONTENT_TRUST=1 docker run  --tmpfs /tmp --network host --rm obsidiansystems/kiln:0.8.1 ...
+docker run  --tmpfs /tmp --network host --rm registry.gitlab.com/tezos-kiln/kiln:0.8.2 ...
 ```
 
-you can replace `0.8.1` with another available version.
+<!-- you can replace `0.8.1` with another available version. -->
 
 You can remove old images and containers for the monitor safely. All your data is kept in the PostgreSQL instance.
