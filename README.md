@@ -4,6 +4,46 @@ Kiln is a tool for both baking and monitoring on the Tezos network. It provides 
 
 **For step-by-step instructions on how to get started, see the Obsidian System's medium post [How to Install Kiln and Bake on Ubuntu](https://medium.com/@obsidian.systems/how-to-install-kiln-and-bake-on-ubuntu-a13d17df63c).** Past release notes are available [here](https://medium.com/@obsidian.systems).
 
+# NOTE for Version 0.8.2
+Archival node may not be properly syncing on Delphi and cause issues for the Kiln node to get up to date. To address this issue follow the steps below. 
+**On Ubuntu:**
+```
+sudo su -
+cd /var/lib/kiln/exe-dir/
+ls
+```
+if there is no _config_ directory yet, make it:
+
+```
+mkdir -p config
+```
+
+if there is - just continue with the following:
+```
+echo false > config/enable-obsidian-node
+systemctl stop kiln
+systemctl start kiln
+```
+
+
+**On MacOS Catalina**
+
+```
+cd ~/Library/Kiln
+ls
+```
+if there is no _config_ directory yet, make it:
+```
+mkdir -p config
+```
+if there is - just continue with the following:
+```
+echo false > config/enable-obsidian-node
+launchctl stop tezos.kiln
+launchctl start tezos.kiln
+```
+
+
 ## System Requirements
 
 System requirements are dependent on whether you plan on running a Tezos node in Kiln, which is necessary for baking.
