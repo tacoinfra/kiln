@@ -89,8 +89,7 @@ import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
-                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable
-                      , frontendConfig_tezosGitlabProjectId, frontendConfig_tezosRelease)
+                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -218,7 +217,6 @@ appMain
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
-    , HasJSContext (Performable m)
     )
   => m ()
 appMain = do
@@ -261,8 +259,6 @@ appSidebar
   :: ( MonadAppWidget t m
      , MonadAppWidget t (ModalM m)
      , MonadJSM (ModalM m)
-     , MonadJSM (Performable m)
-     , HasJSContext (Performable m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
      , HasFrontendConfig r, MonadReader r m, HasModal t m
@@ -283,23 +279,19 @@ appSidebar = do
           appSideFooter
           displayLatestRelease
   where
+    ppMajorMinor (Just (MajorMinorVersion major minor ai)) = case ai of
+        Release -> Just $ T.pack $ show major <> "." <> show minor
+        _ -> Nothing
+    ppMajorMinor Nothing = Nothing
+
     displayLatestRelease = do
-        ev <- getPostBuild
 
-        projId <- asks (^. frontendConfig . frontendConfig_tezosGitlabProjectId)
-        mrelease <- asks (^. frontendConfig . frontendConfig_tezosRelease)
+        let gitLink = "https://gitlab.com/tezos/tezos/-/releases"
 
-        let toRequest = XhrRequest "GET" releaseLink def
-            showMajorMinor (a, b) = T.pack (show a) <> "." <> T.pack (show b)
-            releaseLink = "https://gitlab.com/api/v4/projects/" <> projId <> "/releases"
-            gitLink = "https://gitlab.com/tezos/tezos/-/releases"
+        latestTezosRelease' <- watchLatestTezosRelease
+        let latestTezosRelease = ppMajorMinor <$> latestTezosRelease'
 
-        versionReq' <-
-          (_xhrResponse_responseText >=> getRelease mrelease getReleaseTag) <$$> performRequestAsync (toRequest <$ ev)
-
-        versionReq <- holdDyn Nothing $ showMajorMinor <$$> versionReq'
-
-        dyn_ $ ffor versionReq $ elAttr "div" ("style" =: "margin-bottom: 1rem;") . maybe (text "Latest Tezos Release: Unavailable.")
+        dyn_ $ ffor latestTezosRelease $ elAttr "div" ("style" =: "margin-bottom: 1rem;") . maybe (text "Latest Tezos Release: Unavailable.")
             (\v -> hrefLink (gitLink <> "/v" <> v) $
                    elAttr "small" ("style" =: "position: absolute; left:30px;") $
                    text $ "Latest Tezos Release: " <> v)

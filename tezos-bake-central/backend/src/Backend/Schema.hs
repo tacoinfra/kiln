@@ -140,6 +140,7 @@ data NotifyTag a where
   NotifyTag_BakerVote :: NotifyTag (Maybe BakerVote)
   NotifyTag_BakerRegistered :: NotifyTag (PublicKeyHash, Bool)
   NotifyTag_NodeVersion :: NotifyTag (Either PublicNode (Id Node), Maybe TezosVersion)
+  NotifyTag_LatestTezosRelease :: NotifyTag (Maybe MajorMinorVersion)
   deriving Typeable
 
 mkNotify :: PersistBackend m => n a -> a -> m (DbNotification n)
@@ -1418,6 +1419,7 @@ instance ArgDict c NotifyTag where
     , c (Maybe BakerVote)
     , c (PublicKeyHash, Bool)
     , c (Either PublicNode (Id Node), Maybe TezosVersion)
+    , c (Maybe MajorMinorVersion)
     )
   argDict = \case
     NotifyTag_Baker -> Dict
@@ -1465,6 +1467,7 @@ instance ArgDict c NotifyTag where
     NotifyTag_BakerVote -> Dict
     NotifyTag_BakerRegistered -> Dict
     NotifyTag_NodeVersion -> Dict
+    NotifyTag_LatestTezosRelease -> Dict
 
 fmap concat $ for [''NotifyTag] $ \t -> concat <$> sequence
   [ deriveJSONGADT t
