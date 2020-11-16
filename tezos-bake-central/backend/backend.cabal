@@ -18,6 +18,7 @@ library
   build-depends:
       aeson
     , async
+    , attoparsec
     , base
     , base16-bytestring
     , base58-bytestring

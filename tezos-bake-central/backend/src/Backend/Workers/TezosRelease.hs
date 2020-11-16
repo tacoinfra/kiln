@@ -13,7 +13,9 @@ import Control.Monad
 import Control.Monad.Logger (logDebug)
 import Data.Aeson (Value(..))
 import Data.Aeson.Lens
+import Data.Attoparsec.Text hiding (try)
 import qualified Data.ByteString.Lazy as LB
+import Data.Char
 import Data.Foldable
 import Data.Ord
 import Data.Pool (Pool)
@@ -78,12 +80,9 @@ getReleaseTag :: Value -> Maybe MajorMinorVersion
 getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
 
 parseMajorMinorVersion :: Text -> Either String MajorMinorVersion
-parseMajorMinorVersion version = do
-  (leadingv, rest1) <- maybe (Left "Can't parse") Right $ T.uncons version
-  guard $ leadingv == 'v'
-  (major, rest2) <- T.decimal @Int rest1
-  (dot, rest3) <- maybe (Left "Missing dot") Right $ T.uncons rest2
-  guard $ dot == '.'
-  (minor, rest4) <- T.decimal @Int rest3
-  guard $ T.null rest4
-  return $ MajorMinorVersion (fromIntegral major) (fromIntegral minor) Release
+parseMajorMinorVersion = parseOnly $ do
+  char 'v'
+  major <- decimal
+  char '.'
+  minor <- decimal
+  return $ MajorMinorVersion major minor Release
