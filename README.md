@@ -6,20 +6,16 @@ Kiln is a tool for both baking and monitoring on the Tezos network. It provides 
 
 # NOTE for Version 0.8.2
 Archival node may not be properly syncing on Delphi and cause issues for the Kiln node to get up to date. To address this issue follow the steps below. 
+
+- Click "Add Nodes", fill in Node Address with https://mainnet-tezos.giganode.io/ , click Add Node
+
+- Disable built-in archival node:
+
 **On Ubuntu:**
 ```
 sudo su -
 cd /var/lib/kiln/exe-dir/
-ls
-```
-if there is no _config_ directory yet, make it:
-
-```
 mkdir -p config
-```
-
-if there is - just continue with the following:
-```
 echo false > config/enable-obsidian-node
 systemctl stop kiln
 systemctl start kiln
@@ -30,14 +26,7 @@ systemctl start kiln
 
 ```
 cd ~/Library/Kiln
-ls
-```
-if there is no _config_ directory yet, make it:
-```
 mkdir -p config
-```
-if there is - just continue with the following:
-```
 echo false > config/enable-obsidian-node
 launchctl stop tezos.kiln
 launchctl start tezos.kiln
