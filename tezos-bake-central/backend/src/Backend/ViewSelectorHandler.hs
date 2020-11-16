@@ -18,16 +18,13 @@
 module Backend.ViewSelectorHandler where
 
 import Control.Concurrent.STM (atomically)
-import Control.Lens (findOf, maximumByOf)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger
-import Control.Error (hush)
 import Control.Exception.Safe (try, MonadMask)
 import Control.Monad.Trans.State (StateT(..))
 import Control.Monad.Trans.State (evalStateT)
 import Control.Monad.Trans.State (modify)
-import Data.Aeson (decode', Value(..))
-import Data.Aeson.Lens
+import Data.Aeson (decode')
 import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
 import qualified Data.ByteString.Lazy as LB
@@ -50,7 +47,6 @@ import Data.Semigroup (Max(..), sconcat)
 import Data.Some (Some(..))
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
-import qualified Data.Text.Read  as T
 import Data.Time (UTCTime)
 import Data.These (these)
 import Data.Tuple (swap)
@@ -96,6 +92,7 @@ import Tezos.Common.NodeRPC.Sources (PublicNode(..), getPublicNodeUri)
 import Backend.CachedNodeRPC
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)
 import Backend.Schema
+import Backend.Workers.TezosRelease (getLatestTezosRelease)
 import Common.Alerts(AlertsFilter(..))
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -810,42 +807,6 @@ versionWorker httpMgr baseUrl = do
             liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest commitUrl)
 
         return $ either (const Nothing) (decode' . Http.getResponseBody) commitResp'
-
-getLatestTezosRelease
-  :: forall m. (Monad m, MonadIO m)
-  => Http.Manager
-  -> Text
-  -> Maybe Text
-  -> m (Maybe MajorMinorVersion)
-getLatestTezosRelease httpMgr projId mrelease = do
-    releaseResp :: Either Http.HttpException (Http.Response LB.ByteString) <-
-        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack releaseLink))
-    return $ case releaseResp of
-         Left _ -> Nothing
-         Right body -> getRelease mrelease getReleaseTag (Http.getResponseBody body)
-  where
-    releaseLink = "https://gitlab.com/api/v4/projects/" <> projId <> "/releases"
-
-getRelease :: AsValue s => Maybe Text -> (Value -> Maybe c) -> s -> Maybe c
-getRelease mr f = case mr of
-   Nothing ->
-       maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> f
-   Just release ->
-       findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> f
-
-getReleaseTag :: Value -> Maybe MajorMinorVersion
-getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
-
-parseMajorMinorVersion :: Text -> Either String MajorMinorVersion
-parseMajorMinorVersion version = do
-  (leadingv, rest1) <- maybe (Left "Can't parse") Right $ T.uncons version
-  guard $ leadingv == 'v'
-  (major, rest2) <- T.decimal @Int rest1
-  (dot, rest3) <- maybe (Left "Missing dot") Right $ T.uncons rest2
-  guard $ dot == '.'
-  (minor, rest4) <- T.decimal @Int rest3
-  guard $ T.null rest4
-  return $ MajorMinorVersion (fromIntegral major) (fromIntegral minor) Release
 
 getNodeAddresses
   :: forall m. (Monad m, PostgresRaw m, MonadLogger m, PersistBackend m)
