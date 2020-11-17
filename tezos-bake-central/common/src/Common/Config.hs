@@ -64,8 +64,8 @@ networkGitLabProjectIdDefault = "3836952"
 serveNodeCache :: FilePath
 serveNodeCache = "serve-node-cache"
 
-enableOsPublicNode :: FilePath
-enableOsPublicNode = "enable-obsidian-node"
+enableArchivalPublicNode :: FilePath
+enableArchivalPublicNode = "enable-archival-node"
 
 ledgerCheckDelay :: FilePath
 ledgerCheckDelay = "ledger-check-delay"
@@ -119,8 +119,8 @@ tzscanApiUri = "tzscan-api-uri"
 blockscaleApiUri :: FilePath
 blockscaleApiUri = "blockscale-api-uri"
 
-obsidianApiUri :: FilePath
-obsidianApiUri = "obsidian-api-uri"
+archivalNodeApiUri :: FilePath
+archivalNodeApiUri = "archival-node-api-uri"
 
 nodes :: FilePath
 nodes = "nodes"
@@ -198,7 +198,7 @@ data FrontendConfig = FrontendConfig
   , _frontendConfig_chainId :: !ChainId
   , _frontendConfig_checkForUpgrade :: !Bool
   , _frontendConfig_appVersion :: !Version
-  , _frontendConfig_usingOsPublicNode :: !Bool
+  , _frontendConfig_usingArchivalPublicNode :: !Bool
   , _frontendConfig_logExportAvailable :: !Bool
   , _frontendConfig_ledgerConnectedChecks :: !Bool
   , _frontendConfig_tezosGitlabProjectId :: !Text

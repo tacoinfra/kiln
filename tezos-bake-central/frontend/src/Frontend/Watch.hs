@@ -249,7 +249,7 @@ watchCollectiveNodesStatus
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
-  dUsingOsPublicNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
+  dUsingOsPublicNode <- (fmap . fmap) _frontendConfig_usingArchivalPublicNode <$> watchFrontendConfig
   dNodes <- watchNodeAddresses
   let dmNids = NEL.nonEmpty
         <$> MMap.keys

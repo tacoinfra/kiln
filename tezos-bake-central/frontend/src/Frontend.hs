@@ -573,7 +573,7 @@ nodesTabOrWelcome = do
   bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
-  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingOsPublicNode <$> watchFrontendConfig
+  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingArchivalPublicNode <$> watchFrontendConfig
 
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let haveBakersMaybe =
