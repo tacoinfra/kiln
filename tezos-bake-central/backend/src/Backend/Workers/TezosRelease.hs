@@ -85,4 +85,5 @@ parseMajorMinorVersion = parseOnly $ do
   major <- decimal
   skip (== '.')
   minor <- decimal
+  endOfInput
   return $ MajorMinorVersion major minor Release
