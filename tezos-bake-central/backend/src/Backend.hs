@@ -174,9 +174,9 @@ backendImpl cfg serve = do
     (pure $ _opts_serveNodeCache cfg)
     (getConfigFromFile (Just . Config.parseBool) $ configPath Config.serveNodeCache)
 
-  !(enableOsPublicNode :: Bool) <- fmap (fromMaybe True) $ liftA2 (<|>)
-    (pure $ _opts_enableOsPublicNode cfg)
-    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.enableOsPublicNode)
+  !(enableArchivalPublicNode :: Bool) <- fmap (fromMaybe True) $ liftA2 (<|>)
+    (pure $ _opts_enableArchivalPublicNode cfg)
+    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.enableArchivalPublicNode)
 
   !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
     (pure $ _opts_checkForUpgrade cfg)
@@ -230,9 +230,9 @@ backendImpl cfg serve = do
     , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
     , pure $ getPublicNodeUri PublicNode_Blockscale =<< maybeNamedChain
     ]
-  !(obsidianApi :: Maybe (NonEmpty URI)) <- firstOption
-    [ pure $ getOption $ _opts_obsidianApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.obsidianApiUri
+  !(archivalNodeApi :: Maybe (NonEmpty URI)) <- firstOption
+    [ pure $ getOption $ _opts_archivalNodeApiUri cfg
+    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.archivalNodeApiUri
     , pure $ getPublicNodeUri PublicNode_Archival =<< maybeNamedChain
     ]
 
@@ -256,7 +256,7 @@ backendImpl cfg serve = do
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
     publicDataSources' = catMaybes
       [ (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
-      , (,,) <$> pure PublicNode_Archival <*> pure chain <*> obsidianApi
+      , (,,) <$> pure PublicNode_Archival <*> pure chain <*> archivalNodeApi
       ]
 
   publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
@@ -354,7 +354,7 @@ backendImpl cfg serve = do
 
     runLoggingEnv logger $ runDb (Identity db) $ do
       let publicNode = PublicNode_Archival
-          enabled = enableOsPublicNode
+          enabled = enableArchivalPublicNode
       cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
         project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
       now <- getTime
@@ -419,7 +419,7 @@ backendImpl cfg serve = do
         , _nodeDataSource_latestHead = latestHead
         , _nodeDataSource_logger = logger
         , _nodeDataSource_ioQueue = ioQueue
-        , _nodeDataSource_osPublicNode = if enableOsPublicNode then NonEmpty.head <$> obsidianApi else Nothing
+        , _nodeDataSource_archivalPublicNode = if enableArchivalPublicNode then NonEmpty.head <$> archivalNodeApi else Nothing
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
         , _nodeDataSource_nodeForQuery = Nothing
         }
@@ -436,7 +436,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_chainId = chainId
           , Config._frontendConfig_checkForUpgrade = checkForUpgrade
           , Config._frontendConfig_appVersion = version
-          , Config._frontendConfig_usingOsPublicNode = isJust $ _nodeDataSource_osPublicNode dataSrc
+          , Config._frontendConfig_usingArchivalPublicNode = isJust $ _nodeDataSource_archivalPublicNode dataSrc
           , Config._frontendConfig_logExportAvailable = logExportAvailable
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
@@ -556,10 +556,10 @@ data Opts = Opts
   , _opts_chain :: !(Maybe (Either NamedChain ChainId))
   , _opts_checkForUpgrade :: !(Maybe Bool)
   , _opts_serveNodeCache :: !(Maybe Bool)
-  , _opts_enableOsPublicNode :: !(Maybe Bool)
+  , _opts_enableArchivalPublicNode :: !(Maybe Bool)
   , _opts_tzscanApiUri     :: !(Option (NonEmpty URI))
   , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
-  , _opts_obsidianApiUri   :: !(Option (NonEmpty URI))
+  , _opts_archivalNodeApiUri   :: !(Option (NonEmpty URI))
   , _opts_nodes :: !(Option (Map.Map URI (Maybe Text)))
   , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
   , _opts_networkGitLabProjectId :: !(Maybe Text)
@@ -581,10 +581,10 @@ instance Semigroup Opts where
     , _opts_chain = rightBiased (<|>) _opts_chain
     , _opts_checkForUpgrade = rightBiased (<|>) _opts_checkForUpgrade
     , _opts_serveNodeCache = rightBiased (<|>) _opts_serveNodeCache
-    , _opts_enableOsPublicNode = rightBiased (<|>) _opts_enableOsPublicNode
+    , _opts_enableArchivalPublicNode = rightBiased (<|>) _opts_enableArchivalPublicNode
     , _opts_tzscanApiUri = rightBiased (<|>) _opts_tzscanApiUri
     , _opts_blockscaleApiUri = rightBiased (<|>) _opts_blockscaleApiUri
-    , _opts_obsidianApiUri = rightBiased (<|>) _opts_obsidianApiUri
+    , _opts_archivalNodeApiUri = rightBiased (<|>) _opts_archivalNodeApiUri
     , _opts_nodes = rightBiased (<>) _opts_nodes -- Last alias (or lack of) wins
     , _opts_bakers = rightBiased (<>) _opts_bakers -- Last alias (or lack of) wins
     , _opts_networkGitLabProjectId = rightBiased (<|>) _opts_networkGitLabProjectId
@@ -608,10 +608,10 @@ instance Monoid Opts where
       , _opts_chain = Nothing
       , _opts_checkForUpgrade = Nothing
       , _opts_serveNodeCache = Nothing
-      , _opts_enableOsPublicNode = Nothing
+      , _opts_enableArchivalPublicNode = Nothing
       , _opts_tzscanApiUri     = mempty
       , _opts_blockscaleApiUri = mempty
-      , _opts_obsidianApiUri   = mempty
+      , _opts_archivalNodeApiUri   = mempty
       , _opts_nodes = mempty
       , _opts_bakers = mempty
       , _opts_networkGitLabProjectId = Nothing
@@ -645,7 +645,7 @@ optsArgDescr =
   , mkReqArg Config.serveNodeCache "BOOL" (set opts_serveNodeCache . Just . Config.parseBool)
       "Serve Node Cache.  Default disabled."
 
-  , mkReqArg Config.enableOsPublicNode "BOOL" (set opts_enableOsPublicNode . Just . Config.parseBool)
+  , mkReqArg Config.enableArchivalPublicNode "BOOL" (set opts_enableArchivalPublicNode . Just . Config.parseBool)
       "Enables the Public Archival Node provided by Obsidian Systems.  Default Enabled."
 
   , mkReqArg Config.tzscanApiUri "URL" (set opts_tzscanApiUri . pure . pure . Config.parseRootURIUnsafe)
@@ -654,8 +654,8 @@ optsArgDescr =
   , mkReqArg Config.blockscaleApiUri "URL" (set opts_blockscaleApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom Blockscale API URL.  Default none."
 
-  , mkReqArg Config.obsidianApiUri "URL" (set opts_obsidianApiUri . pure . pure . Config.parseRootURIUnsafe)
-      "Custom Obsidian API URL.  Default none."
+  , mkReqArg Config.archivalNodeApiUri "URL" (set opts_archivalNodeApiUri . pure . pure . Config.parseRootURIUnsafe)
+      "Custom Archival Node API URL.  Default none."
 
   , mkReqArg Config.nodes "URIS" (set opts_nodes . Option . Just . Config.parseNodesUnsafe)
       "Force the set of monitored nodes to be exactly the given set of (comma-separated) list of nodes. If given multiple times, the sets will be unioned. Defaults to off."

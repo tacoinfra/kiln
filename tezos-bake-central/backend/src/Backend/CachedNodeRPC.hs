@@ -205,7 +205,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
   , _nodeDataSource_logger :: !LoggingEnv
   , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
-  , _nodeDataSource_osPublicNode :: !(Maybe URI)
+  , _nodeDataSource_archivalPublicNode :: !(Maybe URI)
   , _nodeDataSource_kilnNodeUri :: !URI
   , _nodeDataSource_nodeForQuery :: !(Maybe URI) -- Override the node selection algo, and do RPC using this node
   } deriving (Typeable, Generic)
@@ -308,13 +308,15 @@ instance MonadNodeQuery NodeQueryQueued where
 
     result <- case mNodesToTry of
       -- The public node is the last resort
-      [] -> case _nodeDataSource_osPublicNode dsrc of
+      [] -> case _nodeDataSource_archivalPublicNode dsrc of
         Nothing -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
         Just uri ->
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
           -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
-          in NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+          in -- ### IMPORTANT ### We are using another node for this fallback case.
+             NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+          -- NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
       -- But if we have candidate nodes, try them until we succeed
       -- TODO: Why isn't there a public node call as the last attempt here?
       nodesToTry -> do
