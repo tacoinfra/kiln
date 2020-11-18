@@ -39,6 +39,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Time (NominalDiffTime)
+import Data.Time.Clock (nominalDay)
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
 import Gargoyle.PostgreSQL.Connect (withDb)
@@ -104,6 +105,7 @@ import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Node (DataSource, amendmentProcessWorker, nodeAlertWorker, nodeWorker,
                              protocolMonitorWorker, publicNodesWorker)
 import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker)
+import Backend.Workers.TezosRelease
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
@@ -474,6 +476,7 @@ backendImpl cfg serve = do
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
       addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
       addFinalizer =<< amendmentProcessWorker appConfig dataSrc db
+      addFinalizer =<< latestTezosReleaseWorker nominalDay networkGitLabProjectId tezosReleaseTag dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
         -- Square roots of rationals are the most effective for this because number theory.
 

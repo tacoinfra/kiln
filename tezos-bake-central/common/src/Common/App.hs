@@ -282,6 +282,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_nodeVersions :: !(RangeSelector' (Id Node) (Maybe TezosVersion) a)
   , _bakeViewSelector_publicVersions :: !(RangeSelector' PublicNode (Maybe TezosVersion) a)
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
+  , _bakeViewSelector_latestTezosRelease :: !(MaybeSelector (Maybe MajorMinorVersion) a)
   , _bakeViewSelector_parameters :: !(MapSelector ProtocolHash ProtocolIndex a)
   , _bakeViewSelector_latestHead :: !(MaybeSelector (WithProtocolHash VeryBlockLike) a)
   , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
@@ -328,6 +329,7 @@ data BakeView a = BakeView
   , _bakeView_nodeVersions :: !(RangeView' (Id Node) (Maybe TezosVersion) a)
   , _bakeView_publicVersions :: !(RangeView' PublicNode (Maybe TezosVersion) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
+  , _bakeView_latestTezosRelease :: !(MaybeView (Maybe MajorMinorVersion) a)
   , _bakeView_parameters :: !(Common.Vassal.View (MapSelector ProtocolHash ProtocolIndex) a)
   , _bakeView_latestHead :: !(MaybeView (WithProtocolHash VeryBlockLike) a)
   , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)
@@ -443,6 +445,7 @@ cropBakeView vs v = BakeView
   , _bakeView_publicNodeConfig = cropView (_bakeViewSelector_publicNodeConfig vs) (_bakeView_publicNodeConfig v)
   , _bakeView_publicNodeHeads = cropView (_bakeViewSelector_publicNodeHeads vs) (_bakeView_publicNodeHeads v)
   , _bakeView_nodeDetails = cropView (_bakeViewSelector_nodeDetails vs) (_bakeView_nodeDetails v)
+  , _bakeView_latestTezosRelease = cropView (_bakeViewSelector_latestTezosRelease vs) (_bakeView_latestTezosRelease v)
   , _bakeView_bakerAddresses = cropView (_bakeViewSelector_bakerAddresses vs) (_bakeView_bakerAddresses v)
   , _bakeView_bakerAlerts = cropView (_bakeViewSelector_bakerAlerts vs) (_bakeView_bakerAlerts v)
   , _bakeView_bakerDetails = cropView (_bakeViewSelector_bakerDetails vs) (_bakeView_bakerDetails v)
@@ -476,6 +479,7 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_publicNodeConfig = mapMaybe f $ _bakeViewSelector_publicNodeConfig a
     , _bakeViewSelector_publicNodeHeads = mapMaybe f $ _bakeViewSelector_publicNodeHeads a
     , _bakeViewSelector_nodeDetails = mapMaybe f $ _bakeViewSelector_nodeDetails a
+    , _bakeViewSelector_latestTezosRelease = mapMaybe f $ _bakeViewSelector_latestTezosRelease a
     , _bakeViewSelector_bakerAddresses = mapMaybe f $ _bakeViewSelector_bakerAddresses a
     , _bakeViewSelector_bakerAlerts = mapMaybe f $ _bakeViewSelector_bakerAlerts a
     , _bakeViewSelector_bakerDetails = mapMaybe f $ _bakeViewSelector_bakerDetails a
@@ -512,6 +516,7 @@ instance Filterable BakeView where
     , _bakeView_publicNodeConfig = mapMaybe f $ _bakeView_publicNodeConfig a
     , _bakeView_publicNodeHeads = mapMaybe f $ _bakeView_publicNodeHeads a
     , _bakeView_nodeDetails = mapMaybe f $ _bakeView_nodeDetails a
+    , _bakeView_latestTezosRelease = mapMaybe f $ _bakeView_latestTezosRelease a
     , _bakeView_bakerAddresses = mapMaybe f $ _bakeView_bakerAddresses a
     , _bakeView_bakerAlerts = mapMaybe f $ _bakeView_bakerAlerts a
     , _bakeView_bakerDetails = mapMaybe f $ _bakeView_bakerDetails a
@@ -553,6 +558,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_publicNodeConfig = (<>) (_bakeViewSelector_publicNodeConfig u) (_bakeViewSelector_publicNodeConfig v)
     , _bakeViewSelector_publicNodeHeads = (<>) (_bakeViewSelector_publicNodeHeads u) (_bakeViewSelector_publicNodeHeads v)
     , _bakeViewSelector_nodeDetails = (<>) (_bakeViewSelector_nodeDetails u) (_bakeViewSelector_nodeDetails v)
+    , _bakeViewSelector_latestTezosRelease = (<>) (_bakeViewSelector_latestTezosRelease u) (_bakeViewSelector_latestTezosRelease v)
     , _bakeViewSelector_bakerAddresses = (<>) (_bakeViewSelector_bakerAddresses u) (_bakeViewSelector_bakerAddresses v)
     , _bakeViewSelector_bakerAlerts = (<>) (_bakeViewSelector_bakerAlerts u) (_bakeViewSelector_bakerAlerts v)
     , _bakeViewSelector_bakerDetails = (<>) (_bakeViewSelector_bakerDetails u) (_bakeViewSelector_bakerDetails v)
@@ -589,6 +595,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_publicNodeConfig = mempty
     , _bakeViewSelector_publicNodeHeads = mempty
     , _bakeViewSelector_nodeDetails = mempty
+    , _bakeViewSelector_latestTezosRelease = mempty
     , _bakeViewSelector_bakerAddresses = mempty
     , _bakeViewSelector_bakerAlerts = mempty
     , _bakeViewSelector_bakerDetails = mempty
@@ -629,6 +636,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_publicNodeConfig = mempty
     , _bakeView_publicNodeHeads = mempty
     , _bakeView_nodeDetails = mempty
+    , _bakeView_latestTezosRelease = mempty
     , _bakeView_bakerAddresses = mempty
     , _bakeView_bakerAlerts = mempty
     , _bakeView_bakerDetails = mempty
@@ -667,6 +675,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_publicNodeConfig = _bakeView_publicNodeConfig u <> _bakeView_publicNodeConfig v
     , _bakeView_publicNodeHeads = _bakeView_publicNodeHeads u <> _bakeView_publicNodeHeads v
     , _bakeView_nodeDetails = _bakeView_nodeDetails u <> _bakeView_nodeDetails v
+    , _bakeView_latestTezosRelease = _bakeView_latestTezosRelease u <> _bakeView_latestTezosRelease v
     , _bakeView_bakerAddresses = _bakeView_bakerAddresses u <> _bakeView_bakerAddresses v
     , _bakeView_bakerAlerts = _bakeView_bakerAlerts u <> _bakeView_bakerAlerts v
     , _bakeView_bakerDetails = _bakeView_bakerDetails u <> _bakeView_bakerDetails v

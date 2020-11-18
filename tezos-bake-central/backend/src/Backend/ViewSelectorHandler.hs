@@ -92,6 +92,7 @@ import Tezos.Common.NodeRPC.Sources (PublicNode(..), getPublicNodeUri)
 import Backend.CachedNodeRPC
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)
 import Backend.Schema
+import Backend.Workers.TezosRelease (getLatestTezosRelease)
 import Common.Alerts(AlertsFilter(..))
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -341,6 +342,12 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   publicVersions <- toRangeView publicVersionsVS <$> getPublicVersions mgr xs
 
+  let latestTezosReleaseVS = _bakeViewSelector_latestTezosRelease vs
+
+  let projId = _frontendConfig_tezosGitlabProjectId frontendConfig
+  let mrelease = _frontendConfig_tezosRelease frontendConfig
+  latestTezosRelease <- toMaybeView latestTezosReleaseVS . pure <$> getLatestTezosRelease mgr projId mrelease
+
   return BakeView
     { _bakeView_config = config
     , _bakeView_parameters = parameters
@@ -350,6 +357,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_nodeVersions = nodeVersions
     , _bakeView_publicVersions = publicVersions
     , _bakeView_nodeDetails = nodeDetails
+    , _bakeView_latestTezosRelease = latestTezosRelease
     , _bakeView_bakerAddresses = bakerAddresses
     , _bakeView_bakerAlerts = bakerAlerts
     , _bakeView_bakerStats = bakerStats
