@@ -85,8 +85,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_BakerVote :=> Identity ma -> handleBakerVote ma
     NotifyTag_BakerRegistered :=> Identity (pkh, b) -> handleBakerRegistered pkh b
     NotifyTag_NodeVersion :=> Identity (nid, mtzversion) -> handleTezosVersion mtzversion nid
+    NotifyTag_LatestTezosRelease :=> Identity mlatestTezosRelease -> handleLatestTezosRelease mlatestTezosRelease
   where
 
+    latestTezosReleaseVS = _bakeViewSelector_latestTezosRelease aggVS
+
+    handleLatestTezosRelease :: Applicative m' => Maybe MajorMinorVersion -> m' (BakeView a)
+    handleLatestTezosRelease ver = whenM (viewSelects () latestTezosReleaseVS) $ do
+        pure $ mempty { _bakeView_latestTezosRelease = toMaybeView latestTezosReleaseVS $ Just ver }
 
     nodeVersionsVS = _bakeViewSelector_nodeVersions aggVS
 

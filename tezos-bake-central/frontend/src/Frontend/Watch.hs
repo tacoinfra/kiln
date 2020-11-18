@@ -120,6 +120,12 @@ watchNodeDetails nid = do
     }
   return $ ffor theView $ \v' -> MMap.lookup nid $ getRangeView' (_bakeView_nodeDetails v')
 
+watchLatestTezosRelease :: (MonadAppWidget t m) => m (Dynamic t (Maybe MajorMinorVersion))
+watchLatestTezosRelease =
+  (fmap . fmap) (join . getMaybeView . _bakeView_latestTezosRelease) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_latestTezosRelease = viewJust 1
+    }
+
 watchTezosVersion :: (MonadAppWidget t m) => Id Node -> m (Dynamic t (Maybe (Maybe TezosVersion)))
 watchTezosVersion nid = do
   theView <- watchViewSelector . pure $ mempty

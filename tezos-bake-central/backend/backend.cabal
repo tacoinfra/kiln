@@ -18,6 +18,7 @@ library
   build-depends:
       aeson
     , async
+    , attoparsec
     , base
     , base16-bytestring
     , base58-bytestring
@@ -149,6 +150,7 @@ library
     Backend.Workers.Node
     Backend.Workers.Process
     Backend.Workers.TezosClient
+    Backend.Workers.TezosRelease
     System.Which
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
