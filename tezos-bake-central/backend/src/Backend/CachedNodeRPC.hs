@@ -11,6 +11,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE NumDecimals #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -357,18 +358,15 @@ archivalNodeRetry qtext nds action = runLoggingEnv logger $ runDb (Identity db) 
             _ -> False
           _ -> False
 
-    delay = 500000 -- 500ms
+    delay = 1e6 -- 1 second in microseconds
 
-    -- delay each retry by 500ms, and stop retrying after 5 seconds.
-    defaultPolicy = limitRetriesByCumulativeDelay 5000000 $ constantDelay delay
+    defaultPolicy = limitRetriesByCumulativeDelay 5e6 $ exponentialBackoff delay
 
-    -- delay each retry by 500 ms, and stop retrying after 2 block
-    -- times.... roughly
     formPolicy protoInfo =
         -- TOOD: Just get the first one for now. Maybe use the others
         -- once the reason for their existence is understood.
         let blockTime = NE.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo -- in seconds
-        in limitRetriesByCumulativeDelay (2 * (fromIntegral blockTime * 1000000)) $ constantDelay delay
+        in limitRetriesByCumulativeDelay (fromIntegral blockTime * delay) $ exponentialBackoff delay
 
     logger = _nodeDataSource_logger nds
     db = _nodeDataSource_pool nds
