@@ -57,6 +57,8 @@ library
     , rhyolite-frontend
     , safe-exceptions
     , scientific
+    , split
+    , string-conv
     , template-haskell
     , text
     , tezos-bake-monitor-lib
