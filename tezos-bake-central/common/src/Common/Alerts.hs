@@ -11,13 +11,15 @@ import Prelude hiding (cycle)
 import Data.Aeson
 import Data.Foldable (sequenceA_)
 import Data.String (IsString(..))
+import Data.String.Conv (toS)
 import qualified Data.Text as T
 import qualified Data.Time as Time
 import Data.Time (UTCTime, TimeZone)
 import Data.Witherable (Filterable)
+import Formatting hiding (right, text)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.Types (BlockHash, BlockLike (..), Cycle(..), RawLevel (..), VotingPeriodKind(..))
+import Tezos.Types (getMicroTez, BlockHash, BlockLike (..), Cycle(..), RawLevel (..), Tez(..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
 import Common (nominalDiffTimeToSeconds)
@@ -277,20 +279,24 @@ bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerError
       RightKind_Baking -> ("a bake", "bake opportunities", "bake")
       RightKind_Endorsing -> ("an endorsement", "endorsement operations", "endorsement")
 
-bakerInsufficientFundsDescriptions :: ErrorLogInsufficientFunds -> BakerErrorDescriptions
-bakerInsufficientFundsDescriptions _ = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Baker staking balance is insufficient to receive rights"
-  , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
-  , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than 1 roll and cannot receive any baking or endorsing rights."
-  , _bakerErrorDescriptions_problem = [
-      "Bakers receive baking and endorsing rights based on the number of rolls (1 roll = 10,000ꜩ) in their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than one roll and will not receive any baking or endorsing rights."
-      ]
-  , _bakerErrorDescriptions_warning = Just ""
-  , _bakerErrorDescriptions_fix = "Transfer tez or have other accounts delegate their tez to this baker so its staking balance is at least 1 roll."
-  , _bakerErrorDescriptions_resolved = \_ ->
-      ( "Resolved: Baker has sufficient funds to receive rights"
-      , "This baker now has a large enough staking balance to receive baking rights.")
-  }
+bakerInsufficientFundsDescriptions :: Maybe Tez -> ErrorLogInsufficientFunds -> BakerErrorDescriptions
+bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
+    { _bakerErrorDescriptions_title = "Baker staking balance is insufficient to receive rights"
+    , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
+    , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than 1 roll and cannot receive any baking or endorsing rights."
+    , _bakerErrorDescriptions_problem = [
+        ErrorDescription_Plain $ "Bakers receive baking and endorsing rights based on the number of rolls (1 roll = " <> toS roll <> "ꜩ) in their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than one roll and will not receive any baking or endorsing rights."
+        ]
+    , _bakerErrorDescriptions_warning = Just ""
+    , _bakerErrorDescriptions_fix = "Transfer tez or have other accounts delegate their tez to this baker so its staking balance is at least 1 roll."
+    , _bakerErrorDescriptions_resolved = \_ ->
+        ( "Resolved: Baker has sufficient funds to receive rights"
+        , "This baker now has a large enough staking balance to receive baking rights.")
+    }
+  where
+     -- In case we can't get this figure out.
+    tokensPerRoll = fromMaybe 8000000000 mTokensPerRoll
+    roll = format commas $ getMicroTez tokensPerRoll `div` 1000000
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
 bakerAccusedDescriptions elog = BakerErrorDescriptions
