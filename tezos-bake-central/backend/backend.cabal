@@ -84,6 +84,7 @@ library
     , reflex
     , reflex-dom-core
     , resource-pool
+    , retry
     , rhyolite-backend
     , rhyolite-backend-db
     , rhyolite-backend-snap
