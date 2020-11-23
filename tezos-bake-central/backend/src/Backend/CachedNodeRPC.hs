@@ -351,18 +351,24 @@ archivalNodeRetry qtext nds action = runLoggingEnv logger $ runDb (Identity db) 
     toRetry rs r = do
         logDebugNS "kiln-archival-noderpc" $
             "Retrying rpc call " <>  qtext <> " for Archival Node. Attempt number: {" <> tshow (rsIterNumber rs) <> "}."
-        return $ isLeft r
+        return $ case r of
+          Left (CacheError_RpcError rpcError) -> case rpcError of
+            RpcError_UnexpectedStatus _ status _ -> status == 404
+            _ -> False
+          _ -> False
 
-    -- delay each retry by 50ms, and stop retrying after 5 seconds.
-    defaultPolicy = limitRetriesByCumulativeDelay 5000000 $ constantDelay 500000
+    delay = 500000 -- 500ms
 
-    -- delay each retry by 50 ms, and stop retrying after 2 block
+    -- delay each retry by 500ms, and stop retrying after 5 seconds.
+    defaultPolicy = limitRetriesByCumulativeDelay 5000000 $ constantDelay delay
+
+    -- delay each retry by 500 ms, and stop retrying after 2 block
     -- times.... roughly
     formPolicy protoInfo =
         -- TOOD: Just get the first one for now. Maybe use the others
         -- once the reason for their existence is understood.
         let blockTime = NE.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo -- in seconds
-        in limitRetriesByCumulativeDelay (2 * (fromIntegral blockTime * 1000000)) $ constantDelay 500000
+        in limitRetriesByCumulativeDelay (2 * (fromIntegral blockTime * 1000000)) $ constantDelay delay
 
     logger = _nodeDataSource_logger nds
     db = _nodeDataSource_pool nds
