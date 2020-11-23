@@ -316,7 +316,7 @@ instance MonadNodeQuery NodeQueryQueued where
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
           -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
           -- ### IMPORTANT ### We are using another node for this fallback case.
-          in NodeQueryQueued $ liftIO $ archivalNodeRetry dsrc $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+          in NodeQueryQueued $ liftIO $ archivalNodeRetry (tshow q) dsrc $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
           -- NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
       -- But if we have candidate nodes, try them until we succeed
       -- TODO: Why isn't there a public node call as the last attempt here?
@@ -331,22 +331,26 @@ instance MonadNodeQuery NodeQueryQueued where
 
     nqLiftEither result
 
-archivalNodeRetry :: NodeDataSource -> IO (Either CacheError (RpcResult a)) -> IO (Either CacheError (RpcResult a))
-archivalNodeRetry nds action = runLoggingEnv logger $ runDb (Identity db) $ do
+archivalNodeRetry :: Text -> NodeDataSource -> IO (Either CacheError (RpcResult a)) -> IO (Either CacheError (RpcResult a))
+archivalNodeRetry qtext nds action = runLoggingEnv logger $ runDb (Identity db) $ do
 
     history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
 
     let fittestBranch = fittestBranchInHistory history
         mProtoHash = _withProtocolHash_protocolHash <$> fittestBranch
 
-    mProtoInfo <- flip (maybe (pure Nothing)) mProtoHash $ \protoHash ->
-               project1 ProtocolIndex_constantsField $ ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
+    mProtoInfo <- case mProtoHash of
+        Just protoHash ->
+            project1 ProtocolIndex_constantsField $
+              ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
+        Nothing -> pure Nothing
 
     retrying (maybe defaultPolicy formPolicy mProtoInfo) toRetry (const $ liftIO action)
 
   where
     toRetry rs r = do
-        logDebugNS "kiln-archival-noderpc" $ "Retrying rpc call for Archival Node. Attempt number: {" <> tshow (rsIterNumber rs) <> "}."
+        logDebugNS "kiln-archival-noderpc" $
+            "Retrying rpc call " <>  qtext <> " for Archival Node. Attempt number: {" <> tshow (rsIterNumber rs) <> "}."
         return $ isLeft r
 
     -- delay each retry by 50ms, and stop retrying after 5 seconds.
