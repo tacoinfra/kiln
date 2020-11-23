@@ -15,7 +15,6 @@ import Data.Aeson (Value(..))
 import Data.Aeson.Lens
 import Data.Attoparsec.Text hiding (try)
 import qualified Data.ByteString.Lazy as LB
-import Data.Char
 import Data.Foldable
 import Data.Ord
 import Data.Pool (Pool)
@@ -25,7 +24,6 @@ import Data.Text (Text)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.DB (runDb)
 import qualified Data.Text as T
-import qualified Data.Text.Read  as T
 import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http

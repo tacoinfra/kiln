@@ -11,6 +11,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE NumDecimals #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -64,7 +65,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logWarnSH)
+import Control.Monad.Logger (MonadLogger, logDebug, logDebugNS, logDebugSH, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -72,6 +73,7 @@ import qualified Control.Monad.State as S
 import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
+import Control.Retry
 import qualified Data.Aeson as Aeson
 import Data.Aeson (ToJSON, FromJSON)
 import Data.Aeson.Encoding (emptyObject_)
@@ -314,8 +316,8 @@ instance MonadNodeQuery NodeQueryQueued where
           let
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
           -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
-          in -- ### IMPORTANT ### We are using another node for this fallback case.
-             NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+          -- ### IMPORTANT ### We are using another node for this fallback case.
+          in NodeQueryQueued $ liftIO $ archivalNodeRetry (tshow q) dsrc $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
           -- NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
       -- But if we have candidate nodes, try them until we succeed
       -- TODO: Why isn't there a public node call as the last attempt here?
@@ -329,6 +331,48 @@ instance MonadNodeQuery NodeQueryQueued where
         pure $ first (CacheError_NoSuitableNode (tshow q) . fmap (second (UnsuitableNodeReason_QueryFailed . tshow))) res
 
     nqLiftEither result
+
+archivalNodeRetry :: Text -> NodeDataSource -> IO (Either CacheError (RpcResult a)) -> IO (Either CacheError (RpcResult a))
+archivalNodeRetry qtext nds action = runLoggingEnv logger $ runDb (Identity db) $ do
+
+    history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
+
+    let fittestBranch = fittestBranchInHistory history
+        mProtoHash = _withProtocolHash_protocolHash <$> fittestBranch
+
+    mProtoInfo <- case mProtoHash of
+        Just protoHash ->
+            project1 ProtocolIndex_constantsField $
+              ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
+        Nothing -> pure Nothing
+
+    retrying (maybe defaultPolicy formPolicy mProtoInfo) toRetry (const $ liftIO action)
+
+  where
+    toRetry rs r = do
+        logDebugNS "kiln-archival-noderpc" $
+            "Retrying rpc call " <>  qtext <> " for Archival Node. Attempt number: {" <> tshow (rsIterNumber rs) <> "}."
+        return $ case r of
+          Left (CacheError_RpcError rpcError) -> case rpcError of
+            RpcError_UnexpectedStatus _ status _ -> status == 404
+            _ -> False
+          _ -> False
+
+    oneSecond = 1e6 -- in microseconds
+    delay = oneSecond
+
+    defaultPolicy = limitRetriesByCumulativeDelay (5 * oneSecond) $ exponentialBackoff delay
+
+    formPolicy protoInfo =
+        -- TOOD: Just get the first one for now. Maybe use the others
+        -- once the reason for their existence is understood.
+        let blockTime = NE.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo -- in seconds
+        in limitRetriesByCumulativeDelay (fromIntegral blockTime * oneSecond) $ exponentialBackoff delay
+
+    logger = _nodeDataSource_logger nds
+    db = _nodeDataSource_pool nds
+    chainId = _nodeDataSource_chain nds
+
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
 
