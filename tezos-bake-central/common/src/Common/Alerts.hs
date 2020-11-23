@@ -10,13 +10,14 @@ module Common.Alerts where
 import Prelude hiding (cycle)
 import Data.Aeson
 import Data.Foldable (sequenceA_)
+import Data.List (intercalate)
+import Data.List.Split (chunksOf)
 import Data.String (IsString(..))
 import Data.String.Conv (toS)
 import qualified Data.Text as T
 import qualified Data.Time as Time
 import Data.Time (UTCTime, TimeZone)
 import Data.Witherable (Filterable)
-import Formatting hiding (right, text)
 import Rhyolite.Schema (Json (..))
 
 import Tezos.Types (getMicroTez, BlockHash, BlockLike (..), Cycle(..), RawLevel (..), Tez(..), VotingPeriodKind(..))
@@ -296,7 +297,8 @@ bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
   where
      -- In case we can't get this figure out.
     tokensPerRoll = fromMaybe 8000000000 mTokensPerRoll
-    roll = format commas $ getMicroTez tokensPerRoll `div` 1000000
+    roll = formatCommas $ getMicroTez tokensPerRoll `div` 1000000
+    formatCommas = reverse . intercalate "," . chunksOf 3 . reverse . show
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
 bakerAccusedDescriptions elog = BakerErrorDescriptions
