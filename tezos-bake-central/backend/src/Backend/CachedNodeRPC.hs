@@ -358,15 +358,16 @@ archivalNodeRetry qtext nds action = runLoggingEnv logger $ runDb (Identity db) 
             _ -> False
           _ -> False
 
-    delay = 1e6 -- 1 second in microseconds
+    oneSecond = 1e6 -- in microseconds
+    delay = oneSecond
 
-    defaultPolicy = limitRetriesByCumulativeDelay 5e6 $ exponentialBackoff delay
+    defaultPolicy = limitRetriesByCumulativeDelay (5 * oneSecond) $ exponentialBackoff delay
 
     formPolicy protoInfo =
         -- TOOD: Just get the first one for now. Maybe use the others
         -- once the reason for their existence is understood.
         let blockTime = NE.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo -- in seconds
-        in limitRetriesByCumulativeDelay (fromIntegral blockTime * delay) $ exponentialBackoff delay
+        in limitRetriesByCumulativeDelay (fromIntegral blockTime * oneSecond) $ exponentialBackoff delay
 
     logger = _nodeDataSource_logger nds
     db = _nodeDataSource_pool nds
