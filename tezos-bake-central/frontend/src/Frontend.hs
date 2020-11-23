@@ -1011,9 +1011,9 @@ liveErrorsWidget = void $ do
           BakerLogTag_BakerMissed -> renderBakerError
             (bakerMissedDescriptions log)
             pkh
-          BakerLogTag_InsufficientFunds -> renderBakerError
-            (bakerInsufficientFundsDescriptions log)
-            pkh
+          BakerLogTag_InsufficientFunds -> do
+              dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
+              dyn_ $ ffor dTokensPerRoll $ \mTokensPerRoll -> renderBakerError (bakerInsufficientFundsDescriptions mTokensPerRoll log) pkh
           BakerLogTag_VotingReminder ->
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining -> do
               let dsc = bakerVotingReminderDescriptions log <$> remaining
@@ -2216,7 +2216,9 @@ bakersTab =
                     BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
                     BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
                     BakerLogTag_BakerAccused -> Just $ renderBakerError $ bakerAccusedDescriptions log
-                    BakerLogTag_InsufficientFunds -> Just $ renderBakerError $ bakerInsufficientFundsDescriptions log
+                    BakerLogTag_InsufficientFunds -> Just $ do
+                        dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
+                        dyn_ $ ffor dTokensPerRoll $ \mTokensPerRoll -> renderBakerError $ bakerInsufficientFundsDescriptions mTokensPerRoll log
                     BakerLogTag_VotingReminder -> Nothing
                   Right BakerAlert_GroupedAlert
                     { _bakerAlert_groupedAlert_right = rightKind
@@ -2285,7 +2287,9 @@ bakersTab =
           BakerLogTag_BakerDeactivated -> renderBakerError ev (pure $ bakerDeactivatedDescriptions log) pkh
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh
           BakerLogTag_BakerAccused -> renderBakerError ev (pure $ bakerAccusedDescriptions log) pkh
-          BakerLogTag_InsufficientFunds -> renderBakerError ev (pure $ bakerInsufficientFundsDescriptions log) pkh
+          BakerLogTag_InsufficientFunds -> do
+              dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
+              dyn_ $ ffor dTokensPerRoll $ \mTokensPerRoll -> renderBakerError ev (pure $ bakerInsufficientFundsDescriptions mTokensPerRoll log) pkh
           BakerLogTag_VotingReminder ->
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining ->
               renderBakerError ev (bakerVotingReminderDescriptions log <$> remaining) pkh
