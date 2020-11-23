@@ -295,7 +295,7 @@ bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
     }
   where
      -- In case we can't get this figure out.
-    tokensPerRoll = fromMaybe 8000000 mTokensPerRoll
+    tokensPerRoll = fromMaybe 8000000000 mTokensPerRoll
     roll = format commas $ getMicroTez tokensPerRoll `div` 1000000
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
