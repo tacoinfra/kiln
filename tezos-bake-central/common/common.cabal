@@ -40,7 +40,6 @@ library
     , dependent-sum-aeson-orphans
     , dependent-sum-template
     , either
-    , formatting
     , file-embed
     , hashing
     , lens
