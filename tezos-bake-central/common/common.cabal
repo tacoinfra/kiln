@@ -58,7 +58,6 @@ library
     , safe-exceptions
     , scientific
     , split
-    , string-conv
     , template-haskell
     , text
     , tezos-bake-monitor-lib

@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE NumDecimals #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -13,7 +14,6 @@ import Data.Foldable (sequenceA_)
 import Data.List (intercalate)
 import Data.List.Split (chunksOf)
 import Data.String (IsString(..))
-import Data.String.Conv (toS)
 import qualified Data.Text as T
 import qualified Data.Time as Time
 import Data.Time (UTCTime, TimeZone)
@@ -286,7 +286,7 @@ bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
     , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
     , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than 1 roll and cannot receive any baking or endorsing rights."
     , _bakerErrorDescriptions_problem = [
-        ErrorDescription_Plain $ "Bakers receive baking and endorsing rights based on the number of rolls (1 roll = " <> toS roll <> "ꜩ) in their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than one roll and will not receive any baking or endorsing rights."
+        "Bakers receive baking and endorsing rights based on the number of rolls (1 roll = " <> rollInTez <> "ꜩ) in their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than one roll and will not receive any baking or endorsing rights."
         ]
     , _bakerErrorDescriptions_warning = Just ""
     , _bakerErrorDescriptions_fix = "Transfer tez or have other accounts delegate their tez to this baker so its staking balance is at least 1 roll."
@@ -295,9 +295,9 @@ bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
         , "This baker now has a large enough staking balance to receive baking rights.")
     }
   where
-     -- In case we can't get this figure out.
-    tokensPerRoll = fromMaybe 8000000000 mTokensPerRoll
-    roll = formatCommas $ getMicroTez tokensPerRoll `div` 1000000
+     -- In case we can't figure this out.
+    tokensPerRoll = fromMaybe 8e9 mTokensPerRoll
+    rollInTez = fromString $ formatCommas $ getMicroTez tokensPerRoll `div` 1e6
     formatCommas = reverse . intercalate "," . chunksOf 3 . reverse . show
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions

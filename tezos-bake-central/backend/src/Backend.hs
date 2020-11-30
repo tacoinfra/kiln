@@ -379,10 +379,9 @@ backendImpl cfg serve = do
     let
 
       networkName :: Maybe Text
-      networkName = either
-        (pure . showNamedChain)
-        (fmap showNamedChain . identifyChain)
-        chain
+      networkName = case chain of
+        Left namedChain -> pure $ showNamedChain namedChain
+        Right chainId -> fmap showNamedChain $ identifyChain chainId
 
       minLevel :: RawLevel
       minLevel = 2
