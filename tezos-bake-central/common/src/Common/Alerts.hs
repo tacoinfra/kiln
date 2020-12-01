@@ -295,9 +295,7 @@ bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
         , "This baker now has a large enough staking balance to receive baking rights.")
     }
   where
-     -- In case we can't get this figure out.
-    tokensPerRoll = fromMaybe 8000000000 mTokensPerRoll
-    roll = formatCommas $ getMicroTez tokensPerRoll `div` 1000000
+    roll = formatCommas $ maybe 8000 ((`div` 1000000) . getMicroTez) mTokensPerRoll
     formatCommas = reverse . intercalate "," . chunksOf 3 . reverse . show
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
