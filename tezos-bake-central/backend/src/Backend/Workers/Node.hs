@@ -268,7 +268,9 @@ updateNetworkStats appConfig httpMgr db nid node before = do
     eConnections :: Either RpcError Word64 <- runNodeRPC (nodeRPC rConnections)
     eNetworkStat :: Either RpcError NetworkStat <- runNodeRPC (nodeRPC rNetworkStat)
 
-    let after = update' (update' before nodeDetailsData_peerCount (Just <$> eConnections)) nodeDetailsData_networkStat eNetworkStat
+    let after = before
+                & update' nodeDetailsData_peerCount (Just <$> eConnections)
+                & update' nodeDetailsData_networkStat eNetworkStat
 
     runExceptT $ do
         let inDb = runDb (Identity db)
@@ -295,7 +297,9 @@ updateNetworkStats appConfig httpMgr db nid node before = do
 
   where
 
-    update' b lens = either (const b) (\x -> set lens x b)
+    update' lens e b = case e of
+        Left _ -> b
+        Right r -> set lens r b
 
     runNodeRPC :: ReaderT NodeRPCContext (ExceptT RpcError m) a -> m (Either RpcError a)
     runNodeRPC = runExceptT . flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node))
