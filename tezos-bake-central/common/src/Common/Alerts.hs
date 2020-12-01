@@ -286,7 +286,7 @@ bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
     , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
     , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than 1 roll and cannot receive any baking or endorsing rights."
     , _bakerErrorDescriptions_problem = [
-        "Bakers receive baking and endorsing rights based on the number of rolls (1 roll = " <> rollInTez <> "ꜩ) in their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than one roll and will not receive any baking or endorsing rights."
+        "Bakers receive baking and endorsing rights based on the number of rolls (1 roll = " <> roll <> "ꜩ) in their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than one roll and will not receive any baking or endorsing rights."
         ]
     , _bakerErrorDescriptions_warning = Just ""
     , _bakerErrorDescriptions_fix = "Transfer tez or have other accounts delegate their tez to this baker so its staking balance is at least 1 roll."
@@ -295,7 +295,7 @@ bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
         , "This baker now has a large enough staking balance to receive baking rights.")
     }
   where
-    roll = formatCommas $ maybe 8000 ((`div` 1000000) . getMicroTez) mTokensPerRoll
+    roll = fromString $ formatCommas $ maybe 8000 ((`div` 1000000) . getMicroTez) mTokensPerRoll
     formatCommas = reverse . intercalate "," . chunksOf 3 . reverse . show
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
