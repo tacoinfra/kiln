@@ -381,7 +381,7 @@ backendImpl cfg serve = do
       networkName :: Maybe Text
       networkName = case chain of
         Left namedChain -> pure $ showNamedChain namedChain
-        Right chainId -> fmap showNamedChain $ identifyChain chainId
+        Right chainId' -> fmap showNamedChain $ identifyChain chainId'
 
       minLevel :: RawLevel
       minLevel = 2
