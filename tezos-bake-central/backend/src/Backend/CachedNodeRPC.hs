@@ -317,7 +317,7 @@ instance MonadNodeQuery NodeQueryQueued where
             ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
           -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
           -- ### IMPORTANT ### We are using another node for this fallback case.
-          in NodeQueryQueued $ liftIO $ archivalNodeRetry (tshow q) dsrc uri $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+          in NodeQueryQueued $ liftIO $ archivalNodeRetry qBranch q dsrc uri $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
           -- NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
       -- But if we have candidate nodes, try them until we succeed
       -- TODO: Why isn't there a public node call as the last attempt here?
@@ -332,8 +332,8 @@ instance MonadNodeQuery NodeQueryQueued where
 
     nqLiftEither result
 
-archivalNodeRetry :: Text -> NodeDataSource -> URI -> IO (Either CacheError (RpcResult a)) -> IO (Either CacheError (RpcResult a))
-archivalNodeRetry qtext nds archivalNodeURI' action = runLoggingEnv logger $ runDb (Identity db) $ do
+archivalNodeRetry :: BlockHash -> NodeQuery a -> NodeDataSource -> URI -> IO (Either CacheError (RpcResult a)) -> IO (Either CacheError (RpcResult a))
+archivalNodeRetry qBranch q nds archivalNodeURI' action = runLoggingEnv logger $ runDb (Identity db) $ do
 
     history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
 
@@ -352,6 +352,42 @@ archivalNodeRetry qtext nds archivalNodeURI' action = runLoggingEnv logger $ run
 
   where
 
+    -- GADTs can be a little painful at times unfortunately. I would
+    -- love to know if there is a cleaner way to write this code.
+    uriResource =  case q of
+        NodeQuery_ProtocolConstants branch ->
+         _RpcQuery_resource $ rProtoConstants @RpcQuery chainId branch
+        NodeQuery_ProtocolIndex protoHash ->
+         _RpcQuery_resource $ rProtocolIndex @RpcQuery chainId protoHash
+        NodeQuery_BakingRights branch targetLevel  ->
+         _RpcQuery_resource $ rBakingRights @RpcQuery (Set.singleton $ Left targetLevel) chainId branch
+        NodeQuery_EndorsingRights branch targetLevel  ->
+         _RpcQuery_resource $ rEndorsingRights @RpcQuery (Set.singleton $ Left targetLevel) chainId branch
+        NodeQuery_Account branch contractId ->
+         _RpcQuery_resource $ rContract @RpcQuery contractId (ChainTag_Hash chainId) branch
+        NodeQuery_Ballots branch ->
+         _RpcQuery_resource $ rBallots @RpcQuery chainId branch
+        NodeQuery_Ballot branch pkh ->
+         _RpcQuery_resource $ rBallot @RpcQuery chainId branch pkh
+        NodeQuery_ProposalVote branch pkh ->
+         _RpcQuery_resource $ rProposalVote @RpcQuery chainId branch pkh
+        NodeQuery_Listings branch ->
+         _RpcQuery_resource $ rListings @RpcQuery chainId branch
+        NodeQuery_Proposals branch ->
+         _RpcQuery_resource $ rProposals @RpcQuery chainId branch
+        NodeQuery_CurrentProposal branch ->
+         _RpcQuery_resource $ rCurrentProposal @RpcQuery chainId branch
+        NodeQuery_CurrentQuorum branch ->
+         _RpcQuery_resource $ rCurrentQuorum @RpcQuery chainId branch
+        NodeQuery_Block branch ->
+         _RpcQuery_resource $ rBlock @RpcQuery (ChainTag_Hash chainId) branch
+        NodeQuery_BlockHeader branch ->
+         _RpcQuery_resource $ rBlockHeader @RpcQuery (ChainTag_Hash chainId) branch
+        NodeQuery_DelegateInfo branch _lvl pkh ->
+         _RpcQuery_resource $ rDelegateInfo @RpcQuery pkh chainId branch
+        NodeQuery_PublicKey contractId ->
+         _RpcQuery_resource $ rManagerKey @RpcQuery contractId chainId qBranch
+
     toRetry mcd rs r = do
 
         let doRetry = case r of
@@ -364,8 +400,8 @@ archivalNodeRetry qtext nds archivalNodeURI' action = runLoggingEnv logger $ run
           then
             logDebugNS "kiln-archival-noderpc" $
                 fold [
-                    "RPC call "
-                    , qtext
+                    "RPC call ("
+                    , uriResource
                     , " for Archival Node (URI: "
                     , archivalNodeURI
                     , ") \"succeeded\" after "
@@ -378,18 +414,18 @@ archivalNodeRetry qtext nds archivalNodeURI' action = runLoggingEnv logger $ run
             let isFinal = mcd <= rsCumulativeDelay rs + 2 * fromMaybe 0 (rsPreviousDelay rs)
             if isFinal
               then logDebugNS "Kiln-archival-noderpc" $
-                      fold ["For RPC call"
-                           , qtext
-                           , " for Archival Node (URI: "
+                      fold ["For RPC call ("
+                           , uriResource
+                           , ") for Archival Node (URI: "
                            , archivalNodeURI
                            , ") this will be the final retry after "
                            , tshow (succ $ rsIterNumber rs)
                            , " retries."]
               else logDebugNS "kiln-archival-noderpc" $
                       fold [
-                           "Retrying rpc call "
-                           , qtext
-                           , " for Archival Node (URI: "
+                           "Retrying rpc call ("
+                           , uriResource
+                           , ") for Archival Node (URI: "
                            , archivalNodeURI
                            , "). Attempt number: {"
                            , tshow (succ $ rsIterNumber rs)
