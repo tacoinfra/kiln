@@ -82,6 +82,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_PeriodTestingVote :=> Identity ma -> handlePeriodTestingVote ma
     NotifyTag_PeriodTesting :=> Identity ma -> handlePeriodTesting ma
     NotifyTag_PeriodPromotionVote :=> Identity ma -> handlePeriodPromotionVote ma
+    NotifyTag_PeriodAdoption :=> Identity ma -> handlePeriodAdoption ma
     NotifyTag_BakerVote :=> Identity ma -> handleBakerVote ma
     NotifyTag_BakerRegistered :=> Identity (pkh, b) -> handleBakerRegistered pkh b
     NotifyTag_NodeVersion :=> Identity (nid, mtzversion) -> handleTezosVersion mtzversion nid
@@ -405,6 +406,9 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handlePeriodPromotionVote ma
       | viewSelects () periodPromotionVoteVS = pure $ mempty { _bakeView_periodPromotionVote = toMaybeView periodPromotionVoteVS $ Just ma }
       | otherwise = pure mempty
+
+    handlePeriodAdoption :: Maybe PeriodAdoption -> m' (BakeView a)
+    handlePeriodAdoption = undefined
 
     bakerRegisteredVS = _bakeViewSelector_bakerRegistered aggVS
     handleBakerRegistered :: Applicative m' => PublicKeyHash -> Bool -> m' (BakeView a)

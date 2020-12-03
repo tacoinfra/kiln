@@ -63,7 +63,7 @@ import qualified Text.URI as Uri
 import Tezos.NodeRPC hiding (DataSource, getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
 import qualified Tezos.V005.Types as V005
-import qualified Tezos.V004.Types as V004
+import qualified Tezos.V008.Types as V008
 import qualified Tezos.Types as Tezos
 import qualified Tezos.Unsafe
 
@@ -733,6 +733,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       VotingPeriodKind_Testing -> pure BakerVotingState_Testing
       VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
       VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3 BakerVotingState_Promotion
+      VotingPeriodKind_Adoption -> undefined
 
     runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
 
@@ -804,9 +805,10 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_TestingVote -> notify NotifyTag_PeriodTestingVote Nothing
         VotingPeriodKind_Testing -> notify NotifyTag_PeriodTesting Nothing
         VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
+        VotingPeriodKind_Adoption -> notify NotifyTag_PeriodAdoption Nothing
 
   where
-    toBlockHeader = blockCrossCata V004.toBlockHeader V005.toBlockHeader
+    toBlockHeader = blockCrossCata V008.toBlockHeader V005.toBlockHeader
 
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
@@ -839,6 +841,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_TestingVote -> deleteAll' @PeriodTestingVote Proxy
         VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
         VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
+        VotingPeriodKind_Adoption -> deleteAll' @PeriodAdoption Proxy
+
     updateTo startBlock predBlk blk p = do
       let position' = blk ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition
           votingPeriod = blk ^. blockMetadata . blockMetadata_level . level_votingPeriod
@@ -901,6 +905,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                 }
         VotingPeriodKind_TestingVote -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
         VotingPeriodKind_PromotionVote -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
+        VotingPeriodKind_Adoption -> runDb (Identity db) $ notify NotifyTag_PeriodAdoption $ Just PeriodAdoption
 
     handleVotingPeriod :: (PersistEntity a, BlockLike blk) => blk -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
     handleVotingPeriod blk f n = do

@@ -2486,7 +2486,8 @@ bakersTab =
                   RightKind_Endorsing -> "Endorse block "
                 text $ tshow $ unRawLevel l
                 let eventDyn = constDyn (r, l)
-                etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view protocolIndex_constants) knownProto) <*> Compose (fmap (Just . snd) eventDyn) <*> Compose latestHead
+                -- etaDyn <- maybeDyn $ getCompose $ predictFutureTimestamp <$> Compose ((fmap.fmap) (view protocolIndex_constants) knownProto) <*> Compose (fmap (Just . snd) eventDyn) <*> Compose latestHead
+                etaDyn <- maybeDyn $ getCompose $ undefined <$> Compose ((fmap.fmap) (view protocolIndex_constants) knownProto) <*> Compose (fmap (Just . snd) eventDyn) <*> Compose latestHead
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 

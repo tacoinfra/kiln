@@ -568,6 +568,9 @@ data PeriodPromotionVote = PeriodPromotionVote
   , _periodPromotionVote_periodVote :: !PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
+data PeriodAdoption = PeriodAdoption
+   deriving (Eq, Ord, Generic, Typeable, Show)
+
 -- Proposal period
 data BakerProposal = BakerProposal
   { _bakerProposal_pkh :: !PublicKeyHash
@@ -1063,6 +1066,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''NodeInternal
   , ''NodeProcessState
   , ''PeriodPromotionVote
+  , ''PeriodAdoption
   , ''PeriodProposal
   , ''PeriodTesting
   , ''PeriodTestingVote

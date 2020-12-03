@@ -137,6 +137,7 @@ data NotifyTag a where
   NotifyTag_PeriodTestingVote :: NotifyTag (Maybe PeriodTestingVote)
   NotifyTag_PeriodTesting :: NotifyTag (Maybe PeriodTesting)
   NotifyTag_PeriodPromotionVote :: NotifyTag (Maybe PeriodPromotionVote)
+  NotifyTag_PeriodAdoption :: NotifyTag (Maybe PeriodAdoption)
   NotifyTag_BakerVote :: NotifyTag (Maybe BakerVote)
   NotifyTag_BakerRegistered :: NotifyTag (PublicKeyHash, Bool)
   NotifyTag_NodeVersion :: NotifyTag (Either PublicNode (Id Node), Maybe TezosVersion)
@@ -797,6 +798,9 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             reference:
               table: PeriodProposal
               onDelete: cascade
+  - entity: PeriodAdoption
+    constructors:
+      - name: PeriodAdoption
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null
@@ -1416,6 +1420,7 @@ instance ArgDict c NotifyTag where
     , c (Maybe PeriodTestingVote)
     , c (Maybe PeriodTesting)
     , c (Maybe PeriodPromotionVote)
+    , c (Maybe PeriodAdoption)
     , c (Maybe BakerVote)
     , c (PublicKeyHash, Bool)
     , c (Either PublicNode (Id Node), Maybe TezosVersion)
@@ -1464,6 +1469,7 @@ instance ArgDict c NotifyTag where
     NotifyTag_PeriodTestingVote -> Dict
     NotifyTag_PeriodTesting -> Dict
     NotifyTag_PeriodPromotionVote -> Dict
+    NotifyTag_PeriodAdoption -> Dict
     NotifyTag_BakerVote -> Dict
     NotifyTag_BakerRegistered -> Dict
     NotifyTag_NodeVersion -> Dict
