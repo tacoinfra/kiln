@@ -537,8 +537,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           let
             dparameters = (fmap . fmap) _protocolIndex_constants knownProto
             mNextOp :: Dynamic t (Maybe Time.UTCTime)
-            -- mNextOp = getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ constDyn $ Just l) <*> Compose latestHead
-            mNextOp = getCompose $ undefined <$> Compose dparameters <*> (Compose $ constDyn $ Just l) <*> Compose latestHead
+            mNextOp = getCompose $ predictFutureTimestamp <$> Compose dparameters <*> (Compose $ constDyn $ Just l) <*> Compose latestHead
           el "div" $ do
             icon "icon-warning big orange"
           el "div" $ do
