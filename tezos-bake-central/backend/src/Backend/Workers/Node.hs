@@ -626,6 +626,7 @@ data BakerVotingState
   | BakerVotingState_Exploration Bool -- whether baker previously voted
   | BakerVotingState_Testing -- no voting takes place
   | BakerVotingState_Promotion Bool -- whether baker previously voted
+  | BakerVotingState_Adoption  -- no voting takes place
   deriving (Eq, Ord, Show)
 
 data ProposalVoteState
@@ -733,7 +734,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       VotingPeriodKind_Testing -> pure BakerVotingState_Testing
       VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
       VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3 BakerVotingState_Promotion
-      VotingPeriodKind_Adoption -> undefined
+      VotingPeriodKind_Adoption -> pure BakerVotingState_Adoption
 
     runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
 
@@ -765,6 +766,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
           BakerVotingState_Exploration previouslyVoted -> singleVotePhase previouslyVoted
           BakerVotingState_Testing -> clearAllErrors
           BakerVotingState_Promotion previouslyVoted -> singleVotePhase previouslyVoted
+          BakerVotingState_Adoption -> clearAllErrors -- TODO: Make
+          -- sure this makes sense!
 
   -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.
   -- Current period should be updated to the values of the latest block.
@@ -905,7 +908,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                 }
         VotingPeriodKind_TestingVote -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
         VotingPeriodKind_PromotionVote -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
-        VotingPeriodKind_Adoption -> runDb (Identity db) $ notify NotifyTag_PeriodAdoption $ Just PeriodAdoption
+        VotingPeriodKind_Adoption -> handleVotingPeriod predBlk PeriodAdoption NotifyTag_PeriodAdoption
 
     handleVotingPeriod :: (PersistEntity a, BlockLike blk) => blk -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
     handleVotingPeriod blk f n = do

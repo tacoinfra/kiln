@@ -407,8 +407,11 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | viewSelects () periodPromotionVoteVS = pure $ mempty { _bakeView_periodPromotionVote = toMaybeView periodPromotionVoteVS $ Just ma }
       | otherwise = pure mempty
 
-    handlePeriodAdoption :: Maybe PeriodAdoption -> m' (BakeView a)
-    handlePeriodAdoption = undefined
+    periodAdoptionVS = _bakeViewSelector_periodAdoption aggVS
+    handlePeriodAdoption :: PersistBackend m' => Maybe PeriodAdoption -> m' (BakeView a)
+    handlePeriodAdoption ma
+      | viewSelects () periodAdoptionVS = pure $ mempty { _bakeView_periodAdoption = toMaybeView periodAdoptionVS $ Just ma }
+      | otherwise = pure mempty
 
     bakerRegisteredVS = _bakeViewSelector_bakerRegistered aggVS
     handleBakerRegistered :: Applicative m' => PublicKeyHash -> Bool -> m' (BakeView a)

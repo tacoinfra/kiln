@@ -799,8 +799,14 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
               table: PeriodProposal
               onDelete: cascade
   - entity: PeriodAdoption
+    autoKey: null
     constructors:
       - name: PeriodAdoption
+        fields:
+          - name: _periodAdoption_proposal
+            reference:
+              table: PeriodProposal
+              onDelete: cascade
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null
