@@ -56,6 +56,7 @@ library
     , rhyolite-datastructures
     , rhyolite-frontend
     , safe-exceptions
+    , semialign
     , scientific
     , split
     , template-haskell

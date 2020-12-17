@@ -267,7 +267,7 @@ iWither f = fmap catMaybes . itraverse f
 type MaybeView v a = View (MaybeSelector v) a
 
 newtype MaybeSelector (v :: *) a = MaybeSelector { unMaybeSelector :: Option a }
-  deriving (Eq, Show, Ord, Functor, Foldable, Traversable, Monoid, Semigroup, ToJSON, ToJSON1, FromJSON, FromJSON1, Filterable, Align)
+  deriving (Eq, Show, Ord, Functor, Foldable, Traversable, Monoid, Semigroup, ToJSON, ToJSON1, FromJSON, FromJSON1, Filterable, Semialign, Align)
 
 
 
@@ -303,7 +303,7 @@ instance TraversableWithIndex () (View (MaybeSelector v)) where
 
 
 newtype MapSelector k (v :: *) a = MapSelector { unMapSelector :: MonoidalMap k a }
-  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1, Filterable, Align)
+  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1, Filterable, Semialign, Align)
 
 instance Ord k => ViewSelector (MapSelector k v) where
   newtype View (MapSelector k v) a = MapView { unMapView :: MonoidalMap k (First v, a) }
@@ -343,7 +343,7 @@ instance TraversableWithIndex k (View (MapSelector k v)) where
 
 newtype IntervalSelector e (i :: *) (v :: *) a = IntervalSelector
   { unIntervalSelector :: (AppendIntervalMap (ClosedInterval e)) a }
-  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1, Filterable, Align)
+  deriving (Eq, Ord, Eq1, Ord1, Show, Functor, Foldable, Traversable, Monoid, Semigroup, FromJSON, FromJSON1, ToJSON, ToJSON1, Filterable, Semialign, Align)
 
 type IntervalSelector' e = IntervalSelector (WithInfinity e)
 
@@ -414,6 +414,7 @@ newtype RangeSelector e (v :: *) a = RangeSelector
     , FromJSON, FromJSON1
     , ToJSON, ToJSON1
     , Filterable
+    , Semialign
     , Align)
 
 type RangeSelector' e = RangeSelector (WithInfinity e)
@@ -529,15 +530,18 @@ iMapSelectorKeys (RangeSelector vs) = mapMaybe f $ IMap.keys vs
 -- TODO Upstream into witherable
 deriving instance Filterable Option
 
-instance (Align f, Align g) => Align (Compose f g) where
-  nil = Compose nil
-  alignWith f (Compose xs) (Compose ys) = Compose $ alignWith f' xs ys
-    where
-      f' = \case
-        This ga -> fmap (f . This) ga
-        That gb -> fmap (f . That) gb
-        These ga gb -> alignWith f ga gb
+-- instance (Semialign f, Semialign g) => Semialign (Compose f g) where
+--   alignWith f (Compose xs) (Compose ys) = Compose $ alignWith f' xs ys
+--     where
+--       f' = \case
+--         This ga -> fmap (f . This) ga
+--         That gb -> fmap (f . That) gb
+--         These ga gb -> alignWith f ga gb
 
+-- instance (Align f, Align g) => Align (Compose f g) where
+--   nil = Compose nil
+
+deriving instance Semialign Option
 deriving instance Align Option
 
 

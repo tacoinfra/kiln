@@ -23,7 +23,8 @@ import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSON, ToJSON1, ToJSONKey,
                    toJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
-import Data.Align (Align (align, nil))
+-- import Data.Align (Align (align, nil))
+import Data.Align
 import Data.Functor.Classes
 import qualified Data.IntervalMap.Generic.Interval as IntervalClass
 import qualified Data.IntervalMap.Generic.Lazy as IMap
@@ -64,11 +65,14 @@ instance FoldableWithIndex k (AppendIntervalMap k)
 instance TraversableWithIndex k (AppendIntervalMap k) where
   itraverse f = fmap AppendIntervalMap . sequenceA . IMap.mapWithKey f . unAppendIntervalMap
 
-instance (IsInterval k e, Ord k) => Align (AppendIntervalMap k) where
-  nil = AppendIntervalMap mempty
+instance (IsInterval k e, Ord k) => Semialign (AppendIntervalMap k) where
   align m n = unionWith merge (This <$> m) (That <$> n)
     where merge (This m') (That n') = These m' n'
           merge _ _ = error "Impossible: Align AppendIntervalMap merge"
+  zip m n = intersectionWith (,) m n
+
+instance (IsInterval k e, Ord k) => Align (AppendIntervalMap k) where
+  nil = AppendIntervalMap mempty
 
 instance (IsInterval k e) => Filterable (AppendIntervalMap k) where
   mapMaybe f v = AppendIntervalMap $ IMap.mapMaybe f (unAppendIntervalMap v)

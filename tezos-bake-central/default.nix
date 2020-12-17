@@ -9,6 +9,7 @@
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
+  nixpkgs1909 = import dep/nixpkgs1909 {};
 in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
@@ -54,7 +55,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     __closureCompilerOptimizationLevel = closure-compiler-setting;
     packages = {
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
-      functor-infix = hackGet dep/functor-infix;
+      # functor-infix = hackGet dep/functor-infix;
       jsaddle-dom = hackGet dep/jsaddle-dom;
       micro-ecc = hackGet dep/micro-ecc-haskell;
       named = hackGet dep/named; # TODO: Drop once package set includes 0.3.0.0
@@ -99,6 +100,12 @@ obelisk.project ./. ({ pkgs, ... }@args:
           rev = "941ca7a25403bab4c719e669db36dc18b240b996";
           sha256 = "18vvvp29ph112myxqmw4cgf1x6q0xs6jwdmg4k9fghcpav8acjd7";};
         gargoyleOverlay = import gargoyleSrc { postgresql = postgresql-override;};
+
+
+        # For upgrading to later GHC versions.
+        # ghcOverlay = self: super: assert (builtins.hasAttr "haskell" pkgs); builtins.trace (pkgs.haskell.packages.ghc864.ghc.version) {};
+        # ghcOverlay = self: super: {ghc = pkgs.haskell.packages.ghc864.ghc;};
+
         baseOverlay = self: super:
             let callHackageDirect = {pkg,ver,sha256}:
                 let pkgver = "${pkg}-${ver}";
