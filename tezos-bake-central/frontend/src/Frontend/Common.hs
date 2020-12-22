@@ -130,7 +130,7 @@ fancyTez t = let (w, p, tz) = tezPadded t in elClass "span" "fancy-tez" $ do
 
 -- | Clickable copy-to-clipboard icon
 copyButton
-  :: (SemUi.UI t m, MonadJSM (Performable m))
+  :: (SemUi.UI js t m, MonadJSM (Performable m))
   => Behavior t Text -- ^ Text to copy to clipboard
   -> m ()
 copyButton content = mdo
@@ -179,8 +179,8 @@ data TooltipConfig = TooltipConfig
   }
 makeLenses ''TooltipConfig
 
-defaultTooltipConfig :: TooltipConfig 
-defaultTooltipConfig = TooltipConfig 
+defaultTooltipConfig :: TooltipConfig
+defaultTooltipConfig = TooltipConfig
   TooltipPos_TopCenter
 
 defaultWrapper
@@ -191,12 +191,14 @@ defaultWrapper =
   elAttr' "span" ("style" =: "position:relative")
 
 tooltipped
-  :: SemUi.UI t m
+  :: SemUi.UI js t m
+  => MonadIO (Performable m)
   => TooltipPos -> m () -> m a -> m a
 tooltipped pos = tooltippedWrapper defaultWrapper pos
 
 tooltippedWrapper
-  :: SemUi.UI t m
+  :: SemUi.UI js t m
+  => MonadIO (Performable m)
   => (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
   -- ^ Wrapper (used to determine mouse events)
   -> TooltipPos -> m () -> m a -> m a
@@ -205,7 +207,8 @@ tooltippedWrapper wrapper pos = tooltippedWithConfig c wrapper
     c = defaultTooltipConfig & tooltipConfig_pos .~ pos
 
 tooltippedWithConfig
-  :: SemUi.UI t m
+  :: SemUi.UI js t m
+  => MonadIO (Performable m)
   => TooltipConfig
   -> (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
   -> m ()
@@ -261,7 +264,7 @@ localTimestamp t = do
 localHumanizedTimestamp
   ::
     ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, PerformEvent t m, MonadIO (Performable m), TriggerEvent t m
-    , MonadReader r m, HasTimeZone r, HasTimer t r
+    , MonadReader r m, HasTimeZone r, HasTimer t r, Prerender js t m
     )
   => Dynamic t (Maybe Text)
   -> Dynamic t Time.UTCTime

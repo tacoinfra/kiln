@@ -68,7 +68,7 @@ isVotingPeriod = \case
   VotingPeriodKind_PromotionVote -> True
 
 amendmentPopup
-  :: (MonadReader r m, HasTimeZone r, DomBuilder t m, MonadJSM (Performable m), MonadAppWidget t m)
+  ::    (MonadReader r m, HasTimeZone r, DomBuilder t m, MonadJSM (Performable m), MonadAppWidget t m, Prerender js t m)
   => Dynamic t Amendment
   -- ^ The current period
   -> Dynamic t (Map.Map VotingPeriodKind Amendment)
@@ -147,7 +147,7 @@ withLoader f d = maybeDyn d >>= \m -> dyn_ $ ffor m $ \case
   Just a -> f a
 
 periodProposals
-  :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m))
+  :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m), Prerender js t m)
   => Dynamic t (Map.Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)) -> m ()
 periodProposals proposals' = do
   let proposals = sortOn (Down . _periodProposal_votes . fst) . Map.elems <$> proposals'
@@ -166,7 +166,7 @@ periodProposals proposals' = do
     text "No proposals have been submitted for this voting period yet."
 
 periodTest
-  :: forall t m. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
+  :: forall t m js. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
   => Dynamic t ((Id PeriodProposal, PeriodProposal), PeriodTesting) -> m ()
 periodTest test = el "dl" $ do
   el "dt" $ text "Proposal Hash"
@@ -180,7 +180,7 @@ periodTest test = el "dl" $ do
     el "dd" $ dynText $ textWithCommas . fromIntegral . unRawLevel <$> lvl
 
 periodVote
-  :: forall t m. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
+  :: forall t m js. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
   => Text -> Dynamic t ((Id PeriodProposal, PeriodProposal), PeriodVote) -> m ()
 periodVote promote vote = el "dl" $ do
   el "dt" $ text "Proposal Hash"
@@ -244,11 +244,12 @@ progressDots currentCycle' maxCycle' = do
       LT -> "upcoming"
 
 -- | Modal for voting
-voteModal :: forall r t m.
+voteModal :: forall r t m js.
   ( MonadAppWidget t m
   , MonadReader r m, HasFrontendConfig r
   , MonadJSM (Performable m)
   , HasTimer t r, HasTimeZone r
+  , Prerender js t m
   )
   => (PublicKeyHash, SecretKey)
   -- ^ Baker to vote with

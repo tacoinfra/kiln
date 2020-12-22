@@ -71,12 +71,13 @@ data SettingsRoute t cfg
   | SettingsRoute_Edit
 
 settingsTab
-  :: forall r t m.
+  :: forall r t m js.
     ( MonadAppWidget t m
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
     , HasModal t m, MonadAppWidget  t (ModalM m)
+    , Prerender js t m
     )
   => m ()
 settingsTab = do
@@ -291,3 +292,6 @@ fakeRadioItem :: (DomBuilder t m, PostBuild t m) => Dynamic t Bool -> m a -> m (
 fakeRadioItem checked ma = do
   (e, a) <- elDynAttr' "div" (ffor checked $ \c -> "class" =: ("fake-radio-item" <> if c then " checked" else "")) ma
   pure (domEvent Click e, a)
+
+(<$$) :: Functor f => Functor g => b -> f (g a) -> f (g b)
+(<$$) b fga = fmap (fmap (const b)) fga

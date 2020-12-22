@@ -1,9 +1,9 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell, PackageImports #-}
 module System.Which where
 
 import qualified Shelly as Sh
 import qualified Data.Text as T
-import Language.Haskell.TH (Exp, Q, reportError, runIO)
+import "template-haskell" Language.Haskell.TH (Exp, Q, reportError, runIO)
 import Data.Monoid ((<>))
 import Data.List (isPrefixOf)
 

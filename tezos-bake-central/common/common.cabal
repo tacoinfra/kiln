@@ -41,6 +41,7 @@ library
     , dependent-sum-template
     , either
     , file-embed
+    , functor-infix
     , hashing
     , lens
     , memory

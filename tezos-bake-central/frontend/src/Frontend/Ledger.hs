@@ -96,7 +96,7 @@ instance GCompare (PromptResult m) where
   gcompare PromptResult_Success PromptResult_Success = GEQ
   gcompare PromptResult_Success _ = GGT
 
-ledgerSetupSteps :: forall t m. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
+ledgerSetupSteps :: forall t m js. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m, Prerender js t m) => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedgerForced
   ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
@@ -237,7 +237,8 @@ authorizeLedger (sk, pkh) = do
       | otherwise = Nothing
 
 registerDelegate
-  :: forall t m. MonadAppWidget t m
+  :: forall t m js. MonadAppWidget t m
+  => Prerender js t m
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError ()))
 registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanation prompt sk handleStep
   where
@@ -321,7 +322,7 @@ connectLedger connectedLedger = divClass "central" $ do
   pure ledgerChoice
 
 selectAddress
-  :: forall t m. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m)
+  :: forall t m js. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m, Prerender js t m)
   => LedgerIdentifier -> m (Event t (SecretKey, PublicKeyHash))
 selectAddress ledger = divClass "select-address" $ mdo
   let curves = [minBound .. maxBound] :: [SigningCurve]

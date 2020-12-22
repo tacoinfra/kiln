@@ -50,7 +50,6 @@ import Data.Maybe (fromMaybe, isJust)
 import Data.Semigroup (First (..), Option (..), Semigroup, (<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.These (These (..))
 import Data.Witherable (Filterable(mapMaybe, catMaybes))
 
 import Common.WrappedShow1

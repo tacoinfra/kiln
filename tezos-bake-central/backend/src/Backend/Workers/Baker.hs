@@ -67,7 +67,7 @@ import Common (curryMap)
 import Common.Schema
 import ExtraPrelude
 
-import Data.Align
+import Data.Align hiding (zip)
 import Data.These (These(..), these)
 
 -- TODO: This only loops through one cycle at a time, per block;  we don't need to wait that long (although it may still end up doing the right thing eventually)

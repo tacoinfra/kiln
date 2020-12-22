@@ -9,7 +9,6 @@
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
-  nixpkgs1909 = import dep/nixpkgs1909 {};
 in
 obelisk.project ./. ({ pkgs, ... }@args:
   let
@@ -101,6 +100,13 @@ obelisk.project ./. ({ pkgs, ... }@args:
           sha256 = "18vvvp29ph112myxqmw4cgf1x6q0xs6jwdmg4k9fghcpav8acjd7";};
         gargoyleOverlay = import gargoyleSrc { postgresql = postgresql-override;};
 
+        groundhogSrc = pkgs.fetchFromGitHub {
+          owner = "emmanueldenloye"; # temporary until obsidian uploads these channges
+          repo = "groundhog";
+          rev = "b485de4e1d593bc5bf7ca2208658ef62c484dcfa";
+          sha256 = "0qgl4bcmxnh466qa8arf25jq7l8qs527drgvdj2whg3vwd3shp8f";
+        };
+        groundhogOverlay = let lib = pkgs.lib; in import (groundhogSrc + /default.nix) { inherit lib;};
 
         # For upgrading to later GHC versions.
         # ghcOverlay = self: super: assert (builtins.hasAttr "haskell" pkgs); builtins.trace (pkgs.haskell.packages.ghc864.ghc.version) {};
@@ -114,7 +120,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
                    inherit sha256;
                    });
             in { which = callHackageDirect { pkg = "which"; ver = "0.1.0.0"; sha256 = "1c8svdiv378ps63lwn3aw7rv5wamlpmzgcn21r2pap4sx7p08892";} {};};
-     in with pkgs.lib; foldr composeExtensions baseOverlay [ rhyolite.haskellOverrides appOverlay gargoyleOverlay ];
+     in with pkgs.lib; foldr composeExtensions baseOverlay [ rhyolite.haskellOverrides appOverlay groundhogOverlay gargoyleOverlay];
   }) // {
     dev.extraGhciArgs = ["-fobject-code"];
   }

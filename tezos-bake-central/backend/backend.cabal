@@ -134,6 +134,7 @@ library
     Backend.Migrations
     Backend.NodeCmd
     Backend.NotifyHandler
+    Backend.PersistDefinitions
     Backend.RequestHandler
     Backend.Schema
     Backend.Snapshot

@@ -80,6 +80,7 @@ editCfg
   :: (MonadAppWidget t m
      , MonadJSM m
      , MonadJSM (Performable m)
+     , Prerender js t m
      )
   => Dynamic t (Maybe MailServerView) -> m (Event t ())
 editCfg mailServer = do
@@ -99,6 +100,7 @@ mailServerForm
   :: ( MonadAppWidget t m
      , MonadJSM m
      , MonadJSM (Performable m)
+     , Prerender js t m
      )
   => (MailServerView, [Email]) -> m (Event t ((MailServerView, Maybe Text), [Email]), Event t ())
 mailServerForm (srv0, emails0) = do
