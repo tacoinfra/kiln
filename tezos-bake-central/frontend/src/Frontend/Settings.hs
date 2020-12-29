@@ -72,12 +72,11 @@ data SettingsRoute t cfg
 
 settingsTab
   :: forall r t m js.
-    ( MonadAppWidget t m
+    ( MonadAppWidget js t m
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
-    , HasModal t m, MonadAppWidget  t (ModalM m)
-    , Prerender js t m
+    , HasModal t m, MonadAppWidget js t (ModalM m)
     )
   => m ()
 settingsTab = do

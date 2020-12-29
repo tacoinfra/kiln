@@ -45,13 +45,13 @@ import Common.Alerts (AlertsFilter(..))
 import ExtraPrelude
 import Frontend.Common
 
-watchFrontendConfig :: MonadAppWidget t m => m (Dynamic t (Maybe FrontendConfig))
+watchFrontendConfig :: MonadAppWidget js t m => m (Dynamic t (Maybe FrontendConfig))
 watchFrontendConfig =
   (fmap . fmap) (getMaybeView . _bakeView_config) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_config = viewJust 1
     }
 
-watchProtocolConstants :: MonadAppWidget t m => Dynamic t ProtocolHash -> m (Dynamic t (Maybe ProtocolIndex))
+watchProtocolConstants :: MonadAppWidget js t m => Dynamic t ProtocolHash -> m (Dynamic t (Maybe ProtocolIndex))
 watchProtocolConstants protocol = do
   mmap <- (fmap . fmap) (unMapView . _bakeView_parameters) $
     watchViewSelector $
@@ -61,7 +61,7 @@ watchProtocolConstants protocol = do
   pure $ liftA2 (\p m -> getFirst . fst <$> MMap.lookup p m) protocol mmap
 
 watchHeadWithProtocol
-  :: forall t m. MonadAppWidget t m
+  :: forall js t m. MonadAppWidget js t m
   => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)), Dynamic t (Maybe ProtocolIndex))
 watchHeadWithProtocol = do
   latestHead <- watchLatestHead
@@ -74,94 +74,94 @@ watchHeadWithProtocol = do
   protoConstants <- join <$> holdDyn (pure Nothing) protoConstantsEvt
   pure (latestHead, protoConstants)
 
-watchLatestProtoInfo :: MonadAppWidget t m => m (Dynamic t (Maybe ProtoInfo))
+watchLatestProtoInfo :: MonadAppWidget js t m => m (Dynamic t (Maybe ProtoInfo))
 watchLatestProtoInfo = do
   (_, knownProto) <- watchHeadWithProtocol
   pure $ fmap _protocolIndex_constants <$> knownProto
 
-watchLatestHead :: MonadAppWidget t m => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)))
+watchLatestHead :: MonadAppWidget js t m => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)))
 watchLatestHead =
   (fmap . fmap) (getMaybeView . _bakeView_latestHead) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
-watchInternalBaker :: MonadAppWidget t m => m (Dynamic t (Maybe (PublicKeyHash, BakerInternalData)))
+watchInternalBaker :: MonadAppWidget js t m => m (Dynamic t (Maybe (PublicKeyHash, BakerInternalData)))
 watchInternalBaker = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> listToMaybe $ MMap.toList $ fmapMaybe (preview _Right . _bakerSummary_baker) $ fmapMaybe getFirst $ getRangeView' (_bakeView_bakerAddresses v')
 
-watchInternalNode :: MonadAppWidget t m => m (Dynamic t (Maybe (Id Node, ProcessData)))
+watchInternalNode :: MonadAppWidget js t m => m (Dynamic t (Maybe (Id Node, ProcessData)))
 watchInternalNode = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> listToMaybe $ MMap.toList $ fmapMaybe (preview _Right . _nodeSummary_node) $ fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
-watchNodeAddresses :: MonadAppWidget t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
+watchNodeAddresses :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap (Id Node) NodeSummary))
 watchNodeAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_nodeAddresses v')
 
-watchNodeAddressesValid :: MonadAppWidget t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) NodeSummary)))
+watchNodeAddressesValid :: MonadAppWidget js t m => m (Dynamic t (Maybe (MonoidalMap (Id Node) NodeSummary)))
 watchNodeAddressesValid = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_nodeAddresses v')
 
-watchNodeDetails :: (MonadAppWidget t m) => Id Node -> m (Dynamic t (Maybe NodeDetailsData))
+watchNodeDetails :: (MonadAppWidget js t m) => Id Node -> m (Dynamic t (Maybe NodeDetailsData))
 watchNodeDetails nid = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeDetails = viewRangeExactly (Bounded nid) 1
     }
   return $ ffor theView $ \v' -> MMap.lookup nid $ getRangeView' (_bakeView_nodeDetails v')
 
-watchLatestTezosRelease :: (MonadAppWidget t m) => m (Dynamic t (Maybe MajorMinorVersion))
+watchLatestTezosRelease :: (MonadAppWidget js t m) => m (Dynamic t (Maybe MajorMinorVersion))
 watchLatestTezosRelease =
   (fmap . fmap) (join . getMaybeView . _bakeView_latestTezosRelease) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_latestTezosRelease = viewJust 1
     }
 
-watchTezosVersion :: (MonadAppWidget t m) => Id Node -> m (Dynamic t (Maybe (Maybe TezosVersion)))
+watchTezosVersion :: (MonadAppWidget js t m) => Id Node -> m (Dynamic t (Maybe (Maybe TezosVersion)))
 watchTezosVersion nid = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_nodeVersions = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> MMap.lookup nid $ getRangeView' (_bakeView_nodeVersions v')
 
-watchPublicVersion :: (MonadAppWidget t m) => Dynamic t PublicNode -> m (Dynamic t (Maybe (Maybe TezosVersion)))
+watchPublicVersion :: (MonadAppWidget js t m) => Dynamic t PublicNode -> m (Dynamic t (Maybe (Maybe TezosVersion)))
 watchPublicVersion dpn = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_publicVersions = viewRangeAll 1
     }
   return $ ffor2 theView dpn $ \v' pn -> MMap.lookup pn $ getRangeView' (_bakeView_publicVersions v')
 
-watchBakerAddresses :: MonadAppWidget t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
+watchBakerAddresses :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
 watchBakerAddresses = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_bakerAddresses v')
 
-watchBakerAddressesValid :: MonadAppWidget t m => m (Dynamic t (Maybe (MonoidalMap PublicKeyHash BakerSummary)))
+watchBakerAddressesValid :: MonadAppWidget js t m => m (Dynamic t (Maybe (MonoidalMap PublicKeyHash BakerSummary)))
 watchBakerAddressesValid = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerAddresses = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> validatingRange (fmapMaybe getFirst . getRangeView') (_bakeView_bakerAddresses v')
 
-watchBakerDetails :: MonadAppWidget t m => PublicKeyHash -> m (Dynamic t (Maybe BakerDetails))
+watchBakerDetails :: MonadAppWidget js t m => PublicKeyHash -> m (Dynamic t (Maybe BakerDetails))
 watchBakerDetails pkh = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerDetails = viewRangeExactly (Bounded pkh) 1
     }
   return $ ffor theView $ \v' -> MMap.lookup pkh $ fmapMaybe getFirst $ getRangeView' (_bakeView_bakerDetails v')
 
-watchBakerStats :: (MonadAppWidget t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
+watchBakerStats :: (MonadAppWidget js t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
 watchBakerStats bakers = do
   let levels :: (RawLevel, RawLevel) = (0, 30)
       --levels' :: ClosedInterval RawLevel = ClosedInterval 0 30
@@ -176,14 +176,14 @@ watchBakerStats bakers = do
   --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_bakerStats
 
 watchMailServer
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => m (Dynamic t (Maybe (Maybe MailServerView)))
 watchMailServer =
   (fmap . fmap) (getMaybeView . _bakeView_mailServer) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_mailServer = viewJust 1 }
 
-watchNotificatees :: MonadAppWidget t m => m (Dynamic t (Maybe (Maybe [Email])))
+watchNotificatees :: MonadAppWidget js t m => m (Dynamic t (Maybe (Maybe [Email])))
 watchNotificatees = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_mailServer = viewJust 1
@@ -191,7 +191,7 @@ watchNotificatees = do
   return $ fmap ((fmap . fmap) _mailServerView_notificatees . getMaybeView . _bakeView_mailServer) theView
 
 watchErrors
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Dynamic t (Maybe AlertsFilter)
   -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MMap.MonoidalMap (Id ErrorLog) (ErrorLog, ErrorLogView)))
@@ -200,7 +200,7 @@ watchErrors mAlert intervals = watchErrorsByTag mAlert allLogTags intervals
 
 -- It is possible to to query each LogTag with different Interval
 watchErrorsByTag
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Dynamic t (Maybe AlertsFilter)
   -> Dynamic t (DMap LogTag (Const ()))
   -> Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
@@ -219,7 +219,7 @@ watchErrorsByTag mAlert logSet intervals = do
     in fmapMaybe (getFirst . fst . getFirst) $ _intervalView_elements allTags
 
 watchErrorsByNode
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (MonoidalMap (Id Node) (NonEmpty (ErrorLog, NodeErrorLogView))))
 watchErrorsByNode alertWindow = do
@@ -233,7 +233,7 @@ watchErrorsByNode alertWindow = do
     ]
 
 watchBakerAlerts
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => m (Dynamic t (MonoidalMap PublicKeyHash (NonEmpty BakerAlert)))
 watchBakerAlerts = do
   theView <- watchViewSelector . pure $ mempty
@@ -251,7 +251,7 @@ nodeSummaryStateIfInternal :: NodeSummary -> Maybe ProcessState
 nodeSummaryStateIfInternal = preview $ nodeSummary_node . _Right . processData_state
 
 watchCollectiveNodesStatus
-  :: forall t m . MonadAppWidget t m
+  :: forall js t m. MonadAppWidget js t m
   => Dynamic t (Set (ClosedInterval (WithInfinity UTCTime)))
   -> m (Dynamic t (Either CollectiveNodesFailure ()))
 watchCollectiveNodesStatus alertWindow = do
@@ -289,99 +289,99 @@ watchCollectiveNodesStatus alertWindow = do
           Nothing -> Right ()
           Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
 
-watchPublicNodeConfig :: MonadAppWidget t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
+watchPublicNodeConfig :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
 watchPublicNodeConfig =
   (fmap . fmap) (getRangeView . _bakeView_publicNodeConfig) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
 
-watchPublicNodeConfigValid :: MonadAppWidget t m => m (Dynamic t (Maybe (MonoidalMap PublicNode PublicNodeConfig)))
+watchPublicNodeConfigValid :: MonadAppWidget js t m => m (Dynamic t (Maybe (MonoidalMap PublicNode PublicNodeConfig)))
 watchPublicNodeConfigValid =
   (fmap . fmap) (validatingRange getRangeView . _bakeView_publicNodeConfig) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
 
-watchPublicNodeHeads :: MonadAppWidget t m => m (Dynamic t (MonoidalMap (Id PublicNodeHead) PublicNodeHead))
+watchPublicNodeHeads :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap (Id PublicNodeHead) PublicNodeHead))
 watchPublicNodeHeads =
   (fmap . fmap) (getRangeView' . _bakeView_publicNodeHeads) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
 
-watchTelegramConfig :: MonadAppWidget t m => m (Dynamic t (Maybe (Maybe TelegramConfig)))
+watchTelegramConfig :: MonadAppWidget js t m => m (Dynamic t (Maybe (Maybe TelegramConfig)))
 watchTelegramConfig =
   (fmap . fmap) (getMaybeView . _bakeView_telegramConfig) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_telegramConfig = viewJust 1 }
 
-watchTelegramRecipients :: MonadAppWidget t m => m (Dynamic t (MonoidalMap (Id TelegramRecipient) (Maybe TelegramRecipient)))
+watchTelegramRecipients :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap (Id TelegramRecipient) (Maybe TelegramRecipient)))
 watchTelegramRecipients =
   (fmap . fmap) (fmap getFirst . getRangeView' . _bakeView_telegramRecipients) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_telegramRecipients = viewRangeAll 1 }
 
-watchUpstreamVersion :: MonadAppWidget t m => m (Dynamic t (Maybe UpstreamVersion))
+watchUpstreamVersion :: MonadAppWidget js t m => m (Dynamic t (Maybe UpstreamVersion))
 watchUpstreamVersion = holdUniqDyn <=<
   (fmap . fmap) (getMaybeView . _bakeView_upstreamVersion) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_upstreamVersion = viewJust 1 }
 
-watchAlertCount :: MonadAppWidget t m => m (Dynamic t (Maybe (DMap LogTag (Const Int))))
+watchAlertCount :: MonadAppWidget js t m => m (Dynamic t (Maybe (DMap LogTag (Const Int))))
 watchAlertCount =
   (fmap . fmap) (getMaybeView . _bakeView_alertCount) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_alertCount = viewJust 1
     }
 
-watchSnapshotMeta :: MonadAppWidget t m => m (Dynamic t (Maybe SnapshotMeta))
+watchSnapshotMeta :: MonadAppWidget js t m => m (Dynamic t (Maybe SnapshotMeta))
 watchSnapshotMeta =
   (fmap . fmap) (getMaybeView . _bakeView_snapshotMeta) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_snapshotMeta = viewJust 1
     }
 
-watchConnectedLedger :: MonadAppWidget t m => m (Dynamic t (Maybe ConnectedLedger))
+watchConnectedLedger :: MonadAppWidget js t m => m (Dynamic t (Maybe ConnectedLedger))
 watchConnectedLedger = do
   (fmap . fmap) (join . getMaybeView . _bakeView_connectedLedger) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_connectedLedger = viewJust 1
     }
 
-watchConnectedLedgerForced :: MonadAppWidget t m => m (Dynamic t (Maybe ConnectedLedger))
+watchConnectedLedgerForced :: MonadAppWidget js t m => m (Dynamic t (Maybe ConnectedLedger))
 watchConnectedLedgerForced = do
   -- this is in lieu of a nicer libusb solution to avoid constantly polling the device
   poll <- tickLossyFromPostBuildTime 5
   _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
   watchConnectedLedger
 
-watchLedgerAccounts :: MonadAppWidget t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (PublicKeyHash, Tez)))
+watchLedgerAccounts :: MonadAppWidget js t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (PublicKeyHash, Tez)))
 watchLedgerAccounts dkeys =
   (fmap . fmap) (fmapMaybe getFirst . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty
     { _bakeViewSelector_showLedger = RangeSelector $ AppendIMap.fromList $ ffor keys $ \k -> (ClosedInterval k k, 1)
     }
 
-watchAmendment :: MonadAppWidget t m => m (Dynamic t (Map VotingPeriodKind Amendment))
+watchAmendment :: MonadAppWidget js t m => m (Dynamic t (Map VotingPeriodKind Amendment))
 watchAmendment =
   (fmap . fmap) (MMap.getMonoidalMap . fmapMaybe getFirst . getRangeView . _bakeView_amendment) $
     watchViewSelector $ pure $ mempty
       { _bakeViewSelector_amendment = viewRangeAll 1 }
 
-watchProposals :: MonadAppWidget t m => m (Dynamic t (Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)))
+watchProposals :: MonadAppWidget js t m => m (Dynamic t (Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)))
 watchProposals =
   (fmap . fmap) (MMap.getMonoidalMap . fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_proposals = viewRangeAll 1
     }
 
-watchProposal :: MonadAppWidget t m => Dynamic t (Id PeriodProposal) -> m (Dynamic t (Maybe (PeriodProposal, Maybe Bool)))
+watchProposal :: MonadAppWidget js t m => Dynamic t (Id PeriodProposal) -> m (Dynamic t (Maybe (PeriodProposal, Maybe Bool)))
 watchProposal pid = do
   m <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor pid $ \p -> mempty
     { _bakeViewSelector_proposals = viewRangeExactly (Bounded p) 1
     }
   pure $ ffor2 pid m MMap.lookup
 
-watchBakerVote :: MonadAppWidget t m => m (Dynamic t (Maybe BakerVote))
+watchBakerVote :: MonadAppWidget js t m => m (Dynamic t (Maybe BakerVote))
 watchBakerVote =
   (fmap . fmap) (join . getMaybeView . _bakeView_bakerVote) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_bakerVote = viewJust 1
     }
 
-watchPeriodTestingVote :: MonadAppWidget t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodVote)))
+watchPeriodTestingVote :: MonadAppWidget js t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodVote)))
 watchPeriodTestingVote = do
   vote <- (fmap . fmap) (join . getMaybeView . _bakeView_periodTestingVote) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodTestingVote = viewJust 1
@@ -396,7 +396,7 @@ watchPeriodTestingVote = do
     (pp, _) <- MMap.lookup pid m
     pure ((pid, pp), _periodTestingVote_periodVote v)
 
-watchPeriodTesting :: MonadAppWidget t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodTesting)))
+watchPeriodTesting :: MonadAppWidget js t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodTesting)))
 watchPeriodTesting = do
   test <- (fmap . fmap) (join . getMaybeView . _bakeView_periodTesting) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodTesting = viewJust 1
@@ -411,7 +411,7 @@ watchPeriodTesting = do
     (pp, _) <- MMap.lookup pid m
     pure ((pid, pp), t)
 
-watchPeriodPromotionVote :: MonadAppWidget t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodVote)))
+watchPeriodPromotionVote :: MonadAppWidget js t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodVote)))
 watchPeriodPromotionVote = do
   vote <- (fmap . fmap) (join . getMaybeView . _bakeView_periodPromotionVote) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodPromotionVote = viewJust 1
@@ -426,26 +426,26 @@ watchPeriodPromotionVote = do
     (pp, _) <- MMap.lookup pid m
     pure ((pid, pp), _periodPromotionVote_periodVote v)
 
-watchPrompting :: MonadAppWidget t m => SecretKey -> m (Dynamic t (Maybe SetupState))
+watchPrompting :: MonadAppWidget js t m => SecretKey -> m (Dynamic t (Maybe SetupState))
 watchPrompting sk = do
   (fmap . fmap) (MMap.lookup sk . fmapMaybe getFirst . getRangeView . _bakeView_prompting) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_prompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
     }
 
-watchVotePrompting :: MonadAppWidget t m => SecretKey -> m (Dynamic t (Maybe VoteState))
+watchVotePrompting :: MonadAppWidget js t m => SecretKey -> m (Dynamic t (Maybe VoteState))
 watchVotePrompting sk = do
   (fmap . fmap) (MMap.lookup sk . fmapMaybe getFirst . getRangeView . _bakeView_votePrompting) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_votePrompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
     }
 
-watchBakerRegistered :: MonadAppWidget t m => PublicKeyHash -> m (Dynamic t (Maybe Bool))
+watchBakerRegistered :: MonadAppWidget js t m => PublicKeyHash -> m (Dynamic t (Maybe Bool))
 watchBakerRegistered pkh = do
   theView <- watchViewSelector . pure $ mempty
     { _bakeViewSelector_bakerRegistered = viewRangeExactly (Bounded pkh) 1
     }
   return $ ffor theView $ \v' -> MMap.lookup pkh $ getRangeView' (_bakeView_bakerRegistered v')
 
-watchRightNotificationLimit :: MonadAppWidget t m => RightKind -> m (Dynamic t (Maybe RightNotificationLimit))
+watchRightNotificationLimit :: MonadAppWidget js t m => RightKind -> m (Dynamic t (Maybe RightNotificationLimit))
 watchRightNotificationLimit rk = do
   (fmap . fmap) (MMap.lookup rk . fmapMaybe getFirst . getRangeView . _bakeView_rightNotificationSettings) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_rightNotificationSettings = RangeSelector $ AppendIMap.singleton (ClosedInterval rk rk) 1

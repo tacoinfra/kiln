@@ -31,7 +31,7 @@ import Data.Time (NominalDiffTime, UTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
-import Database.Groundhog.Postgresql (Postgresql)
+import Database.Groundhog.Postgresql (Postgresql(..))
 import GHC.Generics (Generic)
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http

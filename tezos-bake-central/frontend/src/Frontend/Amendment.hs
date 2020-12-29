@@ -68,7 +68,7 @@ isVotingPeriod = \case
   VotingPeriodKind_PromotionVote -> True
 
 amendmentPopup
-  ::    (MonadReader r m, HasTimeZone r, DomBuilder t m, MonadJSM (Performable m), MonadAppWidget t m, Prerender js t m)
+  ::    (MonadReader r m, HasTimeZone r, DomBuilder t m, MonadJSM (Performable m), MonadAppWidget js t m)
   => Dynamic t Amendment
   -- ^ The current period
   -> Dynamic t (Map.Map VotingPeriodKind Amendment)
@@ -245,11 +245,11 @@ progressDots currentCycle' maxCycle' = do
 
 -- | Modal for voting
 voteModal :: forall r t m js.
-  ( MonadAppWidget t m
-  , MonadReader r m, HasFrontendConfig r
+  ( MonadAppWidget js t m
+  , MonadReader r m
+  , HasFrontendConfig r
   , MonadJSM (Performable m)
   , HasTimer t r, HasTimeZone r
-  , Prerender js t m
   )
   => (PublicKeyHash, SecretKey)
   -- ^ Baker to vote with

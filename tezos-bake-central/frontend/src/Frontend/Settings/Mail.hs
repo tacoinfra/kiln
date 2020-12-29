@@ -45,7 +45,7 @@ renderProto = \case
   SmtpProtocol_Starttls -> "STARTTLS"
 
 viewCfg
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Dynamic t MailServerView
   -> m (Event t ())
 viewCfg dMsv = do --never <$ text "TODO Email View"
@@ -77,10 +77,9 @@ viewCfg dMsv = do --never <$ text "TODO Email View"
   return $ domEvent Click reopener
 
 editCfg
-  :: (MonadAppWidget t m
+  :: (MonadAppWidget js t m
      , MonadJSM m
      , MonadJSM (Performable m)
-     , Prerender js t m
      )
   => Dynamic t (Maybe MailServerView) -> m (Event t ())
 editCfg mailServer = do
@@ -97,10 +96,9 @@ abstractPassword :: Text
 abstractPassword = "••••••••••••"
 
 mailServerForm
-  :: ( MonadAppWidget t m
+  :: ( MonadAppWidget js t m
      , MonadJSM m
      , MonadJSM (Performable m)
-     , Prerender js t m
      )
   => (MailServerView, [Email]) -> m (Event t ((MailServerView, Maybe Text), [Email]), Event t ())
 mailServerForm (srv0, emails0) = do

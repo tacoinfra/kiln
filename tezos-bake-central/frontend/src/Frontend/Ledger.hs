@@ -96,7 +96,7 @@ instance GCompare (PromptResult m) where
   gcompare PromptResult_Success PromptResult_Success = GEQ
   gcompare PromptResult_Success _ = GGT
 
-ledgerSetupSteps :: forall t m js. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m, Prerender js t m) => m (Event t (Either ClientError ()))
+ledgerSetupSteps :: forall t m js. (MonadAppWidget js t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedgerForced
   ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
@@ -140,7 +140,7 @@ ledgerSetupSteps = mdo
     ]
 
 doPrompt
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Text
   -- ^ Title
   -> m (Behavior t (Maybe (PublicRequest ())))
@@ -192,7 +192,7 @@ respondToPrompt prompt = do
   elClass "h6" "ui header prompt-text" prompt
 
 importSecretKey
-  :: forall t m. MonadAppWidget t m
+  :: forall t m js. MonadAppWidget js t m
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError ()))
 importSecretKey (sk, pkh) = doPrompt "Import address to Kiln." explanation prompt sk handleStep
   where
@@ -210,7 +210,7 @@ importSecretKey (sk, pkh) = doPrompt "Import address to Kiln." explanation promp
       | otherwise = Nothing
 
 authorizeLedger
-  :: forall t m. MonadAppWidget t m
+  :: forall t m js. MonadAppWidget js t m
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError (DSum LSS Identity)))
 authorizeLedger (sk, pkh) = do
   e <- doPrompt "Authorize Ledger Device for this address." explanation prompt sk handleStep
@@ -237,7 +237,7 @@ authorizeLedger (sk, pkh) = do
       | otherwise = Nothing
 
 registerDelegate
-  :: forall t m js. MonadAppWidget t m
+  :: forall t m js. MonadAppWidget js t m
   => Prerender js t m
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError ()))
 registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanation prompt sk handleStep
@@ -286,7 +286,7 @@ registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanat
       pure $ ffor fee $ \t -> PublicRequest_RegisterKeyAsDelegate sk . Tez <$> readMaybe (T.unpack t)
 
 connectLedger
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Dynamic t (Maybe ConnectedLedger) -> m (Event t LedgerIdentifier)
 connectLedger connectedLedger = divClass "central" $ do
   elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
@@ -322,7 +322,7 @@ connectLedger connectedLedger = divClass "central" $ do
   pure ledgerChoice
 
 selectAddress
-  :: forall t m js. (MonadAppWidget t m, MonadJSM (Performable m), MonadJSM m, Prerender js t m)
+  :: forall t m js. (MonadAppWidget js t m, MonadJSM (Performable m), MonadJSM m, Prerender js t m)
   => LedgerIdentifier -> m (Event t (SecretKey, PublicKeyHash))
 selectAddress ledger = divClass "select-address" $ mdo
   let curves = [minBound .. maxBound] :: [SigningCurve]
@@ -440,7 +440,7 @@ isValidBIP32 t
         Nothing -> errFormat
 
 setupComplete
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => (SecretKey, PublicKeyHash)
   -> m (Event t ())
 setupComplete (_sk, pkh) = divClass "central" $ do
