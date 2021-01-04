@@ -54,7 +54,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     __closureCompilerOptimizationLevel = closure-compiler-setting;
     packages = {
       # Obelisk thunks. Place here so can repl and build locally when unpacked.
-      functor-infix = hackGet dep/functor-infix;
+      # functor-infix = hackGet dep/functor-infix;
       jsaddle-dom = hackGet dep/jsaddle-dom;
       micro-ecc = hackGet dep/micro-ecc-haskell;
       named = hackGet dep/named; # TODO: Drop once package set includes 0.3.0.0
@@ -99,6 +99,15 @@ obelisk.project ./. ({ pkgs, ... }@args:
           rev = "941ca7a25403bab4c719e669db36dc18b240b996";
           sha256 = "18vvvp29ph112myxqmw4cgf1x6q0xs6jwdmg4k9fghcpav8acjd7";};
         gargoyleOverlay = import gargoyleSrc { postgresql = postgresql-override;};
+
+        groundhogSrc = pkgs.fetchFromGitHub {
+          owner = "obsidiansystems";
+          repo = "groundhog";
+          rev = "01c3f1829de18881f25818b928b43862c0e3234a";
+          sha256 = "0qgl4bcmxnh466qa8arf25jq7l8qs527drgvdj2whg3vwd3shp8f";
+        };
+        groundhogOverlay = let lib = pkgs.lib; in import (groundhogSrc + /default.nix) { inherit lib;};
+
         baseOverlay = self: super:
             let callHackageDirect = {pkg,ver,sha256}:
                 let pkgver = "${pkg}-${ver}";
@@ -107,7 +116,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
                    inherit sha256;
                    });
             in { which = callHackageDirect { pkg = "which"; ver = "0.1.0.0"; sha256 = "1c8svdiv378ps63lwn3aw7rv5wamlpmzgcn21r2pap4sx7p08892";} {};};
-     in with pkgs.lib; foldr composeExtensions baseOverlay [ rhyolite.haskellOverrides appOverlay gargoyleOverlay ];
+     in with pkgs.lib; foldr composeExtensions baseOverlay [ rhyolite.haskellOverrides appOverlay groundhogOverlay gargoyleOverlay];
   }) // {
     dev.extraGhciArgs = ["-fobject-code"];
   }

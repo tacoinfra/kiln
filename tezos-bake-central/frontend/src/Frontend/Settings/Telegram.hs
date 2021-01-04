@@ -34,7 +34,7 @@ import Frontend.Common
 -- uninitialized case.
 
 viewCfg
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Dynamic t TelegramConfig
   -> m (Event t ())
 viewCfg cfg = do
@@ -54,8 +54,8 @@ viewCfg cfg = do
   return $ domEvent Click reopener
 
 editCfg
-  :: forall m t
-  .  MonadAppWidget t m
+  :: forall m t js
+  .  MonadAppWidget js t m
   => Dynamic t (Maybe TelegramConfig)
   -> m (Event t ())
 editCfg cfg = switchHold never <=< workflowView $ Workflow $ do
@@ -119,7 +119,7 @@ telegramRecipientFullName
 telegramRecipientFullName recipient = _telegramRecipient_firstName recipient <> maybe "" (" " <>) (_telegramRecipient_lastName recipient)
 
 settingsForm
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Dynamic t (Maybe TelegramConfig)
   -> m (Dynamic t (Either Text Text))
 settingsForm cfg = holdUniqDyn =<< do
@@ -154,7 +154,7 @@ settingsForm cfg = holdUniqDyn =<< do
       $ text "You’re done! Click " *> st "‘Connect Telegram'" *> text " to finish linking Kiln to your bot!"
 
     return v
-watchTelegramRecipients :: MonadAppWidget t m => m (Dynamic t (Map (Id TelegramRecipient) TelegramRecipient))
+watchTelegramRecipients :: MonadAppWidget js t m => m (Dynamic t (Map (Id TelegramRecipient) TelegramRecipient))
 watchTelegramRecipients =
   (fmap . fmap) (getMonoidalMap . fmapMaybe getFirst . getRangeView' . _bakeView_telegramRecipients) $
     watchViewSelector $ pure $ mempty
