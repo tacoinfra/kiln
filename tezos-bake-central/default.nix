@@ -101,16 +101,12 @@ obelisk.project ./. ({ pkgs, ... }@args:
         gargoyleOverlay = import gargoyleSrc { postgresql = postgresql-override;};
 
         groundhogSrc = pkgs.fetchFromGitHub {
-          owner = "emmanueldenloye"; # temporary until obsidian uploads these channges
+          owner = "obsidiansystems";
           repo = "groundhog";
-          rev = "b485de4e1d593bc5bf7ca2208658ef62c484dcfa";
+          rev = "01c3f1829de18881f25818b928b43862c0e3234a";
           sha256 = "0qgl4bcmxnh466qa8arf25jq7l8qs527drgvdj2whg3vwd3shp8f";
         };
         groundhogOverlay = let lib = pkgs.lib; in import (groundhogSrc + /default.nix) { inherit lib;};
-
-        # For upgrading to later GHC versions.
-        # ghcOverlay = self: super: assert (builtins.hasAttr "haskell" pkgs); builtins.trace (pkgs.haskell.packages.ghc864.ghc.version) {};
-        # ghcOverlay = self: super: {ghc = pkgs.haskell.packages.ghc864.ghc;};
 
         baseOverlay = self: super:
             let callHackageDirect = {pkg,ver,sha256}:
