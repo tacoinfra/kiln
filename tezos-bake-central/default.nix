@@ -73,7 +73,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
             librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
           }))));
           base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
-          cryptohash = dontCheck super.cryptohash;
           email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
           extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
           lens-aeson = dontCheck super.lens-aeson;

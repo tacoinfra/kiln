@@ -31,7 +31,6 @@ library
     , constraints
     , constraints-extras
     , containers
-    , cryptohash
     , cryptonite
     , data-default
     , database-id-class
