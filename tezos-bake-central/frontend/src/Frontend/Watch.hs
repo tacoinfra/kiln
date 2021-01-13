@@ -429,7 +429,7 @@ watchPeriodPromotionVote = do
 watchPeriodAdoption :: m (Dynamic t (Maybe (m ())))
 watchPeriodAdoption = undefined
 
-watchPrompting :: MonadAppWidget t m => SecretKey -> m (Dynamic t (Maybe SetupState))
+watchPrompting :: MonadAppWidget js t m => SecretKey -> m (Dynamic t (Maybe SetupState))
 watchPrompting sk = do
   (fmap . fmap) (MMap.lookup sk . fmapMaybe getFirst . getRangeView . _bakeView_prompting) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_prompting = RangeSelector $ AppendIMap.singleton (ClosedInterval sk sk) 1
