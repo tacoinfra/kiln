@@ -2,7 +2,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE NumDecimals #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
