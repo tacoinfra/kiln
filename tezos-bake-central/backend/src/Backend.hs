@@ -114,6 +114,7 @@ import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
+import Orphans.Instances ()
 
 onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
 onRpcError = either (throwError . tshow) pure

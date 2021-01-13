@@ -31,7 +31,6 @@ library
     , constraints
     , constraints-extras
     , containers
-    , cryptohash
     , cryptonite
     , data-default
     , database-id-class
@@ -41,6 +40,7 @@ library
     , dependent-sum-template
     , either
     , file-embed
+    , functor-infix
     , hashing
     , lens
     , memory
@@ -56,6 +56,7 @@ library
     , rhyolite-datastructures
     , rhyolite-frontend
     , safe-exceptions
+    , semialign
     , scientific
     , split
     , template-haskell

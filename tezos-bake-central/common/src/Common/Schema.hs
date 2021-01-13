@@ -12,6 +12,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -72,7 +73,7 @@ import Data.Version (Version)
 import Data.Word
 import Database.Id.Class
 import GHC.Generics (Generic)
-import Language.Haskell.TH (Name)
+import "template-haskell" Language.Haskell.TH (Name)
 import Rhyolite.Schema (Email, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri

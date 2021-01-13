@@ -9,6 +9,7 @@
 module Backend.Migrations where
 
 import Backend.Schema (migrateSchema)
+import Control.Monad.Fail (MonadFail(..))
 import Control.Monad.Logger (MonadLogger, logInfoS)
 import Data.String (fromString)
 import qualified Data.Text as T
@@ -30,7 +31,7 @@ type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger
 convQN :: QualifiedIdentifier -> QualifiedName
 convQN (QualifiedIdentifier a b) = (T.unpack <$> a, T.unpack b)
 
-migrateKiln :: Migrate m => ChainId -> m ()
+migrateKiln :: Migrate m => MonadFail m => ChainId -> m ()
 migrateKiln chainId = (getTableAnalysis >>= preMigrate chainId >>= autoMigrate) *> extraIndexes
 
 autoMigrate :: Migrate m => TableAnalysis m -> m ()
@@ -215,7 +216,7 @@ dropTableIfExists cascade table ta = do
     Nothing -> pure ta
     Just _ -> dropTable table cascade *> getTableAnalysis
 
-extraIndexes :: Migrate m => m ()
+extraIndexes :: Migrate m => MonadFail m => m ()
 extraIndexes = do
   createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "started"] "_errorLog_started_idx" Nothing
   createIndex (QualifiedIdentifier Nothing "ErrorLog") [Right "id"] "_errorLog_idWhereStarted_idx" (Just "\"stopped\" IS NULL")
@@ -224,6 +225,7 @@ extraIndexes = do
 
 createIndex
   :: Migrate m
+  => MonadFail m
   => QualifiedIdentifier
   -> [Either Text Identifier]
   -> Identifier

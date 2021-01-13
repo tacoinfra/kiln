@@ -191,7 +191,7 @@ withConnectivityModal socketState f = do
     (mkDisconnectedModal <$ wsDisconnected)
     f
 
-withFrontendContext :: (MonadAppWidget t m) => ReaderT (FrontendContext t) m () -> m ()
+withFrontendContext :: (MonadAppWidget js t m) => ReaderT (FrontendContext t) m () -> m ()
 withFrontendContext f = do
   cfg <- watchFrontendConfig
   dyn_ $ ffor cfg $ \case
@@ -207,9 +207,9 @@ isPublicNodeEnabled :: PublicNode -> MonoidalMap PublicNode PublicNodeConfig -> 
 isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
 
 appMain
-  :: forall r m t.
-    ( MonadAppWidget t m
-    , MonadAppWidget t (ModalM m), HasModal t m
+  :: forall r m t js.
+    ( MonadAppWidget js t m
+    , MonadAppWidget js t (ModalM m), HasModal t m
     , MonadJSM (Performable (ModalM m))
     , MonadJSM (ModalM m)
     , MonadJSM (Performable m)
@@ -217,6 +217,8 @@ appMain
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
+    , Prerender js t m
+    , Prerender js t (ModalM m)
     )
   => m ()
 appMain = do
@@ -256,13 +258,14 @@ appName :: Text
 appName = "Kiln"
 
 appSidebar
-  :: ( MonadAppWidget t m
-     , MonadAppWidget t (ModalM m)
+  :: ( MonadAppWidget js t m
+     , MonadAppWidget js t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
      , HasFrontendConfig r, MonadReader r m, HasModal t m
      , RouteConstraints t AppRoute m
+     , Prerender js t m
      )
   => m ()
 appSidebar = do
@@ -296,18 +299,18 @@ appSidebar = do
                    elAttr "small" ("style" =: "position: absolute; left:30px;") $
                    text $ "Latest Tezos Release: " <> v)
 
-routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
+routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m, Prerender js t m)
                => R r -> (e -> ch -> m a) -> e -> ch -> m a
 routeSelector' dest con cfg child = do
   r <- askRoute
   let activated = ffor r $ bool "" "active" . (== dest)
   routeLink dest $ con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
 
-routeSelector :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
+routeSelector :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m, Prerender js t m)
               => R r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
 routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
-appSideHeader :: (MonadAppWidget t m, RouteConstraints t AppRoute m) => m ()
+appSideHeader :: (MonadAppWidget js t m, RouteConstraints t AppRoute m) => m ()
 appSideHeader =
   SemUi.segment
     (def
@@ -330,8 +333,8 @@ appSideHeader =
         SemUi.divider def
 
 appGutter
-  :: ( MonadAppWidget t m
-     , MonadAppWidget t (ModalM m)
+  :: ( MonadAppWidget js t m
+     , MonadAppWidget js t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
@@ -349,7 +352,7 @@ appGutter chain =
         nodesList chain
 
 appSideFooter
-  :: (MonadAppWidget t m
+  :: (MonadAppWidget js t m
      , RouteConstraints t AppRoute m
      , MonadReader r m
      , HasFrontendConfig r
@@ -406,8 +409,8 @@ parseMajorMinorVersion version = do
   return (major, minor)
 
 appHeader
-  :: forall r m t.
-    ( MonadAppWidget t m, MonadJSM (Performable m)
+  :: forall r m t js.
+    ( MonadAppWidget js t m, MonadJSM (Performable m)
     , MonadReader r m, HasTimer t r, HasFrontendConfig r, HasTimeZone r
     )
   => m (Event t ())
@@ -500,7 +503,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         whenJustDyn dmLatestHead $ \_ -> copyButton (current dProtoText)
         dynText dProtoText
 
-headerBell :: forall t m . MonadAppWidget t m => m (Event t ())
+headerBell :: forall t m js . MonadAppWidget js t m => Prerender js t m => m (Event t ())
 headerBell = do
   alertCount <- watchAlertCount
   let
@@ -527,14 +530,14 @@ headerBell = do
   return $ domEvent Click e
 
 appContentArea
-  :: forall r m t.
-    ( MonadAppWidget t m
+  :: forall r m t js.
+    ( MonadAppWidget js t m
     , MonadJSM (Performable m)
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r
     , Routed t (R AppRoute) m
     , HasModal t m
-    , MonadAppWidget t (ModalM m)
+    , MonadAppWidget js t (ModalM m)
     , MonadJSM (ModalM m)
     , MonadJSM (Performable (ModalM m))
     , HasJSContext (Performable (ModalM m))
@@ -549,12 +552,13 @@ appContentArea = do
     AppRoute_Options -> divClass "app-content" settingsTab
 
 nodesTabOrWelcome
-  :: forall r m t.
-    ( MonadAppWidget t m
+  :: forall r m t js.
+    ( MonadAppWidget js t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , MonadJSM m
-    , HasModal t m, MonadAppWidget t (ModalM m)
+    , HasModal t m, MonadAppWidget js t (ModalM m)
     , MonadJSM (ModalM m)
+    , MonadJSM (Performable m)
     , MonadJSM (Performable (ModalM m))
     , HasJSContext (Performable (ModalM m))
     , MonadReader r (ModalM m)
@@ -594,10 +598,10 @@ everythingWindow :: Applicative f => f (Set (ClosedInterval (WithInfinity a)))
 everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
 
 globalAlerts
-  :: forall r m t.
-    ( MonadAppWidget t m
+  :: forall r m t js.
+    ( MonadAppWidget js t m
     , MonadReader r m, HasFrontendConfig r
-    , HasModal t m, MonadAppWidget t (ModalM m)
+    , HasModal t m, MonadAppWidget js t (ModalM m)
     , MonadJSM (ModalM m)
     , MonadJSM (Performable (ModalM m))
     , HasJSContext (Performable (ModalM m))
@@ -636,8 +640,8 @@ globalAlerts = do
     SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") m
 
 internalNodeFailedAlertBanner
-  :: ( MonadAppWidget t m
-     , HasModal t m, MonadAppWidget t (ModalM m)
+  :: ( MonadAppWidget js t m
+     , HasModal t m, MonadAppWidget js t (ModalM m)
      , MonadJSM (ModalM m)
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
@@ -661,7 +665,7 @@ internalNodeFailedAlertBanner chain e = case _errorLogInternalNodeFailed_reason 
 
   InternalNodeFailureReason_Unknown _ -> pure () -- TODO: Might be useful...
 
-kilnUpdateAlert :: (MonadAppWidget t m) => Version -> m ()
+kilnUpdateAlert :: (MonadAppWidget js t m) => Version -> m ()
 kilnUpdateAlert v = do
   let
     header = "Kiln " <> T.pack (showVersion v) <> " is available!"
@@ -681,7 +685,7 @@ kilnUpdateAlert v = do
     Nothing
     body
 
-welcomeScreen :: forall t m. MonadAppWidget t m => Bool -> m ()
+welcomeScreen :: forall t m js. MonadAppWidget js t m => Bool -> m ()
 welcomeScreen hasOsPubNode = mdo
   closeEv <- switch . current <$> widgetHold banner (pure never <$ closeEv)
   pure ()
@@ -816,8 +820,8 @@ instance (HasAlertMetaData a, HasAlertMetaData b) => HasAlertMetaData (Either a 
   getAlertMetaData (Right v) = getAlertMetaData v
 
 liveErrorsWidget
-  :: forall r m t.
-    ( MonadAppWidget t m
+  :: forall r m t js.
+    ( MonadAppWidget js t m
     , MonadReader r m, HasFrontendConfig r, HasTimeZone r, HasTimer t r
     )
   => m ()
@@ -1083,9 +1087,9 @@ statusColor = \case
   MonitoredStatus_Unhealthy -> "red"
   MonitoredStatus_Unknown -> "grey"
 
-sidebarList :: forall t m k.
-  ( MonadAppWidget t m
-  , MonadAppWidget t (ModalM m)
+sidebarList :: forall t m k js.
+  ( MonadAppWidget js t m
+  , MonadAppWidget js t (ModalM m)
   , HasModal t m
   , Ord k
   )
@@ -1130,8 +1134,8 @@ bakerStatus = \case
     | otherwise -> MonitoredStatus_Healthy
 
 bakersList ::
-  ( MonadAppWidget t m
-  , MonadAppWidget t (ModalM m)
+  ( MonadAppWidget js t m
+  , MonadAppWidget js t (ModalM m)
   , MonadJSM (ModalM m)
   , MonadJSM (Performable (ModalM m))
   , HasJSContext (Performable (ModalM m))
@@ -1149,8 +1153,10 @@ bakersList = do
           )
   sidebarList "Baker" bakers addBakerModal
 
-addBakerModal :: forall t m .
-  ( MonadAppWidget t m, MonadJSM m, MonadJSM (Performable m)
+addBakerModal :: forall t m js.
+  ( MonadAppWidget js t m
+  , MonadJSM m
+  , MonadJSM (Performable m)
   , HasJSContext (Performable m)
   )
   => Event t () -> m (Dynamic t [Text], Event t ())
@@ -1247,7 +1253,7 @@ respondToPrompt prompt = do
   elClass "h6" "ui header prompt-text" prompt
 
 authorizeLedgerToBakeModal
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => SecretKey -> PublicKeyHash -> Event t () -> m (Dynamic t [Text], Event t ())
 authorizeLedgerToBakeModal sk pkh close = ffor (workflow auth) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
   where
@@ -1286,7 +1292,7 @@ authorizeLedgerToBakeModal sk pkh close = ffor (workflow auth) $ \d -> let (c, e
       pure ((["ledger-prompt"], continue), never)
 
 setHighWaterMark
-  :: MonadAppWidget t m
+  :: MonadAppWidget js t m
   => Dynamic t RawLevel -> SecretKey -> PublicKeyHash -> Event t () -> m (Dynamic t [Text], Event t ())
 setHighWaterMark latestBlockLevelDyn secretKey pkh close = ffor (workflow set) $ \d -> let (c, e) = splitDynPure d in (("add-baker":) <$> c, close <> switch (current e))
   where
@@ -1391,8 +1397,8 @@ nodeStatus mInternalState alertCount = min fromStatus fromAlert
       _ -> MonitoredStatus_Unhealthy
 
 nodesList ::
-  ( MonadAppWidget t m
-  , MonadAppWidget t (ModalM m)
+  ( MonadAppWidget js t m
+  , MonadAppWidget js t (ModalM m)
   , HasModal t m
   , MonadJSM (ModalM m)
   , MonadJSM (Performable (ModalM m))
@@ -1415,7 +1421,7 @@ publicNodeAvailable :: PublicNode -> Either NamedChain ChainId -> Bool
 publicNodeAvailable pn chain = foldr (const $ const True) False $ either Just identifyChain chain >>= getPublicNodeUri pn
 
 addNodeModal ::
-  ( MonadAppWidget t m
+  ( MonadAppWidget js t m
   , MonadJSM m
   , MonadJSM (Performable m)
   , HasJSContext (Performable m)
@@ -1490,8 +1496,8 @@ addNodeModal chain close = ffor (workflow splash) $ \d -> let (c, e) = splitDynP
            showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
            pure close
 
-startNodeWorkflow :: forall m t.
-  ( MonadAppWidget t m
+startNodeWorkflow :: forall m t js.
+  ( MonadAppWidget js t m
   , MonadJSM m
   , MonadJSM (Performable m)
   , HasJSContext (Performable m)
@@ -1559,7 +1565,7 @@ verifySnapshotModal ::
   , HasTimer t r
   , HasTimeZone r
   , MonadJSM (Performable m)
-  , MonadAppWidget t m
+  , MonadAppWidget js t m
   )
   => SnapshotMeta -> Event t () -> m (Event t ())
 verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
@@ -1593,7 +1599,7 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
 
 showImportLogModal ::
   ( MonadReader r m
-  , MonadAppWidget t m
+  , MonadAppWidget js t m
   )
   => Text -> Event t () -> m (Event t ())
 showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
@@ -1608,7 +1614,7 @@ osPublicNodeRemoveMessage = do
   let url = "https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md#enable-obsidian-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
-publicNodeOptions :: MonadAppWidget t m => Either NamedChain ChainId -> m ()
+publicNodeOptions :: MonadAppWidget js t m => Either NamedChain ChainId -> m ()
 publicNodeOptions chain = do
   let
     publicNodesInOrder = filter (`publicNodeAvailable` chain)
@@ -1643,7 +1649,7 @@ publicNodeOptions chain = do
 thirtySixHoursToInfinity
   ::
   ( MonadReader r m, HasTimer t r
-  , MonadAppWidget t m
+  , MonadAppWidget js t m
   )
   => m (Dynamic t (ClosedInterval (WithInfinity Time.UTCTime)))
 thirtySixHoursToInfinity = do
@@ -1655,13 +1661,13 @@ thirtySixHoursToInfinity = do
   return $ fmap (flip ClosedInterval UpperInfinity . Bounded . Time.addUTCTime thirtySixHoursAgo) time
 
 tileMenuEntry :: (DomBuilder t m, MonadFix m, MonadIO (Performable m)
-                 , PostBuild t m, PerformEvent t m, TriggerEvent t m, MonadHold t m)
+                 , PostBuild t m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
               => Text -> m (Event t ())
 tileMenuEntry = fmap (domEvent Click . fst) . SemUi.listItem' def . text
 
 tileMenuEntryModal :: (DomBuilder t m, MonadFix m, MonadIO (Performable m)
                       , PostBuild t m, PerformEvent t m, TriggerEvent t m, MonadHold t m
-                      , HasModal t m)
+                      , HasModal t m, Prerender js t m)
                    => Text -> (Event t () -> ModalM m (Event t ())) -> m ()
 tileMenuEntryModal txt modal = do
   open <- tileMenuEntry txt
@@ -1679,14 +1685,14 @@ ppTezosVersion = either id showV . getTezosVersion
         Release -> mempty
 
 nodesTab
-  :: forall r m t.
-    ( MonadAppWidget t m
+  :: forall r m t js.
+    ( MonadAppWidget js t m
     , MonadReader r m
     , MonadReader r (ModalM m)
     , MonadJSM m
     , MonadJSM (Performable (ModalM m))
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
-    , HasModal t m, MonadAppWidget  t (ModalM m)
+    , HasModal t m, MonadAppWidget js  t (ModalM m)
     )
   => Bool -> m ()
 nodesTab onlyOsNode =
@@ -2136,11 +2142,18 @@ data BakersBanner
   deriving (Eq, Ord, Show)
 
 bakersTab
-  :: forall r m t.
-    ( MonadAppWidget t m
-    , MonadReader r m, HasTimer t r, HasTimeZone r
-    , MonadReader r (ModalM m), HasFrontendConfig r, MonadJSM m, MonadJSM (Performable (ModalM m))
-    , HasModal t m, MonadAppWidget  t (ModalM m)
+  :: forall r m t js.
+    ( MonadAppWidget js t m
+    , MonadAppWidget js t (ModalM m)
+    , MonadReader r m
+    , MonadReader r (ModalM m)
+    , HasTimer t r
+    , HasTimeZone r
+    , HasFrontendConfig r
+    , MonadJSM m
+    , MonadJSM (Performable m)
+    , MonadJSM (Performable (ModalM m))
+    , HasModal t m
     )
   => m ()
 bakersTab =
@@ -2518,7 +2531,7 @@ bakersTab =
           True -> divClass "ui active inline loader mini blue" blank
               *> text "Gathering baker data."
 
-renderResolvableSplashAlert :: (MonadAppWidget t m)
+renderResolvableSplashAlert :: (MonadAppWidget js t m)
   => NonEmpty (DSum LogTag (Const (Id ErrorLog)))
   -> m () -- ^ Alert icon
   -> m () -- ^ Title
@@ -2534,7 +2547,7 @@ renderResolvableSplashAlert es splashIcon title entity desc = do
         text "Resolve"
       void $ requestingIdentity $ public (PublicRequest_ResolveAlerts $ toList es) <$ resolve
 
-renderSplashAlert :: (MonadAppWidget t m)
+renderSplashAlert :: (MonadAppWidget js t m)
   => m () -- ^ Alert icon
   -> m () -- ^ Title
   -> Maybe (m ()) -- ^ Entity
@@ -2558,7 +2571,7 @@ withPlaceholder' placeholder f' = dyn_ $ ffor f' $ \case
 withMaybeDyn :: (Eq b, MonadFix m, MonadHold t m, Reflex t) => Dynamic t (Maybe (Dynamic t a)) -> (Dynamic t b -> m ()) -> (a -> b) -> Dynamic t (Maybe (m ()))
 withMaybeDyn d mkWidget f = (fmap.fmap) (mkWidget <=< holdUniqDyn . fmap f) d
 
-removeItemModal :: MonadAppWidget t m
+removeItemModal :: MonadAppWidget js t m
                 => Text
                 -> (Event t () -> Event t (PublicRequest ()))
                 -> Event t ()
@@ -2568,7 +2581,7 @@ removeItemModal name = reminderModal
   ("You can always add this " <> name <> " again from the \"Add " <> pluralOf (T.toTitle name) <> "\" button.")
   ("Remove " <> T.toTitle name)
 
-tileMenu :: (DomBuilder t m, TriggerEvent t m, MonadIO (Performable m), PerformEvent t m, PostBuild t m, MonadHold t m, MonadFix m) => m b -> m ()
+tileMenu :: (DomBuilder t m, TriggerEvent t m, MonadIO (Performable m), PerformEvent t m, PostBuild t m, MonadHold t m, MonadFix m, Prerender js t m) => m b -> m ()
 tileMenu content =
   divClass "menu-section" $ divClass "span" $ mdo
     menuTransition <- manageMenu (domEvent Click iconEl) uiEl
@@ -2592,7 +2605,7 @@ semuiTab label k currentTab enabled =
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
 
-withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadAppWidget t m)
+withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadAppWidget js t m)
                      => RawLevel -> (Dynamic t Time.NominalDiffTime -> m ()) -> m ()
 withAmendmentPeriodProgress expectedVotingPeriod w = do
   currentTime <- asks (^. timer)

@@ -39,7 +39,7 @@ import Reflex.Dom.Form.Widgets (validatedInput)
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.TextField as Txt
 import Rhyolite.Api (public, ApiRequest)
-import Rhyolite.Frontend.App (MonadRhyoliteFrontendWidget)
+import Rhyolite.Frontend.App (MonadRhyoliteWidget)
 import qualified Text.URI as Uri
 import Text.URI.QQ (uri)
 
@@ -64,7 +64,15 @@ import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), fronte
 import Common.URI (appendPaths, mkRootUri)
 import ExtraPrelude
 
-type MonadAppWidget t m = (MonadRhyoliteFrontendWidget (BakeViewSelector SelectedCount) (ApiRequest () PublicRequest PrivateRequest) t m)
+type MonadAppWidget js t m = (MonadRhyoliteFrontendWidget js (BakeViewSelector SelectedCount) (ApiRequest () PublicRequest PrivateRequest) t m)
+
+type MonadRhyoliteFrontendWidget js q r t m =
+     ( MonadRhyoliteWidget q r t m
+     , DomBuilderSpace m ~ GhcjsDomSpace
+     , MonadIO m
+     , MonadIO (Performable m)
+    , Prerender js t m
+     )
 
 data FrontendContext t = FrontendContext
   { _frontendContext_config :: !FrontendConfig
@@ -130,7 +138,7 @@ fancyTez t = let (w, p, tz) = tezPadded t in elClass "span" "fancy-tez" $ do
 
 -- | Clickable copy-to-clipboard icon
 copyButton
-  :: (SemUi.UI t m, MonadJSM (Performable m))
+  :: (SemUi.UI js t m, MonadJSM (Performable m))
   => Behavior t Text -- ^ Text to copy to clipboard
   -> m ()
 copyButton content = mdo
@@ -179,8 +187,8 @@ data TooltipConfig = TooltipConfig
   }
 makeLenses ''TooltipConfig
 
-defaultTooltipConfig :: TooltipConfig 
-defaultTooltipConfig = TooltipConfig 
+defaultTooltipConfig :: TooltipConfig
+defaultTooltipConfig = TooltipConfig
   TooltipPos_TopCenter
 
 defaultWrapper
@@ -191,12 +199,14 @@ defaultWrapper =
   elAttr' "span" ("style" =: "position:relative")
 
 tooltipped
-  :: SemUi.UI t m
+  :: SemUi.UI js t m
+  => MonadIO (Performable m)
   => TooltipPos -> m () -> m a -> m a
 tooltipped pos = tooltippedWrapper defaultWrapper pos
 
 tooltippedWrapper
-  :: SemUi.UI t m
+  :: SemUi.UI js t m
+  => MonadIO (Performable m)
   => (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
   -- ^ Wrapper (used to determine mouse events)
   -> TooltipPos -> m () -> m a -> m a
@@ -205,7 +215,8 @@ tooltippedWrapper wrapper pos = tooltippedWithConfig c wrapper
     c = defaultTooltipConfig & tooltipConfig_pos .~ pos
 
 tooltippedWithConfig
-  :: SemUi.UI t m
+  :: SemUi.UI js t m
+  => MonadIO (Performable m)
   => TooltipConfig
   -> (forall b. m b -> m (Element EventResult (DomBuilderSpace m) t, b))
   -> m ()
@@ -261,7 +272,7 @@ localTimestamp t = do
 localHumanizedTimestamp
   ::
     ( DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m, PerformEvent t m, MonadIO (Performable m), TriggerEvent t m
-    , MonadReader r m, HasTimeZone r, HasTimer t r
+    , MonadReader r m, HasTimeZone r, HasTimer t r, Prerender js t m
     )
   => Dynamic t (Maybe Text)
   -> Dynamic t Time.UTCTime
@@ -510,7 +521,7 @@ cancelableModalWithClasses f close = mdo
     divClass "content" (f $ leftmost [domEvent Click closeEl, close])
   pure e
 
-reminderModal :: MonadAppWidget t m
+reminderModal :: MonadAppWidget js t m
                   => Text
                   -> Text
                   -> Text
@@ -519,7 +530,7 @@ reminderModal :: MonadAppWidget t m
                   -> m (Event t ())
 reminderModal title msg = confirmationModal False title [msg]
 
-warningModal :: (MonadAppWidget t m)
+warningModal :: (MonadAppWidget js t m)
              => Text
              -> [Text]
              -> Text
@@ -528,7 +539,7 @@ warningModal :: (MonadAppWidget t m)
              -> m (Event t ())
 warningModal = confirmationModal True
 
-confirmationModal :: (MonadAppWidget t m)
+confirmationModal :: (MonadAppWidget js t m)
                   => Bool
                   -> Text
                   -> [Text]
@@ -631,7 +642,7 @@ zipFieldsWith :: (Applicative m, Reflex t)
 zipFieldsWith = liftA2 . liftA2 . liftA2
 
 formWithReset
-  :: forall a m t. (MonadAppWidget t m)
+  :: forall js a m t. (MonadAppWidget js t m)
   => Text -- ^ Form label
   -> Text -- ^ Submit button tooltip
   -> m () -- ^ Feedback after submit

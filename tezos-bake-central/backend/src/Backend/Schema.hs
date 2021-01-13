@@ -11,6 +11,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -80,10 +81,10 @@ import Database.PostgreSQL.Simple.FromField hiding (Binary, Field)
 import Database.PostgreSQL.Simple.ToField (ToField (toField), Action(Plain))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import qualified Formatting as Fmt
-import Language.Haskell.TH (conE)
-import Language.Haskell.TH (conT)
-import Language.Haskell.TH (mkName)
-import Language.Haskell.TH (nameBase)
+import "template-haskell" Language.Haskell.TH (conE)
+import "template-haskell" Language.Haskell.TH (conT)
+import "template-haskell" Language.Haskell.TH (mkName)
+import "template-haskell" Language.Haskell.TH (nameBase)
 import Rhyolite.Backend.Account ()
 import Rhyolite.Backend.Listen (HasNotification (..), NotificationType (..), DbNotification (..), getSchemaName, notifyChannel)
 import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)

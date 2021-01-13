@@ -5,6 +5,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE PackageImports #-}
 
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -19,7 +20,7 @@ import Data.Coerce
 import Data.Proxy
 import Unsafe.Coerce
 
-import qualified Language.Haskell.TH as TH
+import qualified "template-haskell" Language.Haskell.TH as TH
 
 -- | short example
 -- data YourThing f b

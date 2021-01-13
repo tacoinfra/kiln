@@ -1,5 +1,5 @@
 name: backend
-version: 0.8.3
+version: 0.8.4
 license: BSD3
 copyright: Copyright (C) Obsidian Systems LLC 2018
 author: Obsidian Systems LLC
@@ -91,6 +91,7 @@ library
     , rhyolite-common
     , safe
     , safe-exceptions
+    , semialign
     , semigroupoids
     , shelly
     , snap-core
@@ -153,6 +154,7 @@ library
     Backend.Workers.TezosClient
     Backend.Workers.TezosRelease
     System.Which
+    Orphans.Instances
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
   cpp-options: -DREAL_BUILD
