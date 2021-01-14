@@ -59,6 +59,7 @@ textPeriod = \case
   VotingPeriodKind_TestingVote -> "Exploration"
   VotingPeriodKind_Testing -> "Testing"
   VotingPeriodKind_PromotionVote -> "Promotion"
+  VotingPeriodKind_Adoption -> "Adoption"
 
 isVotingPeriod :: VotingPeriodKind -> Bool
 isVotingPeriod = \case
@@ -66,6 +67,7 @@ isVotingPeriod = \case
   VotingPeriodKind_TestingVote -> True
   VotingPeriodKind_Testing -> False
   VotingPeriodKind_PromotionVote -> True
+  VotingPeriodKind_Adoption -> False
 
 amendmentPopup
   ::    (MonadReader r m, HasTimeZone r, DomBuilder t m, MonadJSM (Performable m), MonadAppWidget js t m)
@@ -127,6 +129,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
       VotingPeriodKind_TestingVote -> withLoader (periodVote "Test Period") =<< watchPeriodTestingVote
       VotingPeriodKind_Testing -> withLoader periodTest =<< watchPeriodTesting
       VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
+      VotingPeriodKind_Adoption -> withLoader dyn_  =<< watchPeriodAdoption
 
   pure ()
   where
@@ -285,6 +288,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       VotingPeriodKind_TestingVote -> workflow explorationFlow
       VotingPeriodKind_Testing -> pure <$> getPostBuild -- TODO: close immediately
       VotingPeriodKind_PromotionVote -> workflow promotionFlow
+      VotingPeriodKind_Adoption -> workflow _adoptionFlow
 
     headerWithCycles header detail extras = do
       divClass "header" $ do
@@ -365,6 +369,9 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         ("Votes in this period will decide if the proposal under consideration should be promoted to " <> chainText <> ". If it does not pass the current protocol will remain in place. If it passes, the proposed protocol will take affect at the end of this Promotion Period.")
         chainText
         (maybeDyn =<< watchPeriodPromotionVote)
+
+    _adoptionFlow :: Workflow t m (Event t ())
+    _adoptionFlow = undefined
 
     someVotingPeriodFlow
       :: Text -- ^ Header

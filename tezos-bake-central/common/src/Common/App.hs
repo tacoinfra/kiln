@@ -291,6 +291,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_periodTestingVote :: !(MaybeSelector (Maybe PeriodTestingVote) a)
   , _bakeViewSelector_periodTesting :: !(MaybeSelector (Maybe PeriodTesting) a)
   , _bakeViewSelector_periodPromotionVote :: !(MaybeSelector (Maybe PeriodPromotionVote) a)
+  , _bakeViewSelector_periodAdoption :: !(MaybeSelector (Maybe PeriodAdoption) a)
   , _bakeViewSelector_publicNodeConfig :: !(RangeSelector PublicNode PublicNodeConfig a)
   , _bakeViewSelector_publicNodeHeads :: !(RangeSelector' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeViewSelector_upstreamVersion :: !(MaybeSelector UpstreamVersion a)
@@ -338,6 +339,7 @@ data BakeView a = BakeView
   , _bakeView_periodTestingVote :: !(MaybeView (Maybe PeriodTestingVote) a)
   , _bakeView_periodTesting :: !(MaybeView (Maybe PeriodTesting) a)
   , _bakeView_periodPromotionVote :: !(MaybeView (Maybe PeriodPromotionVote) a)
+  , _bakeView_periodAdoption :: !(MaybeView (Maybe PeriodAdoption) a)
   , _bakeView_publicNodeConfig :: !(RangeView PublicNode PublicNodeConfig a)
   , _bakeView_publicNodeHeads :: !(RangeView' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeView_upstreamVersion :: !(MaybeView UpstreamVersion a)
@@ -459,6 +461,7 @@ cropBakeView vs v = BakeView
   , _bakeView_periodTestingVote = cropView (_bakeViewSelector_periodTestingVote vs) (_bakeView_periodTestingVote v)
   , _bakeView_periodTesting = cropView (_bakeViewSelector_periodTesting vs) (_bakeView_periodTesting v)
   , _bakeView_periodPromotionVote = cropView (_bakeViewSelector_periodPromotionVote vs) (_bakeView_periodPromotionVote v)
+  , _bakeView_periodAdoption = cropView (_bakeViewSelector_periodAdoption vs) (_bakeView_periodAdoption v)
   , _bakeView_upstreamVersion = cropView (_bakeViewSelector_upstreamVersion vs) (_bakeView_upstreamVersion v)
   , _bakeView_telegramConfig = cropView (_bakeViewSelector_telegramConfig vs) (_bakeView_telegramConfig v)
   , _bakeView_telegramRecipients = cropView (_bakeViewSelector_telegramRecipients vs) (_bakeView_telegramRecipients v)
@@ -496,6 +499,7 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_periodTestingVote = mapMaybe f $ _bakeViewSelector_periodTestingVote a
     , _bakeViewSelector_periodTesting = mapMaybe f $ _bakeViewSelector_periodTesting a
     , _bakeViewSelector_periodPromotionVote = mapMaybe f $ _bakeViewSelector_periodPromotionVote a
+    , _bakeViewSelector_periodAdoption = mapMaybe f $ _bakeViewSelector_periodAdoption a
     , _bakeViewSelector_upstreamVersion = mapMaybe f $ _bakeViewSelector_upstreamVersion a
     , _bakeViewSelector_telegramConfig = mapMaybe f (_bakeViewSelector_telegramConfig a)
     , _bakeViewSelector_telegramRecipients = mapMaybe f (_bakeViewSelector_telegramRecipients a)
@@ -533,6 +537,7 @@ instance Filterable BakeView where
     , _bakeView_periodTestingVote = mapMaybe f $ _bakeView_periodTestingVote a
     , _bakeView_periodTesting = mapMaybe f $ _bakeView_periodTesting a
     , _bakeView_periodPromotionVote = mapMaybe f $ _bakeView_periodPromotionVote a
+    , _bakeView_periodAdoption = mapMaybe f $ _bakeView_periodAdoption a
     , _bakeView_upstreamVersion = mapMaybe f $ _bakeView_upstreamVersion a
     , _bakeView_telegramConfig = mapMaybe f $ _bakeView_telegramConfig a
     , _bakeView_telegramRecipients = mapMaybe f $ _bakeView_telegramRecipients a
@@ -575,6 +580,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_periodTestingVote = (<>) (_bakeViewSelector_periodTestingVote u) (_bakeViewSelector_periodTestingVote v)
     , _bakeViewSelector_periodTesting = (<>) (_bakeViewSelector_periodTesting u) (_bakeViewSelector_periodTesting v)
     , _bakeViewSelector_periodPromotionVote = (<>) (_bakeViewSelector_periodPromotionVote u) (_bakeViewSelector_periodPromotionVote v)
+    , _bakeViewSelector_periodAdoption = (<>) (_bakeViewSelector_periodAdoption u) (_bakeViewSelector_periodAdoption v)
     , _bakeViewSelector_upstreamVersion = (<>) (_bakeViewSelector_upstreamVersion u) (_bakeViewSelector_upstreamVersion v)
     , _bakeViewSelector_telegramConfig = (<>) (_bakeViewSelector_telegramConfig u) (_bakeViewSelector_telegramConfig v)
     , _bakeViewSelector_telegramRecipients = (<>) (_bakeViewSelector_telegramRecipients u) (_bakeViewSelector_telegramRecipients v)
@@ -612,6 +618,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_periodTestingVote = mempty
     , _bakeViewSelector_periodTesting = mempty
     , _bakeViewSelector_periodPromotionVote = mempty
+    , _bakeViewSelector_periodAdoption = mempty
     , _bakeViewSelector_upstreamVersion = mempty
     , _bakeViewSelector_telegramConfig = mempty
     , _bakeViewSelector_telegramRecipients = mempty
@@ -655,6 +662,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_periodTestingVote = mempty
     , _bakeView_periodTesting = mempty
     , _bakeView_periodPromotionVote = mempty
+    , _bakeView_periodAdoption = mempty
     , _bakeView_upstreamVersion = mempty
     , _bakeView_telegramConfig = mempty
     , _bakeView_telegramRecipients = mempty
@@ -694,6 +702,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_periodTestingVote = _bakeView_periodTestingVote u <> _bakeView_periodTestingVote v
     , _bakeView_periodTesting = _bakeView_periodTesting u <> _bakeView_periodTesting v
     , _bakeView_periodPromotionVote = _bakeView_periodPromotionVote u <> _bakeView_periodPromotionVote v
+    , _bakeView_periodAdoption = _bakeView_periodAdoption u <> _bakeView_periodAdoption v
     , _bakeView_upstreamVersion = _bakeView_upstreamVersion u <> _bakeView_upstreamVersion v
     , _bakeView_telegramConfig = _bakeView_telegramConfig u <> _bakeView_telegramConfig v
     , _bakeView_telegramRecipients = _bakeView_telegramRecipients u <> _bakeView_telegramRecipients v

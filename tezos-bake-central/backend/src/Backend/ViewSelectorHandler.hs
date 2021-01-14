@@ -288,6 +288,27 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
         }
       }
 
+  periodAdoption <- maybeViewHandler _bakeViewSelector_periodAdoption $ Just <$> do
+    results <- [queryQ|
+      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalRolls"
+      FROM "PeriodAdoption" v
+      JOIN "PeriodProposal" p ON p.id = v.proposal
+      WHERE p."chainId" = ?chainId
+      LIMIT 1
+    |]
+    pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodAdoption
+      { _periodAdoption_proposal = p
+      , _periodAdoption_periodVote = PeriodVote
+        { _periodVote_ballots = Ballots
+          { _ballots_yay = by
+          , _ballots_nay = bn
+          , _ballots_pass = bp
+          }
+        , _periodVote_quorum = q
+        , _periodVote_totalRolls = t
+        }
+      }
+
   connectedLedger <- maybeViewHandler _bakeViewSelector_connectedLedger $ Just <$> selectSingle CondEmpty
 
   let showLedgerVS = _bakeViewSelector_showLedger vs
@@ -371,6 +392,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     , _bakeView_periodTestingVote = periodTestingVote
     , _bakeView_periodTesting = periodTesting
     , _bakeView_periodPromotionVote = periodPromotionVote
+    , _bakeView_periodAdoption = periodAdoption
     , _bakeView_upstreamVersion = upgrade
     , _bakeView_telegramConfig = telegramConfig
     , _bakeView_telegramRecipients = telegramRecipients

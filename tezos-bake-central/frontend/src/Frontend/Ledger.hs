@@ -238,7 +238,6 @@ authorizeLedger (sk, pkh) = do
 
 registerDelegate
   :: forall t m js. MonadAppWidget js t m
-  => Prerender js t m
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError ()))
 registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanation prompt sk handleStep
   where
@@ -322,7 +321,7 @@ connectLedger connectedLedger = divClass "central" $ do
   pure ledgerChoice
 
 selectAddress
-  :: forall t m js. (MonadAppWidget js t m, MonadJSM (Performable m), MonadJSM m, Prerender js t m)
+  :: forall t m js. (MonadAppWidget js t m, MonadJSM (Performable m), MonadJSM m)
   => LedgerIdentifier -> m (Event t (SecretKey, PublicKeyHash))
 selectAddress ledger = divClass "select-address" $ mdo
   let curves = [minBound .. maxBound] :: [SigningCurve]

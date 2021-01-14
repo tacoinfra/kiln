@@ -217,8 +217,6 @@ appMain
     , MonadJSM m
     , MonadReader r m, HasFrontendConfig r, HasTimer t r, HasTimeZone r, MonadReader r (ModalM m)
     , RouteConstraints t AppRoute m
-    , Prerender js t m
-    , Prerender js t (ModalM m)
     )
   => m ()
 appMain = do
@@ -265,7 +263,6 @@ appSidebar
      , HasJSContext (Performable (ModalM m))
      , HasFrontendConfig r, MonadReader r m, HasModal t m
      , RouteConstraints t AppRoute m
-     , Prerender js t m
      )
   => m ()
 appSidebar = do
@@ -299,14 +296,14 @@ appSidebar = do
                    elAttr "small" ("style" =: "position: absolute; left:30px;") $
                    text $ "Latest Tezos Release: " <> v)
 
-routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m, Prerender js t m)
+routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
                => R r -> (e -> ch -> m a) -> e -> ch -> m a
 routeSelector' dest con cfg child = do
   r <- askRoute
   let activated = ffor r $ bool "" "active" . (== dest)
   routeLink dest $ con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
 
-routeSelector :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m, Prerender js t m)
+routeSelector :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
               => R r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
 routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
@@ -503,7 +500,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         whenJustDyn dmLatestHead $ \_ -> copyButton (current dProtoText)
         dynText dProtoText
 
-headerBell :: forall t m js . MonadAppWidget js t m => Prerender js t m => m (Event t ())
+headerBell :: forall t m js . MonadAppWidget js t m => m (Event t ())
 headerBell = do
   alertCount <- watchAlertCount
   let
@@ -558,7 +555,6 @@ nodesTabOrWelcome
     , MonadJSM m
     , HasModal t m, MonadAppWidget js t (ModalM m)
     , MonadJSM (ModalM m)
-    , MonadJSM (Performable m)
     , MonadJSM (Performable (ModalM m))
     , HasJSContext (Performable (ModalM m))
     , MonadReader r (ModalM m)
@@ -1660,12 +1656,12 @@ thirtySixHoursToInfinity = do
 
   return $ fmap (flip ClosedInterval UpperInfinity . Bounded . Time.addUTCTime thirtySixHoursAgo) time
 
-tileMenuEntry :: (DomBuilder t m, MonadFix m, MonadIO (Performable m)
+tileMenuEntry :: (DomBuilder t m, MonadFix m
                  , PostBuild t m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
               => Text -> m (Event t ())
 tileMenuEntry = fmap (domEvent Click . fst) . SemUi.listItem' def . text
 
-tileMenuEntryModal :: (DomBuilder t m, MonadFix m, MonadIO (Performable m)
+tileMenuEntryModal :: (DomBuilder t m, MonadFix m
                       , PostBuild t m, PerformEvent t m, TriggerEvent t m, MonadHold t m
                       , HasModal t m, Prerender js t m)
                    => Text -> (Event t () -> ModalM m (Event t ())) -> m ()
@@ -2151,7 +2147,6 @@ bakersTab
     , HasTimeZone r
     , HasFrontendConfig r
     , MonadJSM m
-    , MonadJSM (Performable m)
     , MonadJSM (Performable (ModalM m))
     , HasModal t m
     )
