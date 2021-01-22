@@ -279,8 +279,12 @@ appSidebar = do
           appSideFooter
           displayLatestRelease
   where
-    ppMajorMinor (Just (MajorMinorVersion major minor ai)) = case ai of
-        Release -> Just $ T.pack $ show major <> "." <> show minor
+    ppMajorMinor (Just (MajorMinorVersion major minor mextra ai)) = case ai of
+        Release -> Just $ T.pack $
+            show major
+            <> "."
+            <> show minor
+            <> maybe mempty (\extra -> "." <> show extra) mextra
         _ -> Nothing
     ppMajorMinor Nothing = Nothing
 
@@ -1055,13 +1059,13 @@ liveErrorsWidget = void $ do
 
 printMajorMinor :: NodeVersion -> Text
 printMajorMinor n = case _nodeVersion_version n of
-  MajorMinorVersion major minor additionalinfo ->
+  MajorMinorVersion major minor mextra additionalinfo ->
+    let extra = maybe mempty show mextra in
     case additionalinfo of
-      Development -> T.pack (show major) <> "." <> T.pack (show minor) <> "-dev"
+      Development -> T.pack (show major) <> "." <> T.pack (show minor) <> "." <> T.pack extra <> "-dev"
       ReleaseCandidate rc ->
-          T.pack (show major) <> "." <> T.pack (show minor) <> "-rc" <> T.pack (show rc)
-      Release -> T.pack (show major) <> "." <> T.pack (show minor)
-
+          T.pack (show major) <> "." <> T.pack (show minor) <> "." <> T.pack extra <> "-rc" <> T.pack (show rc)
+      Release -> T.pack (show major) <> "." <> T.pack (show minor) <> "." <> T.pack extra
 
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol

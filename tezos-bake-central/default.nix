@@ -6,6 +6,7 @@
 , runTests ? false
 , buildHaddock ? false
 , closure-compiler-setting ? "SIMPLE" # set this to null to skip closure-compiler step
+, source ? true
 }:
 let
   obelisk = import .obelisk/impl { inherit system profiling; };
@@ -17,7 +18,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
     rhyolite = obelisk;
     nodeKit = if tezosScopedKit != null
             then tezosScopedKit
-            else import ../dep/platform-specific-binaries.nix { inherit system pkgs;};
+            else import ../dep/platform-specific-binaries.nix { inherit system pkgs source;};
 
     hsOnly = attrs: pkg: pkg.overrideAttrs ({ src, ... }: {
       src = pkgs.lib.cleanSourceWith {

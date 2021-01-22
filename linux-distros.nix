@@ -3,6 +3,7 @@
 , nodeKit
 , pkgName
 , version
+, zcash
 }:
 let
   maintainer = "Obsidian Systems <tezos@obsidian.systems>";
@@ -96,6 +97,8 @@ let
           chmod 0755 $DEBDIR/usr/bin/*
 
           ${pkgs.dpkg}/bin/dpkg-deb --build $DEBDIR $out
+          mkdir -p ${var-prefix}/.zcash-params
+          ln -sf '${zcash}/zcash-params/'* ${var-prefix}/.zcash-params
         '';
     };
 

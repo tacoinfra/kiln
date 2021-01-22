@@ -289,6 +289,7 @@ data NodeVersion = NodeVersion
 data MajorMinorVersion = MajorMinorVersion
      { _majorMinorVersion_major :: !Int32
      , _majorMinorVersion_minor :: !Int32
+     , _majorMinorVersion_extra :: !(Maybe Int32)
      , _majorMinorVersion_additional_info :: !AdditionalInfo
      } deriving (Eq, Ord, Read, Show)
 
