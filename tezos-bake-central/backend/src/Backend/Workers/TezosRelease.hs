@@ -79,9 +79,12 @@ getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
 
 parseMajorMinorVersion :: Text -> Either String MajorMinorVersion
 parseMajorMinorVersion = parseOnly $ do
-  skip (== 'v')
-  major <- decimal
-  skip (== '.')
-  minor <- decimal
-  endOfInput
-  return $ MajorMinorVersion major minor Release
+    option () (skip (== 'v'))
+    major <- decimal
+    skip (== '.')
+    minor <- decimal
+    extra <- option Nothing $ do
+      skip (== '.')
+      Just <$> decimal
+    endOfInput
+    return $ MajorMinorVersion major minor extra Release
