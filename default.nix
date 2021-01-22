@@ -40,8 +40,6 @@ let
     mkdir "$out/frontend.jsexe.assets"
     cp -r '${exe}/frontend.jsexe.assets'/*all.js "$out/frontend.jsexe.assets"
 
-    mkdir -p $HOME/.zcash-params
-    ln -sf '${zcash}/zcash-params/'* $HOME/.zcash-params
   '';
   dockerImage = let
     bakeCentralSetupScript = pkgs.dockerTools.shellScript "dockersetup.sh" ''
@@ -55,6 +53,9 @@ let
 
       mkdir -p    /var/run/bake-monitor
       chown 99:99 /var/run/bake-monitor
+
+    mkdir -p $HOME/.zcash-params
+    ln -sf '${zcash}/zcash-params/'* $HOME/.zcash-params
     '';
     bakeCentralEntrypoint = pkgs.dockerTools.shellScript "entrypoint.sh" ''
       set -ex
