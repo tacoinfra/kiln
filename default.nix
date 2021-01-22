@@ -131,7 +131,7 @@ let
 
       security.sudo.wheelNeedsPassword = false;
       networking.firewall.enable = false;
-      environment.systemPackages = [ upgradeKilnVM pkgs.firefox (tezosScopedKit "x86_64-linux") ];
+      environment.systemPackages = [ upgradeKilnVM pkgs.firefox (tezosScopedKit false "x86_64-linux") ];
       services.udev.extraRules = ''
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c", MODE="0660", GROUP="users"
         SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="2b7c", MODE="0660", GROUP="users"
@@ -215,12 +215,12 @@ in (obApp false distroMethods.source system) // {
   kiln-debian = (import ./linux-distros.nix {
     inherit pkgs;
     obApp = obAppGargoyle false distroMethods.linuxPackage "x86_64-linux";
-    nodeKit = tezosScopedKit "x86_64-linux";
+    nodeKit = tezosScopedKit false "x86_64-linux";
     pkgName = "kiln";
     version = "0.8.4"; # TODO: Calculate this
     inherit zcash;
   }).kiln-debian;
 
-  tezosKit = tezosScopedKit system;
+  tezosKit = tezosScopedKit false system;
 
 }
