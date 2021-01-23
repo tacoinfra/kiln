@@ -54,8 +54,8 @@ let
       mkdir -p    /var/run/bake-monitor
       chown 99:99 /var/run/bake-monitor
 
-    mkdir -p $HOME/.zcash-params
-    ln -sf '${zcash}/zcash-params/'* $HOME/.zcash-params
+    mkdir -p /.zcash-params
+    ln -sf '${zcash}/zcash-params/'* /.zcash-params
     '';
     bakeCentralEntrypoint = pkgs.dockerTools.shellScript "entrypoint.sh" ''
       set -ex
