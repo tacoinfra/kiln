@@ -249,11 +249,11 @@ bakerDaemonProcess appConfig logger db maybePaths = do
     epid2 = _bakerDaemonInternalData_altEndorserProcessData bdid
     nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     alias = T.unpack aliasT
-    bakerArgs = [ "--port", nodeRpcPort
+    bakerArgs = [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
                 , "--base-dir", tezosClientDataDir appConfig
                 , "run", "with", "local", "node", nodeDataDir appConfig
                 , alias]
-    endorserArgs = [ "--port", nodeRpcPort
+    endorserArgs = [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
                    , "--base-dir", tezosClientDataDir appConfig
                    , "run"
                    , alias]

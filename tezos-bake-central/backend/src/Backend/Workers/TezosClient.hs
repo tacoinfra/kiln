@@ -42,6 +42,7 @@ import System.IO (hIsEOF)
 import System.IO.Error (isEOFError)
 import System.Which
 import Text.Read (readMaybe)
+import Text.URI (render, URI)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -53,7 +54,7 @@ import Tezos.Types
 import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
-import Backend.Config (AppConfig (..), tezosClientDataDir, BinaryPaths(..))
+import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI, BinaryPaths(..))
 import Backend.IndexQueries
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
@@ -463,7 +464,7 @@ runClientCommand
   -> ExceptT e m Text
 runClientCommand appConfig maybePaths mTimeout args handleError = do
   le <- askLoggerIO
-  let procSpec = Process.proc (clientPath maybePaths) (["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig] ++ args)
+  let procSpec = Process.proc (clientPath maybePaths) (["--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig, "--base-dir", tezosClientDataDir appConfig] ++ args)
       runProc = runLoggingEnv (LoggingEnv le) $ readCreateProcessWithExitCodeWithLogging procSpec ""
       withTimeout run handle = flip (maybe ((liftIO run) >>= handle)) mTimeout $ \(t, err) -> (liftIO $ timeout' t run) >>= \case
         Just v -> handle v
@@ -524,7 +525,7 @@ registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths fee
     False -> do
       -- withCreateProcess will close these automatically
       (readPipe, writePipe) <- liftIO Process.createPipe
-      let p = (Process.proc (clientPath maybePaths) ["--port", show (_appConfig_kilnNodeRpcPort appConfig), "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
+      let p = (Process.proc (clientPath maybePaths) ["--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig, "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
             { Process.std_err = Process.UseHandle writePipe
             , Process.std_out = Process.UseHandle writePipe
             }
