@@ -42,7 +42,7 @@ import System.IO (hIsEOF)
 import System.IO.Error (isEOFError)
 import System.Which
 import Text.Read (readMaybe)
-import Text.URI (render, URI)
+import Text.URI (render)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
