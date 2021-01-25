@@ -40,8 +40,8 @@ let
     mkdir "$out/frontend.jsexe.assets"
     cp -r '${exe}/frontend.jsexe.assets'/*all.js "$out/frontend.jsexe.assets"
 
-    mkdir -p /.zcash-params
-    ln -sf '${zcash}/zcash-params/'* /.zcash-params
+    # mkdir -p /.zcash-params
+    # ln -sf '${zcash}/zcash-params/'* /.zcash-params
 
   '';
   dockerImage = let
