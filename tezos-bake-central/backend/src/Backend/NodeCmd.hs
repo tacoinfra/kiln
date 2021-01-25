@@ -43,13 +43,14 @@ import System.IO (hGetContents)
 import System.IO.Error (isEOFError)
 import qualified System.IO.Streams as Streams
 import System.Which (staticWhich)
+import Text.URI (render)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
 import Tezos.Types (ProtocolHash)
 
 import Backend.CachedNodeRPC
-import Backend.Config (AppConfig (..), nodeDataDir, tezosClientDataDir, BinaryPaths(..))
+import Backend.Config (AppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir, BinaryPaths(..))
 import Backend.Schema
 import Backend.Workers.Process
 import Common.Route (ExportLog(..))
@@ -247,13 +248,12 @@ bakerDaemonProcess appConfig logger db maybePaths = do
     epid1 = _bakerDaemonInternalData_endorserProcessData bdid
     bpid2 = _bakerDaemonInternalData_altBakerProcessData bdid
     epid2 = _bakerDaemonInternalData_altEndorserProcessData bdid
-    nodeRpcPort = show $ _appConfig_kilnNodeRpcPort appConfig
     alias = T.unpack aliasT
-    bakerArgs = [ "--port", nodeRpcPort
+    bakerArgs = [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig
                 , "--base-dir", tezosClientDataDir appConfig
                 , "run", "with", "local", "node", nodeDataDir appConfig
                 , alias]
-    endorserArgs = [ "--port", nodeRpcPort
+    endorserArgs = [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
                    , "--base-dir", tezosClientDataDir appConfig
                    , "run"
                    , alias]
