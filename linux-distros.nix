@@ -96,9 +96,9 @@ let
 
           chmod 0755 $DEBDIR/usr/bin/*
 
+          mkdir -p $DEBDIR/${var-prefix}/.zcash-params
+          cp '${zcash}/zcash-params/'* $DEBDIR/${var-prefix}/.zcash-params
           ${pkgs.dpkg}/bin/dpkg-deb --build $DEBDIR $out
-          mkdir -p $DEBDIR/var/lib/kiln/.zcash-params
-          ln -sf '${zcash}/zcash-params/'* $DEBDIR/var/lib/kiln/.zcash-params
         '';
     };
 
