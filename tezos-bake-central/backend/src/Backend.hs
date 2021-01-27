@@ -43,6 +43,7 @@ import Data.Time.Clock (nominalDay)
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
 import Gargoyle.PostgreSQL.Connect (withDb)
+import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import qualified Network.HTTP.Client as Http (newManager)
 import qualified Network.HTTP.Client.TLS as Https
 import Network.Mail.Mime (Address (..))
@@ -131,6 +132,9 @@ resolveKnownChains = \case
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
 backendImpl cfg serve = do
   hSetBuffering stderr LineBuffering -- Decrease likelihood of output from multiple threads being interleaved
+
+  -- Just in case, text encoding/decoding is not set to UTF-8
+  setLocaleEncoding utf8
 
   let
     loggingConfigForDistro = case distributionMethod of
