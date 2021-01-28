@@ -469,12 +469,12 @@ runClientCommand appConfig maybePaths mTimeout args handleError = do
       withTimeout run handle = flip (maybe ((liftIO run) >>= handle)) mTimeout $ \(t, err) -> (liftIO $ timeout' t run) >>= \case
         Just v -> handle v
         Nothing -> do
-          $(logWarn) $ "runClientCommand Timedout"
+          logDebugNS "kiln-node" "runClientCommand Timedout"
           throwError err
   withTimeout runProc $ \(exitCode, stdout, stderr) -> case exitCode of
     ExitSuccess -> pure $ T.strip stdout
     ExitFailure _ -> do
-      $(logWarn) $ "runClientCommand failed: " <> stderr
+      logDebugNS "kin-debugging" $ "runClientCommand failed: " <> stderr
       let strippedLines = fmap T.strip $ T.lines stderr
           warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
           errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
@@ -482,7 +482,7 @@ runClientCommand appConfig maybePaths mTimeout args handleError = do
       case handleError warnings (fatal ++ errors) of
         Right t -> pure t
         Left e -> do
-          $(logWarn) $ T.pack $ show e
+          logDebugNS "kiln-debugging" $ T.pack $ show e
           throwError e
 
 setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> m SetupLedgerToBakeStep
