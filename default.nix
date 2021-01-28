@@ -204,6 +204,8 @@ let
     echo "Installing Kiln in directory: $KILN_INSTALL_PATH"
     mkdir -p "$KILN_INSTALL_PATH"
     ln -sf '${(obAppGargoyle true distroMethods.source system).exe}'/* "$KILN_INSTALL_PATH"
+    mkdir -p $HOME/.zcash-params
+    ln -sf '${zcash}'/zcash-params/* $HOME/.zcash-params
     echo "Install Complete!"
     echo "'cd \"$KILN_INSTALL_PATH\"' and run './backend' to run kiln with default settings."
   '';
