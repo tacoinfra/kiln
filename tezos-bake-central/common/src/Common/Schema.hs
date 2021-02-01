@@ -570,7 +570,7 @@ data PeriodPromotionVote = PeriodPromotionVote
   , _periodPromotionVote_periodVote :: !PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
--- There is actual voting in this period.
+-- There is no actual voting in this period.
 data PeriodAdoption = PeriodAdoption
   { _periodAdoption_proposal :: !(Id PeriodProposal)
   , _periodAdoption_periodVote :: !PeriodVote

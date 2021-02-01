@@ -2407,8 +2407,12 @@ bakersTab =
             Right bid -> do
               mPeriodKind_amendment <- maybeDyn . fmap Map.lookupMax =<< watchAmendment
               whenJustDyn mPeriodKind_amendment $ \periodKind_amendment -> do
-                isTestingPeriod <- holdUniqDyn $ (VotingPeriodKind_Testing ==) . fst <$> periodKind_amendment
-                dyn_ $ ffor isTestingPeriod $ \case
+                let testingOrAdoption = \case
+                        VotingPeriodKind_Testing -> True
+                        VotingPeriodKind_Adoption -> True
+                        _ -> False
+                isTestingOrAdoptionPeriod <- holdUniqDyn $ testingOrAdoption . fst <$> periodKind_amendment
+                dyn_ $ ffor isTestingOrAdoptionPeriod $ \case
                   True -> pure ()
                   False -> do
                     open <- tileMenuEntry "Vote"

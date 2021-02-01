@@ -426,8 +426,20 @@ watchPeriodPromotionVote = do
     (pp, _) <- MMap.lookup pid m
     pure ((pid, pp), _periodPromotionVote_periodVote v)
 
-watchPeriodAdoption :: m (Dynamic t (Maybe (m ())))
-watchPeriodAdoption = undefined
+watchPeriodAdoption :: MonadAppWidget js t m => m (Dynamic t (Maybe (Id PeriodProposal, PeriodProposal)))
+watchPeriodAdoption = do
+  adoption <- (fmap . fmap) (join . getMaybeView . _bakeView_periodAdoption) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_periodAdoption = viewJust 1
+    }
+  mId <- holdUniqDyn $ fmap _periodAdoption_proposal <$> adoption
+  dm <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor mId $ \mp -> mempty
+    { _bakeViewSelector_proposals = maybe mempty (\p -> viewRangeExactly (Bounded p) 1) mp
+    }
+  pure $ ffor2 adoption dm $ \mv m -> do
+    v <- mv
+    let pid = _periodAdoption_proposal v
+    (pp, _) <- MMap.lookup pid m
+    pure (pid, pp)
 
 watchPrompting :: MonadAppWidget js t m => SecretKey -> m (Dynamic t (Maybe SetupState))
 watchPrompting sk = do
