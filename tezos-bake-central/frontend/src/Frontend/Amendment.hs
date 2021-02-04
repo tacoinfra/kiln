@@ -129,7 +129,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
       VotingPeriodKind_TestingVote -> withLoader (periodVote "Test Period") =<< watchPeriodTestingVote
       VotingPeriodKind_Testing -> withLoader periodTest =<< watchPeriodTesting
       VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
-      VotingPeriodKind_Adoption -> withLoader dyn_  =<< watchPeriodAdoption
+      VotingPeriodKind_Adoption -> withLoader periodAdoption =<< watchPeriodAdoption
 
   pure ()
   where
@@ -148,6 +148,16 @@ withLoader
 withLoader f d = maybeDyn d >>= \m -> dyn_ $ ffor m $ \case
   Nothing -> divClass "ui active loader" blank
   Just a -> f a
+
+periodAdoption
+  :: forall t m js. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
+  => Dynamic t (Id PeriodProposal, PeriodProposal) -> m ()
+periodAdoption adopt = el "dl" $ do
+  el "dt" $ text "Proposal Hash"
+  el "dd" $ do
+    let proposalHash = toBase58Text . _periodProposal_hash . snd <$> adopt
+    copyButton $ current proposalHash
+    dynText proposalHash
 
 periodProposals
   :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m), Prerender js t m)
@@ -288,7 +298,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       VotingPeriodKind_TestingVote -> workflow explorationFlow
       VotingPeriodKind_Testing -> pure <$> getPostBuild -- TODO: close immediately
       VotingPeriodKind_PromotionVote -> workflow promotionFlow
-      VotingPeriodKind_Adoption -> workflow _adoptionFlow
+      VotingPeriodKind_Adoption -> pure <$> getPostBuild -- TODO: close immediately
 
     headerWithCycles header detail extras = do
       divClass "header" $ do
@@ -369,9 +379,6 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         ("Votes in this period will decide if the proposal under consideration should be promoted to " <> chainText <> ". If it does not pass the current protocol will remain in place. If it passes, the proposed protocol will take affect at the end of this Promotion Period.")
         chainText
         (maybeDyn =<< watchPeriodPromotionVote)
-
-    _adoptionFlow :: Workflow t m (Event t ())
-    _adoptionFlow = undefined
 
     someVotingPeriodFlow
       :: Text -- ^ Header
