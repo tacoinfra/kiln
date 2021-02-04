@@ -6,7 +6,7 @@
 , zcash
 }:
 let
-  maintainer = "Obsidian Systems <tezos@obsidian.systems>";
+  maintainer = "Tezos Kiln <maintainer@tezos-kiln.org>";
   description = "Application for participating in the Tezos blockchain.\n  Kiln is an application for participating in the Tezos blockchain. It allows the user to run a node, produce and validate blocks, and vote on protocol amendments through its interface. It can also be used to monitor existing Tezos infrastructure, and sends notifications via Telegram or SMTP when It detects an issue.";
 
   var-prefix = "/var/lib/${pkgName}";
@@ -185,10 +185,11 @@ let
   deb-copyright = pkgs.writeTextFile { name = "${pkgName}-deb-copyright"; text = ''
     Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
     Upstream-Name: Kiln
-    Source: https://gitlab.com/obsidian.systems/kiln
+    Source: https://gitlab.com/tezos-kiln/kiln
 
     Files: *
     Copyright: 2019 obsidian.systems
+    Copyright: 2020, 2021 TQ Tezos
     License: MIT
       Permission is hereby granted, free of charge, to any person obtaining a copy
       of this software and associated documentation files (the "Software"), to deal
