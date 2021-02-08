@@ -22,8 +22,7 @@ import Database.Groundhog.Postgresql
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 
-import Backend.Common.Worker
-import Backend.Common.TezosRelease
+import Backend.Common
 import Backend.CachedNodeRPC
 
 import Backend.Schema

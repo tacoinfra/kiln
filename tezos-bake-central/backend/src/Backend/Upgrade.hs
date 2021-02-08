@@ -36,8 +36,7 @@ import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
 import Backend.Alerts
 import Backend.Alerts.Common
 import Backend.Config (AppConfig(..))
-import Backend.Common (workerWithDelay)
-import Backend.Common.TezosRelease
+import Backend.Common
 import Backend.Schema
 import Backend.Version (parseVersion)
 import Common.Schema
