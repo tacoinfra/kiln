@@ -7,16 +7,10 @@
 module Backend.Workers.TezosRelease where
 
 import Control.Lens
-import Control.Error
 import Control.Monad.IO.Class
-import Control.Monad
 import Control.Monad.Logger (logDebug)
-import Data.Aeson (Value(..))
-import Data.Aeson.Lens
-import Data.Attoparsec.Text hiding (try)
 import qualified Data.ByteString.Lazy as LB
 import Data.Foldable
-import Data.Ord
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)
 import Control.Exception.Safe (try)
@@ -29,12 +23,12 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 
 import Backend.Common.Worker
+import Backend.Common.TezosRelease
 import Backend.CachedNodeRPC
 
 import Backend.Schema
 import Common.Schema
 
-{- TODO: A little bit of randomness could be added to the delay? -}
 latestTezosReleaseWorker
   :: NominalDiffTime
   -> Text
@@ -66,25 +60,3 @@ getLatestTezosRelease httpMgr projId mrelease = do
          Right body -> getRelease mrelease getReleaseTag (Http.getResponseBody body)
   where
     releaseLink = "https://gitlab.com/api/v4/projects/" <> projId <> "/releases"
-
-getRelease :: AsValue s => Maybe Text -> (Value -> Maybe c) -> s -> Maybe c
-getRelease mr f = case mr of
-   Nothing ->
-       maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> f
-   Just release ->
-       findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> f
-
-getReleaseTag :: Value -> Maybe MajorMinorVersion
-getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
-
-parseMajorMinorVersion :: Text -> Either String MajorMinorVersion
-parseMajorMinorVersion = parseOnly $ do
-    option () (skip (== 'v'))
-    major <- decimal
-    skip (== '.')
-    minor <- decimal
-    extra <- option Nothing $ do
-      skip (== '.')
-      Just <$> decimal
-    endOfInput
-    return $ MajorMinorVersion major minor extra Release
