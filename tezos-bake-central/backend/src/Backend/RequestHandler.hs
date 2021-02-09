@@ -20,8 +20,10 @@ module Backend.RequestHandler where
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo, logDebug)
+import Control.Monad.Trans.Except
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
+import Data.List (partition)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
@@ -42,16 +44,17 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Email)
 import Safe
 import System.Directory (removeDirectoryRecursive)
-import Tezos.Types (Tez, PublicKeyHash)
+import Tezos.Types (Tez, PublicKeyHash, LedgerIdentifier, toPublicKeyHashText)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common
-import Backend.Config (AppConfig (..), nodeDataDir)
+import Backend.Config (AppConfig (..), BinaryPaths(..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
+import Backend.Workers.TezosClient (showLedger, getBalanceFor)
 import Backend.Workers.Node (DataSource, updateDataSource)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -64,8 +67,9 @@ requestHandler
   -> Address
   -> NodeDataSource
   -> [DataSource]
+  -> Maybe BinaryPaths
   -> RequestHandler (ApiRequest () PublicRequest PrivateRequest) m
-requestHandler appConfig emailFromAddr nds publicNodeSources =
+requestHandler appConfig emailFromAddr nds publicNodeSources maybePaths =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
@@ -80,6 +84,55 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
           , _connectedLedger_forceConnectivityCheck = True
           , _connectedLedger_walletAppVersion = Nothing
           }
+      PublicRequest_ShowLedgerBatch sks -> inDb $ do
+
+        existent <- select (foldr1 Or (map (embeddedSecretKeyEquals LedgerAccount_secretKeyField) sks))
+
+        let insertNewAccounts sks' = do
+            res <- runExceptT $ for_ sks' $ \sk -> do
+                mPkh <- withExceptT ((,) sk) $ ExceptT $ showLedger appConfig maybePaths sk
+                case mPkh of
+                    Nothing -> notify NotifyTag_ShowLedger (sk, Nothing)
+                    Just pkh -> do
+                        mTez <- withExceptT ((,) sk) $ ExceptT $ getBalanceFor appConfig maybePaths pkh
+                        case mTez of
+                            Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
+                            Just tez -> do
+                                insert $ LedgerAccount
+                                  { _ledgerAccount_secretKey = sk
+                                  , _ledgerAccount_publicKeyHash = Nothing
+                                  , _ledgerAccount_balance = Just tez
+                                  , _ledgerAccount_shouldImport = False
+                                  , _ledgerAccount_imported = False
+                                  , _ledgerAccount_shouldSetupToBake = False
+                                  , _ledgerAccount_shouldRegisterFee = Nothing
+                                  , _ledgerAccount_shouldSetHWM = Nothing
+                                  , _ledgerAccount_shouldDoVoteProtocol = Nothing
+                                  , _ledgerAccount_shouldDoVoteBallot = Nothing
+                                  }
+                                notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
+            case res of
+                Right _ -> pure ()
+                Left (_, ClientError_LedgerDisconnected) -> do
+                    now <- getTime
+                    -- Mark ledger as disconnected
+                    update
+                        [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
+                        , ConnectedLedger_bakingAppVersionField =. (Nothing :: Maybe Text)
+                        , ConnectedLedger_updatedField =. Just now
+                        ] CondEmpty
+                Left (sk, err) -> do
+                    delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+                    notify NotifyTag_ShowLedger (sk, Nothing)
+                    $(logError) (tshow err)
+
+        case existent of
+          [] -> insertNewAccounts sks
+          found ->  case partition (`elem` (_ledgerAccount_secretKey <$> found)) sks of
+            (alreadyFound, notInDb) -> do
+                for_ alreadyFound $ \sk -> update [LedgerAccount_balanceField =. (Nothing :: Maybe Tez)] $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+                insertNewAccounts notInDb
+
       PublicRequest_ShowLedger sk -> inDb $ do
         existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
         case existing of

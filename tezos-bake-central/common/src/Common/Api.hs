@@ -55,6 +55,7 @@ data PublicRequest a where
     :: Email
     -> PublicRequest ()
   PublicRequest_PollLedgerDevice :: PublicRequest ()
+  PublicRequest_ShowLedgerBatch :: [SecretKey] -> PublicRequest ()
   PublicRequest_ShowLedger :: SecretKey -> PublicRequest ()
   PublicRequest_ImportSecretKey :: SecretKey -> PublicRequest ()
   PublicRequest_SetupLedgerToBake :: SecretKey -> PublicRequest ()
