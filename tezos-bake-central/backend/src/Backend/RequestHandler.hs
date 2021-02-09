@@ -100,7 +100,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources maybePaths =
                             Just tez -> do
                                 insert $ LedgerAccount
                                   { _ledgerAccount_secretKey = sk
-                                  , _ledgerAccount_publicKeyHash = Nothing
+                                  , _ledgerAccount_publicKeyHash = Just pkh
                                   , _ledgerAccount_balance = Just tez
                                   , _ledgerAccount_shouldImport = False
                                   , _ledgerAccount_imported = False
@@ -564,4 +564,3 @@ getTelegramCfgId :: PersistBackend m => m (Maybe (Id TelegramConfig))
 getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   -- Silliness to help type inference:
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
-

@@ -465,7 +465,7 @@ backendImpl cfg serve = do
 
       let withWs = RhyoliteWs.withWebsocketsConnectionLogging @Snap.Snap (\str e -> runLoggingEnv logger $ $logError $ T.pack $ "Websocket error: " <> str <> " " <> show e)
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs "v3" RhyoliteApp.functorFromWire db
-        (requestHandler appConfig emailFromAddress dataSrc publicDataSources (hush maybeNamedChainOrPaths))
+        (requestHandler appConfig emailFromAddress dataSrc publicDataSources (maybeNamedChainOrPaths >>= hush))
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
