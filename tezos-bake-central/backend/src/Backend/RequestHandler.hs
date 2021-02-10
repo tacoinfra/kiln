@@ -88,50 +88,55 @@ requestHandler appConfig emailFromAddr nds publicNodeSources maybePaths =
 
         existent <- select (foldr1 Or (map (embeddedSecretKeyEquals LedgerAccount_secretKeyField) sks))
 
-        let insertNewAccounts sks' = do
-            res <- runExceptT $ for_ sks' $ \sk -> do
-                mPkh <- withExceptT ((,) sk) $ ExceptT $ showLedger appConfig maybePaths sk
-                case mPkh of
-                    Nothing -> notify NotifyTag_ShowLedger (sk, Nothing)
-                    Just pkh -> do
-                        mTez <- withExceptT ((,) sk) $ ExceptT $ getBalanceFor appConfig maybePaths pkh
-                        case mTez of
-                            Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
-                            Just tez -> do
-                                insert $ LedgerAccount
-                                  { _ledgerAccount_secretKey = sk
-                                  , _ledgerAccount_publicKeyHash = Just pkh
-                                  , _ledgerAccount_balance = Just tez
-                                  , _ledgerAccount_shouldImport = False
-                                  , _ledgerAccount_imported = False
-                                  , _ledgerAccount_shouldSetupToBake = False
-                                  , _ledgerAccount_shouldRegisterFee = Nothing
-                                  , _ledgerAccount_shouldSetHWM = Nothing
-                                  , _ledgerAccount_shouldDoVoteProtocol = Nothing
-                                  , _ledgerAccount_shouldDoVoteBallot = Nothing
-                                  }
-                                notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
-            case res of
-                Right _ -> pure ()
-                Left (_, ClientError_LedgerDisconnected) -> do
-                    now <- getTime
-                    -- Mark ledger as disconnected
-                    update
-                        [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
-                        , ConnectedLedger_bakingAppVersionField =. (Nothing :: Maybe Text)
-                        , ConnectedLedger_updatedField =. Just now
-                        ] CondEmpty
-                Left (sk, err) -> do
-                    delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-                    notify NotifyTag_ShowLedger (sk, Nothing)
-                    $(logError) (tshow err)
+        let insertAccount sk pkh tez = insert $ LedgerAccount
+                { _ledgerAccount_secretKey = sk
+                , _ledgerAccount_publicKeyHash = Just pkh
+                , _ledgerAccount_balance = Just tez
+                , _ledgerAccount_shouldImport = False
+                , _ledgerAccount_imported = False
+                , _ledgerAccount_shouldSetupToBake = False
+                , _ledgerAccount_shouldRegisterFee = Nothing
+                , _ledgerAccount_shouldSetHWM = Nothing
+                , _ledgerAccount_shouldDoVoteProtocol = Nothing
+                , _ledgerAccount_shouldDoVoteBallot = Nothing
+                }
+            updateAccount sk pkh tez =
+                update
+                    [LedgerAccount_balanceField =. Just tez, LedgerAccount_publicKeyHashField =. Just pkh]
+                    $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+            insertOrUpdateAccounts f sks' = do
+              res <- runExceptT $ for_ sks' $ \sk -> do
+                  mPkh <- withExceptT ((,) sk) $ ExceptT $ showLedger appConfig maybePaths sk
+                  case mPkh of
+                      Nothing -> notify NotifyTag_ShowLedger (sk, Nothing)
+                      Just pkh -> do
+                          mTez <- withExceptT ((,) sk) $ ExceptT $ getBalanceFor appConfig maybePaths pkh
+                          case mTez of
+                              Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
+                              Just tez -> do
+                                  f sk pkh tez
+                                  notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
+              case res of
+                  Right _ -> pure ()
+                  Left (_, ClientError_LedgerDisconnected) -> do
+                      now <- getTime
+                      -- Mark ledger as disconnected
+                      update
+                          [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
+                          , ConnectedLedger_bakingAppVersionField =. (Nothing :: Maybe Text)
+                          , ConnectedLedger_updatedField =. Just now
+                          ] CondEmpty
+                  Left (sk, err) -> do
+                      delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+                      notify NotifyTag_ShowLedger (sk, Nothing)
+                      $(logError) (tshow err)
 
         case existent of
-          [] -> insertNewAccounts sks
+          [] -> insertOrUpdateAccounts insertAccount sks
           found ->  case partition (`elem` (_ledgerAccount_secretKey <$> found)) sks of
             (alreadyFound, notInDb) -> do
-                for_ alreadyFound $ \sk -> update [LedgerAccount_balanceField =. (Nothing :: Maybe Tez)] $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-                insertNewAccounts notInDb
+                insertOrUpdateAccounts updateAccount alreadyFound
+                insertOrUpdateAccounts insertAccount notInDb
 
       PublicRequest_ShowLedger sk -> inDb $ do
         existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
