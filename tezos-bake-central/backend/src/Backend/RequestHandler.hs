@@ -48,7 +48,7 @@ import Tezos.Types (Tez, PublicKeyHash, LedgerIdentifier, toPublicKeyHashText)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common
-import Backend.Config (AppConfig (..), BinaryPaths(..), nodeDataDir)
+import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
@@ -67,9 +67,8 @@ requestHandler
   -> Address
   -> NodeDataSource
   -> [DataSource]
-  -> Maybe BinaryPaths
   -> RequestHandler (ApiRequest () PublicRequest PrivateRequest) m
-requestHandler appConfig emailFromAddr nds publicNodeSources maybePaths =
+requestHandler appConfig emailFromAddr nds publicNodeSources =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
@@ -100,17 +99,19 @@ requestHandler appConfig emailFromAddr nds publicNodeSources maybePaths =
                 , _ledgerAccount_shouldDoVoteProtocol = Nothing
                 , _ledgerAccount_shouldDoVoteBallot = Nothing
                 }
+
             updateAccount sk pkh tez =
                 update
                     [LedgerAccount_balanceField =. Just tez, LedgerAccount_publicKeyHashField =. Just pkh]
                     $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+
             insertOrUpdateAccounts f sks' = do
               res <- runExceptT $ for_ sks' $ \sk -> do
-                  mPkh <- withExceptT ((,) sk) $ ExceptT $ showLedger appConfig maybePaths sk
+                  mPkh <- withExceptT ((,) sk) $ ExceptT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
                   case mPkh of
                       Nothing -> notify NotifyTag_ShowLedger (sk, Nothing)
                       Just pkh -> do
-                          mTez <- withExceptT ((,) sk) $ ExceptT $ getBalanceFor appConfig maybePaths pkh
+                          mTez <- withExceptT ((,) sk) $ ExceptT $ getBalanceFor appConfig (_appConfig_binaryPaths appConfig) pkh
                           case mTez of
                               Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
                               Just tez -> do
