@@ -21,19 +21,24 @@ import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo, logDebug)
 import Control.Monad.Trans.Except
+import Data.Aeson
+import qualified Data.ByteString.Lazy as LB
 import Data.Foldable (toList)
 import Data.Functor.Infix hiding ((<&>))
-import Data.List (partition)
+import Data.List (partition, dropWhileEnd)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
 import Data.Some (Some(..))
+import qualified Data.Text as T
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
 import Network.Mail.Mime (Address (..), simpleMail')
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Simple as Http
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -44,6 +49,8 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Email)
 import Safe
 import System.Directory (removeDirectoryRecursive)
+import Text.Printf
+import Text.URI (render)
 import Tezos.Types (Tez, PublicKeyHash, LedgerIdentifier, toPublicKeyHashText)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
@@ -54,7 +61,7 @@ import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
-import Backend.Workers.TezosClient (showLedger, getBalanceFor)
+import Backend.Workers.TezosClient (showLedger)
 import Backend.Workers.Node (DataSource, updateDataSource)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -105,13 +112,23 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                     [LedgerAccount_balanceField =. Just tez, LedgerAccount_publicKeyHashField =. Just pkh]
                     $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
 
+            fastGetBalanceFor pkh = do
+                let mgr = _nodeDataSource_httpMgr nds
+                    internalURI = T.unpack $ render $ _nodeDataSource_kilnNodeUri nds
+                    balanceUrl  = dropWhileEnd (== '/') internalURI <> (printf "/chains/main/blocks/head/context/contracts/%s/balance" (T.unpack $ toPublicKeyHashText pkh))
+
+                tezResp :: Either Http.HttpException (Http.Response LB.ByteString) <-
+                        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager mgr <$> Http.parseRequest balanceUrl)
+
+                pure $ either (Left . ClientError_Other . tshow) (Right . decode' @Tez . Http.getResponseBody) tezResp
+
             insertOrUpdateAccounts f sks' = do
               res <- runExceptT $ for_ sks' $ \sk -> do
                   mPkh <- withExceptT ((,) sk) $ ExceptT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
                   case mPkh of
                       Nothing -> notify NotifyTag_ShowLedger (sk, Nothing)
                       Just pkh -> do
-                          mTez <- withExceptT ((,) sk) $ ExceptT $ getBalanceFor appConfig (_appConfig_binaryPaths appConfig) pkh
+                          mTez <- withExceptT ((,) sk) $ ExceptT $ fastGetBalanceFor pkh
                           case mTez of
                               Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
                               Just tez -> do
