@@ -24,6 +24,7 @@ import Control.Monad.Trans.Except
 import Data.Aeson
 import qualified Data.ByteString.Lazy as LB
 import Data.Foldable (toList)
+import Data.Functor.Compose
 import Data.Functor.Infix hiding ((<&>))
 import Data.List (partition, dropWhileEnd)
 import Data.List.NonEmpty (nonEmpty)
@@ -94,7 +95,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
 
         existent <- select (foldr1 Or (map (embeddedSecretKeyEquals LedgerAccount_secretKeyField) sks))
 
-        let insertAccount sk pkh tez = insert $ LedgerAccount
+        let insertAccount (sk, pkh, tez) = insert $ LedgerAccount
                 { _ledgerAccount_secretKey = sk
                 , _ledgerAccount_publicKeyHash = Just pkh
                 , _ledgerAccount_balance = Just tez
@@ -107,7 +108,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                 , _ledgerAccount_shouldDoVoteBallot = Nothing
                 }
 
-            updateAccount sk pkh tez =
+            updateAccount (sk, pkh, tez) =
                 update
                     [LedgerAccount_balanceField =. Just tez, LedgerAccount_publicKeyHashField =. Just pkh]
                     $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
@@ -123,19 +124,21 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                 pure $ either (Left . ClientError_Other . tshow) (Right . decode' @Tez . Http.getResponseBody) tezResp
 
             insertOrUpdateAccounts f sks' = do
-              res <- runExceptT $ for_ sks' $ \sk -> do
+              res <- runExceptT $ for sks' $ \sk -> do
                   mPkh <- withExceptT ((,) sk) $ ExceptT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
                   case mPkh of
-                      Nothing -> notify NotifyTag_ShowLedger (sk, Nothing)
+                      Nothing -> notify NotifyTag_ShowLedger (sk, Nothing) >> return Nothing
                       Just pkh -> do
                           mTez <- withExceptT ((,) sk) $ ExceptT $ fastGetBalanceFor pkh
                           case mTez of
-                              Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
+                              Nothing -> do
+                                $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
+                                return Nothing
                               Just tez -> do
-                                  f sk pkh tez
                                   notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
+                                  return $ Just (sk, pkh, tez)
               case res of
-                  Right _ -> pure ()
+                  Right rs -> mapM_ f (Compose rs)
                   Left (_, ClientError_LedgerDisconnected) -> do
                       now <- getTime
                       -- Mark ledger as disconnected
