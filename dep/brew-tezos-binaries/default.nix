@@ -4,47 +4,47 @@ with pkgs;
 let
     tezos-accuser-007-PsDELPH1 = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-accuser-007-PsDELPH1-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "1wc4rzlgf2z5c105x2xkrwhi4h8cjv4dgm2znkbapkig9iyxz2hy";
+      sha256 = "1ncvd82sblrrzhm8zffyliyf02ahyc0r32r3hj5q804y7dl2v7kw";
     };
     tezos-accuser-008-PtEdo2Zk = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-accuser-008-PtEdo2Zk-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "0x4d9zpi5bd4gaw3rax70fsi1y01h9k1mzz8akpbpmjy714d4daj";
+      sha256 = "17vrwxi3mvrx3nl3apz8zxghc769jpdk634fys4v2xrx9br2sn2a";
     };
     tezos-admin-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-admin-client-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "10qr9lwxl866ra04nzzwy7kbr0qyysknqlmjlic8xfqj3sgyqav2";
+      sha256 = "0nir4p207abf05ijqynxb170rfp4wna48gkxbdnv26sfivrr03qi";
     };
     tezos-baker-007-PsDELPH1 = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-baker-007-PsDELPH1-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "0x9fn3hpqr3qwnzsjlmcljk82vziaxaj9i74hd7ac743f6iq0z7m";
+      sha256 = "06gfc8wql0k63xql6ga5r2l1vi8qq0xam9dmv0sbmfmswfp1lrsm";
     };
     tezos-baker-008-PtEdo2Zk = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-baker-008-PtEdo2Zk-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "04afb0gl7qacl0zjl24mrccw5y618inadqra14myfz5y1809yf63";
+      sha256 = "0qj9d916dp803mm2ri2h17xlsrla7rg6jaifsh9ypqb1fyhdnnya";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-client-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "1yqx51vfip624gs6mhlaslwhhpg1zrkxf0j08zs5176mlyj9p3yd";
+      sha256 = "1h5r3f057f4kr0cm081k235l0a34079scmm7m8hp1zcq4lk8n814";
     };
     tezos-codec = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-codec-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "1kqypyyvzvk9vv38bwknalfk7p1pcp45057mhbiaxm2yba55gw4q";
+      sha256 = "1j7c74n410br5wibvr0n6kd3hvdb8gsd65g8vbkdkzmz8adchg8d";
     };
     tezos-endorser-007-PsDELPH1 = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-endorser-007-PsDELPH1-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "1l25pwdhiwc7v520k606aw0z0m0k6yhfg06yxr2zys0q0zn5md7m";
+      sha256 = "1b0kzx0p2y0pqgaiww7s1z5f6wv7k13a71b01vd54yiwbywd08k7";
     };
     tezos-endorser-008-PtEdo2Zk = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-endorser-008-PtEdo2Zk-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "1hllxpbyw6ff1njbyc26px80knhzxhkgjd7mp184dfhlryrn2llb";
+      sha256 = "0yhgi3r0d83q3c3c1gja0h8dfda2d6sa373bvms1fdbvym7wap8p";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-node-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "0gh304xrqn37fiwnx8qf8wyzc4pdpxsgla4vjwnhsnn5m3yhrd74";
+      sha256 = "0m8cc5xd6l2j9f162b35irzd4s6lb7y3zm98agx9xjgyka0vlm7v";
     };
     tezos-signer = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v8.2-1/tezos-signer-v8.2-1.catalina.bottle.tar.gz";
-      sha256 = "0hq5yprkj9qcn2nr0r183y827294xw3cy5gy7sidkyx3653yll6c";
+      sha256 = "08fmyplyspcfw7ba3406x0lzswc5b6icrzrvsz7l85hsib6kj0wl";
     };
 
 in stdenv.mkDerivation rec {
