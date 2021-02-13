@@ -86,9 +86,9 @@ tezosBinaryPaths = NonEmpty.fromList
   , $(staticWhich "tezos-baker-007-PsDELPH1")
   , $(staticWhich "tezos-endorser-007-PsDELPH1")
   ),
-  ( "PtEdoTezd3RHSC31mpxxo1npxFjoWWcFgQtxapi51Z8TLu6v6Uq"
-  , $(staticWhich "tezos-baker-008-PtEdoTez")
-  , $(staticWhich "tezos-endorser-008-PtEdoTez")
+  ( "PtEdo2ZkT9oKpimTah6x2embF25oss54njMuPzkJTEi5RqfdZFA"
+  , $(staticWhich "tezos-baker-008-PtEdo2Zk")
+  , $(staticWhich "tezos-endorser-008-PtEdo2Zk")
   )
   ]
 
