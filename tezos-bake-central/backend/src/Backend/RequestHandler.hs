@@ -20,18 +20,26 @@ module Backend.RequestHandler where
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
 import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo, logDebug)
+import Control.Monad.Trans.Except
+import Data.Aeson
+import qualified Data.ByteString.Lazy as LB
 import Data.Foldable (toList)
+import Data.Functor.Compose
 import Data.Functor.Infix hiding ((<&>))
+import Data.List (partition, dropWhileEnd)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
 import Data.Some (Some(..))
+import qualified Data.Text as T
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
 import Network.Mail.Mime (Address (..), simpleMail')
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Simple as Http
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -42,7 +50,9 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Email)
 import Safe
 import System.Directory (removeDirectoryRecursive)
-import Tezos.Types (Tez, PublicKeyHash)
+import Text.Printf
+import Text.URI (render)
+import Tezos.Types (Tez, PublicKeyHash, LedgerIdentifier, toPublicKeyHashText)
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common
@@ -52,6 +62,7 @@ import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
+import Backend.Workers.TezosClient (showLedger)
 import Backend.Workers.Node (DataSource, updateDataSource)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -80,6 +91,74 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
           , _connectedLedger_forceConnectivityCheck = True
           , _connectedLedger_walletAppVersion = Nothing
           }
+      PublicRequest_ShowLedgerBatch sks -> inDb $ do
+
+        existent <- select (foldr1 Or (map (embeddedSecretKeyEquals LedgerAccount_secretKeyField) sks))
+
+        let insertAccount (sk, pkh, tez) = insert $ LedgerAccount
+                { _ledgerAccount_secretKey = sk
+                , _ledgerAccount_publicKeyHash = Just pkh
+                , _ledgerAccount_balance = Just tez
+                , _ledgerAccount_shouldImport = False
+                , _ledgerAccount_imported = False
+                , _ledgerAccount_shouldSetupToBake = False
+                , _ledgerAccount_shouldRegisterFee = Nothing
+                , _ledgerAccount_shouldSetHWM = Nothing
+                , _ledgerAccount_shouldDoVoteProtocol = Nothing
+                , _ledgerAccount_shouldDoVoteBallot = Nothing
+                }
+
+            updateAccount (sk, pkh, tez) =
+                update
+                    [LedgerAccount_balanceField =. Just tez, LedgerAccount_publicKeyHashField =. Just pkh]
+                    $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+
+            fastGetBalanceFor pkh = do
+                let mgr = _nodeDataSource_httpMgr nds
+                    internalURI = T.unpack $ render $ _nodeDataSource_kilnNodeUri nds
+                    balanceUrl  = dropWhileEnd (== '/') internalURI <> (printf "/chains/main/blocks/head/context/contracts/%s/balance" (T.unpack $ toPublicKeyHashText pkh))
+
+                tezResp :: Either Http.HttpException (Http.Response LB.ByteString) <-
+                        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager mgr <$> Http.parseRequest balanceUrl)
+
+                pure $ either (Left . ClientError_Other . tshow) (Right . decode' @Tez . Http.getResponseBody) tezResp
+
+            insertOrUpdateAccounts f sks' = do
+              res <- runExceptT $ for sks' $ \sk -> do
+                  mPkh <- withExceptT ((,) sk) $ ExceptT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
+                  case mPkh of
+                      Nothing -> notify NotifyTag_ShowLedger (sk, Nothing) >> return Nothing
+                      Just pkh -> do
+                          mTez <- withExceptT ((,) sk) $ ExceptT $ fastGetBalanceFor pkh
+                          case mTez of
+                              Nothing -> do
+                                $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
+                                return Nothing
+                              Just tez -> do
+                                  notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
+                                  return $ Just (sk, pkh, tez)
+              case res of
+                  Right rs -> mapM_ f (Compose rs)
+                  Left (_, ClientError_LedgerDisconnected) -> do
+                      now <- getTime
+                      -- Mark ledger as disconnected
+                      update
+                          [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
+                          , ConnectedLedger_bakingAppVersionField =. (Nothing :: Maybe Text)
+                          , ConnectedLedger_updatedField =. Just now
+                          ] CondEmpty
+                  Left (sk, err) -> do
+                      delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+                      notify NotifyTag_ShowLedger (sk, Nothing)
+                      $(logError) (tshow err)
+
+        case existent of
+          [] -> insertOrUpdateAccounts insertAccount sks
+          found ->  case partition (`elem` (_ledgerAccount_secretKey <$> found)) sks of
+            (alreadyFound, notInDb) -> do
+                insertOrUpdateAccounts updateAccount alreadyFound
+                insertOrUpdateAccounts insertAccount notInDb
+
       PublicRequest_ShowLedger sk -> inDb $ do
         existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
         case existing of
@@ -511,4 +590,3 @@ getTelegramCfgId :: PersistBackend m => m (Maybe (Id TelegramConfig))
 getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   -- Silliness to help type inference:
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
-

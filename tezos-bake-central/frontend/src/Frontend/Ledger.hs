@@ -332,7 +332,7 @@ selectAddress ledger = divClass "select-address" $ mdo
   let submitted = domEvent Submit formEl
 
   pb <- getPostBuild
-  traverse_ (\sk -> requestingIdentity $ public (PublicRequest_ShowLedger sk) <$ pb) (reverse secretKeys)
+  requesting_ (public (PublicRequest_ShowLedgerBatch (reverse secretKeys)) <$ pb)
 
   (formEl, selection) <- elDynAttrWithModifyEvent' preventDefault Submit "form" ((\e -> "class" =: ("ui form" <> if e then " error" else "")) <$> hasError) $ mdo
     let accountItem :: SecretKey -> Dynamic t (Maybe (PublicKeyHash, Tez)) -> m (Event t (SecretKey, PublicKeyHash))
