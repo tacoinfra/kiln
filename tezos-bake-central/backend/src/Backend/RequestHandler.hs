@@ -116,7 +116,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
             fastGetBalanceFor pkh = do
                 let mgr = _nodeDataSource_httpMgr nds
                     internalURI = T.unpack $ render $ _nodeDataSource_kilnNodeUri nds
-                    balanceUrl  = dropWhileEnd (== '/') internalURI <> (printf "/chains/main/blocks/head/context/contracts/%s/balance" (T.unpack $ toPublicKeyHashText pkh))
+                    balanceUrl  = dropWhileEnd (== '/') internalURI <> printf "/chains/main/blocks/head/context/contracts/%s/balance" (T.unpack $ toPublicKeyHashText pkh)
 
                 tezResp :: Either Http.HttpException (Http.Response LB.ByteString) <-
                         liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager mgr <$> Http.parseRequest balanceUrl)
