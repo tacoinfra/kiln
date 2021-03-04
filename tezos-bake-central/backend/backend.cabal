@@ -114,6 +114,7 @@ library
     , unordered-containers
     , uri-encode
     , vector
+    , validation
     , witherable
 
   exposed-modules:

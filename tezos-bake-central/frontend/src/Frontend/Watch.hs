@@ -13,6 +13,7 @@
 
 module Frontend.Watch where
 
+import Data.Bifunctor
 import qualified Data.List.NonEmpty as NEL
 import Data.Dependent.Map (DMap, DSum(..), Some (..))
 import qualified Data.Dependent.Map as DMap
@@ -24,6 +25,7 @@ import Data.Semigroup (Min (..))
 import Data.Semigroup.Foldable (fold1)
 import Data.Time (UTCTime)
 import Data.Universe (universe)
+import Data.Validation
 import Prelude hiding (log)
 import Reflex.Dom.Core
 import Rhyolite.Api (public)
@@ -350,9 +352,10 @@ watchConnectedLedgerForced = do
   _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
   watchConnectedLedger
 
-watchLedgerAccounts :: MonadAppWidget js t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (PublicKeyHash, Tez)))
+watchLedgerAccounts :: MonadAppWidget js t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (Either Text (PublicKeyHash, Tez))))
 watchLedgerAccounts dkeys =
-  (fmap . fmap) (fmapMaybe getFirst . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty
+  -- (fmap . fmap) (fmapMaybe getFirst . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty
+  (fmap . fmap) (fmap (bimap getFirst id . toEither) . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty
     { _bakeViewSelector_showLedger = RangeSelector $ AppendIMap.fromList $ ffor keys $ \k -> (ClosedInterval k k, 1)
     }
 

@@ -17,6 +17,7 @@ import Data.Dependent.Map (DSum(..), Some (..))
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
+import Data.Validation
 import Database.Groundhog.Postgresql (PersistBackend, get, (&&.), (==.), Cond(..))
 import Database.Id.Class
 import Database.Id.Groundhog
@@ -123,7 +124,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     handleShowLedger :: Applicative m' => SecretKey -> Maybe (PublicKeyHash, Tez) -> m' (BakeView a)
     handleShowLedger sk mpkh
       | viewSelects sk showLedgerVS = pure $ mempty
-        { _bakeView_showLedger = toRangeView1 showLedgerVS sk $ Just $ First mpkh
+        { _bakeView_showLedger = toRangeView1 showLedgerVS sk $ fmap (fromEither . Right) mpkh
         }
       | otherwise = pure mempty
 
