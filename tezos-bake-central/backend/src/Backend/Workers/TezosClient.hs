@@ -149,18 +149,18 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
               Left err -> do
                 inDb $ do
                   delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-                  notify NotifyTag_ShowLedger (sk, Nothing)
+                  notify NotifyTag_ShowLedger (sk, Left (T.pack $ show err))
                 $(logError) (T.pack (show err))
               Right mPkh -> do
                 case mPkh of
-                  Nothing -> inDb $ notify NotifyTag_ShowLedger (sk, Nothing)
+                  Nothing -> inDb $ notify NotifyTag_ShowLedger (sk, Left $ "tezosClientWorker:showLedger: public key hash unavailable")
                   Just pkh -> getBalanceFor appConfig maybePaths pkh >>= \case
                     -- In case of error, give another try in the code further down
                     Left err -> $(logError) (T.pack (show err))
                     Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
                     Right (Just tez) -> inDb $ do
                       update [LedgerAccount_balanceField =. Just tez] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-                      notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
+                      notify NotifyTag_ShowLedger (sk, Right (pkh, tez))
                 inDb $ (maybe delete (\pkh -> update [LedgerAccount_publicKeyHashField =. Just pkh]) mPkh)
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
@@ -172,12 +172,12 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
               $(logError) ("Client Timout: getBalanceFor: " <> toPublicKeyHashText pkh)
               inDb $ do
                 delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-                notify NotifyTag_ShowLedger (sk, Nothing)
+                notify NotifyTag_ShowLedger (sk, Left $ T.pack $ show ClientError_Timeout)
             Left err -> $(logError) (T.pack (show err))
             Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
             Right (Just tez) -> inDb $ do
               update [LedgerAccount_balanceField =. Just tez] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-              notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
+              notify NotifyTag_ShowLedger (sk, Right (pkh, tez))
 
           -- set high water mark
           inDb (selectSingle $ LedgerAccount_shouldSetHWMField /=. (Nothing :: Maybe RawLevel)) >>= \mla ->

@@ -74,7 +74,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_TelegramRecipient :=> Identity (eid, ent) -> handleTelegramRecipient eid ent
     NotifyTag_UpstreamVersion :=> Identity (_eid, ent) -> handleUpstreamVersion ent
     NotifyTag_ConnectedLedger :=> Identity mli -> handleConnectedLedger mli
-    NotifyTag_ShowLedger :=> Identity (sk, mpkh) -> handleShowLedger sk mpkh
+    NotifyTag_ShowLedger :=> Identity (sk, epkh) -> handleShowLedger sk epkh
     NotifyTag_Prompting :=> Identity (sk, step) -> handlePrompting sk step
     NotifyTag_VotePrompting :=> Identity (sk, step) -> handleVotePrompting sk step
     NotifyTag_RightNotificationSettings :=> Identity (rk, mrnl) -> handleRightNotificationSettings rk mrnl
@@ -121,10 +121,10 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | otherwise = pure mempty
 
     showLedgerVS = _bakeViewSelector_showLedger aggVS
-    handleShowLedger :: Applicative m' => SecretKey -> Maybe (PublicKeyHash, Tez) -> m' (BakeView a)
-    handleShowLedger sk mpkh
+    handleShowLedger :: Applicative m' => SecretKey -> Either Text (PublicKeyHash, Tez) -> m' (BakeView a)
+    handleShowLedger sk epkh
       | viewSelects sk showLedgerVS = pure $ mempty
-        { _bakeView_showLedger = toRangeView1 showLedgerVS sk $ fmap (fromEither . Right) mpkh
+        { _bakeView_showLedger = toRangeView1 showLedgerVS sk $ Just $ liftError First epkh
         }
       | otherwise = pure mempty
 

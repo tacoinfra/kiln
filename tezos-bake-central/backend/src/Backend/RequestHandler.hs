@@ -119,7 +119,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
 
             balancePath pkh = printf "/chains/main/blocks/head/context/contracts/%s/balance" (T.unpack $ toPublicKeyHashText pkh)
 
-            balanceUrl pkh  = dropWhileEnd (== '/') internalURI <> balancePath pkh
+            balanceUrl pkh = dropWhileEnd (== '/') internalURI <> balancePath pkh
 
             fastGetBalanceFor pkh = do
                 let mgr = _nodeDataSource_httpMgr nds
@@ -127,15 +127,17 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                 tezResp :: Either Http.HttpException (Http.Response LB.ByteString) <-
                         liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager mgr <$> Http.parseRequest (balanceUrl pkh))
 
-                case tezResp of
-                    Left err -> pure $ Left err
-                    Right resp -> pure $ Right $ decode' @Tez $ Http.getResponseBody $ resp
+                pure $ case tezResp of
+                    Left err -> Left err
+                    Right resp -> Right $ decode' @Tez $ Http.getResponseBody $ resp
 
             insertOrUpdateAccounts f sks' = do
               res <- runExceptT $ for sks' $ \sk -> do
                   mPkh <- withExceptT ((,) sk . Right) $ ExceptT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
                   case mPkh of
-                      Nothing -> notify NotifyTag_ShowLedger (sk, Nothing) >> return Nothing
+                      Nothing -> do
+                        notify NotifyTag_ShowLedger (sk, Left $ "tezosClientWorker:showLedger: public key hash unavailable")
+                        return Nothing
                       Just pkh -> do
 
                           mTez <- withExceptT ((,) sk . Left) $ ExceptT $ do
@@ -192,7 +194,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                                 logErrorNS "kiln-node" $ "Failed to get balance of account " <> toPublicKeyHashText pkh
                                 return Nothing
                               Just tez -> do
-                                  notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
+                                  notify NotifyTag_ShowLedger (sk, Right (pkh, tez))
                                   return $ Just (sk, pkh, tez)
               case res of
                   Right rs -> mapM_ f (Compose rs)
@@ -206,7 +208,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                           ] CondEmpty
                   Left (sk, err) -> do
                       delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-                      notify NotifyTag_ShowLedger (sk, Nothing)
+                      notify NotifyTag_ShowLedger (sk, Left $ T.pack $ show err)
                       $(logError) (either tshow tshow err)
 
         case existent of
