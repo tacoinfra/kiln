@@ -44,7 +44,7 @@ blank, use contents of 'config/network'. If also blank, default to 'mainnet'.
 
 Serve Node Cache.  Default disabled.
 
-## enable-obsidian-node BOOL
+## enable-archival-node BOOL
 
 Enables the Public Node Caching library provided by Obsidian Systems.  Default Enabled.
 
