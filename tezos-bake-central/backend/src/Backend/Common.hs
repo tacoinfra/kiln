@@ -7,4 +7,4 @@ module Backend.Common
 import Backend.Common.Baker as X
 import Backend.Common.Node as X
 import Backend.Common.Worker as X
-
+import Backend.Common.TezosRelease as X
