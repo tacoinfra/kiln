@@ -13,11 +13,13 @@ module Backend.Config where
 
 import Control.Lens (Lens', view)
 import Control.Monad.Reader (MonadReader, asks)
+import Data.Aeson (Value)
 import Data.Either (fromRight)
 import Data.Word
 import Network.Mail.Mime (Address)
 import System.FilePath ((</>))
 import Text.URI (URI)
+import Data.Aeson.Lens
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Text as T
@@ -56,14 +58,17 @@ kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:"
 
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
-  </> fromMaybe (error "specify data-dir") (_nodeConfigFile_dataDir $ _appConfig_kilnNodeConfig appConfig)
-  </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
+    </> fromMaybe (error "specify data-dir") (either getDataDir _nodeConfigFile_dataDir $ _appConfig_kilnNodeConfig appConfig)
+    </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
+  where getDataDir json = T.unpack <$> json ^? key "data_dir" . _String
 
 tezosClientDataDir :: AppConfig -> FilePath
 tezosClientDataDir appConfig = _appConfig_kilnDataDir appConfig </> "tezos-client"
 
-defaultNodeConfigFile :: NodeConfigFile
-defaultNodeConfigFile = NodeConfigFile
+type NodeConfigFile = Either Value NodeConfigFile'
+
+defaultNodeConfigFile :: NodeConfigFile'
+defaultNodeConfigFile = NodeConfigFile'
   { _nodeConfigFile_p2p = NodeConfigP2P
     { _nodeConfigP2P_expectedProofOfWork = Nothing
     , _nodeConfigP2P_bootstrapPeers = Nothing
@@ -173,7 +178,7 @@ data NodeConfigShellChainValidator = NodeConfigShellChainValidator
   , _nodeConfigShellChainValidator_workerZombieMemory :: !(Maybe Double)
   }
 
-data NodeConfigFile = NodeConfigFile
+data NodeConfigFile' = NodeConfigFile'
   { _nodeConfigFile_p2p :: !NodeConfigP2P
   , _nodeConfigFile_dataDir :: !(Maybe FilePath)
   , _nodeConfigFile_rpc :: !(Maybe NodeConfigRPC)
@@ -195,7 +200,7 @@ concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
     . Aeson.fieldLabelModifier tezosJsonOptions
   , Aeson.omitNothingFields = True
     })
-  [ ''NodeConfigFile
+  [ ''NodeConfigFile'
   , ''NodeConfigLog
   , ''NodeConfigP2P
   , ''NodeConfigRPC

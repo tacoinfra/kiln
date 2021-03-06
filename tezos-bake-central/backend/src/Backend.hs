@@ -171,6 +171,10 @@ backendImpl cfg serve = do
       (pure $ _opts_emailFromAddress cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
 
+  !(nodeConfigFile :: Maybe Aeson.Value) <- liftA2 (<|>)
+    (maybe (pure Nothing) (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8)) $ _opts_nodeConfigFile cfg)
+    (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.nodeConfigFile)
+
   !(chain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
@@ -252,6 +256,7 @@ backendImpl cfg serve = do
   !(ledgerCheckDelay :: Maybe NominalDiffTime) <- liftA2 (<|>)
     (pure $ _opts_ledgerCheckDelaySeconds cfg)
     (getConfigFromFile (Just . Config.parseSecondsUnsafe) $ configPath Config.ledgerCheckDelay)
+
 
   -- Force the check delay so that an error is thrown early
   -- Exceptions in non-strict languages are terrabad
@@ -402,7 +407,7 @@ backendImpl cfg serve = do
         , _appConfig_kilnNodeNetPort = kilnNodeNetPort
         , _appConfig_kilnDataDir = kilnDataDir
         , _appConfig_kilnNodeConfig =
-          defaultNodeConfigFile {_nodeConfigFile_network = networkName}
+          maybe (Right $ defaultNodeConfigFile {_nodeConfigFile_network = networkName}) Left nodeConfigFile
 
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
@@ -574,6 +579,7 @@ data Opts = Opts
   , _opts_kilnDataDir :: !(Maybe FilePath)
   , _opts_binaryPaths :: !(Maybe Text)
   , _opts_ledgerCheckDelaySeconds :: !(Maybe NominalDiffTime)
+  , _opts_nodeConfigFile :: !(Maybe FilePath)
   }
 makeLenses ''Opts
 
@@ -599,6 +605,7 @@ instance Semigroup Opts where
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     , _opts_ledgerCheckDelaySeconds = rightBiased (<|>) _opts_ledgerCheckDelaySeconds
+    , _opts_nodeConfigFile = rightBiased (<|>) _opts_nodeConfigFile
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
@@ -626,6 +633,7 @@ instance Monoid Opts where
       , _opts_kilnDataDir = Nothing
       , _opts_binaryPaths = Nothing
       , _opts_ledgerCheckDelaySeconds = Nothing
+      , _opts_nodeConfigFile = Nothing
       }
 
 optsArgDescr :: [GetOpt.OptDescr Opts]

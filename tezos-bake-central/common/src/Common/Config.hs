@@ -122,6 +122,9 @@ blockscaleApiUri = "blockscale-api-uri"
 archivalNodeApiUri :: FilePath
 archivalNodeApiUri = "archival-node-api-uri"
 
+nodeConfigFile :: FilePath
+nodeConfigFile = "node-config-file"
+
 nodes :: FilePath
 nodes = "nodes"
 
