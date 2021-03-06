@@ -9,7 +9,7 @@ preceding periods, if we are in a period after proposal).
 ## Tests
 
   1. Build the version of kiln to be tested
-  2. Run kiln as such: `./backend --nodes=http://127.0.0.1:20000 --enable-obsidian-node=false`
+  2. Run kiln as such: `./backend --nodes=http://127.0.0.1:20000 --enable-archival-node=false`
   3. Open the monitor in the browser
   4. From another terminal window, navigate to tezos-bake-monitor and run:
   ```
