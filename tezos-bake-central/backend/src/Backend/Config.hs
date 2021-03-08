@@ -58,8 +58,9 @@ kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:"
 
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
-    </> fromMaybe (error "specify data-dir") (either getDataDir _nodeConfigFile_dataDir $ _appConfig_kilnNodeConfig appConfig)
-    </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
+    </> case _appConfig_kilnNodeConfig appConfig of
+          Left json -> fromMaybe (error "specify data-dir") $ getDataDir json
+          Right ncf -> fromMaybe (error "specify data-dir") (_nodeConfigFile_dataDir ncf) </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
   where getDataDir json = T.unpack <$> json ^? key "data_dir" . _String
 
 tezosClientDataDir :: AppConfig -> FilePath
