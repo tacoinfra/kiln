@@ -35,7 +35,6 @@ import Safe
 import qualified Snap.Core as Snap
 import Snap.Util.FileUploads
 import System.Directory
-import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
 import qualified System.Process as Process
 import System.Posix.Signals (signalProcess, sigKILL)
@@ -152,11 +151,10 @@ importSnapshotData
   -> Key SnapshotMeta BackendSpecific
   -> m ()
 importSnapshotData appConfig nds sm smId = do
-  mTezosNodeDir <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
   let
     logger = _nodeDataSource_logger nds
     nodePath = nixNodePath
-    dataDir = nodeDataDir appConfig mTezosNodeDir
+    dataDir = nodeDataDir appConfig
     storePath = T.unpack $ _snapshotMeta_storePath sm
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)

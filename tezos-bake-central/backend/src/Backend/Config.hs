@@ -41,6 +41,7 @@ data AppConfig = AppConfig
   , _appConfig_chainId :: ChainId
   , _appConfig_kilnNodeCustomArgs :: Maybe Text
   , _appConfig_binaryPaths :: Maybe BinaryPaths
+  , _appConfig_tezosNodeEnvVar :: Maybe FilePath
   }
 
 class HasAppConfig a where
@@ -56,12 +57,13 @@ kilnNodeRpcURI :: AppConfig -> URI
 kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
   Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodeRpcPort appConfig))
 
-nodeDataDir :: AppConfig -> Maybe FilePath -> FilePath
-nodeDataDir appConfig envTezosNodeDir = _appConfig_kilnDataDir appConfig
+nodeDataDir :: AppConfig -> FilePath
+nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
     </> case _appConfig_kilnNodeConfig appConfig of
-          Left json -> fromMaybe (error "specify data-dir") $ getDataDir json <|> envTezosNodeDir
+          Left json -> fromMaybe (error jsonOrEnvErrMsg) $ getDataDir json <|> _appConfig_tezosNodeEnvVar appConfig
           Right ncf -> fromMaybe (error "specify data-dir") (_nodeConfigFile_dataDir ncf) </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
   where getDataDir json = T.unpack <$> json ^? key "data_dir" . _String
+        jsonOrEnvErrMsg = "Either specify data-dir in JSON config or point to the data directory in the TEZOS_NODE_DIR environment variable]"
 
 tezosClientDataDir :: AppConfig -> FilePath
 tezosClientDataDir appConfig = _appConfig_kilnDataDir appConfig </> "tezos-client"

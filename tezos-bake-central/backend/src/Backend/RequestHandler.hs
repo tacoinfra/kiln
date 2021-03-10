@@ -50,7 +50,6 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Email)
 import Safe
 import System.Directory (removeDirectoryRecursive)
-import System.Environment (lookupEnv)
 import Text.Printf
 import Text.URI (render)
 import Tezos.Types (Tez, PublicKeyHash, LedgerIdentifier, toPublicKeyHashText)
@@ -295,8 +294,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
           void $ liftIO $ async $ runLoggingEnv (_nodeDataSource_logger nds) removeDataDir
         where
           removeDataDir = do
-            mTezosNodeDir <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
-            let dataDir = nodeDataDir appConfig mTezosNodeDir
+            let dataDir = nodeDataDir appConfig
             $(logDebug) ("Removing Kiln node's data dir: " <> tshow dataDir)
             liftIO $ removeDirectoryRecursive dataDir
 

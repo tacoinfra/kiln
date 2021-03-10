@@ -36,7 +36,6 @@ import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
 import System.Directory (doesFileExist)
-import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
 import qualified System.FilePath as FilePath
 import System.Process as Proc
@@ -166,8 +165,7 @@ initNode
   -> "configFile" :! FilePath
   -> IO (FilePath, [String])
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
-  mTezosNodeDir <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
-  let dataDir = nodeDataDir appConfig mTezosNodeDir
+  let dataDir = nodeDataDir appConfig
   let identityFile = dataDir `FilePath.combine` "identity.json"
       versionFile  = dataDir `FilePath.combine` "version.json"
 
@@ -244,7 +242,6 @@ bakerDaemonProcess appConfig logger db maybePaths = do
             }
           }
         return (nodePPid, bdid)
-  mTezosNodeDir <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
   let
     aliasT = _bakerDaemonInternalData_alias bdid
     bpid1 = _bakerDaemonInternalData_bakerProcessData bdid
@@ -254,7 +251,7 @@ bakerDaemonProcess appConfig logger db maybePaths = do
     alias = T.unpack aliasT
     bakerArgs = [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig
                 , "--base-dir", tezosClientDataDir appConfig
-                , "run", "with", "local", "node", nodeDataDir appConfig mTezosNodeDir
+                , "run", "with", "local", "node", nodeDataDir appConfig
                 , alias]
     endorserArgs = [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
                    , "--base-dir", tezosClientDataDir appConfig

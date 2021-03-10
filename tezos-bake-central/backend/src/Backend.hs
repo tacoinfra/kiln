@@ -68,7 +68,7 @@ import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
 import System.Directory (doesDirectoryExist, renameDirectory)
-import System.Environment (getArgs, getProgName, withArgs)
+import System.Environment (getArgs, getProgName, lookupEnv, withArgs)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
@@ -386,6 +386,8 @@ backendImpl cfg serve = do
 
     resetLedgerQueue logger db
 
+    tezosNodeEnvVar <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
+
     let
 
       networkName :: Maybe Text
@@ -412,6 +414,7 @@ backendImpl cfg serve = do
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
         , _appConfig_binaryPaths = binaryPaths
+        , _appConfig_tezosNodeEnvVar = tezosNodeEnvVar
         }
 
     dataSrc <- liftIO $ do
