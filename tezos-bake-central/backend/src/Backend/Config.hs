@@ -1,3 +1,4 @@
+{-# language ApplicativeDo #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -6,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -13,8 +15,9 @@ module Backend.Config where
 
 import Control.Lens (Lens', view)
 import Control.Monad.Reader (MonadReader, asks)
-import Data.Aeson (Value)
+import Data.Aeson (Value(..))
 import Data.Either (fromRight)
+import Data.Validation hiding (validate)
 import Data.Word
 import Network.Mail.Mime (Address)
 import System.FilePath ((</>))
@@ -56,6 +59,28 @@ askAppConfig = asks $ view getAppConfig
 kilnNodeRpcURI :: AppConfig -> URI
 kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
   Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodeRpcPort appConfig))
+
+-- this function is in later versions of the validation libbray
+validate :: e -> (a -> Maybe b) -> a -> Validation e b
+validate e p a = case p a of
+  Nothing -> Failure e
+  Just b -> Success b
+
+validateNodeConfigFile :: NodeConfigFile -> Validation [Text] NodeConfigFile
+validateNodeConfigFile = \case
+  Right r -> pure $ Right r
+  Left json -> do
+   result <- bindValidation (validate ["network object unavailable"] (^? key "network" . _Object) json) $ \(Object -> network) ->
+       bindValidation (validate ["genesis object unavailable"] (^? key "genesis" . _Object) network) $ \(Object -> genesis) ->
+          do
+            validate ["timestamp unavailable"] (^? key "timestamp") genesis
+            validate ["block unavailable"] (^? key "block") genesis
+            validate ["protocol unavailable"] (^? key "protocol") genesis
+            validate ["chain_name unavailable"] (^? key "chain_name") network
+            validate ["sandboxed_chain_name unavailable"] (^? key "sandboxed_chain_name") network
+            pure json
+
+   pure $ Left result
 
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
