@@ -17,7 +17,7 @@ import Control.Lens (Lens', view)
 import Control.Monad.Reader (MonadReader, asks)
 import Data.Aeson (Value(..))
 import Data.Either (fromRight)
-import Data.Validation hiding (validate)
+import Data.Validation
 import Data.Word
 import Network.Mail.Mime (Address)
 import System.FilePath ((</>))
@@ -60,24 +60,22 @@ kilnNodeRpcURI :: AppConfig -> URI
 kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
   Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodeRpcPort appConfig))
 
--- this function is in later versions of the validation libbray
-validate :: e -> (a -> Maybe b) -> a -> Validation e b
-validate e p a = case p a of
-  Nothing -> Failure e
-  Just b -> Success b
 
-validateNodeConfigFile :: NodeConfigFile -> Validation [Text] NodeConfigFile
+(>>=?) :: Validation e a -> (a -> Validation e b) -> Validation e b
+v >>=? f = bindValidation v f
+
+validateNodeConfigFile :: NodeConfigFile -> Validation (NonEmpty Text) NodeConfigFile
 validateNodeConfigFile = \case
   Right r -> pure $ Right r
   Left json -> do
-   result <- bindValidation (validate ["network object unavailable"] (^? key "network" . _Object) json) $ \(Object -> network) ->
-       bindValidation (validate ["genesis object unavailable"] (^? key "genesis" . _Object) network) $ \(Object -> genesis) ->
+   result <- (validationNel $ maybe (Left "network object unavailable") Right (json ^? key "network" . _Object)) >>=? \(Object -> network) ->
+       (validationNel $ maybe (Left "genesis object unavailable") Right (network ^? key "genesis" . _Object)) >>=? \(Object -> genesis) ->
           do
-            validate ["timestamp unavailable"] (^? key "timestamp") genesis
-            validate ["block unavailable"] (^? key "block") genesis
-            validate ["protocol unavailable"] (^? key "protocol") genesis
-            validate ["chain_name unavailable"] (^? key "chain_name") network
-            validate ["sandboxed_chain_name unavailable"] (^? key "sandboxed_chain_name") network
+            validationNel $ maybe (Left "timestamp unavailable") Right (genesis ^? key "timestamp")
+            validationNel $ maybe (Left "block unavailable") Right (genesis ^? key "block")
+            validationNel $ maybe (Left "protocol unavailable") Right (genesis ^? key "protocol")
+            validationNel $ maybe (Left "chain_name unavailable") Right (network ^? key "chain_name")
+            validationNel $ maybe (Left "sandboxed_chain_name unavailable") Right (network ^? key "sandboxed_chain_name")
             pure json
 
    pure $ Left result
