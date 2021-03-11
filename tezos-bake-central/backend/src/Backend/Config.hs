@@ -57,9 +57,11 @@ askAppConfig :: (HasAppConfig a, MonadReader a m) => m AppConfig
 askAppConfig = asks $ view getAppConfig
 
 kilnNodeRpcURI :: AppConfig -> URI
-kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
-  Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodeRpcPort appConfig))
+kilnNodeRpcURI = kilnNodeRpcURI' . _appConfig_kilnNodeRpcPort
 
+kilnNodeRpcURI' :: Port -> URI
+kilnNodeRpcURI' port = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
+  Uri.mkURI ("http://127.0.0.1:" <> tshow port)
 
 (>>=?) :: Validation e a -> (a -> Validation e b) -> Validation e b
 v >>=? f = bindValidation v f
