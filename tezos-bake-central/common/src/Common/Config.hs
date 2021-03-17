@@ -196,13 +196,20 @@ parsePortUnsafe = unsafeParse "port number" $ \a -> case readMaybe (T.unpack a) 
   Nothing -> Left "Not a port number"
   Just b -> Right b
 
+data UsingNodeOption =
+  UsingArchivalNode
+  | UsingCustomNode
+  deriving (Eq, Ord, Show, Generic)
+
+instance Aeson.ToJSON UsingNodeOption
+instance Aeson.FromJSON UsingNodeOption
+
 data FrontendConfig = FrontendConfig
   { _frontendConfig_chain :: !(Either NamedChain ChainId)
   , _frontendConfig_chainId :: !ChainId
   , _frontendConfig_checkForUpgrade :: !Bool
   , _frontendConfig_appVersion :: !Version
-  , _frontendConfig_usingArchivalPublicNode :: !Bool
-  , _frontendConfig_usingCustomNode :: !Bool
+  , _frontendConfig_usingNodeOption :: !(Maybe UsingNodeOption)
   , _frontendConfig_logExportAvailable :: !Bool
   , _frontendConfig_ledgerConnectedChecks :: !Bool
   , _frontendConfig_tezosGitlabProjectId :: !Text

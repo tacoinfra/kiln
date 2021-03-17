@@ -454,8 +454,11 @@ backendImpl cfg serve = do
           , Config._frontendConfig_chainId = maybe chainId (either (const $ error "impossible") id) customChainId
           , Config._frontendConfig_checkForUpgrade = checkForUpgrade
           , Config._frontendConfig_appVersion = version
-          , Config._frontendConfig_usingArchivalPublicNode =  not (isJust customChainId) && isJust (_nodeDataSource_archivalPublicNode dataSrc)
-          , Config._frontendConfig_usingCustomNode = isJust customChainId
+          , Config._frontendConfig_usingNodeOption =
+            case (_nodeDataSource_archivalPublicNode dataSrc, customChainId) of
+              (Just _, Nothing) -> Just Config.UsingArchivalNode
+              (_, Just _) -> Just Config.UsingCustomNode
+              _ -> Nothing
           , Config._frontendConfig_logExportAvailable = logExportAvailable
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId

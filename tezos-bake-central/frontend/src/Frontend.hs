@@ -90,6 +90,7 @@ import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
                       frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable)
+import Common.Config (UsingNodeOption(..))
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -569,7 +570,7 @@ nodesTabOrWelcome = do
   bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
-  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingArchivalPublicNode <$> watchFrontendConfig
+  mUsingNodeOption <- (fmap . fmap) _frontendConfig_usingNodeOption <$> watchFrontendConfig
 
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let haveBakersMaybe =
@@ -577,10 +578,17 @@ nodesTabOrWelcome = do
       haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-      onlyOsPubNode = ffor2 publicNodesMaybe mUsingOsPubNode $ liftA2 $ \pNodes usingOs -> usingOs &&
-        (length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1)
-          && maybe False (_publicNodeConfig_enabled . snd)
-            (headMay (filter ((== PublicNode_Archival) . fst) $ MMap.assocs pNodes))
+      onlyOsPubNode = ffor2 publicNodesMaybe mUsingNodeOption $ liftA2 $ \pNodes usingOption -> do
+        let actuallyUsingArchivalNode = and
+                     [
+                      Just UsingArchivalNode == usingOption
+                     , length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1
+                     , maybe False (_publicNodeConfig_enabled . snd) (headMay (filter ((== PublicNode_Archival) . fst) $ MMap.assocs pNodes))
+                     ]
+        case usingOption of
+          Just UsingArchivalNode -> bool Nothing (Just UsingArchivalNode) actuallyUsingArchivalNode
+          _ -> usingOption
+
   haveBakersHaveNodesMaybe <- holdUniqDyn $
     (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe onlyOsPubNode
 
@@ -588,11 +596,13 @@ nodesTabOrWelcome = do
 
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
-    Just (False, False, False) -> divClass "app-content app-welcome" $ welcomeScreen False
-    Just (haveBakers, haveNodes, onlyOsNode) -> divClass "app-content" $ do
-      when (onlyOsNode && not haveBakers) $ welcomeScreen True
+    Just (False, False, Nothing) -> divClass "app-content app-welcome" $ welcomeScreen Nothing
+    Just (haveBakers, haveNodes, usingNodeOption) -> divClass "app-content" $ do
+      when ((Just UsingArchivalNode == usingNodeOption) && not haveBakers) $ welcomeScreen (Just UsingArchivalNode)
+      when ((Just UsingCustomNode == usingNodeOption) && not haveBakers) $ welcomeScreen (Just UsingCustomNode)
       when haveBakers bakersTab
-      when haveNodes (nodesTab onlyOsNode)
+      when haveNodes $ do
+        nodesTab usingNodeOption
 
 everythingWindow :: Applicative f => f (Set (ClosedInterval (WithInfinity a)))
 everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
@@ -685,8 +695,8 @@ kilnUpdateAlert v = do
     Nothing
     body
 
-welcomeScreen :: forall t m js. MonadAppWidget js t m => Bool -> m ()
-welcomeScreen hasOsPubNode = mdo
+welcomeScreen :: forall t m js. MonadAppWidget js t m => Maybe UsingNodeOption -> m ()
+welcomeScreen usingNodeOption = mdo
   closeEv <- switch . current <$> widgetHold banner (pure never <$ closeEv)
   pure ()
   where
@@ -701,9 +711,15 @@ welcomeScreen hasOsPubNode = mdo
       divClass "welcome-description" $ do
         el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
         el "p" $ text $ "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
-          <> (if hasOsPubNode then " The Archival node, by Obsidian, has been added to provide a baseline source of network data." else "")
+          <> customMessage
         el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
       pure $ domEvent Click closeEl
+    customMessage = case usingNodeOption of
+      Just UsingArchivalNode -> " The Archival node, provided by Giganode, has been added to provide a baseline source of network data."
+      Just UsingCustomNode -> "You are currently using Kiln to run a custom network. Accordingly, the archivaln node has been disabled."
+      Nothing -> ""
+
+
 
 radioLabels :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Eq k) => k -> [(k, m ())] -> m (Dynamic t k)
 radioLabels k0 ks = divClass "ui buttons" $ mdo
@@ -1694,8 +1710,8 @@ nodesTab
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadAppWidget js  t (ModalM m)
     )
-  => Bool -> m ()
-nodesTab onlyOsNode =
+  => Maybe UsingNodeOption -> m ()
+nodesTab usingNodeOption =
   divClass "dashboard-section dashboard-section-nodes" $ do
     elClass "h4" "dashboard-section-title" $ text "Nodes"
     nodesDyn <- watchNodeAddresses
@@ -1764,9 +1780,10 @@ nodesTab onlyOsNode =
 
       -- Node tiles
       dyn_ $ ffor useBlocker $ \case
-        True -> case onlyOsNode of
-            False -> divClass "app-content app-welcome" $ welcomeScreen False
-            True -> waitingForResponse
+        True -> case usingNodeOption of
+            Just UsingCustomNode -> divClass "app-content app-welcome" $ welcomeScreen usingNodeOption
+            Just UsingArchivalNode -> divClass "app-content app-welcome" $ welcomeScreen Nothing
+            _ -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
           ebn <- snd <$$$$> watchErrorsByNode everythingWindow
 
