@@ -202,6 +202,7 @@ data FrontendConfig = FrontendConfig
   , _frontendConfig_checkForUpgrade :: !Bool
   , _frontendConfig_appVersion :: !Version
   , _frontendConfig_usingArchivalPublicNode :: !Bool
+  , _frontendConfig_usingCustomNode :: !Bool
   , _frontendConfig_logExportAvailable :: !Bool
   , _frontendConfig_ledgerConnectedChecks :: !Bool
   , _frontendConfig_tezosGitlabProjectId :: !Text

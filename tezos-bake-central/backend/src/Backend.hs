@@ -24,7 +24,7 @@ import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
+import Control.Monad.Logger (runNoLoggingT, LoggingT (..), MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
@@ -40,6 +40,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Time (NominalDiffTime)
 import Data.Time.Clock (nominalDay)
+import Data.Validation
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
 import Gargoyle.PostgreSQL.Connect (withDb)
@@ -85,7 +86,7 @@ import Tezos.Types
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common (worker', workerWithDelay)
 import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
-                      , _nodeConfigFile_network)
+                      , _nodeConfigFile_network, validateNodeConfigFile)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NodeCmd (bakerDaemonProcess, handleExportLogs, internalNodeWorker)
@@ -105,7 +106,7 @@ import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Node (DataSource, amendmentProcessWorker, nodeAlertWorker, nodeWorker,
                              protocolMonitorWorker, publicNodesWorker)
-import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker)
+import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker, computeChainId)
 import Backend.Workers.TezosRelease
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
@@ -262,6 +263,13 @@ backendImpl cfg serve = do
   -- Exceptions in non-strict languages are terrabad
   for_ ledgerCheckDelay (`seq` pure ())
 
+  let computeChainId' bins json = runNoLoggingT $ computeChainId Config.defaultKilnNodeRpcPort Config.defaultKilnDataDir bins json <&> \e -> toEither $ first toList (validateNodeConfigFile (Left json) *> validationNel e)
+
+  -- error out if chain id is invalaid
+  customChainId <- traverse (computeChainId' binaryPaths) nodeConfigFile >>= \case
+      Nothing -> pure Nothing
+      Just e -> either (throwString . T.unpack . T.intercalate ":") (pure . Just . Right) e
+
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
     publicDataSources' = catMaybes
@@ -364,7 +372,7 @@ backendImpl cfg serve = do
 
     runLoggingEnv logger $ runDb (Identity db) $ do
       let publicNode = PublicNode_Archival
-          enabled = enableArchivalPublicNode
+          enabled = enableArchivalPublicNode && isNothing customChainId
       cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
         project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
       now <- getTime
@@ -398,11 +406,6 @@ backendImpl cfg serve = do
       minLevel :: RawLevel
       minLevel = 2
 
-      -- changeRPCConf conf = conf
-            -- { _nodeConfigRPC_corsHeaders =
-
-            -- }
-
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
@@ -416,6 +419,7 @@ backendImpl cfg serve = do
         , _appConfig_binaryPaths = binaryPaths
         , _appConfig_tezosNodeEnvVar = tezosNodeEnvVar
         }
+
 
     dataSrc <- liftIO $ do
       hist <- newTVarIO $ emptyCache minLevel
@@ -431,7 +435,8 @@ backendImpl cfg serve = do
         , _nodeDataSource_latestHead = latestHead
         , _nodeDataSource_logger = logger
         , _nodeDataSource_ioQueue = ioQueue
-        , _nodeDataSource_archivalPublicNode = if enableArchivalPublicNode then NonEmpty.head <$> archivalNodeApi else Nothing
+        , _nodeDataSource_archivalPublicNode = if enableArchivalPublicNode && isNothing customChainId
+            then NonEmpty.head <$> archivalNodeApi else Nothing
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
         , _nodeDataSource_nodeForQuery = Nothing
         }
@@ -442,13 +447,15 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
       addFinalizer <=< worker' "readNodeDataSourceIOQueue" $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
+
       let
         frontendConfig = Config.FrontendConfig
-          { Config._frontendConfig_chain = chain
-          , Config._frontendConfig_chainId = chainId
+          { Config._frontendConfig_chain = fromMaybe chain customChainId
+          , Config._frontendConfig_chainId = maybe chainId (either (const $ error "impossible") id) customChainId
           , Config._frontendConfig_checkForUpgrade = checkForUpgrade
           , Config._frontendConfig_appVersion = version
-          , Config._frontendConfig_usingArchivalPublicNode = isJust $ _nodeDataSource_archivalPublicNode dataSrc
+          , Config._frontendConfig_usingArchivalPublicNode =  not (isJust customChainId) && isJust (_nodeDataSource_archivalPublicNode dataSrc)
+          , Config._frontendConfig_usingCustomNode = isJust customChainId
           , Config._frontendConfig_logExportAvailable = logExportAvailable
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
@@ -698,6 +705,9 @@ optsArgDescr =
 
   , mkReqArg Config.ledgerCheckDelay "SECONDS" (set opts_ledgerCheckDelaySeconds . Just . Config.parseSecondsUnsafe)
       "Check ledger connectivity every X seconds (off by default)"
+
+  , mkReqArg Config.nodeConfigFile "FILEPATH" (set opts_nodeConfigFile . Just . T.unpack)
+      "The file containing the custom tezos-node configuration (for running custom networks)"
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

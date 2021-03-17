@@ -70,14 +70,15 @@ validateNodeConfigFile :: NodeConfigFile -> Validation (NonEmpty Text) NodeConfi
 validateNodeConfigFile = \case
   Right r -> pure $ Right r
   Left json -> do
-   result <- (validationNel $ maybe (Left "network object unavailable") Right (json ^? key "network" . _Object)) >>=? \(Object -> network) ->
-       (validationNel $ maybe (Left "genesis object unavailable") Right (network ^? key "genesis" . _Object)) >>=? \(Object -> genesis) ->
+   result <- validationNel (maybe (Left "network unavailable") Right (json ^? key "network" . _Object)) >>=? \(Object -> network) ->
+       validationNel (maybe (Left "network.genesis unavailable") Right (network ^? key "genesis" . _Object)) >>=? \(Object -> genesis) ->
           do
-            validationNel $ maybe (Left "timestamp unavailable") Right (genesis ^? key "timestamp")
-            validationNel $ maybe (Left "block unavailable") Right (genesis ^? key "block")
-            validationNel $ maybe (Left "protocol unavailable") Right (genesis ^? key "protocol")
-            validationNel $ maybe (Left "chain_name unavailable") Right (network ^? key "chain_name")
-            validationNel $ maybe (Left "sandboxed_chain_name unavailable") Right (network ^? key "sandboxed_chain_name")
+            validationNel $ maybe (Left "data-dir unavailable") Right (json ^? key "data-dir")
+            validationNel $ maybe (Left "network.genesis.timestamp unavailable") Right (genesis ^? key "timestamp")
+            validationNel $ maybe (Left "network.genesis.block unavailable") Right (genesis ^? key "block")
+            validationNel $ maybe (Left "network.genesis.protocol unavailable") Right (genesis ^? key "protocol")
+            validationNel $ maybe (Left "network.genesis.chain_name unavailable") Right (network ^? key "chain_name")
+            validationNel $ maybe (Left "network.genesis.sandboxed_chain_name unavailable") Right (network ^? key "sandboxed_chain_name")
             pure json
 
    pure $ Left result
@@ -87,7 +88,7 @@ nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
     </> case _appConfig_kilnNodeConfig appConfig of
           Left json -> fromMaybe (error jsonOrEnvErrMsg) $ getDataDir json <|> _appConfig_tezosNodeEnvVar appConfig
           Right ncf -> fromMaybe (error "specify data-dir") (_nodeConfigFile_dataDir ncf) </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
-  where getDataDir json = T.unpack <$> json ^? key "data_dir" . _String
+  where getDataDir json = T.unpack <$> json ^? key "data-dir" . _String
         jsonOrEnvErrMsg = "Either specify data-dir in JSON config or point to the data directory in the TEZOS_NODE_DIR environment variable]"
 
 tezosClientDataDir :: AppConfig -> FilePath
