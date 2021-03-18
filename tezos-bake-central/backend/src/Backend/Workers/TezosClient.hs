@@ -28,12 +28,13 @@ import Data.Maybe (mapMaybe)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog
-import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
+import Database.Groundhog.Postgresql (Postgresql(..), SqlDb, in_)
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
+import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Safe
 import System.Directory (createDirectoryIfMissing)
@@ -252,7 +253,7 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
         pure ()
 
     where
-      inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+      inDb :: ReaderT AppConfig Serializable a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
 
       -- Regardless of updated time, we ought not to check the ledger if we are two levels around
@@ -273,7 +274,7 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
           _ -> pure True
         when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
 
-withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig Serializable a -> LoggingT IO a
 withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
 
 updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> Maybe BinaryPaths -> LoggingT IO ()

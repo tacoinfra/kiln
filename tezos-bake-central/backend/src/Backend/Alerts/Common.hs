@@ -1,9 +1,11 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
 module Backend.Alerts.Common where
 
+import Control.Monad.Base
 import Control.Monad.Logger (MonadLogger, logInfoS, logErrorS)
 import qualified Data.Text.Lazy as TL
 import Database.Groundhog.Core (Cond (CondEmpty), select)
@@ -12,6 +14,7 @@ import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Backend.DB (getTime)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ)
+import Rhyolite.Backend.DB.Serializable (Serializable)
 import Rhyolite.Backend.EmailWorker (queueEmail)
 
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
@@ -30,6 +33,7 @@ data Alert = Alert
 queueAlert
   :: ( PersistBackend m, PostgresLargeObject m, MonadIO m
      , MonadReader a m, HasAppConfig a, MonadLogger m
+     , MonadBase Serializable m
      )
   => Maybe (Id ErrorLog) -> Alert -> m ()
 queueAlert maybeLogId alert = do
@@ -60,7 +64,7 @@ queueTelegramAlert alert = do
 
 queueEmailAlert
   :: ( PersistBackend m, PostgresLargeObject m, MonadIO m
-     , MonadReader a m, HasAppConfig a
+     , MonadReader a m, HasAppConfig a, MonadBase Serializable m
      )
   => Alert -> m ()
 queueEmailAlert message = do

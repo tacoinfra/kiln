@@ -18,6 +18,7 @@ module Backend.Alerts where
 import Prelude hiding (log, cycle)
 import Data.Dependent.Sum
 import Control.Lens ((<&>))
+import Control.Monad.Base (MonadBase)
 import Control.Monad.Logger (MonadLogger)
 import Data.Map (Map())
 import qualified Data.Map as Map
@@ -34,6 +35,7 @@ import Database.PostgreSQL.Simple.Types (Identifier(..))
 import Rhyolite.Backend.DB (getTime, selectSingle, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, queryQ)
+import Rhyolite.Backend.DB.Serializable (Serializable)
 import Rhyolite.Schema (Json (..))
 import qualified Text.URI as Uri
 
@@ -56,6 +58,7 @@ import Common.App (errorLogIdForErrorLogView)
 import Common.Schema
 import ExtraPrelude
 
+import Orphans.Instances ()
 
 clearUnrelatedNetworkUpdateError :: (PersistBackend m, PostgresRaw m) => NamedChain -> m ()
 clearUnrelatedNetworkUpdateError namedChain = do
@@ -90,6 +93,7 @@ getBaker pkh = selectSingle $ Baker_publicKeyHashField `in_` [pkh]
 reportBakerDeactivated
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     , MonadBase Serializable m
      )
   => PublicKeyHash -> ProtoInfo -> Fitness -> m ()
 reportBakerDeactivated pkh protoInfo newFit = do
@@ -116,8 +120,9 @@ reportBakerDeactivated pkh protoInfo newFit = do
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivatedDescriptions log
 
 clearBakerDeactivated
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
-     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m),
+     PersistBackend m, PostgresLargeObject m, HasAppConfig a,
+     MonadBase Serializable m
      )
   => PublicKeyHash -> Fitness -> m ()
 clearBakerDeactivated pkh newFit = do
@@ -139,8 +144,9 @@ clearBakerDeactivated pkh newFit = do
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivatedDescriptions log) baker
 
 reportBakerDeactivationRisk
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
-     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m),
+     PersistBackend m, PostgresLargeObject m, HasAppConfig a,
+     MonadBase Serializable m
      )
   => PublicKeyHash -> Cycle -> Cycle -> ProtoInfo -> Fitness -> m ()
 reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
@@ -173,8 +179,9 @@ reportBakerDeactivationRisk pkh gracePeriod latestCycle protoInfo newFit = do
         queueAlert (Just logId) $ unresolvedBakerAlert $ bakerDeactivationRiskDescriptions log
 
 clearBakerDeactivationRisk
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
-     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m),
+     PersistBackend m, PostgresLargeObject m, HasAppConfig a,
+     MonadBase Serializable m
      )
   => PublicKeyHash -> Fitness -> m ()
 clearBakerDeactivationRisk pkh newFit = do
@@ -196,8 +203,9 @@ clearBakerDeactivationRisk pkh newFit = do
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
 reportBakerLedgerDisconnected
-  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
-     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m,
+     PersistBackend m, PostgresLargeObject m, HasAppConfig a,
+     MonadBase Serializable m
      )
   => PublicKeyHash -> m ()
 reportBakerLedgerDisconnected pkh = do
@@ -222,7 +230,8 @@ reportBakerLedgerDisconnected pkh = do
 
 clearBakerLedgerDisconnected
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
-     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a,
+       MonadBase Serializable m
      )
   => PublicKeyHash -> m ()
 clearBakerLedgerDisconnected pkh = do
@@ -289,6 +298,7 @@ clearInsufficientFunds baker = do
 reportInaccessibleNodeError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
      , HasAppConfig a, MonadReader a m, SqlDb (PhantomDb m)
+     , MonadBase Serializable m
      , MonadLogger m)
   => Id Node -> m ()
 reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
@@ -317,7 +327,8 @@ reportInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
 clearInaccessibleNodeError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m
      , SqlDb (PhantomDb m)
-     , MonadReader a m, HasAppConfig a)
+     , MonadReader a m, HasAppConfig a
+     , MonadBase Serializable m)
   => Id Node -> m ()
 clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
@@ -339,6 +350,7 @@ clearInaccessibleNodeError nodeId = when' (nodeNotDeleted nodeId) $ do
 reportNodeWrongChainError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , SqlDb (PhantomDb m)
+     , MonadBase Serializable m
      , MonadLogger m)
   => Id Node -> ChainId -> ChainId -> m ()
 reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotDeleted nodeId) $ do
@@ -368,6 +380,7 @@ reportNodeWrongChainError nodeId expectedChainId actualChainId = when' (nodeNotD
 clearNodeWrongChainError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m
      , SqlDb (PhantomDb m)
+     , MonadBase Serializable m
      , MonadReader a m, HasAppConfig a) => Id Node -> m ()
 clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
@@ -387,6 +400,7 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
 
 reportNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+      MonadBase Serializable m,
       MonadLogger m, SqlDb (PhantomDb m))
   => Id Node -> Int -> Word64 -> m ()
 reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nodeNotDeleted nodeId) $ do
@@ -414,6 +428,7 @@ reportNodeInvalidPeerCountError nodeId minPeerCount actualPeerCount = when' (nod
 
 clearNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, MonadLogger m,
+      MonadBase Serializable m,
       MonadReader a m, HasAppConfig a, SqlDb (PhantomDb m)) => Id Node -> m ()
 clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
@@ -433,6 +448,7 @@ clearNodeInvalidPeerCountError nodeId = when' (nodeNotDeleted nodeId) $ do
 
 reportInternalNodeFailed
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+      MonadBase Serializable m,
       MonadLogger m)
   => Id ProcessData -> InternalNodeFailureReason -> m ()
 reportInternalNodeFailed pid reason = do
@@ -462,6 +478,7 @@ reportInternalNodeFailed pid reason = do
 reportVotingReminderError
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m
      , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     , MonadBase Serializable m
      )
   => ChainId
   -> Id Baker
@@ -550,6 +567,7 @@ reportBadNodeHeadError
   :: forall m a latestHead nodeHead lca.
      ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , SqlDb (PhantomDb m)
+     , MonadBase Serializable m
      , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
   => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
@@ -593,6 +611,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
 clearBadNodeHeadError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m
      , SqlDb (PhantomDb m)
+     , MonadBase Serializable m
      , MonadIO m, MonadReader a m, HasAppConfig a)
   => Id Node -> m ()
 clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
@@ -645,6 +664,7 @@ bakerNotDeleted pkh = all not <$> project
 reportMissedBake
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
      , SqlDb (PhantomDb m)
+     , MonadBase Serializable m
      , MonadLogger m)
   => UTCTime -> Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 reportMissedBake bakeTime f right pkh lvl = when' (bakerNotDeleted pkh) $ do
@@ -717,6 +737,7 @@ accusedBakeLog pkh chainId opHash blkHash =
 reportAccusation
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
      , SqlDb (PhantomDb m)
+     , MonadBase Serializable m
      , MonadLogger m)
   => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
 reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
@@ -743,7 +764,9 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
       RightKind_Baking -> "baked"
       RightKind_Endorsing -> "endorsed"
 
-clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r, MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r
+                   , MonadBase Serializable m
+                   , MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 clearMissedBake f right pkh lvl = do
   chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBakerMissed] <- stripOnly <$> [queryQ|

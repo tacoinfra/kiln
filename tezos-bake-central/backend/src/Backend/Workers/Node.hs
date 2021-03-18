@@ -22,7 +22,7 @@ import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
-import Control.Monad.Logger (LoggingT, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
@@ -45,7 +45,7 @@ import Data.Time (NominalDiffTime, diffUTCTime)
 import qualified Data.Text as T
 import Data.Word
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql, in_, isFieldNothing, (&&.), (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql(..), in_, isFieldNothing, (&&.), (=.), (==.))
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
@@ -55,6 +55,7 @@ import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
+import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
@@ -255,7 +256,7 @@ versionWorker httpMgr baseUrl = do
         return $ either (const Nothing) (decode' . Http.getResponseBody) commitResp'
 
 updateNetworkStats
-  :: (MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
+  :: (MonadIO m, MonadLoggerIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
   => AppConfig
   -> Http.Manager
   -> Pool Postgresql
@@ -320,7 +321,7 @@ nodeData_alias = either (const $ Just "Kiln managed node") _nodeExternalData_ali
 --
 -- TODO do join in database, not Haskell. Also don't get all the data
 getNodes
-  :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m
+  :: ( MonadIO m, MonadLoggerIO m, MonadLogger m, MonadBaseNoPureAborts IO m
      , HasSelectOptions cond Postgresql (RestrictionHolder NodeDetails NodeDetailsConstructor)
      )
   => Pool Postgresql
@@ -454,7 +455,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       $(logInfo) $ "start monitor on " <> Uri.render nodeAddr
 
   where
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => ReaderT AppConfig (DbPersist Postgresql m) a -> m a
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => ReaderT AppConfig Serializable a -> m a
     inDb = runDb (Identity db) . flip runReaderT appConfig
 
 type DataSource = (PublicNode, Either NamedChain ChainId, URI)
@@ -962,7 +963,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
   (mainProto, altProto) <- getProtocol
 
   let
-    inDb :: DbPersist Postgresql (LoggingT IO) a -> LoggingT IO a
+    inDb :: Serializable a -> LoggingT IO a
     inDb = runDb (Identity db)
     setControl c ps = update [ProcessData_controlField =. c] (AutoKeyField `in_` map fromId ps)
 
@@ -1020,6 +1021,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
 
 waitTillEndOfCycle
   :: ( MonadIO m
+     , MonadLoggerIO m
      , MonadLogger m
      , BlockLike blk
      , MonadBaseNoPureAborts IO m

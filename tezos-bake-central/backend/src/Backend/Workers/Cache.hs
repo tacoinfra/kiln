@@ -16,6 +16,7 @@ import Data.Either (partitionEithers)
 import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
+import Database.Groundhog.Postgresql (Postgresql(..))
 import Database.PostgreSQL.Simple.SqlQQ (sql)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (executeMany)

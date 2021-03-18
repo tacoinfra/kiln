@@ -17,7 +17,7 @@ import Control.Exception.Safe (try)
 import Control.Lens (findOf, maximumByOf)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (MonadLogger, logError, logInfo)
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logError, logInfo)
 import Data.Aeson
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
@@ -48,6 +48,8 @@ import Common.Alerts
 import ExtraPrelude
 import Tezos.Types
 
+import Orphans.Instances ()
+
 upgradeCheckWorker
   :: MonadIO m
   => NamedChain
@@ -67,7 +69,7 @@ upgradeCheckWorker chain mrelease gitLabProjectId delay logger httpMgr db appCon
     void $ updateUpstreamVersion httpMgr (runDb (Identity db))
 
 notifyChainUpgrade
-  :: ( MonadIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
+  :: ( MonadIO m, MonadLoggerIO m, MonadLogger m, MonadBaseNoPureAborts IO m)
   => NamedChain
   -> Maybe Text
   -> Text
