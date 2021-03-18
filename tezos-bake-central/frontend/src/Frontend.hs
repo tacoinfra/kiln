@@ -297,14 +297,14 @@ appSidebar = do
                    elAttr "small" ("style" =: "position: absolute; left:30px;") $
                    text $ "Latest Tezos Release: " <> v)
 
-routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
+routeSelector' :: (Prerender js t m, DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
                => R r -> (e -> ch -> m a) -> e -> ch -> m a
 routeSelector' dest con cfg child = do
   r <- askRoute
   let activated = ffor r $ bool "" "active" . (== dest)
   routeLink dest $ con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
 
-routeSelector :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
+routeSelector :: (Prerender js t m, DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
               => R r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
 routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
@@ -1486,13 +1486,13 @@ startNodeWorkflow backWF = Workflow $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
       divClass "file-selection" $ do
         rec
-          let fileName = headMay <$> value fi
+          let fileName = headMay <$> _inputElement_files fi
           dyn_ $ ffor fileName $ mapM $ \file -> do
             name <- liftJSM $ File.getName file
             divClass "file-name" $ text name
           elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
-          fi <- fileInput $ (def :: FileInputConfig t)
-            & fileInputConfig_attributes .~ constDyn ("id" =: "fileId")
+          fi <- inputElement $ def
+            & initialAttributes .~ ("id" =: "fileId")
         pure fileName
     (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
       divClass "" $ text "Peer to Peer Download"

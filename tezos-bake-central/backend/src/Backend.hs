@@ -24,7 +24,7 @@ import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
+import Control.Monad.Logger (LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
@@ -55,6 +55,7 @@ import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
+import Rhyolite.Backend.DB.Serializable
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
 import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender (..),
@@ -305,7 +306,7 @@ backendImpl cfg serve = do
           -> Field NodeExternal NodeExternalConstructor (DeletableRow NodeExternalData)
           -> SubField Postgresql NodeExternal NodeExternalConstructor URI
           -> SubField Postgresql NodeExternal NodeExternalConstructor (Maybe Text)
-          -> DbPersist Postgresql (LoggingT IO) (Map.Map URI (Maybe Text))
+          -> Serializable (Map.Map URI (Maybe Text))
         updateNodesAndAlias names deletable nameSelector aliasSelector = do
           update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
           update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
@@ -319,7 +320,7 @@ backendImpl cfg serve = do
           -> Field Baker BakerConstructor (DeletableRow BakerData)
           -> Field Baker BakerConstructor PublicKeyHash
           -> SubField Postgresql Baker BakerConstructor (Maybe Text)
-          -> DbPersist Postgresql (LoggingT IO) (Map.Map PublicKeyHash (Maybe Text))
+          -> Serializable (Map.Map PublicKeyHash (Maybe Text))
         updateBakersAndAlias names deletable nameSelector aliasSelector = do
           update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
           update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
@@ -518,6 +519,7 @@ clearMailQueueWithDynamicEmailEnv
   , MonadIO m
   , MonadBaseNoPureAborts IO m
   , MonadLogger m
+  , MonadLoggerIO m
   )
   => f (Pool Postgresql)
   -> m ()
