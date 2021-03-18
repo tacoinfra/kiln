@@ -127,6 +127,7 @@ library
     Backend.Common
     Backend.Common.Baker
     Backend.Common.Node
+    Backend.Common.TezosRelease
     Backend.Common.Worker
     Backend.Config
     --Backend.Graphs

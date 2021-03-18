@@ -14,17 +14,14 @@ module Backend.Upgrade where
 
 import Control.Error hiding (err, isRight)
 import Control.Exception.Safe (try)
-import Control.Lens (findOf, maximumByOf)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logError, logInfo)
 import Data.Aeson
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
-import Data.Ord
 import Data.Pool (Pool)
 import qualified Data.Text as T
-import qualified Data.Text.Read  as T
 import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Version as V
 import Database.Groundhog.Postgresql
@@ -40,7 +37,7 @@ import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
 import Backend.Alerts
 import Backend.Alerts.Common
 import Backend.Config (AppConfig(..))
-import Backend.Common (workerWithDelay)
+import Backend.Common
 import Backend.Schema
 import Backend.Version (parseVersion)
 import Common.Schema
@@ -179,28 +176,6 @@ getTezosReleaseCommit httpMgr projectId mrelease = do
                 Nothing -> msg <> " at latest release."
                 Just s -> msg <> " found for this release: " <> s <> "."
          Just commit -> Right $ TezosVersion (Left commit)
-
-
-getReleaseTag :: Value -> Maybe (Int, Int)
-getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
-
-getRelease :: AsValue s => Maybe Text -> (Value -> Maybe c) -> s -> Maybe c
-getRelease mr f = case mr of
-   Nothing ->
-       maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> f
-   Just release ->
-       findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> f
-
-parseMajorMinorVersion :: Text -> Either String (Int,Int)
-parseMajorMinorVersion version = do
-  (leadingv, rest1) <- maybe (Left "Can't parse") Right $ T.uncons version
-  guard $ leadingv == 'v'
-  (major, rest2) <- T.decimal @Int rest1
-  (dot, rest3) <- maybe (Left "Missing dot") Right $ T.uncons rest2
-  guard $ dot == '.'
-  (minor, rest4) <- T.decimal @Int rest3
-  guard $ T.null rest4
-  return (major, minor)
 
 gitlabApiBaseUrl :: Text
 gitlabApiBaseUrl = "https://gitlab.com/api/v4"

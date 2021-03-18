@@ -21,13 +21,11 @@
 
 module Frontend where
 
-import Control.Lens (imap, to, (<>~), findOf, maximumByOf)
+import Control.Lens (imap, to, (<>~))
 import Control.Monad (unless)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
-import qualified Data.Aeson as A
-import Data.Aeson.Lens
 import Data.Bool (bool)
 import Data.Constraint.Extras
 import Data.Default
@@ -40,12 +38,11 @@ import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
-import Data.Ord (comparing, Down (..))
+import Data.Ord (Down (..))
 import qualified Data.Set as Set
 import Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Text.Read  as T
 import qualified Data.Time as Time
 import Data.Version
 import Data.Word (Word64)
@@ -382,32 +379,6 @@ appSideFooter =
                   Just uv | Just v <- _upstreamVersion_version uv , v > currentVersion ->
                     elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
                   _ -> pure ()
-
-getReleaseTag :: A.Value -> Maybe (Int, Int)
-getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
-
-hush :: Either b a -> Maybe a
-hush = \case
-    Left _ -> Nothing
-    Right r -> Just r
-
-getRelease :: AsValue s => Maybe Text -> (A.Value -> Maybe c) -> s -> Maybe c
-getRelease mr f = case mr of
-   Nothing ->
-       maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> f
-   Just release ->
-       findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> f
-
-parseMajorMinorVersion :: Text -> Either String (Int,Int)
-parseMajorMinorVersion version = do
-  (leadingv, rest1) <- maybe (Left "Can't parse") Right $ T.uncons version
-  guard $ leadingv == 'v'
-  (major, rest2) <- T.decimal @Int rest1
-  (dot, rest3) <- maybe (Left "Missing dot") Right $ T.uncons rest2
-  guard $ dot == '.'
-  (minor, rest4) <- T.decimal @Int rest3
-  guard $ T.null rest4
-  return (major, minor)
 
 appHeader
   :: forall r m t js.
@@ -1611,7 +1582,7 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
   text "This Node can only be turned off via "
-  let url = "https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md#enable-obsidian-node-bool"
+  let url = "https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md#enable-archival-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
 publicNodeOptions :: MonadAppWidget js t m => Either NamedChain ChainId -> m ()

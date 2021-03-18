@@ -16,7 +16,7 @@ Archival node may not be properly syncing on Delphi and cause issues for the Kil
 sudo su -
 cd /var/lib/kiln/exe-dir/
 mkdir -p config
-echo false > config/enable-obsidian-node
+echo false > config/enable-archival-node
 systemctl stop kiln
 systemctl start kiln
 ```
@@ -27,7 +27,7 @@ systemctl start kiln
 ```
 cd ~/Library/Kiln
 mkdir -p config
-echo false > config/enable-obsidian-node
+echo false > config/enable-archival-node
 launchctl stop tezos.kiln
 launchctl start tezos.kiln
 ```
