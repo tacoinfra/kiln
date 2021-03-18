@@ -29,7 +29,7 @@ import Data.Maybe (mapMaybe)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog
-import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
+import Database.Groundhog.Postgresql (Postgresql(..), SqlDb, in_)
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Database.PostgreSQL.Simple as Pg
@@ -55,8 +55,8 @@ import Tezos.Types
 
 import Backend.Alerts
 import Backend.CachedNodeRPC
-import Backend.Common (addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
-import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI',kilnNodeRpcURI, BinaryPaths(..))
+import Backend.Common (AppSerializable, addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
+import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI, BinaryPaths(..))
 import Backend.IndexQueries
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
@@ -255,7 +255,7 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
         pure ()
 
     where
-      inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+      inDb :: AppSerializable a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
 
       -- Regardless of updated time, we ought not to check the ledger if we are two levels around
@@ -276,7 +276,7 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
           _ -> pure True
         when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
 
-withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+withDbAndConfig :: Pool Postgresql -> AppConfig -> AppSerializable a -> LoggingT IO a
 withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
 
 updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> Maybe BinaryPaths -> LoggingT IO ()

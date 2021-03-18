@@ -28,8 +28,9 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Time.Clock (NominalDiffTime)
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql, (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql(..), (=.), (==.))
 import Rhyolite.Backend.DB (getTime, runDb, project1, MonadBaseNoPureAborts)
+import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging
 import Safe
 import qualified Snap.Core as Snap
@@ -62,7 +63,7 @@ handleSnapshotUpload appConfig nds lockMVar = do
     `catch` (\(e :: IOException) -> runLoggingEnv logger $ $(logWarn) ("Make dir failed: " <> tshow uploadTmpLocation <> "\nError: " <> tshow e))
   void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
   where
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => Serializable a -> m a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
 
     logger = _nodeDataSource_logger nds
@@ -144,7 +145,7 @@ cleanupDir dir = do
 -- Jul  6 19:45:46 - shell.snapshots: Successful import from file ./.kiln/snapshots/main.snapshot
 
 importSnapshotData
-  :: (MonadLogger m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
+  :: (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
   => AppConfig
   -> NodeDataSource
   -> SnapshotMeta
@@ -156,7 +157,7 @@ importSnapshotData appConfig nds sm smId = do
     nodePath = nixNodePath
     dataDir = nodeDataDir appConfig
     storePath = T.unpack $ _snapshotMeta_storePath sm
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLogger m) => DbPersist Postgresql m a -> m a
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => Serializable a -> m a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
 
   $(logDebug) "importSnapshotData: cleaning old data dir"
