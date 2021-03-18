@@ -58,7 +58,7 @@ import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 import Backend.Config (AppConfig (..), HasAppConfig)
 import Backend.Alerts
 import Backend.CachedNodeRPC
-import Backend.Common (worker')
+import Backend.Common (worker', AppSerializable)
 import Backend.Config (AppConfig (..))
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle, getLatestProtocolConstants)
 import Backend.Schema
@@ -283,7 +283,7 @@ getWantedAction
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare
   , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare, MonadLoggerIO mPrepare
   )
-  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (ReaderT AppConfig Serializable ())
+  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (AppSerializable ())
 getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   let
     headHash = headBlock ^. hash
@@ -307,9 +307,9 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     . fromMaybe ([headHash], [])
     <$> enumerateBranches headHash detailsBranch
   $(logDebugSH) ("getWantedAction" :: Text, baker, headHash, headLvl, headBranch)
-  bakingEndorsingAlerts :: [ReaderT AppConfig Serializable ()] <- for headBranch $ \(lvl, thisHash) -> do
+  bakingEndorsingAlerts :: [AppSerializable ()] <- for headBranch $ \(lvl, thisHash) -> do
     bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
-    bakingAlerts :: [ReaderT AppConfig Serializable ()]
+    bakingAlerts :: [AppSerializable ()]
                  <- whenM (any (\br -> ((== 0) . _bakingRights_priority) br && ((== _baker_publicKeyHash baker) . _bakingRights_delegate) br) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
@@ -322,7 +322,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
 
     -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
-    endorsingAlerts :: [ReaderT AppConfig Serializable ()]
+    endorsingAlerts :: [AppSerializable ()]
                     <- whenM (elem (_baker_publicKeyHash baker) $ _endorsingRights_delegate <$> endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
@@ -351,7 +351,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
       let
         gracePeriod = _cacheDelegateInfo_gracePeriod di
 
-        updateDetails :: ReaderT AppConfig Serializable ()
+        updateDetails :: AppSerializable ()
         updateDetails = do
           existingIds <- project BakerDetails_publicKeyHashField
             ( BakerDetails_publicKeyHashField ==. delegatePkh
@@ -378,7 +378,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
 
         -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
         -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.
-        deactivationAlerts :: ReaderT AppConfig Serializable ()
+        deactivationAlerts :: AppSerializable ()
         deactivationAlerts =
           if _cacheDelegateInfo_deactivated di
             then do
@@ -392,7 +392,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
 
         isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
 
-        insufficientFundAlerts :: ReaderT AppConfig Serializable ()
+        insufficientFundAlerts :: AppSerializable ()
         insufficientFundAlerts = bool clearInsufficientFunds reportInsufficientFunds isInsufficientFunds baker
 
         -- updateBakerDataInternal :: mCommit ()

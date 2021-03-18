@@ -17,7 +17,6 @@ import Control.Exception.Safe (try)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logError, logInfo)
-import Data.Aeson
 import Data.Aeson.Lens
 import qualified Data.ByteString.Lazy as Bz
 import Data.Pool (Pool)

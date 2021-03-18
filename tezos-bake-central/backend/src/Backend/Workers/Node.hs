@@ -73,7 +73,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError,
                        clearPastVotingPeriodErrors, reportVotingReminderError)
 import Backend.CachedNodeRPC
-import Backend.Common (unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
+import Backend.Common (AppSerializable, unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.IndexQueries
 import Backend.Schema
@@ -455,7 +455,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       $(logInfo) $ "start monitor on " <> Uri.render nodeAddr
 
   where
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => ReaderT AppConfig Serializable a -> m a
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => AppSerializable a -> m a
     inDb = runDb (Identity db) . flip runReaderT appConfig
 
 type DataSource = (PublicNode, Either NamedChain ChainId, URI)
