@@ -1,3 +1,4 @@
+{-# language ApplicativeDo #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -6,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -13,11 +15,14 @@ module Backend.Config where
 
 import Control.Lens (Lens', view)
 import Control.Monad.Reader (MonadReader, asks)
+import Data.Aeson (Value(..))
 import Data.Either (fromRight)
+import Data.Validation
 import Data.Word
 import Network.Mail.Mime (Address)
 import System.FilePath ((</>))
 import Text.URI (URI)
+import Data.Aeson.Lens
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Text as T
@@ -39,6 +44,7 @@ data AppConfig = AppConfig
   , _appConfig_chainId :: ChainId
   , _appConfig_kilnNodeCustomArgs :: Maybe Text
   , _appConfig_binaryPaths :: Maybe BinaryPaths
+  , _appConfig_tezosNodeEnvVar :: Maybe FilePath
   }
 
 class HasAppConfig a where
@@ -51,19 +57,47 @@ askAppConfig :: (HasAppConfig a, MonadReader a m) => m AppConfig
 askAppConfig = asks $ view getAppConfig
 
 kilnNodeRpcURI :: AppConfig -> URI
-kilnNodeRpcURI appConfig = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
-  Uri.mkURI ("http://127.0.0.1:" <> tshow (_appConfig_kilnNodeRpcPort appConfig))
+kilnNodeRpcURI = kilnNodeRpcURI' . _appConfig_kilnNodeRpcPort
+
+kilnNodeRpcURI' :: Port -> URI
+kilnNodeRpcURI' port = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> show defaultKilnNodeRpcPort) $
+  Uri.mkURI ("http://127.0.0.1:" <> tshow port)
+
+(>>=?) :: Validation e a -> (a -> Validation e b) -> Validation e b
+v >>=? f = bindValidation v f
+
+validateNodeConfigFile :: NodeConfigFile -> Validation (NonEmpty Text) NodeConfigFile
+validateNodeConfigFile = \case
+  Right r -> pure $ Right r
+  Left json -> do
+   result <- validationNel (maybe (Left "network unavailable") Right (json ^? key "network" . _Object)) >>=? \(Object -> network) ->
+       validationNel (maybe (Left "network.genesis unavailable") Right (network ^? key "genesis" . _Object)) >>=? \(Object -> genesis) ->
+          do
+            validationNel $ maybe (Left "data-dir unavailable") Right (json ^? key "data-dir")
+            validationNel $ maybe (Left "network.genesis.timestamp unavailable") Right (genesis ^? key "timestamp")
+            validationNel $ maybe (Left "network.genesis.block unavailable") Right (genesis ^? key "block")
+            validationNel $ maybe (Left "network.genesis.protocol unavailable") Right (genesis ^? key "protocol")
+            validationNel $ maybe (Left "network.genesis.chain_name unavailable") Right (network ^? key "chain_name")
+            validationNel $ maybe (Left "network.genesis.sandboxed_chain_name unavailable") Right (network ^? key "sandboxed_chain_name")
+            pure json
+
+   pure $ Left result
 
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
-  </> fromMaybe (error "specify data-dir") (_nodeConfigFile_dataDir $ _appConfig_kilnNodeConfig appConfig)
-  </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
+    </> case _appConfig_kilnNodeConfig appConfig of
+          Left json -> fromMaybe (error jsonOrEnvErrMsg) $ getDataDir json <|> _appConfig_tezosNodeEnvVar appConfig
+          Right ncf -> fromMaybe (error "specify data-dir") (_nodeConfigFile_dataDir ncf) </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
+  where getDataDir json = T.unpack <$> json ^? key "data-dir" . _String
+        jsonOrEnvErrMsg = "Either specify data-dir in JSON config or point to the data directory in the TEZOS_NODE_DIR environment variable]"
 
 tezosClientDataDir :: AppConfig -> FilePath
 tezosClientDataDir appConfig = _appConfig_kilnDataDir appConfig </> "tezos-client"
 
-defaultNodeConfigFile :: NodeConfigFile
-defaultNodeConfigFile = NodeConfigFile
+type NodeConfigFile = Either Value NodeConfigFile'
+
+defaultNodeConfigFile :: NodeConfigFile'
+defaultNodeConfigFile = NodeConfigFile'
   { _nodeConfigFile_p2p = NodeConfigP2P
     { _nodeConfigP2P_expectedProofOfWork = Nothing
     , _nodeConfigP2P_bootstrapPeers = Nothing
@@ -173,7 +207,7 @@ data NodeConfigShellChainValidator = NodeConfigShellChainValidator
   , _nodeConfigShellChainValidator_workerZombieMemory :: !(Maybe Double)
   }
 
-data NodeConfigFile = NodeConfigFile
+data NodeConfigFile' = NodeConfigFile'
   { _nodeConfigFile_p2p :: !NodeConfigP2P
   , _nodeConfigFile_dataDir :: !(Maybe FilePath)
   , _nodeConfigFile_rpc :: !(Maybe NodeConfigRPC)
@@ -195,7 +229,7 @@ concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
     . Aeson.fieldLabelModifier tezosJsonOptions
   , Aeson.omitNothingFields = True
     })
-  [ ''NodeConfigFile
+  [ ''NodeConfigFile'
   , ''NodeConfigLog
   , ''NodeConfigP2P
   , ''NodeConfigRPC

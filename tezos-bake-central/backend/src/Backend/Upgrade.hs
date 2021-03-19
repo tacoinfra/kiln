@@ -12,6 +12,9 @@
 
 module Backend.Upgrade where
 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 import Control.Error hiding (err, isRight)
 import Control.Exception.Safe (try)
 import Control.Monad

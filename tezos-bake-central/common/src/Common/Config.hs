@@ -6,7 +6,7 @@
 
 module Common.Config where
 
-import Control.Lens.TH (makeLenses)
+import Control.Lens.TH (makeLenses, makePrisms)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import qualified Data.List.NonEmpty as NE
@@ -122,6 +122,9 @@ blockscaleApiUri = "blockscale-api-uri"
 archivalNodeApiUri :: FilePath
 archivalNodeApiUri = "archival-node-api-uri"
 
+nodeConfigFile :: FilePath
+nodeConfigFile = "node-config-file"
+
 nodes :: FilePath
 nodes = "nodes"
 
@@ -193,17 +196,25 @@ parsePortUnsafe = unsafeParse "port number" $ \a -> case readMaybe (T.unpack a) 
   Nothing -> Left "Not a port number"
   Just b -> Right b
 
+data UsingNodeOption =
+  UsingArchivalNode
+  | UsingCustomNode Aeson.Value
+  deriving (Eq, Show, Generic)
+
+instance Aeson.ToJSON UsingNodeOption
+instance Aeson.FromJSON UsingNodeOption
+
 data FrontendConfig = FrontendConfig
   { _frontendConfig_chain :: !(Either NamedChain ChainId)
   , _frontendConfig_chainId :: !ChainId
   , _frontendConfig_checkForUpgrade :: !Bool
   , _frontendConfig_appVersion :: !Version
-  , _frontendConfig_usingArchivalPublicNode :: !Bool
+  , _frontendConfig_usingNodeOption :: !(Maybe UsingNodeOption)
   , _frontendConfig_logExportAvailable :: !Bool
   , _frontendConfig_ledgerConnectedChecks :: !Bool
   , _frontendConfig_tezosGitlabProjectId :: !Text
   , _frontendConfig_tezosRelease :: !(Maybe Text)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+  } deriving (Eq, Show, Generic, Typeable)
 
 class HasFrontendConfig r where
   frontendConfig :: Lens' r FrontendConfig
@@ -211,6 +222,7 @@ class HasFrontendConfig r where
 instance HasFrontendConfig FrontendConfig where
   frontendConfig = id
 
+makePrisms ''UsingNodeOption
 makeLenses ''FrontendConfig
 concat <$> traverse (deriveJSON $ defaultTezosCompatJsonOptions { Aeson.omitNothingFields = True })
   [ 'FrontendConfig
