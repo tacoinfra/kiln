@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -Wall -Werror -fmax-pmcheck-iterations=100000000 #-}
+{-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.NotifyHandler where
 
@@ -55,39 +55,40 @@ notifyHandler
   -> m (BakeView a)
 notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $
   --  $(logDebugS) "NotifyHandler" (T.decodeUtf8 $ LBS.toStrict $ Aeson.encode $ _notifyMessage_value notifyMessage) *>
+  {- We run use runIdentity here to help the typechecker out. Otherwise we use a ton of memory.-}
   case _dbNotification_message notification of
-    NotifyTag_Baker :=> Identity (bid, mBaker) -> handleBaker bid mBaker
-    NotifyTag_BakerDetails :=> Identity bakerDetails -> handleBakerDetails bakerDetails
-    NotifyTag_BakerRightsProgress :=> Identity (_x, y, _z) -> handleBakerAddress (_bakerRightsCycleProgress_publicKeyHash y)
+    NotifyTag_Baker :=> args -> runIdentity $ uncurry handleBaker <$> args
+    NotifyTag_BakerDetails :=> bakerDetails -> runIdentity $ handleBakerDetails <$> bakerDetails
+    NotifyTag_BakerRightsProgress :=> args -> runIdentity $ (handleBakerAddress . _bakerRightsCycleProgress_publicKeyHash . snd) <$> args
     NotifyTag_ErrorLog tag :=> Identity eid ->
       logAssume tag $ handleErrorLog (errorLogIdForErrorLogView . (tag :=>) . Identity) tag eid
-    NotifyTag_ProtocolIndex :=> Identity eid -> handleParameters eid
-    NotifyTag_MailServerConfig :=> Identity (_eid, cfg) -> handleMailServer cfg
-    NotifyTag_NodeExternal :=> Identity (eid, ent) -> (<>) <$> handleNodeExternal eid ent <*> alsoEveryBakerSummary
-    NotifyTag_NodeInternal :=> Identity (eid, ent) -> (<>) <$> handleNodeInternal eid ent <*> alsoEveryBakerSummary
-    NotifyTag_NodeDetails :=> Identity (eid, ent) -> (<>) <$> handleNodeDetails eid ent <*> alsoEveryBakerSummary
+    NotifyTag_ProtocolIndex :=> eid -> runIdentity $ handleParameters <$> eid
+    NotifyTag_MailServerConfig :=> args -> runIdentity $ handleMailServer . snd <$> args
+    NotifyTag_NodeExternal :=> args -> runIdentity $ (liftA2 (flip (<>)) alsoEveryBakerSummary) . uncurry handleNodeExternal <$> args
+    NotifyTag_NodeInternal :=> args -> runIdentity $ (liftA2 (flip (<>)) alsoEveryBakerSummary) . uncurry handleNodeInternal <$> args
+    NotifyTag_NodeDetails :=> args -> runIdentity $ (liftA2 (flip (<>)) alsoEveryBakerSummary) . uncurry handleNodeDetails <$> args
     NotifyTag_Notificatee :=> _eid -> handleNotificatee
-    NotifyTag_PublicNodeConfig :=> Identity (_eid, ent) -> handlePublicNodeConfig ent
-    NotifyTag_PublicNodeHead :=> Identity (eid, ent) -> handlePublicNodeHead eid ent
-    NotifyTag_SnapshotMeta :=> Identity ent -> handleSnapshotMeta ent
-    NotifyTag_TelegramConfig :=> Identity (_eid, ent) -> handleTelegramConfig ent
-    NotifyTag_TelegramRecipient :=> Identity (eid, ent) -> handleTelegramRecipient eid ent
-    NotifyTag_UpstreamVersion :=> Identity (_eid, ent) -> handleUpstreamVersion ent
-    NotifyTag_ConnectedLedger :=> Identity mli -> handleConnectedLedger mli
-    NotifyTag_ShowLedger :=> Identity (sk, epkh) -> handleShowLedger sk epkh
-    NotifyTag_Prompting :=> Identity (sk, step) -> handlePrompting sk step
-    NotifyTag_VotePrompting :=> Identity (sk, step) -> handleVotePrompting sk step
-    NotifyTag_RightNotificationSettings :=> Identity (rk, mrnl) -> handleRightNotificationSettings rk mrnl
-    NotifyTag_Amendment :=> Identity (k, ma) -> handleAmendment k ma
-    NotifyTag_Proposals :=> Identity (pid, mp) -> handleProposals pid mp
-    NotifyTag_PeriodTestingVote :=> Identity ma -> handlePeriodTestingVote ma
-    NotifyTag_PeriodTesting :=> Identity ma -> handlePeriodTesting ma
-    NotifyTag_PeriodPromotionVote :=> Identity ma -> handlePeriodPromotionVote ma
-    NotifyTag_PeriodAdoption :=> Identity ma -> handlePeriodAdoption ma
-    NotifyTag_BakerVote :=> Identity ma -> handleBakerVote ma
-    NotifyTag_BakerRegistered :=> Identity (pkh, b) -> handleBakerRegistered pkh b
+    NotifyTag_PublicNodeConfig :=> args -> runIdentity $ handlePublicNodeConfig . snd <$> args
+    NotifyTag_PublicNodeHead :=> args -> runIdentity $ uncurry handlePublicNodeHead <$> args
+    NotifyTag_SnapshotMeta :=> arg -> runIdentity $ handleSnapshotMeta <$> arg
+    NotifyTag_TelegramConfig :=> args -> runIdentity $ handleTelegramConfig . snd <$> args
+    NotifyTag_TelegramRecipient :=> args -> runIdentity $ uncurry handleTelegramRecipient <$> args
+    NotifyTag_UpstreamVersion :=> args -> runIdentity $ handleUpstreamVersion . snd <$> args
+    NotifyTag_ConnectedLedger :=> args -> runIdentity $ handleConnectedLedger <$> args
+    NotifyTag_ShowLedger :=> args -> runIdentity $ uncurry handleShowLedger <$> args
+    NotifyTag_Prompting :=> args -> runIdentity $ uncurry handlePrompting <$> args
+    NotifyTag_VotePrompting :=> args -> runIdentity $ uncurry handleVotePrompting <$> args
+    NotifyTag_RightNotificationSettings :=> args -> runIdentity $ uncurry handleRightNotificationSettings <$> args
+    NotifyTag_Amendment :=> args -> runIdentity $ uncurry handleAmendment <$> args
+    NotifyTag_Proposals :=> args -> runIdentity $ uncurry handleProposals <$> args
+    NotifyTag_PeriodTestingVote :=> arg -> runIdentity $ handlePeriodTestingVote <$> arg
+    NotifyTag_PeriodTesting :=> arg -> runIdentity $ handlePeriodTesting <$> arg
+    NotifyTag_PeriodPromotionVote :=> arg -> runIdentity $ handlePeriodPromotionVote <$> arg
+    NotifyTag_PeriodAdoption :=> arg -> runIdentity $ handlePeriodAdoption <$> arg
+    NotifyTag_BakerVote :=> arg -> runIdentity $ handleBakerVote <$> arg
+    NotifyTag_BakerRegistered :=> args -> runIdentity $ uncurry handleBakerRegistered <$> args
     NotifyTag_NodeVersion :=> Identity (nid, mtzversion) -> handleTezosVersion mtzversion nid
-    NotifyTag_LatestTezosRelease :=> Identity mlatestTezosRelease -> handleLatestTezosRelease mlatestTezosRelease
+    NotifyTag_LatestTezosRelease :=> arg -> runIdentity $ handleLatestTezosRelease <$> arg
   where
 
     latestTezosReleaseVS = _bakeViewSelector_latestTezosRelease aggVS
