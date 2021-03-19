@@ -361,7 +361,7 @@ selectAddress ledger = divClass "select-address" $ mdo
                   SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
                   text $ toPublicKeyHashText pkh
                   fancyTez tz
-          let f mepkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) (maybe Nothing (either (const Nothing) Just) $ mepkh)
+          let f mepkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) (either (const Nothing) Just =<< mepkh)
           pure $ attachWithMaybe f (current dynPkhTez) (domEvent Click e)
 
     accounts <- watchLedgerAccounts $ (: secretKeys) <$> manualSk

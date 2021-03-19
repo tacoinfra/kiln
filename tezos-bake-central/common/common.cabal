@@ -71,6 +71,7 @@ library
     , unordered-containers
     , uri-encode
     , witherable
+    , validation
     , writer-cps-mtl
 
   exposed-modules:

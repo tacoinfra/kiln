@@ -67,17 +67,17 @@ obelisk.project ./. ({ pkgs, ... }@args:
 
     overrides =
      let appOverlay = self: super: with pkgs.haskell.lib; {
-          common = haddock-build (checkHlint (hsOnly {} (if distMethod == null
+          common = haddock-build (hsOnly {} (if distMethod == null
             then super.common
-            else enableCabalFlag super.common distMethod)));
-          backend = haddock-build (checkHlint (hsOnly {} (overrideCabal super.backend (drv:{
+            else enableCabalFlag super.common distMethod));
+          backend = haddock-build (hsOnly {} (overrideCabal super.backend (drv:{
             librarySystemDepends = drv.librarySystemDepends or [] ++ [nodeKit];
-          }))));
+          })));
           base58-bytestring = dontCheck super.base58-bytestring; # disable tests for GHCJS build
           email-validate = dontCheck super.email-validate; # disable tests for GHCJS build
           extra = dontCheck super.extra; # disable unreliable tests (https://github.com/ndmitchell/extra/issues/37)
           lens-aeson = dontCheck super.lens-aeson;
-          frontend = haddock-build (checkHlint (frontendOnly super.frontend));
+          frontend = haddock-build (frontendOnly super.frontend);
           markdown-unlit = pkgs.haskell.lib.dontCheck super.markdown-unlit;
           memory = dontCheck (self.callHackage "memory" "0.14.17" {});
           reflex-dom-core = dontCheck super.reflex-dom-core;
