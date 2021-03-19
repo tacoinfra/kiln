@@ -21,7 +21,7 @@ import Control.Monad (guard, mzero)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.State (MonadState, execStateT, gets, modify)
 import Control.Monad.Logger (logDebug, logDebugSH, logErrorSH)
@@ -45,6 +45,7 @@ import Reflex (fforMaybe, fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, In(..))
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
+import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Json(..))
 import Safe (maximumDef, minimumDef)
@@ -57,7 +58,7 @@ import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 import Backend.Config (AppConfig (..), HasAppConfig)
 import Backend.Alerts
 import Backend.CachedNodeRPC
-import Backend.Common (worker')
+import Backend.Common (worker', AppSerializable)
 import Backend.Config (AppConfig (..))
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle, getLatestProtocolConstants)
 import Backend.Schema
@@ -277,13 +278,12 @@ bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewHead nds) $ ru
 -- nothing if the data gathered in mPrepare can be stale
 {-# INLINE getWantedAction #-}
 getWantedAction
-  :: forall mPrepare rP mCommit rC blk.
+  :: forall mPrepare rP blk.
   ( BlockLike blk
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare
-  , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare
-  , MonadIO mCommit, MonadReader rC mCommit, HasAppConfig rC, MonadLogger mCommit, PostgresLargeObject mCommit, PersistBackend mCommit, SqlDb (PhantomDb mCommit)
+  , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare, MonadLoggerIO mPrepare
   )
-  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (mCommit ())
+  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (AppSerializable ())
 getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   let
     headHash = headBlock ^. hash
@@ -307,9 +307,9 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     . fromMaybe ([headHash], [])
     <$> enumerateBranches headHash detailsBranch
   $(logDebugSH) ("getWantedAction" :: Text, baker, headHash, headLvl, headBranch)
-  bakingEndorsingAlerts :: [mCommit ()] <- for headBranch $ \(lvl, thisHash) -> do
+  bakingEndorsingAlerts :: [AppSerializable ()] <- for headBranch $ \(lvl, thisHash) -> do
     bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
-    bakingAlerts :: [mCommit ()]
+    bakingAlerts :: [AppSerializable ()]
                  <- whenM (any (\br -> ((== 0) . _bakingRights_priority) br && ((== _baker_publicKeyHash baker) . _bakingRights_delegate) br) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
@@ -322,7 +322,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
 
     -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
-    endorsingAlerts :: [mCommit ()]
+    endorsingAlerts :: [AppSerializable ()]
                     <- whenM (elem (_baker_publicKeyHash baker) $ _endorsingRights_delegate <$> endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
@@ -351,7 +351,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
       let
         gracePeriod = _cacheDelegateInfo_gracePeriod di
 
-        updateDetails :: mCommit ()
+        updateDetails :: AppSerializable ()
         updateDetails = do
           existingIds <- project BakerDetails_publicKeyHashField
             ( BakerDetails_publicKeyHashField ==. delegatePkh
@@ -378,7 +378,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
 
         -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
         -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.
-        deactivationAlerts :: mCommit ()
+        deactivationAlerts :: AppSerializable ()
         deactivationAlerts =
           if _cacheDelegateInfo_deactivated di
             then do
@@ -392,10 +392,10 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
 
         isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
 
-        insufficientFundAlerts :: mCommit ()
+        insufficientFundAlerts :: AppSerializable ()
         insufficientFundAlerts = bool clearInsufficientFunds reportInsufficientFunds isInsufficientFunds baker
 
-        updateBakerDataInternal :: mCommit ()
+        -- updateBakerDataInternal :: mCommit ()
         updateBakerDataInternal = update
           [BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~>
            BakerDaemonInternalData_insufficientFundsSelector =. isInsufficientFunds]

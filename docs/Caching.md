@@ -34,7 +34,7 @@ However, changing the Kiln node from archive to full history mode meant we could
 We used the Obsidian Public Node to make sure Kiln would always have access to archive data.
 
 ## The Obsidian Public Node
-In conjunction with the release of v0.6.0, The Obsidian Public Node was upgraded to permanently fill the data gap created by snapshots and history modes. The Obsidian Public Node is an instance of Kiln with its cache already built and exposed to other instances of Kiln via an API. Not only does this provide all the information only an archive node can, it also makes this information available faster, resulting in less queries and quicker local caching. It is enabled by default for these reasons and we recommend users only disable it ([with this configuration](https://gitlab.com/obsidian.systems/kiln/-/blob/develop/docs/config.md#enable-obsidian-node-bool)) if they have another archive node as a data source. 
+In conjunction with the release of v0.6.0, The Obsidian Public Node was upgraded to permanently fill the data gap created by snapshots and history modes. The Obsidian Public Node is an instance of Kiln with its cache already built and exposed to other instances of Kiln via an API. Not only does this provide all the information only an archive node can, it also makes this information available faster, resulting in less queries and quicker local caching. It is enabled by default for these reasons and we recommend users only disable it ([with this configuration](https://gitlab.com/obsidian.systems/kiln/-/blob/develop/docs/config.md#enable-archival-node-bool)) if they have another archive node as a data source. 
 
 Without an archive data source, users may find Kiln is unable to:
 * Identify accusations directed at a monitored baker

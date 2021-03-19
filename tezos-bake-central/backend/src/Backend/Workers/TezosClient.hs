@@ -24,11 +24,12 @@ import Control.Monad.Except
 import Control.Monad.Logger
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Maybe (MaybeT(..))
+import Data.Aeson.Lens
 import Data.Maybe (mapMaybe)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog
-import Database.Groundhog.Postgresql (Postgresql, SqlDb, in_)
+import Database.Groundhog.Postgresql (Postgresql(..), SqlDb, in_)
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Database.PostgreSQL.Simple as Pg
@@ -41,8 +42,9 @@ import System.Exit (ExitCode(..))
 import System.IO (hIsEOF)
 import System.IO.Error (isEOFError)
 import System.Which
+import Text.Printf (printf)
 import Text.Read (readMaybe)
-import Text.URI (render)
+import Text.URI (render, URI)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -53,12 +55,13 @@ import Tezos.Types
 
 import Backend.Alerts
 import Backend.CachedNodeRPC
-import Backend.Common (addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
-import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI, BinaryPaths(..))
+import Backend.Common (AppSerializable, addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
+import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI', kilnNodeRpcURI, BinaryPaths(..))
 import Backend.IndexQueries
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
 import Common.Schema
+import Common.URI (Port)
 import ExtraPrelude
 
 startBaking :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m ()
@@ -252,7 +255,7 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
         pure ()
 
     where
-      inDb :: ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+      inDb :: AppSerializable a -> LoggingT IO a
       inDb = runDb (Identity db) . flip runReaderT appConfig
 
       -- Regardless of updated time, we ought not to check the ledger if we are two levels around
@@ -273,7 +276,7 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
           _ -> pure True
         when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
 
-withDbAndConfig :: Pool Postgresql -> AppConfig -> ReaderT AppConfig (DbPersist Postgresql (LoggingT IO)) a -> LoggingT IO a
+withDbAndConfig :: Pool Postgresql -> AppConfig -> AppSerializable a -> LoggingT IO a
 withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
 
 updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> Maybe BinaryPaths -> LoggingT IO ()
@@ -454,17 +457,18 @@ importSecretKey appConfig maybePaths sk = do
     | otherwise -> Left $ ImportSecretKeyStep_Failed $ T.unlines errors
   pure $ either id (const ImportSecretKeyStep_Done) e
 
-runClientCommand
+runClientCommand'
   :: (MonadLoggerIO m, Show e)
-  => AppConfig
+  => URI
+  -> FilePath
   -> Maybe BinaryPaths
   -> Maybe (NominalDiffTime, e)
   -> [String]
   -> ([Text] -> [Text] -> Either e Text)
   -> ExceptT e m Text
-runClientCommand appConfig maybePaths mTimeout args handleError = do
+runClientCommand' nodeRpcURI clientDataDir maybePaths mTimeout args handleError = do
   le <- askLoggerIO
-  let procSpec = Process.proc (clientPath maybePaths) (["--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig, "--base-dir", tezosClientDataDir appConfig] ++ args)
+  let procSpec = Process.proc (clientPath maybePaths) (["--endpoint", T.unpack $ render nodeRpcURI, "--base-dir", clientDataDir] ++ args)
       runProc = runLoggingEnv (LoggingEnv le) $ readCreateProcessWithExitCodeWithLogging procSpec ""
       withTimeout run handle = flip (maybe ((liftIO run) >>= handle)) mTimeout $ \(t, err) -> (liftIO $ timeout' t run) >>= \case
         Just v -> handle v
@@ -484,6 +488,31 @@ runClientCommand appConfig maybePaths mTimeout args handleError = do
         Left e -> do
           $(logInfo) $ T.pack $ show e
           throwError e
+
+
+runClientCommand
+  :: (MonadLoggerIO m, Show e)
+  => AppConfig
+  -> Maybe BinaryPaths
+  -> Maybe (NominalDiffTime, e)
+  -> [String]
+  -> ([Text] -> [Text] -> Either e Text)
+  -> ExceptT e m Text
+runClientCommand appConfig = runClientCommand' (kilnNodeRpcURI appConfig) (tezosClientDataDir appConfig)
+
+computeChainId :: (MonadLoggerIO m) => Port -> FilePath -> Maybe BinaryPaths -> Aeson.Value -> m (Either Text ChainId)
+computeChainId port kilnDataDir maybePaths json = do
+    e <- runExceptT $ ExceptT (pure eCommand) >>= \command -> runClientCommand' (kilnNodeRpcURI' port) kilnDataDir maybePaths noTimeout command $ \_warnings errors -> if
+      | "Wrong value for command line option --protocol" : _ <- errors -> Left "Wrong Protocol"
+      | otherwise -> Left "Something else happened."
+    pure $ first T.pack e >>= first tshow . fromBase58 . TE.encodeUtf8
+  where
+    note key' = maybe (Left $ printf "key %s not available" key') (Right . T.unpack)
+    protocol = note ("protocol" :: String) $ json ^? key "network" . key "genesis" . key "protocol" . _String
+    genesisBlock = note ("block" :: String) $ json ^? key "network" . key "genesis" . key "block" . _String
+    eCommand :: Either String [String]
+    eCommand =
+      liftA2 (\p gb -> words $ printf "--protocol %s compute chain id from block hash %s" p gb) protocol genesisBlock
 
 setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> m SetupLedgerToBakeStep
 setupLedgerToBake appConfig maybePaths = do

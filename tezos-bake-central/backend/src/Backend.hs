@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend where
@@ -24,7 +25,7 @@ import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
+import Control.Monad.Logger (NoLoggingT(..), LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
@@ -40,6 +41,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Time (NominalDiffTime)
 import Data.Time.Clock (nominalDay)
+import Data.Validation
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
 import Gargoyle.PostgreSQL.Connect (withDb)
@@ -55,6 +57,7 @@ import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime)
 import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
+import Rhyolite.Backend.DB.Serializable
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
 import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender (..),
@@ -68,7 +71,7 @@ import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
 import qualified System.Console.GetOpt as GetOpt
 import System.Directory (doesDirectoryExist, renameDirectory)
-import System.Environment (getArgs, getProgName, withArgs)
+import System.Environment (getArgs, getProgName, lookupEnv, withArgs)
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr)
 import System.IO.Error (isDoesNotExistError)
@@ -85,7 +88,7 @@ import Tezos.Types
 import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common (worker', workerWithDelay)
 import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
-                      , _nodeConfigFile_network)
+                      , _nodeConfigFile_network, validateNodeConfigFile)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NodeCmd (bakerDaemonProcess, handleExportLogs, internalNodeWorker)
@@ -105,7 +108,7 @@ import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Node (DataSource, amendmentProcessWorker, nodeAlertWorker, nodeWorker,
                              protocolMonitorWorker, publicNodesWorker)
-import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker)
+import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker, computeChainId)
 import Backend.Workers.TezosRelease
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
@@ -170,6 +173,10 @@ backendImpl cfg serve = do
     liftA2 (<|>)
       (pure $ _opts_emailFromAddress cfg)
       (getConfigFromFile Just $ configPath Config.emailFromAddress)
+
+  !(nodeConfigFile :: Maybe Aeson.Value) <- liftA2 (<|>)
+    (maybe (pure Nothing) (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8)) $ _opts_nodeConfigFile cfg)
+    (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.nodeConfigFile)
 
   !(chain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain cfg)
@@ -253,9 +260,17 @@ backendImpl cfg serve = do
     (pure $ _opts_ledgerCheckDelaySeconds cfg)
     (getConfigFromFile (Just . Config.parseSecondsUnsafe) $ configPath Config.ledgerCheckDelay)
 
+
   -- Force the check delay so that an error is thrown early
   -- Exceptions in non-strict languages are terrabad
   for_ ledgerCheckDelay (`seq` pure ())
+
+  let computeChainId' bins json = runNoLoggingT $ computeChainId Config.defaultKilnNodeRpcPort Config.defaultKilnDataDir bins json <&> \e -> toEither $ first toList (validateNodeConfigFile (Left json) *> validationNel e)
+
+  -- error out if chain id is invalaid
+  customChainId <- traverse (computeChainId' binaryPaths) nodeConfigFile >>= \case
+      Nothing -> pure Nothing
+      Just e -> either (throwString . T.unpack . T.intercalate ":") (pure . Just . Right) e
 
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
@@ -305,7 +320,7 @@ backendImpl cfg serve = do
           -> Field NodeExternal NodeExternalConstructor (DeletableRow NodeExternalData)
           -> SubField Postgresql NodeExternal NodeExternalConstructor URI
           -> SubField Postgresql NodeExternal NodeExternalConstructor (Maybe Text)
-          -> DbPersist Postgresql (LoggingT IO) (Map.Map URI (Maybe Text))
+          -> Serializable (Map.Map URI (Maybe Text))
         updateNodesAndAlias names deletable nameSelector aliasSelector = do
           update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
           update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
@@ -319,7 +334,7 @@ backendImpl cfg serve = do
           -> Field Baker BakerConstructor (DeletableRow BakerData)
           -> Field Baker BakerConstructor PublicKeyHash
           -> SubField Postgresql Baker BakerConstructor (Maybe Text)
-          -> DbPersist Postgresql (LoggingT IO) (Map.Map PublicKeyHash (Maybe Text))
+          -> Serializable (Map.Map PublicKeyHash (Maybe Text))
         updateBakersAndAlias names deletable nameSelector aliasSelector = do
           update [deletable ~> DeletableRow_deletedSelector =. True] CondEmpty
           update [deletable ~> DeletableRow_deletedSelector =. False] $ nameSelector `in_` Map.keys names
@@ -359,7 +374,7 @@ backendImpl cfg serve = do
 
     runLoggingEnv logger $ runDb (Identity db) $ do
       let publicNode = PublicNode_Archival
-          enabled = enableArchivalPublicNode
+          enabled = enableArchivalPublicNode && isNothing customChainId
       cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
         project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
       now <- getTime
@@ -381,6 +396,8 @@ backendImpl cfg serve = do
 
     resetLedgerQueue logger db
 
+    tezosNodeEnvVar <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
+
     let
 
       networkName :: Maybe Text
@@ -391,23 +408,20 @@ backendImpl cfg serve = do
       minLevel :: RawLevel
       minLevel = 2
 
-      -- changeRPCConf conf = conf
-            -- { _nodeConfigRPC_corsHeaders =
-
-            -- }
-
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
         , _appConfig_kilnNodeNetPort = kilnNodeNetPort
         , _appConfig_kilnDataDir = kilnDataDir
         , _appConfig_kilnNodeConfig =
-          defaultNodeConfigFile {_nodeConfigFile_network = networkName}
+          maybe (Right $ defaultNodeConfigFile {_nodeConfigFile_network = networkName}) Left nodeConfigFile
 
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
         , _appConfig_binaryPaths = binaryPaths
+        , _appConfig_tezosNodeEnvVar = tezosNodeEnvVar
         }
+
 
     dataSrc <- liftIO $ do
       hist <- newTVarIO $ emptyCache minLevel
@@ -423,7 +437,8 @@ backendImpl cfg serve = do
         , _nodeDataSource_latestHead = latestHead
         , _nodeDataSource_logger = logger
         , _nodeDataSource_ioQueue = ioQueue
-        , _nodeDataSource_archivalPublicNode = if enableArchivalPublicNode then NonEmpty.head <$> archivalNodeApi else Nothing
+        , _nodeDataSource_archivalPublicNode = if enableArchivalPublicNode && isNothing customChainId
+            then NonEmpty.head <$> archivalNodeApi else Nothing
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
         , _nodeDataSource_nodeForQuery = Nothing
         }
@@ -434,13 +449,18 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
       addFinalizer <=< worker' "readNodeDataSourceIOQueue" $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
+
       let
         frontendConfig = Config.FrontendConfig
-          { Config._frontendConfig_chain = chain
-          , Config._frontendConfig_chainId = chainId
+          { Config._frontendConfig_chain = fromMaybe chain customChainId
+          , Config._frontendConfig_chainId = maybe chainId (either (const $ error "impossible") id) customChainId
           , Config._frontendConfig_checkForUpgrade = checkForUpgrade
           , Config._frontendConfig_appVersion = version
-          , Config._frontendConfig_usingArchivalPublicNode = isJust $ _nodeDataSource_archivalPublicNode dataSrc
+          , Config._frontendConfig_usingNodeOption =
+            case (_nodeDataSource_archivalPublicNode dataSrc, customChainId) of
+              (Just _, Nothing) -> Just Config.UsingArchivalNode
+              (_, Just _) -> Config.UsingCustomNode <$> nodeConfigFile
+              _ -> Nothing
           , Config._frontendConfig_logExportAvailable = logExportAvailable
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
@@ -518,6 +538,7 @@ clearMailQueueWithDynamicEmailEnv
   , MonadIO m
   , MonadBaseNoPureAborts IO m
   , MonadLogger m
+  , MonadLoggerIO m
   )
   => f (Pool Postgresql)
   -> m ()
@@ -574,6 +595,7 @@ data Opts = Opts
   , _opts_kilnDataDir :: !(Maybe FilePath)
   , _opts_binaryPaths :: !(Maybe Text)
   , _opts_ledgerCheckDelaySeconds :: !(Maybe NominalDiffTime)
+  , _opts_nodeConfigFile :: !(Maybe FilePath)
   }
 makeLenses ''Opts
 
@@ -599,6 +621,7 @@ instance Semigroup Opts where
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     , _opts_ledgerCheckDelaySeconds = rightBiased (<|>) _opts_ledgerCheckDelaySeconds
+    , _opts_nodeConfigFile = rightBiased (<|>) _opts_nodeConfigFile
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
@@ -626,6 +649,7 @@ instance Monoid Opts where
       , _opts_kilnDataDir = Nothing
       , _opts_binaryPaths = Nothing
       , _opts_ledgerCheckDelaySeconds = Nothing
+      , _opts_nodeConfigFile = Nothing
       }
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -687,6 +711,9 @@ optsArgDescr =
 
   , mkReqArg Config.ledgerCheckDelay "SECONDS" (set opts_ledgerCheckDelaySeconds . Just . Config.parseSecondsUnsafe)
       "Check ledger connectivity every X seconds (off by default)"
+
+  , mkReqArg Config.nodeConfigFile "FILEPATH" (set opts_nodeConfigFile . Just . T.unpack)
+      "The file containing the custom tezos-node configuration (for running custom networks)"
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

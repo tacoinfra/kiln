@@ -128,6 +128,7 @@ library
     Backend.Common
     Backend.Common.Baker
     Backend.Common.Node
+    Backend.Common.TezosRelease
     Backend.Common.Worker
     Backend.Config
     --Backend.Graphs
@@ -157,7 +158,7 @@ library
     System.Which
     Orphans.Instances
 
-  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
+  ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
   cpp-options: -DREAL_BUILD
   if flag(support-systemd-journal) && os(linux)
     cpp-options: -DSUPPORT_SYSTEMD_JOURNAL:
@@ -171,4 +172,5 @@ executable backend
     , backend
     , obelisk-backend
 
+  other-extensions: UnboxedSums
   ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings

@@ -25,7 +25,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-} -- for MonadError instance
 
-{-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
+{-# OPTIONS_GHC -Wall -Wwarn #-}
 
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
@@ -52,7 +52,7 @@ import Control.Lens (re)
 import Control.Lens (review)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (ap)
-import Control.Monad.Base (MonadBase)
+import Control.Monad.Base (MonadBase(..), liftBaseDefault)
 import Control.Monad.Catch (ExitCase (..))
 import Control.Monad.Catch (MonadCatch)
 import Control.Monad.Catch (MonadThrow)
@@ -65,7 +65,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (MonadLogger, logDebug, logDebugNS, logDebugSH, logWarnSH)
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -114,6 +114,7 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
+import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Schema (Json (..), LargeObjectId (..))
 import Safe (headMay, minimumMay)
@@ -134,6 +135,7 @@ import Common (unixEpoch)
 import Common.Schema
 import ExtraPrelude
 
+import Orphans.Instances ()
 
 -- This exception should be impossible, but that depends on the node
 -- working correctly.  The information inside is just the arguments of
@@ -606,6 +608,13 @@ instance Monad m => HasPgConn (DbPersist Postgresql m) where
     (Postgresql conn) <- ask
     pure conn
 
+instance HasPgConn Serializable where
+  askPgConn = unsafeLiftDbPersist askPgConn
+
+
+instance (MonadBase b m, Monad m) => MonadBase b (NodeQueryT m) where
+  liftBase = liftBaseDefault
+
 instance (MonadMask m, PostgresLargeObject m, HasPgConn m, MonadIO m) => PostgresLargeObject (ExceptT e m) where
   withLargeObject oid mode = bracket
     (lift $ genericLiftWithConn $ \conn -> PG.loOpen conn (toOid oid) mode)
@@ -653,9 +662,10 @@ runNodeQueryT
     , MonadIO m, MonadBaseNoPureAborts IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
+    , MonadLoggerIO m
     , Show e
     )
-  => NodeQueryT (ExceptT e (ReaderT NodeDataSource (DbPersist Postgresql m))) a -> ExceptT e m a
+  => NodeQueryT (ExceptT e (ReaderT NodeDataSource Serializable)) a -> ExceptT e m a
 runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
   where
     go :: Int -> DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (Either e a)
@@ -680,12 +690,13 @@ tryNodeQueryTWithDb
     ( MonadIO m, MonadBaseNoPureAborts IO m
     , MonadReader s m, HasNodeDataSource s
     , MonadLogger m
+    , MonadLoggerIO m
     )
-  => DMap NodeQuery (Const (Map BlockHash CacheError)) -> NodeQueryT (ExceptT e (ReaderT NodeDataSource (DbPersist Postgresql m))) a -> m (Either e (NodeQueryTResult a))
+  => DMap NodeQuery (Const (Map BlockHash CacheError)) -> NodeQueryT (ExceptT e (ReaderT NodeDataSource Serializable)) a -> m (Either e (NodeQueryTResult a))
 tryNodeQueryTWithDb bad f = do
   nds <- view nodeDataSource
   let db = _nodeDataSource_pool nds
-      bail = DbPersist $ ReaderT $ \(Postgresql conn) -> liftIO $ PG.rollback conn *> PG.begin conn
+      bail = unsafeMkSerializable $ ReaderT $ \conn -> liftIO $ PG.rollback conn *> PG.begin conn
   runDb (Identity db) $ runReaderT (runExceptT (unNodeQueryT f bad)) nds >>= \case
     e@(Left _) -> e <$ bail
     v@(Right (NodeQueryTResult_Done _)) -> return v

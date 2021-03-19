@@ -20,7 +20,7 @@ module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
-import Control.Monad.Logger (MonadLogger, LoggingT, logError, logInfo, logDebug, logDebugNS, logErrorNS)
+import Control.Monad.Logger (NoLoggingT(..), MonadLoggerIO, MonadLogger, logError, logInfo, logDebug)
 import Control.Monad.Trans.Except
 import Control.Retry
 import Data.Aeson
@@ -47,6 +47,7 @@ import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
+import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Email)
@@ -133,7 +134,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
 
             insertOrUpdateAccounts f sks' = do
               res <- runExceptT $ for sks' $ \sk -> do
-                  mPkh <- withExceptT ((,) sk . Right) $ ExceptT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
+                  mPkh <- withExceptT ((,) sk) $ ExceptT $ runNoLoggingT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
                   case mPkh of
                       Nothing -> do
                         notify NotifyTag_ShowLedger (sk, Left $ "tezosClientWorker:showLedger: public key hash unavailable")
@@ -379,6 +380,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
           clearErrors bId
           notify NotifyTag_Baker (Id pkh, Nothing)
         where
+          clearErrors :: Id Baker -> Serializable ()
           clearErrors bid = do
             let
               -- TODO: Unify the types of the baker alert columns so this duplication isn't needed.
@@ -408,7 +410,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                 for_ ids $ notifyDefault . Id @t
                 pure ids
 
-              onTag :: Some BakerLogTag -> DbPersist Postgresql (LoggingT m) [Id ErrorLog]
+              onTag :: Some BakerLogTag -> Serializable [Id ErrorLog]
               onTag (Some tag) = case tag of
                 BakerLogTag_BakerLedgerDisconnected -> deleteLogsId tag ErrorLogBakerLedgerDisconnected_bakerField
                 BakerLogTag_BakerMissed -> deleteLogsId tag ErrorLogBakerMissed_bakerField
@@ -637,7 +639,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
       PrivateRequest_NoOp -> return ()
 
   where
-    inDb :: forall m' a. (MonadLogger m', MonadIO m', MonadBaseNoPureAborts IO m') => DbPersist Postgresql m' a -> m' a
+    inDb :: forall m' a. (MonadLoggerIO m', MonadLogger m', MonadIO m', MonadBaseNoPureAborts IO m') => Serializable a -> m' a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))

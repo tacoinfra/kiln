@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 -- Kiln managed process/daemon
@@ -21,7 +22,7 @@ module Backend.Workers.Process where
 import Control.Concurrent.Async (withAsync)
 import Control.Exception.Safe (tryJust, throwIO)
 import Control.Monad.Catch (Handler (..), bracket, catches)
-import Control.Monad.Logger (MonadLogger, LoggingT, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
@@ -33,6 +34,7 @@ import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
+import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Posix.Signals (signalProcess, sigKILL)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
@@ -49,6 +51,7 @@ import Backend.Schema
 import Common.Schema
 import ExtraPrelude
 
+import Orphans.Instances ()
 -- Daemon Process Management Worker
 -- The flow is roughly like this
 -- - Obtain lock with finalizer, delay 1s
@@ -110,7 +113,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
       withCreateProcess procSpec procMonitor
     threadDelay' 10
   where
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => DbPersist Postgresql (LoggingT m) a -> m a
+    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => Serializable a -> m a
     inDb = runLoggingEnv logger . runDb (Identity db)
     updateState :: (MonadLogger m, PersistBackend m, MonadIO m) => ProcessState -> m ()
     updateState = updateProcessState pid makeNotify
@@ -176,7 +179,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
                     Right ln -> perLine (T.pack ln) *> loop
 
         {-# INLINE go #-}
-        go :: forall m1. (MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => Maybe Int -> m1 ()
+        go :: forall m1. (MonadLoggerIO m1, MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => Maybe Int -> m1 ()
         go mCount = do
           let getPC = \case
                 [] -> ProcessControl_Stop
@@ -235,6 +238,6 @@ updateProcessState pid makeNotify state = do
 
 withNodeConfig :: AppConfig -> (FilePath -> IO a) -> IO a
 withNodeConfig appConfig f = withTempFile (_appConfig_kilnDataDir appConfig) ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
-  LBS.hPut nodeConfigHandle $ Aeson.encode $ _appConfig_kilnNodeConfig appConfig
+  LBS.hPut nodeConfigHandle $ either Aeson.encode Aeson.encode $ _appConfig_kilnNodeConfig appConfig
   hFlush nodeConfigHandle
   f nodeConfigPath

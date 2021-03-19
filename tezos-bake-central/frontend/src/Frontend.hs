@@ -21,12 +21,11 @@
 
 module Frontend where
 
-import Control.Lens (imap, to, (<>~), findOf, maximumByOf)
+import Control.Lens (imap, to, (<>~))
 import Control.Monad (unless)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
-import qualified Data.Aeson as A
 import Data.Aeson.Lens
 import Data.Bool (bool)
 import Data.Constraint.Extras
@@ -40,12 +39,11 @@ import Data.List (intersperse)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
-import Data.Ord (comparing, Down (..))
+import Data.Ord (Down (..))
 import qualified Data.Set as Set
 import Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Text.Read  as T
 import qualified Data.Time as Time
 import Data.Version
 import Data.Word (Word64)
@@ -89,7 +87,8 @@ import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
-                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable)
+                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_usingNodeOption, frontendConfig_logExportAvailable)
+import Common.Config (UsingNodeOption(..), _UsingCustomNode)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -300,14 +299,14 @@ appSidebar = do
                    elAttr "small" ("style" =: "position: absolute; left:30px;") $
                    text $ "Latest Tezos Release: " <> v)
 
-routeSelector' :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
+routeSelector' :: (Prerender js t m, DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
                => R r -> (e -> ch -> m a) -> e -> ch -> m a
 routeSelector' dest con cfg child = do
   r <- askRoute
   let activated = ffor r $ bool "" "active" . (== dest)
   routeLink dest $ con (cfg & SemUi.classes <>~ SemUi.Dyn activated) child
 
-routeSelector :: (DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
+routeSelector :: (Prerender js t m, DomBuilder t m, SemUi.HasElConfig t e, RouteConstraints t r m)
               => R r -> (e -> ch -> m (a,b)) -> e -> ch -> m b
 routeSelector dest con cfg child = snd <$> routeSelector' dest con cfg child
 
@@ -383,32 +382,6 @@ appSideFooter =
                     elAttr "i" ("class" =: iconClass "upgrade-icon icon-arrow-up" <> "style" =: "float: right; margin: -2px 0 0 0") blank
                   _ -> pure ()
 
-getReleaseTag :: A.Value -> Maybe (Int, Int)
-getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
-
-hush :: Either b a -> Maybe a
-hush = \case
-    Left _ -> Nothing
-    Right r -> Just r
-
-getRelease :: AsValue s => Maybe Text -> (A.Value -> Maybe c) -> s -> Maybe c
-getRelease mr f = case mr of
-   Nothing ->
-       maximumByOf values (comparing $ (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion) >=> f
-   Just release ->
-       findOf values ((== Just release) . (^? key "tag_name" . _String)) >=> f
-
-parseMajorMinorVersion :: Text -> Either String (Int,Int)
-parseMajorMinorVersion version = do
-  (leadingv, rest1) <- maybe (Left "Can't parse") Right $ T.uncons version
-  guard $ leadingv == 'v'
-  (major, rest2) <- T.decimal @Int rest1
-  (dot, rest3) <- maybe (Left "Missing dot") Right $ T.uncons rest2
-  guard $ dot == '.'
-  (minor, rest4) <- T.decimal @Int rest3
-  guard $ T.null rest4
-  return (major, minor)
-
 appHeader
   :: forall r m t js.
     ( MonadAppWidget js t m, MonadJSM (Performable m)
@@ -434,8 +407,14 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       divClass "item" $ divClass "withRightIcon" $ do
         divClass "content" $ do
           divClass "header" $ text "Network"
-          divClass "description" $
-            tooltipped TooltipPos_BottomLeft (protocolTooltip latestHead) $
+          divClass "description" $ do
+            customProtocol <- asks (^? frontendConfig
+                       . frontendConfig_usingNodeOption
+                       . _Just
+                       . _UsingCustomNode
+                       . key "network" . key "genesis" . key "protocol"
+                       . _String)
+            tooltipped TooltipPos_BottomLeft (protocolTooltip customProtocol latestHead) $
               text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
 {-
@@ -497,9 +476,13 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" ensureHealthyNodes
 
-    protocolTooltip dmLatestHead = divClass "protocol-tooltip" $ do
+    protocolTooltip mCustomProtocol dmLatestHead = divClass "protocol-tooltip" $ do
       divClass "tooltip-title" $ text "Current Protocol"
-      let dProtoText = maybe "Unknown" (^.protocolHash.to toBase58Text) <$> dmLatestHead
+      let dProtoText = dmLatestHead <&> \mLatestHead ->
+            case (mLatestHead, mCustomProtocol) of
+              (_, Just customProtocol) -> customProtocol
+              (Just latestHead', _) -> latestHead' ^. protocolHash. to toBase58Text
+              _ -> "Unknown"
       divClass "tooltip-description" $ el "p" $ do
         whenJustDyn dmLatestHead $ \_ -> copyButton (current dProtoText)
         dynText dProtoText
@@ -569,7 +552,7 @@ nodesTabOrWelcome = do
   bakersMaybe <- watchBakerAddressesValid
   publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
-  mUsingOsPubNode <- (fmap . fmap) _frontendConfig_usingArchivalPublicNode <$> watchFrontendConfig
+  mUsingNodeOption <- (fmap . fmap) _frontendConfig_usingNodeOption <$> watchFrontendConfig
 
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
   let haveBakersMaybe =
@@ -577,10 +560,17 @@ nodesTabOrWelcome = do
       haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-      onlyOsPubNode = ffor2 publicNodesMaybe mUsingOsPubNode $ liftA2 $ \pNodes usingOs -> usingOs &&
-        (length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1)
-          && maybe False (_publicNodeConfig_enabled . snd)
-            (headMay (filter ((== PublicNode_Archival) . fst) $ MMap.assocs pNodes))
+      onlyOsPubNode = ffor2 publicNodesMaybe mUsingNodeOption $ liftA2 $ \pNodes usingOption -> do
+        let actuallyUsingArchivalNode = and
+                     [
+                      Just UsingArchivalNode == usingOption
+                     , length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1
+                     , maybe False (_publicNodeConfig_enabled . snd) (headMay (filter ((== PublicNode_Archival) . fst) $ MMap.assocs pNodes))
+                     ]
+        case usingOption of
+          Just UsingArchivalNode -> bool Nothing (Just UsingArchivalNode) actuallyUsingArchivalNode
+          _ -> usingOption
+
   haveBakersHaveNodesMaybe <- holdUniqDyn $
     (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe onlyOsPubNode
 
@@ -588,11 +578,16 @@ nodesTabOrWelcome = do
 
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
-    Just (False, False, False) -> divClass "app-content app-welcome" $ welcomeScreen False
-    Just (haveBakers, haveNodes, onlyOsNode) -> divClass "app-content" $ do
-      when (onlyOsNode && not haveBakers) $ welcomeScreen True
+    Just (False, False, Nothing) -> divClass "app-content app-welcome" $ welcomeScreen Nothing
+    Just (haveBakers, haveNodes, usingNodeOption) -> divClass "app-content" $ do
+      when ((Just UsingArchivalNode == usingNodeOption) && not haveBakers) $ welcomeScreen (Just UsingArchivalNode)
+      let isCustomNode = \case
+            Just (UsingCustomNode _) -> True
+            _ -> False
+      when (isCustomNode usingNodeOption && not haveBakers) $ welcomeScreen usingNodeOption
       when haveBakers bakersTab
-      when haveNodes (nodesTab onlyOsNode)
+      when haveNodes $ do
+        nodesTab usingNodeOption
 
 everythingWindow :: Applicative f => f (Set (ClosedInterval (WithInfinity a)))
 everythingWindow = pure $ Set.singleton $ ClosedInterval LowerInfinity UpperInfinity
@@ -685,8 +680,8 @@ kilnUpdateAlert v = do
     Nothing
     body
 
-welcomeScreen :: forall t m js. MonadAppWidget js t m => Bool -> m ()
-welcomeScreen hasOsPubNode = mdo
+welcomeScreen :: forall t m js. MonadAppWidget js t m => Maybe UsingNodeOption -> m ()
+welcomeScreen usingNodeOption = mdo
   closeEv <- switch . current <$> widgetHold banner (pure never <$ closeEv)
   pure ()
   where
@@ -701,9 +696,15 @@ welcomeScreen hasOsPubNode = mdo
       divClass "welcome-description" $ do
         el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
         el "p" $ text $ "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
-          <> (if hasOsPubNode then " The Archival node, by Obsidian, has been added to provide a baseline source of network data." else "")
+          <> customMessage
         el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
       pure $ domEvent Click closeEl
+    customMessage = case usingNodeOption of
+      Just UsingArchivalNode -> " The Archival node, provided by Giganode, has been added to provide a baseline source of network data."
+      Just (UsingCustomNode _) -> "You are currently using Kiln to run a custom network. Accordingly, the archivaln node has been disabled."
+      Nothing -> ""
+
+
 
 radioLabels :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Eq k) => k -> [(k, m ())] -> m (Dynamic t k)
 radioLabels k0 ks = divClass "ui buttons" $ mdo
@@ -1515,13 +1516,13 @@ startNodeWorkflow backWF = Workflow $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
       divClass "file-selection" $ do
         rec
-          let fileName = headMay <$> value fi
+          let fileName = headMay <$> _inputElement_files fi
           dyn_ $ ffor fileName $ mapM $ \file -> do
             name <- liftJSM $ File.getName file
             divClass "file-name" $ text name
           elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
-          fi <- fileInput $ (def :: FileInputConfig t)
-            & fileInputConfig_attributes .~ constDyn ("id" =: "fileId")
+          fi <- inputElement $ def
+            & initialAttributes .~ ("id" =: "fileId")
         pure fileName
     (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
       divClass "" $ text "Peer to Peer Download"
@@ -1611,7 +1612,7 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
   text "This Node can only be turned off via "
-  let url = "https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md#enable-obsidian-node-bool"
+  let url = "https://gitlab.com/tezos-kiln/kiln/-/blob/develop/docs/config.md#enable-archival-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
 publicNodeOptions :: MonadAppWidget js t m => Either NamedChain ChainId -> m ()
@@ -1623,7 +1624,7 @@ publicNodeOptions chain = do
       ]
 
     describePublicNode = \case
-      PublicNode_Archival -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
+      PublicNode_Archival -> text "Public Node Caching Service provided by Giganode. " *> osPublicNodeRemoveMessage
       PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
 
   pncDyn <- watchPublicNodeConfig
@@ -1694,8 +1695,8 @@ nodesTab
     , HasFrontendConfig r, HasTimeZone r, HasTimer t r
     , HasModal t m, MonadAppWidget js  t (ModalM m)
     )
-  => Bool -> m ()
-nodesTab onlyOsNode =
+  => Maybe UsingNodeOption -> m ()
+nodesTab usingNodeOption =
   divClass "dashboard-section dashboard-section-nodes" $ do
     elClass "h4" "dashboard-section-title" $ text "Nodes"
     nodesDyn <- watchNodeAddresses
@@ -1764,9 +1765,10 @@ nodesTab onlyOsNode =
 
       -- Node tiles
       dyn_ $ ffor useBlocker $ \case
-        True -> case onlyOsNode of
-            False -> divClass "app-content app-welcome" $ welcomeScreen False
-            True -> waitingForResponse
+        True -> case usingNodeOption of
+            Just (UsingCustomNode _) -> divClass "app-content app-welcome" $ welcomeScreen usingNodeOption
+            Just UsingArchivalNode -> blank
+            _ -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
           ebn <- snd <$$$$> watchErrorsByNode everythingWindow
 

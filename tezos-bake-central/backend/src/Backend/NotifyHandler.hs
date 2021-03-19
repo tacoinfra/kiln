@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
+{-# OPTIONS_GHC -Wall -Werror -fmax-pmcheck-iterations=100000000 #-}
 
 module Backend.NotifyHandler where
 
@@ -17,13 +17,12 @@ import Data.Dependent.Map (DSum(..), Some (..))
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
-import Data.Validation
-import Database.Groundhog.Postgresql (PersistBackend, get, (&&.), (==.), Cond(..))
+import Database.Groundhog.Postgresql (PersistBackend(..), Postgresql(..), get, (&&.), (==.), Cond(..))
 import Database.Id.Class
 import Database.Id.Groundhog
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw(..))
 import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
@@ -197,8 +196,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
 
-    handleBaker :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m')
-                => Id Baker -> Maybe BakerData -> m' (BakeView a)
+    handleBaker :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m') => Id Baker -> Maybe BakerData -> m' (BakeView a)
     handleBaker (Id pkh) mBaker = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $
       case mBaker of
         -- fast path
@@ -207,8 +205,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           }
         Just _ -> handleBakerAddress pkh
 
-    handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m')
-                       => PublicKeyHash -> m' (BakeView a)
+    handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m') => PublicKeyHash -> m' (BakeView a)
     handleBakerAddress pkh  = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $ do
       bakerV <- getBakerAddresses nds (Just pkh)
       pure mempty { _bakeView_bakerAddresses = toRangeView bakerAddressesVS bakerV }
