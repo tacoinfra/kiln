@@ -17,6 +17,7 @@ import Data.Dependent.Map (DSum(..), Some (..))
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
+import Data.Validation (liftError)
 import Database.Groundhog.Postgresql (PersistBackend(..), Postgresql(..), get, (&&.), (==.), Cond(..))
 import Database.Id.Class
 import Database.Id.Groundhog

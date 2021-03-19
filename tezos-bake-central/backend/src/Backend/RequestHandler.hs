@@ -20,7 +20,7 @@ module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
-import Control.Monad.Logger (NoLoggingT(..), MonadLoggerIO, MonadLogger, logError, logInfo, logDebug)
+import Control.Monad.Logger (NoLoggingT(..), MonadLoggerIO, MonadLogger, logError, logInfo, logDebug, logDebugNS, logErrorNS)
 import Control.Monad.Trans.Except
 import Control.Retry
 import Data.Aeson
@@ -134,7 +134,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
 
             insertOrUpdateAccounts f sks' = do
               res <- runExceptT $ for sks' $ \sk -> do
-                  mPkh <- withExceptT ((,) sk) $ ExceptT $ runNoLoggingT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
+                  mPkh <- withExceptT ((,) sk . Right) $ ExceptT $ runNoLoggingT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
                   case mPkh of
                       Nothing -> do
                         notify NotifyTag_ShowLedger (sk, Left $ "tezosClientWorker:showLedger: public key hash unavailable")
