@@ -6,7 +6,7 @@
 
 module Common.Config where
 
-import Control.Lens.TH (makeLenses)
+import Control.Lens.TH (makeLenses, makePrisms)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
 import qualified Data.List.NonEmpty as NE
@@ -198,8 +198,8 @@ parsePortUnsafe = unsafeParse "port number" $ \a -> case readMaybe (T.unpack a) 
 
 data UsingNodeOption =
   UsingArchivalNode
-  | UsingCustomNode
-  deriving (Eq, Ord, Show, Generic)
+  | UsingCustomNode Aeson.Value
+  deriving (Eq, Show, Generic)
 
 instance Aeson.ToJSON UsingNodeOption
 instance Aeson.FromJSON UsingNodeOption
@@ -214,7 +214,7 @@ data FrontendConfig = FrontendConfig
   , _frontendConfig_ledgerConnectedChecks :: !Bool
   , _frontendConfig_tezosGitlabProjectId :: !Text
   , _frontendConfig_tezosRelease :: !(Maybe Text)
-  } deriving (Eq, Ord, Show, Generic, Typeable)
+  } deriving (Eq, Show, Generic, Typeable)
 
 class HasFrontendConfig r where
   frontendConfig :: Lens' r FrontendConfig
@@ -222,6 +222,7 @@ class HasFrontendConfig r where
 instance HasFrontendConfig FrontendConfig where
   frontendConfig = id
 
+makePrisms ''UsingNodeOption
 makeLenses ''FrontendConfig
 concat <$> traverse (deriveJSON $ defaultTezosCompatJsonOptions { Aeson.omitNothingFields = True })
   [ 'FrontendConfig

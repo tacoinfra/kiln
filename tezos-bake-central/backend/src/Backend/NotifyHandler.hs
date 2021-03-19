@@ -11,17 +11,18 @@ module Backend.NotifyHandler where
 import Control.Lens
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Monad.Catch (MonadMask)
+import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
 import Data.Dependent.Map (DSum(..), Some (..))
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
-import Database.Groundhog.Postgresql (Postgresql(..), get, (&&.), (==.), Cond(..))
+import Database.Groundhog.Postgresql (PersistBackend(..), Postgresql(..), get, (&&.), (==.), Cond(..))
 import Database.Id.Class
 import Database.Id.Groundhog
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.Serializable
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw(..))
 import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
@@ -90,7 +91,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     latestTezosReleaseVS = _bakeViewSelector_latestTezosRelease aggVS
 
-    handleLatestTezosRelease :: Maybe MajorMinorVersion -> Serializable (BakeView a)
+    handleLatestTezosRelease :: Applicative m' => Maybe MajorMinorVersion -> m' (BakeView a)
     handleLatestTezosRelease ver = whenM (viewSelects () latestTezosReleaseVS) $ do
         pure $ mempty { _bakeView_latestTezosRelease = toMaybeView latestTezosReleaseVS $ Just ver }
 
@@ -100,7 +101,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     publicNodesVS = _bakeViewSelector_publicNodeConfig aggVS
 
-    handleTezosVersion :: Maybe TezosVersion -> Either PublicNode (Id Node) -> Serializable (BakeView a)
+    handleTezosVersion :: Applicative m' => Maybe TezosVersion -> Either PublicNode (Id Node) -> m' (BakeView a)
     handleTezosVersion tv  = \case
         Left publicNode -> whenM (viewSelects publicNode publicNodesVS) $
             pure $ mempty { _bakeView_publicVersions = toRangeView publicVersionsVS [(Bounded publicNode, tv)] }
@@ -111,7 +112,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     connectedLedgerVS = _bakeViewSelector_connectedLedger aggVS
 
-    handleConnectedLedger :: Maybe ConnectedLedger -> Serializable (BakeView a)
+    handleConnectedLedger :: Applicative m' => Maybe ConnectedLedger -> m' (BakeView a)
     handleConnectedLedger mli
       | viewSelects () connectedLedgerVS = pure $ mempty
         { _bakeView_connectedLedger = toMaybeView connectedLedgerVS (Just mli)
@@ -119,7 +120,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | otherwise = pure mempty
 
     showLedgerVS = _bakeViewSelector_showLedger aggVS
-    handleShowLedger :: SecretKey -> Maybe (PublicKeyHash, Tez) -> Serializable (BakeView a)
+    handleShowLedger :: Applicative m' => SecretKey -> Maybe (PublicKeyHash, Tez) -> m' (BakeView a)
     handleShowLedger sk mpkh
       | viewSelects sk showLedgerVS = pure $ mempty
         { _bakeView_showLedger = toRangeView1 showLedgerVS sk $ Just $ First mpkh
@@ -127,7 +128,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | otherwise = pure mempty
 
     promptingVS = _bakeViewSelector_prompting aggVS
-    handlePrompting :: SecretKey -> Maybe SetupState -> Serializable (BakeView a)
+    handlePrompting :: Applicative m' => SecretKey -> Maybe SetupState -> m' (BakeView a)
     handlePrompting sk step
       | viewSelects sk promptingVS = pure $ mempty
         { _bakeView_prompting = toRangeView1 promptingVS sk $ Just $ First step
@@ -135,7 +136,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | otherwise = pure mempty
 
     votePromptingVS = _bakeViewSelector_votePrompting aggVS
-    handleVotePrompting :: SecretKey -> Maybe VoteState -> Serializable (BakeView a)
+    handleVotePrompting :: Applicative m' => SecretKey -> Maybe VoteState -> m' (BakeView a)
     handleVotePrompting sk step
       | viewSelects sk votePromptingVS = pure $ mempty
         { _bakeView_votePrompting = toRangeView1 votePromptingVS sk $ Just $ First step
@@ -144,7 +145,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     paramsVS = _bakeViewSelector_parameters aggVS
 
-    handleParameters :: Id ProtocolIndex -> Serializable (BakeView a)
+    handleParameters :: PersistBackend m' => Id ProtocolIndex -> m' (BakeView a)
     handleParameters (Id (chainId, protoHash)) = whenM (viewSelects protoHash paramsVS) $ do
       newProto :: Maybe ProtocolIndex <- selectSingle $
         ProtocolIndex_hashField ==. protoHash &&.
@@ -159,9 +160,9 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     nodeDetailsVS = _bakeViewSelector_nodeDetails aggVS
 
     {-# INLINE handleNodeExternal #-}
-    handleNodeExternal ::
-      -- :: (Monad m', PostgresRaw m', MonadLogger m', PersistBackend m')
-      Id Node -> Maybe NodeExternalData -> Serializable (BakeView a)
+    handleNodeExternal
+      :: (Monad m', PostgresRaw m', MonadLogger m', PersistBackend m')
+      => Id Node -> Maybe NodeExternalData -> m' (BakeView a)
     handleNodeExternal nid mNodeExternalData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeExternalV <- case mNodeExternalData of
         Nothing -> pure [(Bounded nid, First Nothing)]
@@ -169,16 +170,16 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeExternalV }
 
     {-# INLINE handleNodeInternal #-}
-    handleNodeInternal ::
-      -- :: (Monad m', PostgresRaw m', MonadLogger m', PersistBackend m')
-      Id Node -> Maybe ProcessData -> Serializable (BakeView a)
+    handleNodeInternal
+      :: (Monad m', PostgresRaw m', MonadLogger m', PersistBackend m')
+      => Id Node -> Maybe ProcessData -> m' (BakeView a)
     handleNodeInternal nid mProcessData = whenM (viewSelects (Bounded nid) nodeAddressesVS) $ do
       nodeInternalV <- case mProcessData of
         Nothing -> pure [(Bounded nid, First Nothing)]
         Just _ -> getNodeAddresses (Just nid)
       pure $ mempty { _bakeView_nodeAddresses = toRangeView nodeAddressesVS nodeInternalV }
 
-    handleNodeDetails :: Id Node -> Maybe NodeDetailsData -> Serializable (BakeView a)
+    handleNodeDetails :: (MonadIO m') => Id Node -> Maybe NodeDetailsData -> m' (BakeView a)
     handleNodeDetails nid mNodeDetailsData = mconcat <$> sequence
       [ whenM (viewSelects (Bounded nid) nodeDetailsVS) $
         pure $ mempty
@@ -195,8 +196,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       -- viewselector without making a trip to the database and this whole
       -- thing can live in a withM (viewSelects ...)
 
-    -- handleBaker :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m')
-    handleBaker :: Id Baker -> Maybe BakerData -> Serializable (BakeView a)
+    handleBaker :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m') => Id Baker -> Maybe BakerData -> m' (BakeView a)
     handleBaker (Id pkh) mBaker = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $
       case mBaker of
         -- fast path
@@ -205,23 +205,20 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           }
         Just _ -> handleBakerAddress pkh
 
-    -- handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m')
-    handleBakerAddress :: PublicKeyHash -> Serializable (BakeView a)
+    handleBakerAddress :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m') => PublicKeyHash -> m' (BakeView a)
     handleBakerAddress pkh  = whenM (viewSelects (Bounded pkh) bakerAddressesVS) $ do
       bakerV <- getBakerAddresses nds (Just pkh)
       pure mempty { _bakeView_bakerAddresses = toRangeView bakerAddressesVS bakerV }
 
     -- this is a kludge; id really like a way to send only things that are "new information" to the frontend.
-    -- alsoEveryBakerSummary :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m') => m' (BakeView a)
-    alsoEveryBakerSummary :: Serializable (BakeView a)
+    alsoEveryBakerSummary :: (Monad m', MonadIO m', MonadLogger m', PersistBackend m', PostgresRaw m', MonadMask m') => m' (BakeView a)
     alsoEveryBakerSummary = do
       bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a <- whenM (not $ null bakerAddressesVS) $
         toRangeView bakerAddressesVS <$> getBakerAddresses nds Nothing
       whenM (not $ null bakerAddresses) $
         (\x -> mempty {_bakeView_bakerAddresses = x}) . toRangeView bakerAddressesVS <$> getBakerAddresses nds Nothing
 
-    -- handleBakerDetails :: Monad m' => BakerDetails -> m' (BakeView a)
-    handleBakerDetails :: BakerDetails -> Serializable (BakeView a)
+    handleBakerDetails :: Monad m' => BakerDetails -> m' (BakeView a)
     handleBakerDetails bakerDetails = whenM (viewSelects (Bounded $ _bakerDetails_publicKeyHash bakerDetails) bakerDetailsVS) $
       pure $ mempty
         { _bakeView_bakerDetails = toRangeView1
@@ -232,7 +229,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     mailServerVS = _bakeViewSelector_mailServer aggVS
 
-    handleNotificatee :: Serializable (BakeView a)
+    handleNotificatee :: PersistBackend m' => m' (BakeView a)
     handleNotificatee = whenM (viewSelects () mailServerVS) $ do
       notificatees <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
       -- TODO: do something a little more reasonable that 'listToMaybe'  what happens if there *are* more than one serverConfig?
@@ -241,7 +238,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
         { _bakeView_mailServer = toMaybeView mailServerVS $ Just $ flip mailServerConfigToView notificatees <$> mailServer
         }
 
-    handleMailServer :: MailServerConfig -> Serializable (BakeView a)
+    handleMailServer :: PersistBackend m' => MailServerConfig -> m' (BakeView a)
     handleMailServer mailServer = whenM (viewSelects () mailServerVS) $ do
       notificatees <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
       pure $ (mempty :: BakeView a)
@@ -249,19 +246,19 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
         }
 
     handleErrorLog
-      :: forall e. (EntityWithIdBy (DefaultKeyUnique e) e)
-      => (e -> Id ErrorLog) -> LogTag e -> Id e -> Serializable (BakeView a)
+      :: forall e m2. (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2, MonadMask m2)
+      => (e -> Id ErrorLog) -> LogTag e -> Id e -> m2 (BakeView a)
     handleErrorLog = handleErrorLog' (const $ pure mempty)
 
     alertCountVS = _bakeViewSelector_alertCount aggVS
     handleErrorLog'
-      :: forall e
-      . (EntityWithIdBy (DefaultKeyUnique e) e)
-      => (e -> Serializable (BakeView a))
+      :: forall e m2
+      . (EntityWithIdBy (DefaultKeyUnique e) e, MonadIO m2, MonadLogger m2, PersistBackend m2, PostgresRaw m2, MonadMask m2)
+      => (e -> m2 (BakeView a))
       -> (e -> Id ErrorLog)
       -> LogTag e
       -> Id e
-      -> Serializable (BakeView a)
+      -> m2 (BakeView a)
     handleErrorLog' k getLogId tag specificLogId = do
       let toView logBody = tag :=> Identity logBody
       -- TODO: shove a time range, or perhaps an (Id ErrorLog) in the
@@ -323,14 +320,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
 
-    handlePublicNodeConfig :: PublicNodeConfig -> Serializable (BakeView a)
+    handlePublicNodeConfig :: Applicative m' => PublicNodeConfig -> m' (BakeView a)
     handlePublicNodeConfig pnc =
       whenM (viewSelects (_publicNodeConfig_source pnc) publicNodeConfigVS) $
         pure $ mempty { _bakeView_publicNodeConfig = toRangeView1 publicNodeConfigVS (_publicNodeConfig_source pnc) (Just pnc) }
 
     publicNodeHeadsVS = _bakeViewSelector_publicNodeHeads aggVS
 
-    handlePublicNodeHead :: Id PublicNodeHead -> Maybe PublicNodeHead -> Serializable (BakeView a)
+    handlePublicNodeHead :: (Monad m', MonadIO m') => Id PublicNodeHead -> Maybe PublicNodeHead -> m' (BakeView a)
     handlePublicNodeHead nid pnh = mconcat <$> sequence
       [ whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
           pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) pnh }
@@ -341,31 +338,31 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     snapshotMetaVS = _bakeViewSelector_snapshotMeta aggVS
 
-    handleSnapshotMeta :: SnapshotMeta -> Serializable (BakeView a)
+    handleSnapshotMeta :: Applicative m' => SnapshotMeta -> m' (BakeView a)
     handleSnapshotMeta cfg = whenM (viewSelects () snapshotMetaVS) $ do
       pure $ mempty { _bakeView_snapshotMeta = toMaybeView snapshotMetaVS $ Just cfg }
 
     telegramConfigVS = _bakeViewSelector_telegramConfig aggVS
 
-    handleTelegramConfig :: TelegramConfig -> Serializable (BakeView a)
+    handleTelegramConfig :: Applicative m' => TelegramConfig -> m' (BakeView a)
     handleTelegramConfig cfg = whenM (viewSelects () telegramConfigVS) $ do
       pure $ mempty { _bakeView_telegramConfig = toMaybeView telegramConfigVS $ Just $ Just cfg }
 
     telegramRecipientsVS = _bakeViewSelector_telegramRecipients aggVS
 
-    handleTelegramRecipient :: Id TelegramRecipient -> Maybe TelegramRecipient -> Serializable (BakeView a)
+    handleTelegramRecipient :: Applicative m' => Id TelegramRecipient -> Maybe TelegramRecipient -> m' (BakeView a)
     handleTelegramRecipient rid recipient = whenM (viewSelects (Bounded rid) telegramRecipientsVS) $ do
       pure $ mempty
         { _bakeView_telegramRecipients = toRangeView1 telegramRecipientsVS (Bounded rid) (Just $ First recipient) }
 
     upgradeVS = _bakeViewSelector_upstreamVersion aggVS
 
-    handleUpstreamVersion :: UpstreamVersion -> Serializable (BakeView a)
+    handleUpstreamVersion :: Applicative m' => UpstreamVersion -> m' (BakeView a)
     handleUpstreamVersion ent = whenM (viewSelects () upgradeVS) $ do
       pure $ mempty { _bakeView_upstreamVersion = toMaybeView upgradeVS (Just ent) }
 
     rightNotificationSettingsVS = _bakeViewSelector_rightNotificationSettings aggVS
-    handleRightNotificationSettings :: RightKind -> Maybe RightNotificationLimit -> Serializable (BakeView a)
+    handleRightNotificationSettings :: Applicative m' => RightKind -> Maybe RightNotificationLimit -> m' (BakeView a)
     handleRightNotificationSettings rk mrnl
       | viewSelects rk rightNotificationSettingsVS = pure $ mempty
         { _bakeView_rightNotificationSettings = toRangeView1 rightNotificationSettingsVS rk $ Just $ First mrnl
@@ -373,49 +370,49 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | otherwise = pure mempty
 
     amendmentVS = _bakeViewSelector_amendment aggVS
-    handleAmendment :: VotingPeriodKind -> Maybe Amendment -> Serializable (BakeView a)
+    handleAmendment :: Applicative m' => VotingPeriodKind -> Maybe Amendment -> m' (BakeView a)
     handleAmendment k ma = whenM (viewSelects k amendmentVS) $ do
       pure $ mempty { _bakeView_amendment = toRangeView1 amendmentVS k (Just $ First ma) }
 
     proposalsVS = _bakeViewSelector_proposals aggVS
-    handleProposals :: Id PeriodProposal -> Maybe (PeriodProposal, Maybe Bool) -> Serializable (BakeView a)
+    handleProposals :: PersistBackend m' => Id PeriodProposal -> Maybe (PeriodProposal, Maybe Bool) -> m' (BakeView a)
     handleProposals pid mp
       | viewSelects (Bounded pid) proposalsVS = pure $ mempty
       { _bakeView_proposals = toRangeView1 proposalsVS (Bounded pid) $ Just $ First mp }
       | otherwise = pure mempty
 
     bakerVoteVS = _bakeViewSelector_bakerVote aggVS
-    handleBakerVote :: Maybe BakerVote -> Serializable (BakeView a)
+    handleBakerVote :: PersistBackend m' => Maybe BakerVote -> m' (BakeView a)
     handleBakerVote ma
       | viewSelects () bakerVoteVS = pure $ mempty { _bakeView_bakerVote = toMaybeView bakerVoteVS $ Just ma }
       | otherwise = pure mempty
 
     periodTestingVoteVS = _bakeViewSelector_periodTestingVote aggVS
-    handlePeriodTestingVote :: Maybe PeriodTestingVote -> Serializable (BakeView a)
+    handlePeriodTestingVote :: PersistBackend m' => Maybe PeriodTestingVote -> m' (BakeView a)
     handlePeriodTestingVote ma
       | viewSelects () periodTestingVoteVS = pure $ mempty { _bakeView_periodTestingVote = toMaybeView periodTestingVoteVS $ Just ma }
       | otherwise = pure mempty
 
     periodTestingVS = _bakeViewSelector_periodTesting aggVS
-    handlePeriodTesting :: Maybe PeriodTesting -> Serializable (BakeView a)
+    handlePeriodTesting :: PersistBackend m' => Maybe PeriodTesting -> m' (BakeView a)
     handlePeriodTesting ma
       | viewSelects () periodTestingVS = pure $ mempty { _bakeView_periodTesting = toMaybeView periodTestingVS $ Just ma }
       | otherwise = pure mempty
 
     periodPromotionVoteVS = _bakeViewSelector_periodPromotionVote aggVS
-    handlePeriodPromotionVote :: Maybe PeriodPromotionVote -> Serializable (BakeView a)
+    handlePeriodPromotionVote :: PersistBackend m' => Maybe PeriodPromotionVote -> m' (BakeView a)
     handlePeriodPromotionVote ma
       | viewSelects () periodPromotionVoteVS = pure $ mempty { _bakeView_periodPromotionVote = toMaybeView periodPromotionVoteVS $ Just ma }
       | otherwise = pure mempty
 
     periodAdoptionVS = _bakeViewSelector_periodAdoption aggVS
-    handlePeriodAdoption :: Maybe PeriodAdoption -> Serializable (BakeView a)
+    handlePeriodAdoption :: PersistBackend m' => Maybe PeriodAdoption -> m' (BakeView a)
     handlePeriodAdoption ma
       | viewSelects () periodAdoptionVS = pure $ mempty { _bakeView_periodAdoption = toMaybeView periodAdoptionVS $ Just ma }
       | otherwise = pure mempty
 
     bakerRegisteredVS = _bakeViewSelector_bakerRegistered aggVS
-    handleBakerRegistered :: PublicKeyHash -> Bool -> Serializable (BakeView a)
+    handleBakerRegistered :: Applicative m' => PublicKeyHash -> Bool -> m' (BakeView a)
     handleBakerRegistered pkh b
       | viewSelects (Bounded pkh) bakerRegisteredVS = pure $ mempty
         { _bakeView_bakerRegistered = toRangeView1 bakerRegisteredVS (Bounded pkh) (Just b)

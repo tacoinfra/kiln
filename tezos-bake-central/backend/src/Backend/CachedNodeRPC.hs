@@ -25,7 +25,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-} -- for MonadError instance
 
-{-# OPTIONS_GHC -Wall -Werror -Wno-orphans #-}
+{-# OPTIONS_GHC -Wall -Wwarn #-}
 
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where

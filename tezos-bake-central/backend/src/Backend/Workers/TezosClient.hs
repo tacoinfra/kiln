@@ -56,7 +56,7 @@ import Tezos.Types
 import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (AppSerializable, addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
-import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI, BinaryPaths(..))
+import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI', kilnNodeRpcURI, BinaryPaths(..))
 import Backend.IndexQueries
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))

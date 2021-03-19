@@ -26,6 +26,7 @@ import Control.Monad (unless)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Primitive (PrimMonad)
 import Control.Monad.Reader (ReaderT)
+import Data.Aeson.Lens
 import Data.Bool (bool)
 import Data.Constraint.Extras
 import Data.Default
@@ -86,8 +87,8 @@ import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
-                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_logExportAvailable)
-import Common.Config (UsingNodeOption(..))
+                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_usingNodeOption, frontendConfig_logExportAvailable)
+import Common.Config (UsingNodeOption(..), _UsingCustomNode)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -406,8 +407,14 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       divClass "item" $ divClass "withRightIcon" $ do
         divClass "content" $ do
           divClass "header" $ text "Network"
-          divClass "description" $
-            tooltipped TooltipPos_BottomLeft (protocolTooltip latestHead) $
+          divClass "description" $ do
+            customProtocol <- asks (^? frontendConfig
+                       . frontendConfig_usingNodeOption
+                       . _Just
+                       . _UsingCustomNode
+                       . key "network" . key "genesis" . key "protocol"
+                       . _String)
+            tooltipped TooltipPos_BottomLeft (protocolTooltip customProtocol latestHead) $
               text . showChain =<< asks (^. frontendConfig . frontendConfig_chain)
 
 {-
@@ -469,9 +476,13 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
         el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
         el "p" ensureHealthyNodes
 
-    protocolTooltip dmLatestHead = divClass "protocol-tooltip" $ do
+    protocolTooltip mCustomProtocol dmLatestHead = divClass "protocol-tooltip" $ do
       divClass "tooltip-title" $ text "Current Protocol"
-      let dProtoText = maybe "Unknown" (^.protocolHash.to toBase58Text) <$> dmLatestHead
+      let dProtoText = dmLatestHead <&> \mLatestHead ->
+            case (mLatestHead, mCustomProtocol) of
+              (_, Just customProtocol) -> customProtocol
+              (Just latestHead', _) -> latestHead' ^. protocolHash. to toBase58Text
+              _ -> "Unknown"
       divClass "tooltip-description" $ el "p" $ do
         whenJustDyn dmLatestHead $ \_ -> copyButton (current dProtoText)
         dynText dProtoText
@@ -570,7 +581,10 @@ nodesTabOrWelcome = do
     Just (False, False, Nothing) -> divClass "app-content app-welcome" $ welcomeScreen Nothing
     Just (haveBakers, haveNodes, usingNodeOption) -> divClass "app-content" $ do
       when ((Just UsingArchivalNode == usingNodeOption) && not haveBakers) $ welcomeScreen (Just UsingArchivalNode)
-      when ((Just UsingCustomNode == usingNodeOption) && not haveBakers) $ welcomeScreen (Just UsingCustomNode)
+      let isCustomNode = \case
+            Just (UsingCustomNode _) -> True
+            _ -> False
+      when (isCustomNode usingNodeOption && not haveBakers) $ welcomeScreen usingNodeOption
       when haveBakers bakersTab
       when haveNodes $ do
         nodesTab usingNodeOption
@@ -687,7 +701,7 @@ welcomeScreen usingNodeOption = mdo
       pure $ domEvent Click closeEl
     customMessage = case usingNodeOption of
       Just UsingArchivalNode -> " The Archival node, provided by Giganode, has been added to provide a baseline source of network data."
-      Just UsingCustomNode -> "You are currently using Kiln to run a custom network. Accordingly, the archivaln node has been disabled."
+      Just (UsingCustomNode _) -> "You are currently using Kiln to run a custom network. Accordingly, the archivaln node has been disabled."
       Nothing -> ""
 
 
@@ -1598,7 +1612,7 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
 osPublicNodeRemoveMessage :: DomBuilder t m => m ()
 osPublicNodeRemoveMessage = do
   text "This Node can only be turned off via "
-  let url = "https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md#enable-archival-node-bool"
+  let url = "https://gitlab.com/tezos-kiln/kiln/-/blob/develop/docs/config.md#enable-archival-node-bool"
   elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
 
 publicNodeOptions :: MonadAppWidget js t m => Either NamedChain ChainId -> m ()
@@ -1610,7 +1624,7 @@ publicNodeOptions chain = do
       ]
 
     describePublicNode = \case
-      PublicNode_Archival -> text "Public Node Caching Service provided by Obsidian Systems. " *> osPublicNodeRemoveMessage
+      PublicNode_Archival -> text "Public Node Caching Service provided by Giganode. " *> osPublicNodeRemoveMessage
       PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
 
   pncDyn <- watchPublicNodeConfig
@@ -1752,8 +1766,8 @@ nodesTab usingNodeOption =
       -- Node tiles
       dyn_ $ ffor useBlocker $ \case
         True -> case usingNodeOption of
-            Just UsingCustomNode -> divClass "app-content app-welcome" $ welcomeScreen usingNodeOption
-            Just UsingArchivalNode -> divClass "app-content app-welcome" $ welcomeScreen Nothing
+            Just (UsingCustomNode _) -> divClass "app-content app-welcome" $ welcomeScreen usingNodeOption
+            Just UsingArchivalNode -> blank
             _ -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
           ebn <- snd <$$$$> watchErrorsByNode everythingWindow

@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend where
@@ -24,7 +25,7 @@ import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
+import Control.Monad.Logger (NoLoggingT(..), LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
@@ -458,7 +459,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_usingNodeOption =
             case (_nodeDataSource_archivalPublicNode dataSrc, customChainId) of
               (Just _, Nothing) -> Just Config.UsingArchivalNode
-              (_, Just _) -> Just Config.UsingCustomNode
+              (_, Just _) -> Config.UsingCustomNode <$> nodeConfigFile
               _ -> Nothing
           , Config._frontendConfig_logExportAvailable = logExportAvailable
           , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
