@@ -1521,8 +1521,7 @@ startNodeWorkflow backWF = Workflow $ do
             name <- liftJSM $ File.getName file
             divClass "file-name" $ text name
           elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
-          fi <- inputElement $ def
-            & initialAttributes .~ ("id" =: "fileId")
+          fi <- fileInput' $ constDyn ("id" =: "fileId")
         pure fileName
     (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
       divClass "" $ text "Peer to Peer Download"
@@ -1560,6 +1559,18 @@ startNodeWorkflow backWF = Workflow $ do
   pure ((pure "start-node", leftmost [launchedEv, launchedEv2]), leftmost
        [ backWF <$ backEv
        ])
+  where
+    fileInput' config = do
+      let insertType = Map.insert "type" "file"
+          dAttrs = insertType <$> config
+      modifyAttrs <- dynamicAttributesToModifyAttributes dAttrs
+      let filters = DMap.singleton Change . GhcjsEventFilter $ \_ -> do
+            return . (,) mempty $ return . Just $ EventResult ()
+          elCfg = (def :: ElementConfig EventResult t (DomBuilderSpace m))
+            & modifyAttributes .~ fmap mapKeysToAttributeName modifyAttrs
+            & elementConfig_eventSpec . ghcjsEventSpec_filters .~ filters
+          cfg = (def :: InputElementConfig EventResult t (DomBuilderSpace m)) & inputElementConfig_elementConfig .~ elCfg
+      inputElement cfg
 
 verifySnapshotModal ::
   ( MonadReader r m
