@@ -64,7 +64,7 @@ import qualified Text.URI as Uri
 import Tezos.NodeRPC hiding (DataSource, getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
 import qualified Tezos.V005.Types as V005
-import qualified Tezos.V008.Types as V008
+import qualified Tezos.V009.Types as V009
 import qualified Tezos.Types as Tezos
 import qualified Tezos.Unsafe
 
@@ -732,8 +732,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                     unseenProposalHashes = proposalHashes S.\\ proposalHashesWhenLastVoting
                   pure $ if null unseenProposalHashes then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
-      VotingPeriodKind_Testing -> pure BakerVotingState_Testing
-      VotingPeriodKind_TestingVote -> singleVotePeriod pkh 1 BakerVotingState_Exploration
+      VotingPeriodKind_Exploration -> pure BakerVotingState_Testing
+      VotingPeriodKind_Cooldown -> singleVotePeriod pkh 1 BakerVotingState_Exploration
       VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3 BakerVotingState_Promotion
       VotingPeriodKind_Adoption -> pure BakerVotingState_Adoption
 
@@ -806,13 +806,13 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       notify NotifyTag_Amendment (p, Nothing)
       case p of
         VotingPeriodKind_Proposal -> pure () -- can never happen
-        VotingPeriodKind_TestingVote -> notify NotifyTag_PeriodTestingVote Nothing
-        VotingPeriodKind_Testing -> notify NotifyTag_PeriodTesting Nothing
+        VotingPeriodKind_Exploration -> notify NotifyTag_PeriodTestingVote Nothing
+        VotingPeriodKind_Cooldown -> notify NotifyTag_PeriodTesting Nothing
         VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
         VotingPeriodKind_Adoption -> notify NotifyTag_PeriodAdoption Nothing
 
   where
-    toBlockHeader = blockCrossCata V008.toBlockHeader V005.toBlockHeader
+    toBlockHeader = blockCrossCata V009.toBlockHeader V005.toBlockHeader
 
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
@@ -842,8 +842,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       delete $ Amendment_periodField ==. p
       case p of
         VotingPeriodKind_Proposal -> pure ()
-        VotingPeriodKind_TestingVote -> deleteAll' @PeriodTestingVote Proxy
-        VotingPeriodKind_Testing -> deleteAll' @PeriodTesting Proxy
+        VotingPeriodKind_Exploration -> deleteAll' @PeriodTestingVote Proxy
+        VotingPeriodKind_Cooldown -> deleteAll' @PeriodTesting Proxy
         VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
         VotingPeriodKind_Adoption -> deleteAll' @PeriodAdoption Proxy
 
@@ -883,7 +883,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
             |] $ (\(ProposalVotes (phash, votes)) -> (phash, chainId, votingPeriod, votes)) <$> toList proposals
             for_ inserted $ \(pid, phash, chain, vp, votes, includedPkh :: Maybe PublicKeyHash, includedBlock :: Maybe BlockHash) ->
               notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
-        VotingPeriodKind_Testing -> do
+        VotingPeriodKind_Exploration -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
             let (status, testChainId, startBlockHash) = case blk ^. blockMetadata . blockMetadata_testChainStatus of
@@ -907,7 +907,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                 , _periodTesting_startingLevel = l
                 , _periodTesting_status = s
                 }
-        VotingPeriodKind_TestingVote -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
+        VotingPeriodKind_Cooldown -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
         VotingPeriodKind_PromotionVote -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
         VotingPeriodKind_Adoption -> handleVotingPeriod predBlk PeriodAdoption NotifyTag_PeriodAdoption
 
