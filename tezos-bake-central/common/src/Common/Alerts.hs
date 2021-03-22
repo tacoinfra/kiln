@@ -186,8 +186,8 @@ bakerVotingReminderDescriptions elog periodEndsIn = BakerErrorDescriptions
         where state = if previouslyVoted
                       then "Proposals have been submitted since you last voted"
                       else "Proposals are available for voting"
-      VotingPeriodKind_TestingVote -> singleVotePeriod "Exploration"
-      VotingPeriodKind_Testing -> "" -- impossible
+      VotingPeriodKind_Exploration -> singleVotePeriod "Exploration"
+      VotingPeriodKind_Cooldown -> "" -- impossible
       VotingPeriodKind_PromotionVote -> singleVotePeriod "Promotion"
       VotingPeriodKind_Adoption -> singleVotePeriod "Adoption"
 

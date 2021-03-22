@@ -56,16 +56,16 @@ textBallot = \case
 textPeriod :: VotingPeriodKind -> Text
 textPeriod = \case
   VotingPeriodKind_Proposal -> "Proposal"
-  VotingPeriodKind_TestingVote -> "Exploration"
-  VotingPeriodKind_Testing -> "Testing"
+  VotingPeriodKind_Exploration -> "Exploration"
+  VotingPeriodKind_Cooldown -> "Cooldown(Testing)"
   VotingPeriodKind_PromotionVote -> "Promotion"
   VotingPeriodKind_Adoption -> "Adoption"
 
 isVotingPeriod :: VotingPeriodKind -> Bool
 isVotingPeriod = \case
   VotingPeriodKind_Proposal -> True
-  VotingPeriodKind_TestingVote -> True
-  VotingPeriodKind_Testing -> False
+  VotingPeriodKind_Exploration -> True
+  VotingPeriodKind_Cooldown -> False
   VotingPeriodKind_PromotionVote -> True
   VotingPeriodKind_Adoption -> False
 
@@ -126,8 +126,8 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
            in textWithCommas (calcCycle coeff) <> " - " <> textWithCommas (calcCycle (succ coeff) - 1)
     dyn_ $ ffor selectedPeriod $ \case
       VotingPeriodKind_Proposal -> periodProposals =<< watchProposals
-      VotingPeriodKind_TestingVote -> withLoader (periodVote "Test Period") =<< watchPeriodTestingVote
-      VotingPeriodKind_Testing -> withLoader periodTest =<< watchPeriodTesting
+      VotingPeriodKind_Exploration -> withLoader (periodVote "Exploration") =<< watchPeriodTestingVote
+      VotingPeriodKind_Cooldown -> withLoader periodTest =<< watchPeriodTesting
       VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
       VotingPeriodKind_Adoption -> withLoader periodAdoption =<< watchPeriodAdoption
 
@@ -295,8 +295,8 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     selectPeriod :: VotingPeriodKind -> m (Event t (Either () ()))
     selectPeriod = fmap (fmap Right . switchDyn) . \case
       VotingPeriodKind_Proposal -> workflow proposalFlow
-      VotingPeriodKind_TestingVote -> workflow explorationFlow
-      VotingPeriodKind_Testing -> pure <$> getPostBuild -- TODO: close immediately
+      VotingPeriodKind_Exploration -> workflow explorationFlow
+      VotingPeriodKind_Cooldown -> pure <$> getPostBuild -- TODO: close immediately
       VotingPeriodKind_PromotionVote -> workflow promotionFlow
       VotingPeriodKind_Adoption -> pure <$> getPostBuild -- TODO: close immediately
 
