@@ -69,8 +69,11 @@ v >>=? f = bindValidation v f
 validateNodeConfigFile :: NodeConfigFile -> Validation (NonEmpty Text) NodeConfigFile
 validateNodeConfigFile = \case
   Right r -> pure $ Right r
-  Left json -> do
-   result <- validationNel (maybe (Left "network unavailable") Right (json ^? key "network" . _Object)) >>=? \(Object -> network) ->
+  Left json -> Left <$> validateTrulyCustom json
+
+validateTrulyCustom :: Value -> Validation (NonEmpty Text) Value
+validateTrulyCustom json =
+   validationNel (maybe (Left "network unavailable") Right (json ^? key "network" . _Object)) >>=? \(Object -> network) ->
        validationNel (maybe (Left "network.genesis unavailable") Right (network ^? key "genesis" . _Object)) >>=? \(Object -> genesis) ->
           do
             validationNel $ maybe (Left "data-dir unavailable") Right (json ^? key "data-dir")
@@ -80,8 +83,6 @@ validateNodeConfigFile = \case
             validationNel $ maybe (Left "network.genesis.chain_name unavailable") Right (network ^? key "chain_name")
             validationNel $ maybe (Left "network.genesis.sandboxed_chain_name unavailable") Right (network ^? key "sandboxed_chain_name")
             pure json
-
-   pure $ Left result
 
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
