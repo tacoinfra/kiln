@@ -2408,7 +2408,7 @@ bakersTab =
                 else case Map.size $ Map.filter (isJust . snd) proposals of
                   0 -> notVoted
                   n -> hasUpvoted n
-              VotingPeriodKind_Testing -> Nothing
+              VotingPeriodKind_Cooldown -> Nothing
               _ -> Just $ maybe notVoted hasVoted mBakerVote
 
         tileMenu $ do
@@ -2421,7 +2421,7 @@ bakersTab =
               mPeriodKind_amendment <- maybeDyn . fmap Map.lookupMax =<< watchAmendment
               whenJustDyn mPeriodKind_amendment $ \periodKind_amendment -> do
                 let testingOrAdoption = \case
-                        VotingPeriodKind_Testing -> True
+                        VotingPeriodKind_Cooldown -> True
                         VotingPeriodKind_Adoption -> True
                         _ -> False
                 isTestingOrAdoptionPeriod <- holdUniqDyn $ testingOrAdoption . fst <$> periodKind_amendment
