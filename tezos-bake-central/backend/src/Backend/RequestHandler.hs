@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NumDecimals #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -19,8 +20,9 @@ module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Exception.Safe (SomeException, try)
-import Control.Monad.Logger (NoLoggingT(..), MonadLoggerIO, MonadLogger, logError, logInfo, logDebug)
+import Control.Monad.Logger (NoLoggingT(..), MonadLoggerIO, MonadLogger, logError, logInfo, logDebug, logDebugNS, logErrorNS)
 import Control.Monad.Trans.Except
+import Control.Retry
 import Data.Aeson
 import qualified Data.ByteString.Lazy as LB
 import Data.Foldable (toList)
@@ -114,33 +116,90 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                     [LedgerAccount_balanceField =. Just tez, LedgerAccount_publicKeyHashField =. Just pkh]
                     $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
 
+            internalURI = T.unpack $ render $ _nodeDataSource_kilnNodeUri nds
+
+            balancePath pkh = printf "/chains/main/blocks/head/context/contracts/%s/balance" (T.unpack $ toPublicKeyHashText pkh)
+
+            balanceUrl pkh = dropWhileEnd (== '/') internalURI <> balancePath pkh
+
             fastGetBalanceFor pkh = do
                 let mgr = _nodeDataSource_httpMgr nds
-                    internalURI = T.unpack $ render $ _nodeDataSource_kilnNodeUri nds
-                    balanceUrl  = dropWhileEnd (== '/') internalURI <> printf "/chains/main/blocks/head/context/contracts/%s/balance" (T.unpack $ toPublicKeyHashText pkh)
 
                 tezResp :: Either Http.HttpException (Http.Response LB.ByteString) <-
-                        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager mgr <$> Http.parseRequest balanceUrl)
+                        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager mgr <$> Http.parseRequest (balanceUrl pkh))
 
-                pure $ either (Left . ClientError_Other . tshow) (Right . decode' @Tez . Http.getResponseBody) tezResp
+                pure $ case tezResp of
+                    Left err -> Left err
+                    Right resp -> Right $ decode' @Tez $ Http.getResponseBody $ resp
 
             insertOrUpdateAccounts f sks' = do
               res <- runExceptT $ for sks' $ \sk -> do
-                  mPkh <- withExceptT ((,) sk) $ ExceptT $ runNoLoggingT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
+                  mPkh <- withExceptT ((,) sk . Right) $ ExceptT $ runNoLoggingT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
                   case mPkh of
-                      Nothing -> notify NotifyTag_ShowLedger (sk, Nothing) >> return Nothing
+                      Nothing -> do
+                        notify NotifyTag_ShowLedger (sk, Left $ "tezosClientWorker:showLedger: public key hash unavailable")
+                        return Nothing
                       Just pkh -> do
-                          mTez <- withExceptT ((,) sk) $ ExceptT $ fastGetBalanceFor pkh
+
+                          mTez <- withExceptT ((,) sk . Left) $ ExceptT $ do
+                              let oneSecond :: Int
+                                  oneSecond = 1e6
+                                  defaultPolicy = limitRetriesByCumulativeDelay (5 * oneSecond) $ exponentialBackoff oneSecond
+
+                                  toRetry mcd rs rr = do
+
+                                    let doRetry =
+                                          case rr of
+                                            Left (Http.InvalidUrlException _ _) -> False
+                                            Left (Http.HttpExceptionRequest _ hc) -> case hc of
+                                                 Http.StatusCodeException _ _ -> True
+                                                 Http.ResponseTimeout -> True
+
+                                                 Http.ConnectionTimeout -> True
+                                                 _ -> False
+                                            _ -> False
+
+                                    if not doRetry
+                                        then logDebugNS "kiln-node" $ fold
+                                         ["RPC call ("
+                                         , T.pack $ balanceUrl pkh
+                                         ,") succeeded after "
+                                         , tshow (succ $ rsIterNumber rs)
+                                         , " retries!"
+                                         ]
+                                        else do
+                                            let isFinal = mcd <= rsCumulativeDelay rs + 2 * fromMaybe 0 (rsPreviousDelay rs)
+
+                                            if isFinal
+                                              then logDebugNS "kiln-node" $ fold
+                                                   [ "For RPC call ("
+                                                   , T.pack $ balanceUrl pkh
+                                                   , ") this will be the final retry after "
+                                                   , tshow (succ $ rsIterNumber rs)
+                                                   , " retries."
+                                                    ]
+                                              else logDebugNS "kiln-node" $ fold
+                                                   [ "Retrying rpc call ("
+                                                    , T.pack $ balanceUrl pkh
+                                                    , "). Attempt number: {"
+                                                    , tshow (succ $ rsIterNumber rs)
+                                                    , "}."
+                                                   ]
+
+                                    return doRetry
+
+                              retrying defaultPolicy (toRetry (5 * oneSecond)) (const $ fastGetBalanceFor pkh)
+
                           case mTez of
                               Nothing -> do
-                                $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
+                                logErrorNS "kiln-node" $ "Failed to get balance of account " <> toPublicKeyHashText pkh
                                 return Nothing
                               Just tez -> do
-                                  notify NotifyTag_ShowLedger (sk, Just (pkh, tez))
+                                  notify NotifyTag_ShowLedger (sk, Right (pkh, tez))
                                   return $ Just (sk, pkh, tez)
               case res of
                   Right rs -> mapM_ f (Compose rs)
-                  Left (_, ClientError_LedgerDisconnected) -> do
+                  Left (_, Right ClientError_LedgerDisconnected) -> do
                       now <- getTime
                       -- Mark ledger as disconnected
                       update
@@ -150,8 +209,8 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                           ] CondEmpty
                   Left (sk, err) -> do
                       delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-                      notify NotifyTag_ShowLedger (sk, Nothing)
-                      $(logError) (tshow err)
+                      notify NotifyTag_ShowLedger (sk, Left $ T.pack $ show err)
+                      $(logError) (either tshow tshow err)
 
         case existent of
           [] -> insertOrUpdateAccounts insertAccount sks

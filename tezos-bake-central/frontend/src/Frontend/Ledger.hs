@@ -335,7 +335,7 @@ selectAddress ledger = divClass "select-address" $ mdo
   requesting_ (public (PublicRequest_ShowLedgerBatch (reverse secretKeys)) <$ pb)
 
   (formEl, selection) <- elDynAttrWithModifyEvent' preventDefault Submit "form" ((\e -> "class" =: ("ui form" <> if e then " error" else "")) <$> hasError) $ mdo
-    let accountItem :: SecretKey -> Dynamic t (Maybe (PublicKeyHash, Tez)) -> m (Event t (SecretKey, PublicKeyHash))
+    let accountItem :: SecretKey -> Dynamic t (Maybe (Either Text (PublicKeyHash, Tez))) -> m (Event t (SecretKey, PublicKeyHash))
         accountItem (SecretKey _ sc dp) dynPkhTez = do
           let selected = demuxed selectionDemux $ Just $ SecretKey ledger sc dp
               loaded = isJust <$> dynPkhTez
@@ -344,7 +344,10 @@ selectAddress ledger = divClass "select-address" $ mdo
               Nothing -> do
                 divClass "ui active tiny inline blue loader" blank
                 text "Importing PKH..."
-              Just (pkh, tz) ->
+              Just (Left errMsg) -> do
+                divClass "ui active tiny inline blue loader" blank
+                text errMsg
+              Just (Right (pkh, tz)) ->
                 let
                   tooltipContent = el "dl" $ do
                      el "div" $ do
@@ -358,7 +361,7 @@ selectAddress ledger = divClass "select-address" $ mdo
                   SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
                   text $ toPublicKeyHashText pkh
                   fancyTez tz
-          let f mpkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) mpkh
+          let f mepkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) (either (const Nothing) Just =<< mepkh)
           pure $ attachWithMaybe f (current dynPkhTez) (domEvent Click e)
 
     accounts <- watchLedgerAccounts $ (: secretKeys) <$> manualSk
@@ -391,7 +394,7 @@ selectAddress ledger = divClass "select-address" $ mdo
 
     manualD <- holdUniqDyn $ ffor2 manualSk accounts $ \sk as -> (,) sk <$> MMap.lookup sk as
     chosen' <- divClass "ui block list" $ switchHold never <=< dyn $ ffor manualD $ \case
-      Just (sk, (pkh, tz)) -> accountItem sk (pure (Just (pkh, tz)))
+      Just (sk, pkhtz) -> accountItem sk (pure (Just pkhtz))
       Nothing -> divClass "item" $ do
         divClass "ui active tiny inline blue loader" blank
         text "Importing PKH..."

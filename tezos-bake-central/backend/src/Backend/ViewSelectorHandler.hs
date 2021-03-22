@@ -50,6 +50,7 @@ import Data.Text.Encoding (decodeUtf8)
 import Data.Time (UTCTime)
 import Data.These (these)
 import Data.Tuple (swap)
+import Data.Validation hiding (ensure)
 import Data.Universe (universe)
 import Database.Groundhog.Core (ConstructorMarker)
 import Database.Groundhog.Core (EntityConstr)
@@ -316,7 +317,7 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
     las <- select CondEmpty -- Expect very few records here, so just select them all
     let rangeView = toRangeView showLedgerVS $ flip fmap las $ \la ->
           ( _ledgerAccount_secretKey la
-          , First $ (,) <$> _ledgerAccount_publicKeyHash la <*> _ledgerAccount_balance la
+          , fromEither $ liftA2 (,) (maybe (Left (First "")) Right $ _ledgerAccount_publicKeyHash la) (maybe (Left (First "")) Right $ _ledgerAccount_balance la)
           )
     pure rangeView
 

@@ -265,10 +265,16 @@ backendImpl cfg serve = do
   -- Exceptions in non-strict languages are terrabad
   for_ ledgerCheckDelay (`seq` pure ())
 
-  let computeChainId' bins json = runNoLoggingT $ computeChainId Config.defaultKilnNodeRpcPort Config.defaultKilnDataDir bins json <&> \e -> toEither $ first toList (validateNodeConfigFile (Left json) *> validationNel e)
+  let computeChainId' bins json =
+        runNoLoggingT
+        $ computeChainId Config.defaultKilnNodeRpcPort Config.defaultKilnDataDir bins json
+        <&> \e ->
+          toEither
+          $ let f = first toList
+              in f $ validateNodeConfigFile (Left json) *> validationNel e
 
   -- error out if chain id is invalaid
-  customChainId <- traverse (computeChainId' binaryPaths) nodeConfigFile >>= \case
+  customChainId <- for nodeConfigFile (computeChainId' binaryPaths) >>= \case
       Nothing -> pure Nothing
       Just e -> either (throwString . T.unpack . T.intercalate ":") (pure . Just . Right) e
 
