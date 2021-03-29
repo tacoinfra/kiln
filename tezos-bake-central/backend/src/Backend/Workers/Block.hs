@@ -96,7 +96,7 @@ blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds
                 on conflict do nothing
                 |]
 
-          blockCrossCata (insertAccusationsV8 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
+          blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
 
           void [executeQ|
             update "BlockTodo"
@@ -108,12 +108,12 @@ blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds
             |]
 
 -- TODO: This could use a better abstraction here.
-insertAccusationsV8
+insertAccusationsV9
   :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e
      , PostgresRaw m, MonadMask m, PersistBackend m
      )
   => BlockHash -> ChainId -> V009.Block -> NodeQueryT m ()
-insertAccusationsV8 blockHash chainId block = do
+insertAccusationsV9 blockHash chainId block = do
   -- Operations into a block are divided into 4 subsections.  Accusations
   -- are always in the third of these sections.
   let mightBeAccusations = fold $ Seq.lookup 2 $ V009._block_operations block
