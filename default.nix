@@ -1,7 +1,8 @@
 { system ? builtins.currentSystem
 , obelisk ? (import tezos-bake-central/.obelisk/impl { inherit system; })
 , pkgs ? obelisk.reflex-platform.nixpkgs
-, closure-compiler-setting ? "SIMPLE" # set this to null to skip closure-compiler step
+  # can be set to "SIMPLE", "ADVANCED" or null
+, closure-compiler-setting ? null
 }:
 let
   inherit (obelisk.reflex-platform) hackGet;
