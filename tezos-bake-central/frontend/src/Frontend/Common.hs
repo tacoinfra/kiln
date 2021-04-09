@@ -426,7 +426,8 @@ tzStatsBlockUri chain path = (`appendPaths` [path]) $ case chain of
   NamedChain_Zeronet -> [uri|http://zeronet.tzstats.com/|]
   NamedChain_Mainnet -> [uri|http://tzstats.com/|]
   NamedChain_Delphinet -> [uri|http://delphinet.tzstats.com/|]
-  NamedChain_Edonet -> [uri||] -- this will produce a Nothing value,
+  NamedChain_Edonet -> [uri|https://edo.tzstats.com|] -- this will produce a Nothing value,
+  NamedChain_Edo2net -> [uri|https://edo.tzstats.com|] -- this will produce a Nothing value,
   NamedChain_Florencenet -> [uri||] -- this will produce a Nothing value,
   -- update this when this URL becomes available
 
