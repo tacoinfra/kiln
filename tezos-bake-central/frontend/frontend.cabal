@@ -1,9 +1,9 @@
 name: frontend
 version: 0.1
 license: BSD3
-copyright: Copyright (C) Obsidian Systems LLC 2018
+copyright: (c) 2018 Obsidian Systems LLC, 2020-2021 TQ Tezos
 author: Obsidian Systems LLC
-maintainer: maintainer@obsidian.systems
+maintainer: Tezos Kiln <maintainer@tezos-kiln.org>
 stability: Experimental
 build-type: Simple
 cabal-version: >=1.8
