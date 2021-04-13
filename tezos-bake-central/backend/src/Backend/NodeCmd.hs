@@ -85,11 +85,11 @@ tezosBinaryPaths = NonEmpty.fromList
   [( "PtEdo2ZkT9oKpimTah6x2embF25oss54njMuPzkJTEi5RqfdZFA"
   , $(staticWhich "tezos-baker-008-PtEdo2Zk")
   , $(staticWhich "tezos-endorser-008-PtEdo2Zk")
-  ),
-  ("PsFLorenaUUuikDWvMDr6fGBRG8kt3e3D3fHoXK1j1BFRxeSH4i"
-  , $(staticWhich "tezos-baker-009-PsFLoren")
-  , $(staticWhich "tezos-endorser-009-PsFLoren")
   )
+  -- , ("PsFLorenaUUuikDWvMDr6fGBRG8kt3e3D3fHoXK1j1BFRxeSH4i"
+  -- , $(staticWhich "tezos-baker-009-PsFLoren")
+  -- , $(staticWhich "tezos-endorser-009-PsFLoren")
+  -- )
   ]
 
 -- TODO: use postgres for "process-id's"
