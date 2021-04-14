@@ -93,6 +93,7 @@ preMigrate chainId =
   >=> deleteTzScanPublicNodeConfigs
   >=> deleteTzScanPublicNodeHeads
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "NodeExternal") "data#data#commitHash"
+  >=> updateAmendment
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -596,3 +597,21 @@ deleteTzScanPublicNodeHeads ta = do
         |]
       pure ta
     _ -> pure ta
+
+
+updateAmendment :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+updateAmendment ta = do
+  let table = (Nothing, "Amendment")
+  analyzeTable ta table >>= \case
+    Just _ -> do
+      void [traceExecuteQ|
+          UPDATE "Amendment" 
+          SET "period" = 'VotingPeriodKind_Exploration'
+          WHERE "period" = 'VotingPeriodKind_TestingVote';
+          UPDATE "Amendment" 
+          SET "period" = 'VotingPeriodKind_Cooldown'
+          WHERE "period" = 'VotingPeriodKind_Testing';
+        |]
+      pure ta
+    _ -> pure ta
+        
