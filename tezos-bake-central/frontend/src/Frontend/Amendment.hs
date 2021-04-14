@@ -57,7 +57,7 @@ textPeriod :: VotingPeriodKind -> Text
 textPeriod = \case
   VotingPeriodKind_Proposal -> "Proposal"
   VotingPeriodKind_Exploration -> "Exploration"
-  VotingPeriodKind_Cooldown -> "Cooldown(Testing)"
+  VotingPeriodKind_Cooldown -> "Cooldown"
   VotingPeriodKind_PromotionVote -> "Promotion"
   VotingPeriodKind_Adoption -> "Adoption"
 
