@@ -13,11 +13,30 @@ contains_re_group() { [[ $1 =~ $2 ]] && echo "${BASH_REMATCH[1]}"; }
 #           ledger_uri=$(contains_re_group "$connected_ledgers" '(ledger://[^\"]+)' || fail "Unable to find a connected ledger")
 # fi
 
-ledger_uri="ledger://buttery-quail-oblong-seal/bip25519/0h/0h"
+ledger_uri="ledger://forceful-cichlid-deadly-wolf/bip25519/0h/0h"
 
 echo "> Ledger: $ledger_uri"
 
-show_ledger=$(/home/eod/Downloads/latest/tezos-client show ledger "$ledger_uri" 2>/dev/null)
+tezos_bin_dir="/home/marklnichols/dev/Tezos-binaries/latest"
+echo "> Tezos bin dir: $tezos_bin_dir"
+
+echo "> Tezos client version: "
+$tezos_bin_dir/tezos-client --version
+
+echo "> Tezos node version: "
+$tezos_bin_dir/tezos-node --version
+
+proposalProtocolLib="/home/marklnichols/dev/Tezos-master/tezos/src/proto_009_PsFLoren/lib_protocol/TEZOS_PROTOCOL"
+echo "> Tezos protocol file: $proposalProtocolLib"
+
+oldProtoHash="PtEdo2ZkT9oKpimTah6x2embF25oss54njMuPzkJTEi5RqfdZFA"
+oldSuffix="008-PtEdo2Zk"
+newSuffix="009-PsFLoren"
+echo "> old protocol hash: $oldProtoHash"
+echo "> old suffix: $oldSuffix"
+echo "> new suffix: $newSuffix"
+
+show_ledger=$($tezos_bin_dir/tezos-client show ledger "$ledger_uri" 2>/dev/null)
 pk=$(contains_re_group "$show_ledger" '\* Public Key: ([A-Za-z0-9]+)' || fail "Unable to determine public key for $ledger_uri")
 echo "> PK: $pk"
 pkh=$(contains_re_group "$show_ledger" '\* Public Key Hash: ([A-Za-z0-9]+)' || fail "Unable to determine public key hash for $ledger_uri")
@@ -30,25 +49,21 @@ rm -rf "$root_path"
 
 mkdir -p "$kiln_config_dir"
 
-oldProtoHash="PtEdo2ZkT9oKpimTah6x2embF25oss54njMuPzkJTEi5RqfdZFA"
-oldSuffix="008-PtEdo2Zk"
-newSuffix="009-PsFLoren"
 
-proposalProtocolLib="/home/eod/work/tezos/src/proto_009_PsFLoren/lib_protocol/TEZOS_PROTOCOL"
 
 ########################
 # REPLACE ALL OF THESE #
 ########################
-first_baker_alpha_binary="/home/eod/Downloads/latest/tezos-baker-$oldSuffix"
-first_endorser_alpha_binary="/home/eod/Downloads/latest/tezos-endorser-$oldSuffix"
-first_accuser_alpha_binary="/home/eod/Downloads/latest/tezos-accuser-$oldSuffix"
-second_baker_alpha_binary="/home/eod/Downloads/latest/tezos-baker-$newSuffix"
-second_endorser_alpha_binary="/home/eod/Downloads/latest/tezos-endorser-$newSuffix"
-second_accuser_alpha_binary="/home/eod/Downloads/latest/tezos-accuser-$newSuffix"
-tezos_client_binary="/home/eod/Downloads/latest/tezos-client"
-tezos_admin_client_binary="/home/eod/Downloads/latest/tezos-admin-client"
+first_baker_alpha_binary="$tezos_bin_dir/tezos-baker-$oldSuffix"
+first_endorser_alpha_binary="$tezos_bin_dir/tezos-endorser-$oldSuffix"
+first_accuser_alpha_binary="$tezos_bin_dir/tezos-accuser-$oldSuffix"
+second_baker_alpha_binary="$tezos_bin_dir/tezos-baker-$newSuffix"
+second_endorser_alpha_binary="$tezos_bin_dir/tezos-endorser-$newSuffix"
+second_accuser_alpha_binary="$tezos_bin_dir/tezos-accuser-$newSuffix"
+tezos_client_binary="$tezos_bin_dir/tezos-client"
+tezos_admin_client_binary="$tezos_bin_dir/tezos-admin-client"
 
-/home/eod/Downloads/latest/tezos-sandbox daemons-upgrade $proposalProtocolLib \
+$tezos_bin_dir/tezos-sandbox daemons-upgrade $proposalProtocolLib \
    --interactive true \
    --add-bootstrap "LBK,$pk,$pkh,$ledger_uri@200_000_000_000" \
    --no-daemons-for LBK \
@@ -61,7 +76,7 @@ tezos_admin_client_binary="/home/eod/Downloads/latest/tezos-admin-client"
    --pause-on-error true \
    --root-path "$root_path" \
    --waiting-attempts 2000 \
-   --tezos-node-binary /home/eod/Downloads/latest/tezos-node \
+   --tezos-node-binary $tezos_bin_dir/tezos-node \
    --protocol-hash ${oldProtoHash} \
    --first-baker-alpha-binary     "$first_baker_alpha_binary" \
    --first-endorser-alpha-binary  "$first_endorser_alpha_binary" \
