@@ -20,6 +20,8 @@ echo "> Ledger: $ledger_uri"
 tezos_bin_dir="/home/marklnichols/dev/Tezos-binaries/latest"
 echo "> Tezos bin dir: $tezos_bin_dir"
 
+show_ledger=$(/home/marklnichols/dev/Tezos-binaries/latest/tezos-client show ledger "$ledger_uri" 2>/dev/null)
+
 echo "> Tezos client version: "
 $tezos_bin_dir/tezos-client --version
 
@@ -36,7 +38,7 @@ echo "> old protocol hash: $oldProtoHash"
 echo "> old suffix: $oldSuffix"
 echo "> new suffix: $newSuffix"
 
-show_ledger=$($tezos_bin_dir/tezos-client show ledger "$ledger_uri" 2>/dev/null)
+
 pk=$(contains_re_group "$show_ledger" '\* Public Key: ([A-Za-z0-9]+)' || fail "Unable to determine public key for $ledger_uri")
 echo "> PK: $pk"
 pkh=$(contains_re_group "$show_ledger" '\* Public Key Hash: ([A-Za-z0-9]+)' || fail "Unable to determine public key hash for $ledger_uri")
@@ -48,8 +50,6 @@ root_path=/tmp/kiln-protocol-test
 rm -rf "$root_path"
 
 mkdir -p "$kiln_config_dir"
-
-
 
 ########################
 # REPLACE ALL OF THESE #
