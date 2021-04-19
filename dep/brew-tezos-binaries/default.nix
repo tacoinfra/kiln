@@ -1,51 +1,52 @@
 { pkgs }:
-# https://github.com/serokell/tezos-packaging/releases/download/v9.0-rc1-1/tezos-accuser-009-PsFLoren-v9.0-rc1-1.catalina.bottle.tar.gz
+# https://github.com/serokell/tezos-packaging/releases/download/v9.0-rc1-1/tezos-accuser-009-PsFLoren-v9.0-rc1-1.${macos_version}.bottle.tar.gz
 with pkgs;
 let
-    outer-version = "v9.0-rc1-1";
+  outer-version = "v9.0-rc2-1";
+  macos_version = "mojave";
     tezos-accuser-009-PsFLoren = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-accuser-009-PsFLoren-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "0wdip4mf1bydrqi4fi2192yg6fmxdpqz6np2vrzvxvz3mc4awrd2";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-accuser-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "1griwfrzb92hkpygg1anpqsi2gvw1vdlg4a48mqdjh6c54bj6kf3";
     };
     tezos-accuser-008-PtEdo2Zk = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-accuser-008-PtEdo2Zk-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "1f7b3s2pl3rwp2k9rsmbh4hpas1959h8cw34v71vg1inhj4zlvnq";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-accuser-008-PtEdo2Zk-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "0xrfsig96r07zg4jbqdjr3lc1w1av5acvhs5shx0mg9w4k1c44ws";
     };
     tezos-admin-client = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "0xj5917aa6f9adfi06qmizx8r7lsa30jb6il53ig6b4saj296rs0";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "1hg26zfn723x8mv60s8slprbzg6n5vwxq08bl18wpg9kb9823mhh";
     };
     tezos-baker-009-PsFLoren = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-009-PsFLoren-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "0z72qp1kbgcz0vslrw523dj3k9plinfhy6skv3j8s1ia9bmdk668";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "0jjsf1sc668qfqkmnr9b0479g0l414x7j9rpj7fw3k7adk47s7qa";
     };
     tezos-baker-008-PtEdo2Zk = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-008-PtEdo2Zk-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "1q7sq4kxd636izfb9isz1p84jp6swa328a9rfczy87fh4a98smgf";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-008-PtEdo2Zk-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "0gka06xg2fa8hxhhln0w056nid43br79426afkcb7jb5mb3g6ykg";
     };
     tezos-client = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "00l6wk5gn0jwqq3jk07w21wqk0hbn8jx401mqbgpjzg7qirm9dhp";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "1sg5m0cf0pb56355cnrkdw7ai28vvm2c393ssmbdh98j437ly4zk";
     };
     tezos-codec = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-codec-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "0id99lss8piynqybx3l9ci31rj6gkqdxbg31slbmrmfdvzli97a8";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-codec-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "1h6znxh1z3lcsxr327ybc5gc06s6fdpz3k4gjpd18axgrnjjvms2";
     };
     tezos-endorser-009-PsFLoren = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-009-PsFLoren-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "176fw0y12gqa6aksjriacyq0937nx31m4k32pjlmp5br0s0nch0k";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "06spyd07qsjrmldkgkvs8vs4xvsic57jr09b2g9q8hhhxz9arhid";
     };
     tezos-endorser-008-PtEdo2Zk = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-008-PtEdo2Zk-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "0vhphdi2gsmnpyzdq11q8j286g6x65pdd97b3sdfimild8imjgpf";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-008-PtEdo2Zk-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "09lbnx3hh9ira5y9avzag1dbdy37bq6i5ab0lvlib06vfpk9k1sl";
     };
     tezos-node = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "10an22jgs2fp2ahxgp0jilps4w2ksg8kvsi41p74pwjkv3b42xs7";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "07yvyhddw628p70j3b9rcxawh1ymlxzf4y0m2gwazfby8ds2dz65";
     };
     tezos-signer = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-signer-${outer-version}.catalina.bottle.tar.gz";
-      sha256 = "168ysssd0f9m8qs1f8v09wylphhgzjfbwd4s548kkmihgbj3y6xy";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-signer-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "0d1qgkbrc6wxj3nww5lilxmm7fwnchnxnh1vps9vpkb6vggq0kzm";
     };
 
 in stdenv.mkDerivation rec {
@@ -89,4 +90,6 @@ in stdenv.mkDerivation rec {
   cp ${tezos-signer}/${outer-version}/bin/tezos-signer $out/bin/tezos-signer
   chmod +x $out/bin/tezos-signer
   '';
+
+
   }
