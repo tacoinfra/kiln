@@ -6,7 +6,7 @@ stdenv.mkDerivation rec {
 
   src = builtins.fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v${version}-1/binaries-${version}-1.tar.gz";
-      sha256 = "0000000000000000000000000000000000000000000000000000";
+      sha256 = "1rxswqb184jgff2x2dkxp3n4047185k0qsm87l41ldqyfkvnnzlg";
       };
 
   installPhase = ''
