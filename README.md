@@ -1,4 +1,4 @@
-# Overview
+# Kiln
 
 Kiln is a tool for both baking and monitoring on the Tezos network. It
 provides a locally hosted graphical interface, binaries for
@@ -9,38 +9,145 @@ builds a cache of chain data from the nodes to which it connects.
 Obsidian System's medium post [How to Install Kiln and Bake on
 Ubuntu](https://medium.com/@obsidian.systems/how-to-install-kiln-and-bake-on-ubuntu-a13d17df63c).**
 Past release notes are available
-[here](https://medium.com/@obsidian.systems).
+[here](https://medium.com/@obsidian.systems)**.
 
-# NOTE for Version 0.8.2
-Archival node may not be properly syncing on Delphi and cause issues
-for the Kiln node to get up to date. To address this issue follow the
-steps below.
+If you don't need/want graphical user interface, consider baking
+setup with [Serokell Tezos
+distributions](https://github.com/serokell/tezos-packaging/blob/master/docs/baking.md).
 
-- Click "Add Nodes", fill in Node Address with
-  https://mainnet-tezos.giganode.io/ , click Add Node
+## Quick Start
 
-- Disable built-in archival node:
+- Download latest release from [Releases](https://gitlab.com/tezos-kiln/kiln/-/releases)
 
-## Ubuntu
+### Ubuntu
 
-```
-sudo su -
-cd /var/lib/kiln/exe-dir/
-mkdir -p config
-echo false > config/enable-archival-node
-systemctl stop kiln
-systemctl start kiln
-```
+- Install or update:
 
-## On MacOS Catalina
+    **On desktop:**
+    - Double click downloaded .deb file
+    - Click `Install` button
+
+    **From the command line:** assuming .deb file
+    (e.g. `kiln_0.9.2_amd64.deb`) is downloaded to `~/Downloads` folder
+    - Open terminal
+    - Run
 
 ```
-cd ~/Library/Kiln
-mkdir -p config
-echo false > config/enable-archival-node
+sudo dpkg -i ~/Downloads/kiln_0.9.2_amd64.deb
+```
+
+- Go to Kiln web user interface: open <http://localhost:8000> in a web browser
+
+### MacOS
+
+- Install or update:
+  - Right click downloaded .pkg file, select "Open With > Installer"
+  - Confirm you would like to install this application
+  - Follow installer prompts
+
+- After computer reboots, go to Kiln web user interface: open
+  <http://localhost:8444> in a web browser
+
+## Troubleshooting
+
+### UI stops updating
+
+There are instances where Kiln’s user interface will stop updating,
+but the backend will continue functioning properly. For instance, resolving a
+notification will not cause the notification to disappear until the
+page is refreshed. Stopping and restarting Kiln fixes this issue.
+
+Restart Kiln (Ubuntu):
+
+```
+sudo systemctl stop kiln
+sudo systemctl start kiln
+```
+
+Restart Kiln (MacOS):
+
+```
 launchctl stop tezos.kiln
 launchctl start tezos.kiln
 ```
+
+### Node status in UI is stale
+
+Sometimes Kiln UI may [stop properly updating monitored node
+status](https://gitlab.com/tezos-kiln/kiln/-/issues/4).
+
+To verify that Kiln's Tezos node is synchronized with the network run
+the following command:
+
+Check node is synced (Ubuntu):
+
+```
+/usr/share/kiln/nix/store/*-tezos-*/bin/tezos-client --endpoint http://localhost:8733 bootstrapped
+```
+
+Check node is synced (MacOS):
+
+```
+export DYLD_FALLBACK_LIBRARY_PATH=/usr/local/kiln-nix/lib
+/usr/local/kiln-nix/nix/store/*tezos*/bin/tezos-client --endpoint http://localhost:8733 bootstrapped
+```
+
+If node is synchronized with the network, the command will print "Node
+is bootstrapped." message and exit immediately.
+
+Stopping and restarting Kiln typically resolves the issue.
+
+### Missed bake/endorsement
+A typical reason for missing a bake or endorsement is unavailable
+Ledger device. Examine baker and endorser logs to verify if that's the
+case.
+
+Check logs (Ubuntu):
+
+```
+# everythin
+journalctl -u kiln
+
+# filter messages from baker
+journalctl -u kiln | grep baker
+
+# filter message from endorser within a time period
+journalctl -u kiln --since "5 days ago" --until "1 hour ago" | grep endorser
+```
+
+Consult journalctl
+[documentation](https://manpages.ubuntu.com/manpages/cosmic/man1/journalctl.1.html)
+or
+[tutorial](https://www.digitalocean.com/community/tutorials/how-to-use-journalctl-to-view-and-manipulate-systemd-logs)
+for more ways to browse and filter the logs.
+
+Check logs (MacOS):
+
+- go to `Applications > Utilities` and launch `Console` application.
+- Select `Log Reports`
+- Type `kiln` in search bar
+- Select one of kiln log files
+
+Verify that Ledger is connected (Ubuntu):
+
+```
+/usr/share/kiln/nix/store/*-tezos-*/bin/tezos-client --endpoint http://localhost:8733 list connected ledgers
+```
+
+Verify that Ledger is connected (MacOS):
+
+```
+export DYLD_FALLBACK_LIBRARY_PATH=/usr/local/kiln-nix/lib
+/usr/local/kiln-nix/nix/store/*tezos*/bin/tezos-client --endpoint http://localhost:8733 list connected ledgers
+```
+
+If ledger is not listed in the output:
+
+- Make sure Tezos baking application is running on the device
+- Make sure that device is properly plugged in, on both ends
+- Try unplug the device, plug it back in, unlock and start baking app again
+- Try different USB port
+- Try different USB cable
 
 ## System Requirements
 
@@ -75,23 +182,7 @@ and Kiln’s processes.
 
 **CPU**: Running with at least 2 cores is recommended.
 
-# Obtaining Kiln
-
-Kiln can be built from source on linux distributions and MacOS.
-* pre-built Docker images hosted on [Docker
-  Hub](https://hub.docker.com/r/obsidiansystems/kiln/).
-
-Click the link in the left column to learn more about that Kiln distribution.
-
-| **Distribution**                                       | **Supports Baking?** | **Operating Systems**           | **Released?**     |
-|--------------------------------------------------------|----------------------|---------------------------------|-------------------|
-| [Build from Source](docs/distros/build-from-source.md) | Yes                  | Linux                           | Yes               |
-| [Docker](docs/distros/docker.md)                       | **No**               | Linux / Mac                     | Yes               |
-| [Linux Distribution](docs/distros/ubuntu.md) (.deb)    | Yes                  | Debian / Ubuntu                 | Yes               |
-| [VM Package](docs/distros/virtualmachine.md) (.ova)    | Yes                  | Any                             | Alpha Available   |
-| [Mac Distribution](https://gitlab.com/tezos-kiln/kiln-macos-pkg/-/blob/master/README.md)| Yes                  | Mac OS Catalina                            | Yes|
-
-# Using Kiln to Bake
+## Using Kiln to Bake
 
 Kiln, in conjunction with [Tezos Baking for the Ledger Nano
 S](https://github.com/obsidiansystems/ledger-app-tezos), can be used
@@ -107,8 +198,7 @@ Once you’ve registered as a delegate, it will take time for you to
 earn baking and endorsing rights. As soon as Kiln detects you have
 rights, your next right will be displayed.
 
-
-# Using Kiln as a Monitor
+## Using Kiln as a Monitor
 
 Kiln monitors nodes, bakers, and the Tezos network to keep bakers
 fully informed. The dashboard displays a tile with relevant
@@ -125,19 +215,19 @@ will be notified if mainnet is updated.
 
 Kiln produces a notification if a monitored node:
 
-* Is on the wrong network
-* Is not on the fittest branch
-* Falls behind the current head block level
-* Cannot be reached by the Monitoring Software (e.g. is offline)
-* Reports fewer than a specified number of active peer connections
+- Is on the wrong network
+- Is not on the fittest branch
+- Falls behind the current head block level
+- Cannot be reached by the Monitoring Software (e.g. is offline)
+- Reports fewer than a specified number of active peer connections
 
 ### Baker Monitoring
 
 Kiln produces a notification if a monitored baker:
 
-* Misses a baking or endorsing opportunity
-* Is accused of double baking or double endorsing
-* Has been deactivated due to inactivity or will be within one cycle
+- Misses a baking or endorsing opportunity
+- Is accused of double baking or double endorsing
+- Has been deactivated due to inactivity or will be within one cycle
 
 *Note: To monitor a baker, you must be monitoring a node. Public Nodes
 provide general information about the network, but they do not provide
@@ -155,7 +245,7 @@ For more information, see notes on configuring
 [Telegram](#configuring-telegram-notifications) and
 [Email](#configuring-email-notifications) notifications below.
 
-# Initial Setup
+## Initial Setup
 
 ### Running a node
 
@@ -190,23 +280,9 @@ Once you’ve added at least one node or a Public Node, the Dashboard
 header will show the network status.
 
 *Note: This assumes that you are running at least one Tezos
-node. Options for running a node include:*
-
-* *Building from Source - The best place to start is [Tezos’
-  Documentation](http://tezos.gitlab.io/master/introduction/howtoget.html#build-from-sources). There
-  are also several community guides, some of which you can find
-  [here](https://docs.google.com/document/d/1iu-5j8vnnK00-t0CIQcbMDSz5PbEHI09YsKp8utEaj0/edit).*
-* *Using Docker - The docker image for Tezos can be found on
-  [DockerHub](https://hub.docker.com/r/tezos/tezos/). They also
-  provide a [simple
-  script](http://tezos.gitlab.io/master/introduction/howtoget.html#docker-images)
-  for retrieving the images. We do not yet have instructions on
-  connecting the Tezos node and baking monitor Docker containers, but
-  you can either set this up yourself or connect our Docker container
-  to a node you built from source.*
-* *Using Tezos Baking Platform - See the Tezos Baking Platform's
-  [UsingTezos.md](https://gitlab.com/tezos-kiln/tezos-baking-platform/-/blob/develop/UsingTezos.md)
-  for instructions.*
+node. See [Tezos
+documentation](https://tezos.gitlab.io/introduction/howtoget.html) on
+various ways of running a node*
 
 ### Adding public nodes
 
@@ -238,16 +314,7 @@ Click *Settings* from the left panel and provide the SMTP
 configuration for your SMTP server in the form under *Email*. Add an
 email address to receive alerts and click *Save Settings*.
 
-# Troubleshooting
-
-### Known Issue: Front End Stops Updating
-
-There are instances where Kiln’s front end will stop updating, but the
-backend will continue functioning properly. For instance, resolving a
-notification will not cause the notification to disappear until the
-page is refreshed. Stopping and restarting Kiln fixes this issue.
-
-# Contact Us
+## Contact Us
 
 Users can join Tezos Baking Slack (by emailing for an invite at
 joinslack@tezos-kiln.org) to provide feedback.
