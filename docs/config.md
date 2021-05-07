@@ -78,11 +78,11 @@ The GitLab project id to query for network updates. Defaults to off.
 
 ## kiln-node-rpc-port PORT
 
-The RPC port to use for the kiln node. Defaults to 9733.
+The RPC port to use for the kiln node. Defaults to 8733.
 
 ## kiln-node-net-port PORT
 
-The net-addr port to use for the kiln node. Defaults to 8733.
+The port where kiln node accepts peer-to-peer connections. Defaults to 9733.
 
 ## kiln-data-dir DIRECTORY
 
