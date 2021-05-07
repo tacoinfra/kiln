@@ -152,9 +152,10 @@ If ledger is not listed in the output:
 - Try different USB port
 - Try different USB cable
 
-##Adding Ledger indicator to the UI
+## Adding Ledger indicator to the UI
 
 To add a ledger indicator to your UI to check connectivity every 60 seconds do the following: 
+
 **On Ubuntu:**
 ```
 sudo su -
