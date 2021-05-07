@@ -8,8 +8,11 @@ builds a cache of chain data from the nodes to which it connects.
 **For step-by-step instructions on how to get started, see the
 Obsidian System's medium post [How to Install Kiln and Bake on
 Ubuntu](https://medium.com/@obsidian.systems/how-to-install-kiln-and-bake-on-ubuntu-a13d17df63c).**
+
+**Installation guide for MacOS Catalina or later is available [here](https://medium.com/tezos-kiln/how-to-install-kiln-on-macos-catalina-ce0821f97dcf).**
+
 Past release notes are available
-[here](https://medium.com/@obsidian.systems)**.
+[here](https://medium.com/@obsidian.systems).
 
 If you don't need/want graphical user interface, consider baking
 setup with [Serokell Tezos
