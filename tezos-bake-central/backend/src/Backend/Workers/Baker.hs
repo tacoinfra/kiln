@@ -328,7 +328,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
       predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
       let
         endorserDelegates = blockCrossCata
-          (^..V009.block_operations . traverse . traverse . V009.operation_contents . traverse . V009._OperationContents_Endorsement . V009.operationContentsEndorsement_metadata . V009.endorsementMetadata_delegate)
+          (^..V009.block_operations . traverse . traverse . V009.operation_contents . traverse . V009._OperationContents_EndorsementWithSlot . V009.operationContentsEndorsementWithSlot_metadata . V009.endorsementMetadata_delegate)
           (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
           thisBlock
         mkAction = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (_baker_publicKeyHash baker `elem` endorserDelegates)
