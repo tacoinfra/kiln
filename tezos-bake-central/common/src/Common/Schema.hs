@@ -169,8 +169,8 @@ getBakerFromBlock block = BlockBaker
     . traverse
     . operation_contents
     . traverse
-    . _OperationContents_Endorsement
-    . operationContentsEndorsement_metadata
+    . _OperationContents_EndorsementWithSlot
+    . operationContentsEndorsementWithSlot_metadata
     . to f
   }
   where

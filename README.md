@@ -31,12 +31,12 @@ distributions](https://github.com/serokell/tezos-packaging/blob/master/docs/baki
     - Click `Install` button
 
     **From the command line:** assuming .deb file
-    (e.g. `kiln_0.9.2_amd64.deb`) is downloaded to `~/Downloads` folder
+    (e.g. `kiln_0.9.3_amd64.deb`) is downloaded to `~/Downloads` folder
     - Open terminal
     - Run
 
 ```
-sudo dpkg -i ~/Downloads/kiln_0.9.2_amd64.deb
+sudo dpkg -i ~/Downloads/kiln_0.9.3_amd64.deb
 ```
 
 - Go to Kiln web user interface: open <http://localhost:8000> in a web browser
@@ -154,41 +154,30 @@ If ledger is not listed in the output:
 
 ### Adding Ledger indicator to the UI
 
-To add a ledger indicator to your UI to check connectivity every 60 seconds do the following: 
+To add a ledger indicator to your UI to check connectivity every 60
+seconds do the following:
 
-**On Ubuntu:**
+On Ubuntu:
+
 ```
 sudo su -
 cd /var/lib/kiln/exe-dir/
-ls
-```
-if there is no config directory yet, make it:
-```
 mkdir -p config
-```
-if there is - continue with the following:
-```
 echo 60 > config/ledger-check-delay
-systemctl stop kiln
-systemctl start kiln
+systemctl restart kiln
 ```
-**On MacOS Catalina or later:**
+
+On MacOS
+
 ```
 cd ~/Library/Kiln
-ls
-```
-if there is no config directory yet, make it:
-```
 mkdir -p config
-```
-if there is - continue with the following:
-```
 echo 60 > config/ledger-check-delay
 launchctl stop tezos.kiln
 launchctl start tezos.kiln
 ```
-Indicator should now appear in the top bar of your UI.
 
+Indicator should now appear in the top bar of your UI.
 
 ## System Requirements
 
