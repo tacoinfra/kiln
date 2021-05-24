@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternGuards #-}
@@ -8,7 +9,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE UnboxedSums #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -144,6 +144,11 @@ cleanupDir dir = do
 -- Jul  6 19:45:45 - shell.snapshots: Setting history-mode to full
 -- Jul  6 19:45:46 - shell.snapshots: Successful import from file ./.kiln/snapshots/main.snapshot
 
+data BlockLikeData where
+  BlockPrefixHash :: Text -> BlockLikeData
+  BlockHash :: BlockHash -> BlockLikeData
+  BlockLike :: BlockLike blk => blk -> BlockLikeData
+
 importSnapshotData
   :: (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
   => AppConfig
@@ -227,12 +232,12 @@ importSnapshotData appConfig nds sm smId = do
                       mBlk <- for mBlkHash $ \blkHash -> flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
                         nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
                       let
-                        blkDetails :: (# Text | BlockHash | BlockHeader #)
+                        blkDetails :: BlockLikeData
                         blkDetails = case either (const Nothing) Just =<< mBlk of
-                          Just blk -> (# | | blk #)
+                          Just blk -> BlockLike blk
                           Nothing -> case mBlkHash of
-                            Just blkHash -> (# | blkHash | #)
-                            Nothing -> (# blkHashPrefix | | #)
+                            Just blkHash -> BlockHash blkHash
+                            Nothing -> BlockPrefixHash blkHashPrefix
                       inDb $ do
                         updateSnapshotMeta blkDetails smId
                         updateState NodeProcessState_ImportComplete
@@ -253,24 +258,24 @@ importSnapshotData appConfig nds sm smId = do
     _ -> pure ()
 
 updateSnapshotMeta
-  :: (PersistBackend m, BlockLike blk)
-  => (# Text | BlockHash | blk #)
+  :: (PersistBackend m)
+  => BlockLikeData
   -> Key SnapshotMeta BackendSpecific
   -> m ()
 updateSnapshotMeta blkDetails smId = do
   now <- getTime
   case blkDetails of
-    (# hashPrefix | | #) -> update
+    BlockPrefixHash hashPrefix -> update
       [ SnapshotMeta_headBlockPrefixField =. Just hashPrefix
       , SnapshotMeta_importCompleteTimeField =. Just now
       ]
       (AutoKeyField ==. smId)
-    (# | blkHash | #) -> update
+    BlockHash blkHash -> update
       [ SnapshotMeta_headBlockField =. Just blkHash
       , SnapshotMeta_importCompleteTimeField =. Just now
       ]
       (AutoKeyField ==. smId)
-    (# | | blk #) -> update
+    BlockLike blk -> update
       [ SnapshotMeta_headBlockField =. (Just $ blk ^. hash)
       , SnapshotMeta_headBlockLevelField =. (Just $ blk ^. level)
       , SnapshotMeta_headBlockBakeTimeField =. (Just $ blk ^. timestamp)
