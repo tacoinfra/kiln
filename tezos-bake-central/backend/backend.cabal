@@ -24,8 +24,6 @@ library
     , base58-bytestring
     , bytestring
     , bytestring-lexing
-    -- , Chart
-    -- , Chart-diagrams
     , clientsession
     , colour
     , common
@@ -39,9 +37,6 @@ library
     , dependent-sum
     , dependent-sum-template
     , directory
-    -- , diagrams-core
-    -- , diagrams-lib
-    -- , diagrams-svg
     , errors
     , exceptions
     , filepath
@@ -131,7 +126,6 @@ library
     Backend.Common.TezosRelease
     Backend.Common.Worker
     Backend.Config
-    --Backend.Graphs
     Backend.Http
     Backend.IndexQueries
     Backend.Migrations

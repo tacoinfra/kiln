@@ -2,5 +2,3 @@ packages:
   backend/
   common/
   frontend/
-  dep/tezos-bake-monitor-lib/tezos-bake-monitor-lib
-  dep/tezos-bake-monitor-lib/tezos-noderpc
