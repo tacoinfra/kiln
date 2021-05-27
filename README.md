@@ -98,6 +98,17 @@ export DYLD_FALLBACK_LIBRARY_PATH=/usr/local/kiln-nix/lib
 If node is synchronized with the network, the command will print "Node
 is bootstrapped." message and exit immediately.
 
+Or check via node's web API, e.g. using curl:
+
+```
+curl http://localhost:8733/chains/main/is_bootstrapped
+```
+
+Healthy node should return
+```
+{"bootstrapped":true,"sync_state":"synced"}
+```
+
 Stopping and restarting Kiln typically resolves the issue.
 
 ### Missed bake/endorsement
