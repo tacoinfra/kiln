@@ -31,7 +31,7 @@ import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Tezos.Common.Binary as TBin
 import Tezos.NodeRPC
 import Tezos.Types
-import qualified Tezos.V009.Types as V009
+import qualified Tezos.V010.Types as V010
 import qualified Tezos.V005.Types as V005
 import Tezos.Signature.Verify as Sig
 
@@ -112,28 +112,28 @@ insertAccusationsV9
   :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e
      , PostgresRaw m, MonadMask m, PersistBackend m
      )
-  => BlockHash -> ChainId -> V009.Block -> NodeQueryT m ()
+  => BlockHash -> ChainId -> V010.Block -> NodeQueryT m ()
 insertAccusationsV9 blockHash chainId block = do
   -- Operations into a block are divided into 4 subsections.  Accusations
   -- are always in the third of these sections.
-  let mightBeAccusations = fold $ Seq.lookup 2 $ V009._block_operations block
+  let mightBeAccusations = fold $ Seq.lookup 2 $ V010._block_operations block
   for_ mightBeAccusations $ \op -> do
     let
-      opHash = V009._operation_hash op
+      opHash = V010._operation_hash op
       blockLevel = block ^. level
-    for_ (V009._operation_contents op) $ \case
-      V009.OperationContents_DoubleBakingEvidence ev -> do
+    for_ (V010._operation_contents op) $ \case
+      V010.OperationContents_DoubleBakingEvidence ev -> do
         let
-          accusedLevel = ev ^. V009.operationContentsDoubleBakingEvidence_bh1 . V009.blockHeaderFull_level
-          accusedPriority = ev ^. V009.operationContentsDoubleBakingEvidence_bh1 . V009.blockHeaderFull_priority
+          accusedLevel = ev ^. V010.operationContentsDoubleBakingEvidence_bh1 . V010.blockHeaderFull_level
+          accusedPriority = ev ^. V010.operationContentsDoubleBakingEvidence_bh1 . V010.blockHeaderFull_priority
         insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority
-      V009.OperationContents_DoubleEndorsementEvidence ev -> do
+      V010.OperationContents_DoubleEndorsementEvidence ev -> do
         let
-          accusedLevel = ev ^. V009.operationContentsDoubleEndorsementEvidence_op1 . V009.inlinedEndorsement_operations . V009.inlinedEndorsementContents_level
+          accusedLevel = ev ^. V010.operationContentsDoubleEndorsementEvidence_op1 . V010.inlinedEndorsement_operations . V010.inlinedEndorsementContents_level
         (possibles,possiblesKeys) <- loadPossibles blockHash accusedLevel
         let
-          encodedOp1 = TBin.encode $ V009.Envelope_Endorsement chainId $ V009.outlineEndorsement $ ev ^. V009.operationContentsDoubleEndorsementEvidence_op1
-          sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $ ev ^. V009.operationContentsDoubleEndorsementEvidence_op1 . V009.inlinedEndorsement_signature
+          encodedOp1 = TBin.encode $ V010.Envelope_Endorsement chainId $ V010.outlineEndorsement $ ev ^. V010.operationContentsDoubleEndorsementEvidence_op1
+          sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $ ev ^. V010.operationContentsDoubleEndorsementEvidence_op1 . V010.inlinedEndorsement_signature
         insertDoubleEndorsementEvidence blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
       _ -> return ()
 

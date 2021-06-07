@@ -64,7 +64,7 @@ import qualified Text.URI as Uri
 import Tezos.NodeRPC hiding (DataSource, getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
 import qualified Tezos.V005.Types as V005
-import qualified Tezos.V009.Types as V009
+import qualified Tezos.V010.Types as V010
 import qualified Tezos.Types as Tezos
 import qualified Tezos.Unsafe
 
@@ -658,19 +658,20 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
     -- (the last block of the period), but /votes/current_period_kind for that block will return
     -- the *next* period kind.
-    votingPeriod = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriod
-    currentVotingPosition = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition
-    isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition)
+    votingPeriod = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_index
+    currentVotingPosition = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
+    isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position)
     -- The period of the *current* block, not the next one
     currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
-      $ latestBlock ^. blockMetadata . blockMetadata_votingPeriodKind
+      $ latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
     periodFraction = fromIntegral currentVotingPosition / fromIntegral blocksPerVotingPeriod :: Double
 
     singleVotePeriod pkh periodKindOffset mkVotingState = do
       let blk = latestHead ^.hash
       mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
       -- The voting period of the last proposal period
-      let amendmentPeriod = latestBlock ^. blockMetadata . blockMetadata_level . level_votingPeriod - periodKindOffset
+      let amendmentPeriod = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo .
+            votingPeriodInfo_votingPeriod . votingPeriod_index - periodKindOffset
 
       runDb (Identity db) $ case mBallot of
         Nothing -> do
@@ -812,7 +813,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Adoption -> notify NotifyTag_PeriodAdoption Nothing
 
   where
-    toBlockHeader = blockCrossCata V009.toBlockHeader V005.toBlockHeader
+    toBlockHeader = blockCrossCata V010.toBlockHeader V005.toBlockHeader
 
     getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
@@ -848,8 +849,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Adoption -> deleteAll' @PeriodAdoption Proxy
 
     updateTo startBlock predBlk blk p = do
-      let position' = blk ^. blockMetadata . blockMetadata_level . level_votingPeriodPosition
-          votingPeriod = blk ^. blockMetadata . blockMetadata_level . level_votingPeriod
+      let position' = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
+          votingPeriod = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_index
           chainId = _nodeDataSource_chain nds
           amendment = Amendment
             { _amendment_period = p
@@ -954,7 +955,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
 
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
-      let vp = blk ^. blockMetadata . blockMetadata_votingPeriodKind
+      let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
       tp <- if vp == VotingPeriodKind_PromotionVote
         then fmap babyHax <$> nodeQueryDataSource (NodeQuery_CurrentProposal (latestHead ^. hash))
         else return Nothing

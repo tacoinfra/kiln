@@ -1152,7 +1152,7 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock (toChain chainId) branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
-  NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap $ toCacheDelegateInfo . delegateInfoCrossToV010) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     (RpcResult raw managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKeyCrossCompat_key managerkeyResp of
@@ -1654,7 +1654,7 @@ buildProtocolIndex branch protoHash history = do
             , _protocolIndex_firstBlockLevel = Just $ firstBlock ^. level
             , _protocolIndex_firstBlockFitness = Just $ firstBlock ^. fitness
             , _protocolIndex_firstBlockTimestamp = Just $ firstBlock ^. timestamp
-            , _protocolIndex_firstBlockCycle = Just $ firstBlock ^. blockMetadata . blockMetadata_level . level_cycle
+            , _protocolIndex_firstBlockCycle = Just $ firstBlock ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
             }
 
       for_ protoIndexes $ \protoIndex -> do
@@ -1689,7 +1689,7 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
       else
         levelAncestor history (max (blk ^. level - lvls) (history ^. cachedHistory_minLevel)) (blk ^. hash)
 
-    votingPeriodPosition = blockMetadata . blockMetadata_level . level_votingPeriodPosition
+    votingPeriodPosition = blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
 
     go :: "currentBlock" :! BlockCrossCompat
        -> "currentProtocol" :! ProtocolHash
