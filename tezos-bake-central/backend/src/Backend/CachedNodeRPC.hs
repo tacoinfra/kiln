@@ -170,16 +170,16 @@ data NodeQueryIx a where
   NodeQueryIx_EndorsingRights :: BlockHash -> RawLevel -> NodeQueryIx (Seq EndorsingRights)
 deriving instance Show (NodeQueryIx a)
 
-toCacheDelegateInfo :: DelegateInfo -> CacheDelegateInfo
+toCacheDelegateInfo :: DelegateInfoCrossCompat -> CacheDelegateInfo
 toCacheDelegateInfo di = CacheDelegateInfo
-  { _cacheDelegateInfo_balance = _delegateInfo_balance di
-  , _cacheDelegateInfo_frozenBalance = _delegateInfo_frozenBalance di
-  , _cacheDelegateInfo_frozenBalanceByCycle = _delegateInfo_frozenBalanceByCycle di
-  , _cacheDelegateInfo_stakingBalance = _delegateInfo_stakingBalance di
+  { _cacheDelegateInfo_balance = _delegateInfoCrossCompat_balance di
+  , _cacheDelegateInfo_frozenBalance = _delegateInfoCrossCompat_frozenBalance di
+  , _cacheDelegateInfo_frozenBalanceByCycle = _delegateInfoCrossCompat_frozenBalanceByCycle di
+  , _cacheDelegateInfo_stakingBalance = _delegateInfoCrossCompat_stakingBalance di
   -- , _cacheDelegateInfo_delegatedContracts = _delegateInfo_delegatedContracts di
-  , _cacheDelegateInfo_delegatedBalance = _delegateInfo_delegatedBalance di
-  , _cacheDelegateInfo_deactivated = _delegateInfo_deactivated di
-  , _cacheDelegateInfo_gracePeriod = _delegateInfo_gracePeriod di
+  , _cacheDelegateInfo_delegatedBalance = _delegateInfoCrossCompat_delegatedBalance di
+  , _cacheDelegateInfo_deactivated = _delegateInfoCrossCompat_deactivated di
+  , _cacheDelegateInfo_gracePeriod = _delegateInfoCrossCompat_gracePeriod di
   }
 
 data CachedBlockInfo = CachedBlockInfo
@@ -1152,7 +1152,7 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock (toChain chainId) branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
-  NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap $ toCacheDelegateInfo . delegateInfoCrossToV010) $ nodeRPC' $ rDelegateInfo pkh chainId branch
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     (RpcResult raw managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKeyCrossCompat_key managerkeyResp of
