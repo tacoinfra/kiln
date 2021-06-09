@@ -236,7 +236,7 @@ snapDelegateInfo = runExceptT $ do
   pure $ DelegateInfo
     { _delegateInfo_balance = _cacheDelegateInfo_balance cd
     , _delegateInfo_frozenBalance = _cacheDelegateInfo_frozenBalance cd
-    , _delegateInfo_frozenBalanceByCycle = _cacheDelegateInfo_frozenBalanceByCycle cd
+    , _delegateInfo_frozenBalanceByCycle = frozenBalanceByCycleSeqCrossToV010 $ _cacheDelegateInfo_frozenBalanceByCycle cd
     , _delegateInfo_stakingBalance = _cacheDelegateInfo_stakingBalance cd
     , _delegateInfo_delegatedContracts = mempty
     , _delegateInfo_delegatedBalance = _cacheDelegateInfo_delegatedBalance cd

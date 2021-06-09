@@ -82,6 +82,7 @@ import Tezos.Common.NodeRPC.Types (RpcError, AsRpcError(asRpcError))
 import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Types hiding (TestChainStatus)
+import Tezos.V010.NodeRPC.CrossCompat (FrozenBalanceByCycleSeqCrossCompat)
 
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
@@ -639,7 +640,7 @@ instance HasId BakerData where
 data CacheDelegateInfo = CacheDelegateInfo
   { _cacheDelegateInfo_balance :: !Tez
   , _cacheDelegateInfo_frozenBalance :: !Tez
-  , _cacheDelegateInfo_frozenBalanceByCycle :: !(Seq FrozenBalanceByCycle)
+  , _cacheDelegateInfo_frozenBalanceByCycle :: !FrozenBalanceByCycleSeqCrossCompat
   , _cacheDelegateInfo_stakingBalance :: !Tez
   -- , _cacheDelegateInfo_delegatedContracts :: !(Seq.Seq ContractId)
   , _cacheDelegateInfo_delegatedBalance :: !Tez
