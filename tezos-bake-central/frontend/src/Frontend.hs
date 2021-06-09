@@ -295,7 +295,7 @@ appSidebar = do
         let latestTezosRelease = ppMajorMinor <$> latestTezosRelease'
 
         dyn_ $ ffor latestTezosRelease $ elAttr "div" ("style" =: "margin-bottom: 1rem;") . maybe (text "Latest Tezos Release: Unavailable.")
-            (\v -> hrefLink (gitLink <> "/v" <> v) $
+            (\v -> hrefLink (gitLink <> "/" <> v) $
                    elAttr "small" ("style" =: "position: absolute; left:30px;") $
                    text $ "Latest Tezos Release: " <> v)
 
