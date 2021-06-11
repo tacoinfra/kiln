@@ -124,15 +124,15 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
           -- register
           inDb (selectSingle $
                 LedgerAccount_publicKeyHashField /=. (Nothing :: Maybe PublicKeyHash)
-            &&. LedgerAccount_shouldRegisterFeeField /=. (Nothing :: Maybe Tez)
-            &&. LedgerAccount_importedField ==. True) >>= \mla -> for_ mla $ \la -> case liftA2 (,) (_ledgerAccount_shouldRegisterFee la) (_ledgerAccount_publicKeyHash la) of
+            &&. LedgerAccount_shouldRegisterField ==. True
+            &&. LedgerAccount_importedField ==. True) >>= \mla -> for_ mla $ \la -> case (_ledgerAccount_publicKeyHash la) of
             Nothing -> pure () -- shouldn't happen due to WHERE clause
-            Just (fee, pkh) -> do
+            Just pkh -> do
               let sk = _ledgerAccount_secretKey la
               inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First RegisterStep_Prompting })
-              registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths fee >>= \result -> inDb $ do
+              registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths >>= \result -> inDb $ do
                 update
-                  [LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)]
+                  [LedgerAccount_shouldRegisterField =. False]
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                 notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First result })
                 when (result == RegisterStep_Registered) $ startBaking pkh
@@ -364,7 +364,7 @@ resetLedgerQueue logger db =  liftIO $ runLoggingEnv logger $ runDb (Identity db
   , LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)
   , LedgerAccount_shouldDoVoteBallotField =. (Nothing :: Maybe Ballot)
   , LedgerAccount_shouldDoVoteProtocolField =. (Nothing :: Maybe (Id PeriodProposal))
-  , LedgerAccount_shouldRegisterFeeField =. (Nothing :: Maybe Tez)
+  , LedgerAccount_shouldRegisterField =. False
   , LedgerAccount_shouldSetupToBakeField =. False
   ]
   CondEmpty
@@ -546,15 +546,13 @@ checkIfRegistered logger db nds pkh = do
 -- get up-to-date. We detect that case and just return an error.
 registerKeyAsDelegate
   :: (MonadIO m, MonadLogger m)
-  => LoggingEnv -> Pool Postgresql -> NodeDataSource -> SecretKey -> PublicKeyHash -> AppConfig -> Maybe BinaryPaths -> Tez -> m RegisterStep
-registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths fee
-  | fee > Tez 1 = pure $ RegisterStep_FeeTooHigh fee
-  | otherwise = checkIfRegistered logger db nds pkh >>= \case
+  => LoggingEnv -> Pool Postgresql -> NodeDataSource -> SecretKey -> PublicKeyHash -> AppConfig -> Maybe BinaryPaths -> m RegisterStep
+registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths = checkIfRegistered logger db nds pkh >>= \case
     True -> pure RegisterStep_AlreadyRegistered
     False -> do
       -- withCreateProcess will close these automatically
       (readPipe, writePipe) <- liftIO Process.createPipe
-      let p = (Process.proc (clientPath maybePaths) ["--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig, "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate", "--fee", show (getTez fee)])
+      let p = (Process.proc (clientPath maybePaths) ["--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig, "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate"])
             { Process.std_err = Process.UseHandle writePipe
             , Process.std_out = Process.UseHandle writePipe
             }
@@ -567,7 +565,7 @@ registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths fee
                 ExitSuccess -> pure RegisterStep_Registered -- Succeeds if already registered too
               False -> do
                 t <- liftIO $ catchJust (guard . isEOFError) (T.hGetLine readPipe) (\() -> pure "")
-                let mrs = parseRegisterStep fee t
+                let mrs = parseRegisterStep t
                 $(logInfo) $ "registerKeyAsDelegate: " <> t <> " -> " <> T.pack (show mrs)
                 traverse_ notifyStep mrs
                 case mrs of
@@ -577,18 +575,12 @@ registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths fee
       $(logWarn) $ T.pack $ show result
       pure result
 
-parseRegisterStep :: Tez -> Text -> Maybe RegisterStep
-parseRegisterStep fee (T.strip -> err)
-  | T.isInfixOf "Ledger Application level error (sign): Unregistered status message" err
-  = Just $ RegisterStep_FeeTooHigh fee
+parseRegisterStep :: Text -> Maybe RegisterStep
+parseRegisterStep (T.strip -> err)
   | T.isInfixOf "Ledger Application level error (sign): Conditions of use not satisfied" err
   = Just RegisterStep_Declined
   | T.isInfixOf "Ledger Transport level error:" err
   = Just RegisterStep_Disconnected
-  | fatal : _ <- drop 1 $ dropWhile (/= "Fatal error:") $ T.lines err
-  , Just fee' <- T.stripPrefix "The proposed fee " (T.strip fatal)
-  , T.isPrefixOf " are lower than the fee that baker expect by default " (T.dropWhile (/= ' ') fee')
-  = Just $ RegisterStep_FeeTooLow fee
   | T.isInfixOf "Empty implicit contract " err
   = Just $ RegisterStep_NotEnoughFunds 0
   -- Balance of contract tz1VeX1Wso2LRGW2rpgKHoyFkHUxJpvSxLWP too low (860) to spend 1000
