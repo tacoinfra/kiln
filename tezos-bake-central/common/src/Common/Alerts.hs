@@ -188,7 +188,7 @@ bakerVotingReminderDescriptions elog periodEndsIn = BakerErrorDescriptions
                       else "Proposals are available for voting"
       VotingPeriodKind_Exploration -> singleVotePeriod "Exploration"
       VotingPeriodKind_Cooldown -> "" -- impossible
-      VotingPeriodKind_PromotionVote -> singleVotePeriod "Promotion"
+      VotingPeriodKind_Promotion -> singleVotePeriod "Promotion"
       VotingPeriodKind_Adoption -> singleVotePeriod "Adoption"
 
     description = case periodKind of

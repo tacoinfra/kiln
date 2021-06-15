@@ -611,6 +611,9 @@ updateAmendment ta = do
           UPDATE "Amendment" 
           SET "period" = 'VotingPeriodKind_Cooldown'
           WHERE "period" = 'VotingPeriodKind_Testing';
+          UPDATE "Amendment"
+          SET "period" = 'VotingPeriodKind_Promotion'
+          WHERE "period" = 'VotingPeriodKind_PromotionVote';
         |]
       pure ta
     _ -> pure ta

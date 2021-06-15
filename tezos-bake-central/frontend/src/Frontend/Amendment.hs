@@ -58,7 +58,7 @@ textPeriod = \case
   VotingPeriodKind_Proposal -> "Proposal"
   VotingPeriodKind_Exploration -> "Exploration"
   VotingPeriodKind_Cooldown -> "Cooldown"
-  VotingPeriodKind_PromotionVote -> "Promotion"
+  VotingPeriodKind_Promotion -> "Promotion"
   VotingPeriodKind_Adoption -> "Adoption"
 
 isVotingPeriod :: VotingPeriodKind -> Bool
@@ -66,7 +66,7 @@ isVotingPeriod = \case
   VotingPeriodKind_Proposal -> True
   VotingPeriodKind_Exploration -> True
   VotingPeriodKind_Cooldown -> False
-  VotingPeriodKind_PromotionVote -> True
+  VotingPeriodKind_Promotion -> True
   VotingPeriodKind_Adoption -> False
 
 amendmentPopup
@@ -128,7 +128,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
       VotingPeriodKind_Proposal -> periodProposals =<< watchProposals
       VotingPeriodKind_Exploration -> withLoader (periodVote "Exploration") =<< watchPeriodTestingVote
       VotingPeriodKind_Cooldown -> withLoader periodTest =<< watchPeriodTesting
-      VotingPeriodKind_PromotionVote -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
+      VotingPeriodKind_Promotion -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
       VotingPeriodKind_Adoption -> withLoader periodAdoption =<< watchPeriodAdoption
 
   pure ()
@@ -297,7 +297,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       VotingPeriodKind_Proposal -> workflow proposalFlow
       VotingPeriodKind_Exploration -> workflow explorationFlow
       VotingPeriodKind_Cooldown -> pure <$> getPostBuild -- TODO: close immediately
-      VotingPeriodKind_PromotionVote -> workflow promotionFlow
+      VotingPeriodKind_Promotion -> workflow promotionFlow
       VotingPeriodKind_Adoption -> pure <$> getPostBuild -- TODO: close immediately
 
     headerWithCycles header detail extras = do
