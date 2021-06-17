@@ -59,7 +59,7 @@ data PublicRequest a where
   PublicRequest_ShowLedger :: SecretKey -> PublicRequest ()
   PublicRequest_ImportSecretKey :: SecretKey -> PublicRequest ()
   PublicRequest_SetupLedgerToBake :: SecretKey -> PublicRequest ()
-  PublicRequest_RegisterKeyAsDelegate :: SecretKey -> Tez -> PublicRequest ()
+  PublicRequest_RegisterKeyAsDelegate :: SecretKey -> PublicRequest ()
   PublicRequest_SetHWM :: SecretKey -> RawLevel -> PublicRequest ()
   PublicRequest_AddBaker
     :: PublicKeyHash

@@ -66,6 +66,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogNodeWrongChain") "address"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBadNodeHead") "id"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "checkIfRegistered"
+  >=> migrateLedgerAccountTable
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "deleted" "data#deleted"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "Delegate") "alias" "data#data#alias"
   >=> renameTableIfExists (QualifiedIdentifier Nothing "Delegate") "Baker"
@@ -605,10 +606,10 @@ updateAmendment ta = do
   analyzeTable ta table >>= \case
     Just _ -> do
       void [traceExecuteQ|
-          UPDATE "Amendment" 
+          UPDATE "Amendment"
           SET "period" = 'VotingPeriodKind_Exploration'
           WHERE "period" = 'VotingPeriodKind_TestingVote';
-          UPDATE "Amendment" 
+          UPDATE "Amendment"
           SET "period" = 'VotingPeriodKind_Cooldown'
           WHERE "period" = 'VotingPeriodKind_Testing';
           UPDATE "Amendment"
@@ -617,4 +618,25 @@ updateAmendment ta = do
         |]
       pure ta
     _ -> pure ta
-        
+
+migrateLedgerAccountTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateLedgerAccountTable ta = do
+  let table = (Nothing, "LedgerAccount")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | any ((== "shouldRegisterFee") . colName) $ tableColumns analyzedTable
+      -> do
+        void [traceExecuteQ|
+            ALTER TABLE "LedgerAccount"
+            ADD COLUMN "shouldRegister" BOOLEAN;
+            UPDATE "LedgerAccount" SET "shouldRegister" =
+              CASE
+                WHEN "shouldRegisterFee" IS NULL THEN false
+                ELSE true
+              END;
+            ALTER TABLE "LedgerAccount"
+            ALTER COLUMN "shouldRegister" SET NOT NULL,
+            DROP COLUMN "shouldRegisterFee";
+          |]
+        pure ta
+    _ -> pure ta

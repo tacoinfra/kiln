@@ -105,7 +105,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
                 , _ledgerAccount_shouldImport = False
                 , _ledgerAccount_imported = False
                 , _ledgerAccount_shouldSetupToBake = False
-                , _ledgerAccount_shouldRegisterFee = Nothing
+                , _ledgerAccount_shouldRegister = False
                 , _ledgerAccount_shouldSetHWM = Nothing
                 , _ledgerAccount_shouldDoVoteProtocol = Nothing
                 , _ledgerAccount_shouldDoVoteBallot = Nothing
@@ -230,7 +230,7 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
             , _ledgerAccount_shouldImport = False
             , _ledgerAccount_imported = False
             , _ledgerAccount_shouldSetupToBake = False
-            , _ledgerAccount_shouldRegisterFee = Nothing
+            , _ledgerAccount_shouldRegister = False
             , _ledgerAccount_shouldSetHWM = Nothing
             , _ledgerAccount_shouldDoVoteProtocol = Nothing
             , _ledgerAccount_shouldDoVoteBallot = Nothing
@@ -239,8 +239,8 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
         update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_SetupLedgerToBake sk -> inDb $ do
         update [LedgerAccount_shouldSetupToBakeField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-      PublicRequest_RegisterKeyAsDelegate sk fee -> inDb $ do
-        update [LedgerAccount_shouldRegisterFeeField =. Just fee] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_RegisterKeyAsDelegate sk -> inDb $ do
+        update [LedgerAccount_shouldRegisterField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 

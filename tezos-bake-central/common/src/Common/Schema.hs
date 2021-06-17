@@ -219,7 +219,7 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_shouldImport :: !Bool
   , _ledgerAccount_imported :: !Bool
   , _ledgerAccount_shouldSetupToBake :: !Bool
-  , _ledgerAccount_shouldRegisterFee :: !(Maybe Tez) -- ^ Contains the fee if the user wishes to register
+  , _ledgerAccount_shouldRegister :: !Bool
   , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
   , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe (Id PeriodProposal)) -- ^ Proposal to vote for
   , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Ballot) -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.

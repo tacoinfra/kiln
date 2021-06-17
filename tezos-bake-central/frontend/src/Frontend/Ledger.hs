@@ -256,33 +256,14 @@ registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanat
           divClass "centered explanation" $ text "To verify that your address has been registered as a delegate, the registration operation must be included in a block on the chain. This should usually take only a minute or two."
         RegisterStep_AlreadyRegistered -> Just $ PromptResult_Success ==> () -- we could also inform the user they didn't need to pay the fee
         RegisterStep_NodeNotReady -> Just $ PromptResult_ClientError ==> ClientError_NodeNotReady
-        RegisterStep_FeeTooLow _fee -> Just $ PromptResult_RecoverableError ==> text "Fee is too low, please try again with a higher fee."
-        RegisterStep_FeeTooHigh _fee -> Just $ PromptResult_RecoverableError ==> text "To avoid paying an unnecessarily high fee enter a value of 1 tez or less. We recommend trying the default minimum fee listed above."
         RegisterStep_NotEnoughFunds balance -> Just $ PromptResult_RecoverableError ==> do
           text "Balance ("
           elClass "span" "tez" $ text $ tez balance
           text ") too low to cover fee."
       | otherwise = Nothing
     explanation = do
-      let minimumDefaultFee = 0.004 :: Tez
       text "The selected address must be registered as a delegate on the Tezos network in order to bake."
-      divClass "start-baking-message" $ do
-        icon "large orange icon-warning"
-        divClass "header" $ text "There is a small transaction fee to register as a delegate."
-        divClass "explanation" $ text "Registering a delegate is a blockchain transaction and thus has a fee, similar to a transaction like sending tez."
-        divClass "explanation" $ do
-          text "This address must have enough available Tez to pay the transaction fee to register as a delegate. We recommend using the default minimum fee of "
-          text $ tez minimumDefaultFee
-          text "."
-        divClass "explanation" $ do
-          text "You can read more about fees here: "
-          let uri = "http://tezos.gitlab.io/master/protocols/003_PsddFKi3.html"
-          hrefLink uri $ text uri
-      text "Transaction Fee (ꜩ)"
-      fee <- fmap (current . value) $ SemUi.input (def & SemUi.classes .~ "tx-fee-input") $ inputElement $ def
-        & inputElementConfig_initialValue .~ T.pack (show $ getTez minimumDefaultFee)
-        & initialAttributes .~ "type" =: "number" <> "step" =: "0.000001" <> "min" =: "0"
-      pure $ ffor fee $ \t -> PublicRequest_RegisterKeyAsDelegate sk . Tez <$> readMaybe (T.unpack t)
+      pure $ pure $ Just $ PublicRequest_RegisterKeyAsDelegate sk
 
 connectLedger
   :: MonadAppWidget js t m

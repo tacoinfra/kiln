@@ -229,8 +229,6 @@ data RegisterStep
   | RegisterStep_Disconnected
   | RegisterStep_NodeNotReady
   | RegisterStep_Failed
-  | RegisterStep_FeeTooHigh Tez -- holds users desired fee
-  | RegisterStep_FeeTooLow Tez -- holds users desired fee
   | RegisterStep_NotEnoughFunds Tez -- holds account balance
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON RegisterStep
