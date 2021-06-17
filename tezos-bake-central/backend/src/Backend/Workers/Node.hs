@@ -733,9 +733,9 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                     unseenProposalHashes = proposalHashes S.\\ proposalHashesWhenLastVoting
                   pure $ if null unseenProposalHashes then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
-      VotingPeriodKind_Exploration -> pure BakerVotingState_Testing
-      VotingPeriodKind_Cooldown -> singleVotePeriod pkh 1 BakerVotingState_Exploration
-      VotingPeriodKind_PromotionVote -> singleVotePeriod pkh 3 BakerVotingState_Promotion
+      VotingPeriodKind_Exploration -> singleVotePeriod pkh 1 BakerVotingState_Exploration
+      VotingPeriodKind_Cooldown -> pure BakerVotingState_Testing
+      VotingPeriodKind_Promotion -> singleVotePeriod pkh 3 BakerVotingState_Promotion
       VotingPeriodKind_Adoption -> pure BakerVotingState_Adoption
 
     runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
@@ -809,7 +809,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Proposal -> pure () -- can never happen
         VotingPeriodKind_Exploration -> notify NotifyTag_PeriodTestingVote Nothing
         VotingPeriodKind_Cooldown -> notify NotifyTag_PeriodTesting Nothing
-        VotingPeriodKind_PromotionVote -> notify NotifyTag_PeriodPromotionVote Nothing
+        VotingPeriodKind_Promotion -> notify NotifyTag_PeriodPromotionVote Nothing
         VotingPeriodKind_Adoption -> notify NotifyTag_PeriodAdoption Nothing
 
   where
@@ -845,7 +845,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Proposal -> pure ()
         VotingPeriodKind_Exploration -> deleteAll' @PeriodTestingVote Proxy
         VotingPeriodKind_Cooldown -> deleteAll' @PeriodTesting Proxy
-        VotingPeriodKind_PromotionVote -> deleteAll' @PeriodPromotionVote Proxy
+        VotingPeriodKind_Promotion -> deleteAll' @PeriodPromotionVote Proxy
         VotingPeriodKind_Adoption -> deleteAll' @PeriodAdoption Proxy
 
     updateTo startBlock predBlk blk p = do
@@ -884,7 +884,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
             |] $ (\(ProposalVotes (phash, votes)) -> (phash, chainId, votingPeriod, votes)) <$> toList proposals
             for_ inserted $ \(pid, phash, chain, vp, votes, includedPkh :: Maybe PublicKeyHash, includedBlock :: Maybe BlockHash) ->
               notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
-        VotingPeriodKind_Exploration -> do
+        VotingPeriodKind_Exploration -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
+        VotingPeriodKind_Cooldown -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
             let (status, testChainId, startBlockHash) = case blk ^. blockMetadata . blockMetadata_testChainStatus of
@@ -908,8 +909,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                 , _periodTesting_startingLevel = l
                 , _periodTesting_status = s
                 }
-        VotingPeriodKind_Cooldown -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
-        VotingPeriodKind_PromotionVote -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
+        VotingPeriodKind_Promotion -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
         VotingPeriodKind_Adoption -> handleVotingPeriod predBlk PeriodAdoption NotifyTag_PeriodAdoption
 
     handleVotingPeriod :: (PersistEntity a, BlockLike blk) => blk -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
@@ -956,7 +956,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
-      tp <- if vp == VotingPeriodKind_PromotionVote
+      tp <- if vp == VotingPeriodKind_Promotion
         then fmap babyHax <$> nodeQueryDataSource (NodeQuery_CurrentProposal (latestHead ^. hash))
         else return Nothing
       return (blk ^. blockMetadata . blockMetadata_protocol, tp)
