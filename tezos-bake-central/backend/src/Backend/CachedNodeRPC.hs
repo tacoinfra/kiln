@@ -96,6 +96,7 @@ import Data.Maybe (mapMaybe)
 import Data.Ord (comparing, Down(..))
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
+import qualified Data.Sequence as Seq (filter)
 import qualified Data.Set as Set
 import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
@@ -148,8 +149,8 @@ instance Exception NoRightsException
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: !BlockHash -> NodeQuery ProtoInfo
   NodeQuery_ProtocolIndex   :: !ProtocolHash -> NodeQuery ProtocolIndex
-  NodeQuery_BakingRights    :: BlockHash -> RawLevel -> NodeQuery (Seq BakingRights)
-  NodeQuery_EndorsingRights :: BlockHash -> RawLevel -> NodeQuery (Seq EndorsingRights)
+  NodeQuery_BakingRights    :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRights)
+  NodeQuery_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
   NodeQuery_Ballot          :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
@@ -166,8 +167,8 @@ deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
 data NodeQueryIx a where
-  NodeQueryIx_BakingRights    :: BlockHash -> RawLevel -> NodeQueryIx (Seq BakingRights)
-  NodeQueryIx_EndorsingRights :: BlockHash -> RawLevel -> NodeQueryIx (Seq EndorsingRights)
+  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq BakingRights)
+  NodeQueryIx_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq EndorsingRights)
 deriving instance Show (NodeQueryIx a)
 
 toCacheDelegateInfo :: DelegateInfoCrossCompat -> CacheDelegateInfo
@@ -361,10 +362,10 @@ archivalNodeRetry qBranch q nds archivalNodeURI' action = runLoggingEnv logger $
          _RpcQuery_resource $ rProtoConstants @RpcQuery chainId branch
         NodeQuery_ProtocolIndex protoHash ->
          _RpcQuery_resource $ rProtocolIndex @RpcQuery chainId protoHash
-        NodeQuery_BakingRights branch targetLevel  ->
-         _RpcQuery_resource $ rBakingRights @RpcQuery (Set.singleton $ Left targetLevel) chainId branch
-        NodeQuery_EndorsingRights branch targetLevel  ->
-         _RpcQuery_resource $ rEndorsingRights @RpcQuery (Set.singleton $ Left targetLevel) chainId branch
+        NodeQuery_BakingRights branch targetLevels ->
+         _RpcQuery_resource $ rBakingRights @RpcQuery (Set.map Left targetLevels) chainId branch
+        NodeQuery_EndorsingRights branch targetLevels ->
+         _RpcQuery_resource $ rEndorsingRights @RpcQuery (Set.map Left targetLevels) chainId branch
         NodeQuery_Account branch contractId ->
          _RpcQuery_resource $ rContract @RpcQuery contractId (ChainTag_Hash chainId) branch
         NodeQuery_Ballots branch ->
@@ -1058,8 +1059,8 @@ validNodes
 validNodes nodes q = case q of
   NodeQuery_ProtocolConstants ctx -> findNodes <$> getLvl ctx
   NodeQuery_ProtocolIndex _ctx -> pure $ (\(u,_,_) -> (u, Left UnsuitableNodeReason_ProtocolIndex)) <$> nodes -- only OS public node can do this query
-  NodeQuery_BakingRights _ctx lvl -> pure $ findNodes $ Just lvl
-  NodeQuery_EndorsingRights _ctx lvl -> pure $ findNodes $ Just lvl
+  NodeQuery_BakingRights _ctx lvls -> pure $ findNodes $ Just $ Set.findMin lvls
+  NodeQuery_EndorsingRights _ctx lvls -> pure $ findNodes $ Just $ Set.findMin lvls
   NodeQuery_Block ctx -> findNodes <$> getLvl ctx
   NodeQuery_BlockHeader _ctx -> pure $ findNodes Nothing
   NodeQuery_Account ctx _contractId -> findNodes <$> getLvl ctx
@@ -1138,9 +1139,9 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
   NodeQuery_ProtocolIndex protoHash -> nodeRPC' $ rProtocolIndex chainId protoHash
   NodeQuery_BakingRights branch targetLevel ->
-    nodeRPC' $ rBakingRightsFull (Set.singleton $ Left targetLevel) priorityChunkSize chainId branch
+    nodeRPC' $ rBakingRightsFull (Set.map Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
-    nodeRPC' $ rEndorsingRights (Set.singleton $ Left targetLevel) chainId branch
+    nodeRPC' $ rEndorsingRights (Set.map Left targetLevel) chainId branch
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract contractId (toChain chainId) branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
@@ -1266,6 +1267,7 @@ nodeQueryIx
     , PostgresRaw m
     , PersistBackend m
     , Aeson.FromJSON a, Aeson.ToJSON a
+    , Monoid a
     )
   => NodeQueryIx a -> NodeQueryT m a
 nodeQueryIx q = do
@@ -1291,45 +1293,61 @@ nodeQueryIx q = do
       pure $ fromMaybe ctx mCtxCp
 
   q1 <- modifyContext getRightsContext q
-  mRes <- checkCacheDb q1
-  case mRes of
-    Just v -> pure v
-    Nothing -> do
+  (cachedLvls, cachedRights) <- fmap unzip $ checkCacheDb q1
+  let cachedLvlsSet = Set.fromList cachedLvls
+      lvlsToFetch = queryLvls `Set.difference` cachedLvlsSet
+      chunkedRights = mconcat $ catMaybes cachedRights
+  if Set.size lvlsToFetch == 0
+    then pure chunkedRights
+    else do
       q2 <- modifyContext getCheckpointContext q
-      result <- nodeQueryDataSourceSafe $ getNodeQuery q2
+      result <- nodeQueryDataSourceSafe $ getNodeQuery (filterCachedLvls cachedLvlsSet q2)
       addToDb result q1
-      pure result
+      pure $ result <> chunkedRights
   where
+    queryLvls :: Set RawLevel
+    queryLvls = case q of
+      NodeQueryIx_BakingRights _ lvls -> lvls
+      NodeQueryIx_EndorsingRights _ lvls -> lvls
     modifyContext :: Functor f => (BlockHash -> RawLevel -> f BlockHash) -> NodeQueryIx a -> f (NodeQueryIx a)
     modifyContext f = \case
-      NodeQueryIx_BakingRights ctx lvl -> (\ctx' -> NodeQueryIx_BakingRights ctx' lvl) <$> f ctx lvl
-      NodeQueryIx_EndorsingRights ctx lvl -> (\ctx' -> NodeQueryIx_EndorsingRights ctx' lvl) <$> f ctx lvl
+      NodeQueryIx_BakingRights ctx lvls -> (\ctx' -> NodeQueryIx_BakingRights ctx' lvls) <$> f ctx (Set.findMin lvls)
+      NodeQueryIx_EndorsingRights ctx lvls -> (\ctx' -> NodeQueryIx_EndorsingRights ctx' lvls) <$> f ctx (Set.findMin lvls)
 
     getNodeQuery :: NodeQueryIx a -> NodeQuery a
     getNodeQuery = \case
       NodeQueryIx_BakingRights ctx lvl -> NodeQuery_BakingRights ctx lvl
       NodeQueryIx_EndorsingRights ctx lvl -> NodeQuery_EndorsingRights ctx lvl
 
+    filterCachedLvls :: Set RawLevel -> NodeQueryIx a -> NodeQueryIx a
+    filterCachedLvls cachedLvls = \case
+      NodeQueryIx_BakingRights ctx lvls -> NodeQueryIx_BakingRights ctx (lvls `Set.difference` cachedLvls)
+      NodeQueryIx_EndorsingRights ctx lvls -> NodeQueryIx_EndorsingRights ctx (lvls `Set.difference` cachedLvls)
+
     checkCacheDb
       :: ( Monad m1
       , PostgresRaw m1
       , MonadLogger m1)
-      => NodeQueryIx a -> m1 (Maybe a)
+      => NodeQueryIx a -> m1 [(RawLevel, Maybe a)]
     checkCacheDb = \case
-      NodeQueryIx_BakingRights ctx lvl -> do
-        res <- [queryQ|
-          SELECT "result"
+      NodeQueryIx_BakingRights ctx lvls -> do
+        let minLvl = Set.findMin lvls
+            maxLvl = Set.findMax lvls
+        (rawData :: [(RawLevel, Json Aeson.Value)]) <- [queryQ|
+          SELECT "level", "result"
           FROM "CacheBakingRights"
-          WHERE "context" = ?ctx AND "level" = ?lvl
-        |] <&> stripOnly
-        fmap join $ traverse getResult $ headMay res
-      NodeQueryIx_EndorsingRights ctx lvl -> do
-        res <- [queryQ|
-          SELECT "result"
+          WHERE "context" = ?ctx AND "level" BETWEEN ?minLvl AND ?maxLvl
+        |]
+        mapM (\(lvl, rawRight) -> fmap (lvl,) (getResult rawRight)) rawData
+      NodeQueryIx_EndorsingRights ctx lvls -> do
+        let minLvl = Set.findMin lvls
+            maxLvl = Set.findMax lvls
+        (rawData :: [(RawLevel, Json Aeson.Value)]) <- [queryQ|
+          SELECT "level", "result"
           FROM "CacheEndorsingRights"
-          WHERE "context" = ?ctx AND "level" = ?lvl
-        |] <&> stripOnly
-        fmap join $ traverse getResult $ headMay res
+          WHERE "context" = ?ctx AND "level" BETWEEN ?minLvl AND ?maxLvl
+        |]
+        mapM (\(lvl, rawRight) -> fmap (lvl,) (getResult rawRight)) rawData
       where
         getResult json = case Aeson.fromJSON (unJson json) of
           Aeson.Success v -> return $ Just v
@@ -1337,18 +1355,26 @@ nodeQueryIx q = do
             $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
             return Nothing
 
-    addToDb :: (Monad m1, PostgresRaw m1) => a -> NodeQueryIx a -> m1 ()
+    addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
-      NodeQueryIx_BakingRights ctx lvl -> void [executeQ|
-        INSERT INTO "CacheBakingRights" ("context", "level", "result")
-        values (?ctx, ?lvl, ?result)
-      |]
-      NodeQueryIx_EndorsingRights ctx lvl -> void [executeQ|
-        INSERT INTO "CacheEndorsingRights" ("context", "level", "result")
-        values (?ctx, ?lvl, ?result)
-      |]
-      where result = Json $ Aeson.toJSON result'
-
+      NodeQueryIx_BakingRights ctx lvls -> case result' of
+        (bakingRights :: Seq BakingRights) -> for_ lvls $ \lvl -> do
+          let lvlRights = Seq.filter (\right -> right ^. bakingRights_level == lvl) bakingRights
+              result = Json $ Aeson.toJSON lvlRights
+          unless (null lvlRights) $
+            void [executeQ|
+              INSERT INTO "CacheBakingRights" ("context", "level", "result")
+              values (?ctx, ?lvl, ?result)
+            |]
+      NodeQueryIx_EndorsingRights ctx lvls -> case result' of
+        (endorsingRights :: Seq EndorsingRights) -> for_ lvls $ \lvl -> do
+          let lvlRights = Seq.filter (\right -> right ^. endorsingRights_level == lvl) endorsingRights
+              result = Json $ Aeson.toJSON lvlRights
+          unless (null lvlRights) $
+            void [executeQ|
+              INSERT INTO "CacheEndorsingRights" ("context", "level", "result")
+              values (?ctx, ?lvl, ?result)
+            |]
 
 nodeQueryIxBakingRights1
   :: forall m.
@@ -1362,7 +1388,7 @@ nodeQueryIxBakingRights1
   -> Priority -- ^ The minimum priority in the window of rights we want. The window will be 'priorityChunkSize' large.
   -> NodeQueryT m BakingRights
 nodeQueryIxBakingRights1 ctx lvl prio = do
-  allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx lvl
+  allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx (Set.singleton lvl)
   let
     chunked = fillChunk allRights
 

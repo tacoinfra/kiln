@@ -154,21 +154,32 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
         (cycle, x) <- Map.lookupMin $ MMap.getMonoidalMap unfinished
         cycle' <- Map.lookup cycle cycleHashesByCycle
         return (x, cycle')
+      toChunks :: Int -> [a] -> [[a]]
+      toChunks _ [] = []
+      toChunks chunkSize l = case splitAt chunkSize l of
+        (chunk, rest) -> chunk : toChunks chunkSize rest
+
 
     $(logDebugSH) ("Baker rights TODO:" :: Text, unfinished)
     for_ mNextUnfinished $ \(aBakerRight :| moreUnfinished, aCycleInfo) -> do
       let bakerMinBound = minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished
           bakerMaxBound = rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo
-      for_ [bakerMinBound .. bakerMaxBound] $ \lvl -> do
+          -- Block that begins a new cycle is a corner-case for gathering baking and endorsing rights due to the fact
+          -- that endorsing rights are returned for the previous level, so the first level of each cycle is handled in a 
+          -- separate chunk that consists of a single level
+          lvlChunks = [bakerMinBound] : toChunks 50 [(bakerMinBound + 1) .. bakerMaxBound]
+      for_ lvlChunks $ \lvlChunk -> do
+        let lvls = Set.fromList lvlChunk
+            maxLvl = Set.findMax lvls
         -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on,
         (reqBakers, reqEndorsers) <- runNodeQueryT $ liftA2 (,)
-          (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl)
-          (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvl)
+          (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvls)
+          (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvls)
         let
-          pri1baker :: Maybe BakingRights
-          pri1baker = fmap NonEmpty.head . nonEmpty . filter (\br -> (flip Set.member pkhs . _bakingRights_delegate) br && ((== 0) . _bakingRights_priority) br) $ toList reqBakers
-          endorsers :: Seq EndorsingRights
-          endorsers = Seq.filter (flip Set.member pkhs . _endorsingRights_delegate) reqEndorsers
+          pri1bakers :: [BakingRights]
+          pri1bakers = filter (\br -> (flip Set.member pkhs . _bakingRights_delegate) br && ((== 0) . _bakingRights_priority) br) $ toList reqBakers
+          endorsers :: [EndorsingRights]
+          endorsers = filter (flip Set.member pkhs . _endorsingRights_delegate) $ toList reqEndorsers
           branch :: BlockHash
           branch = _rightsCycleInfo_branch aCycleInfo
 
@@ -178,22 +189,24 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
             , _bakerRightsCycleProgress_branch = branch
             , _bakerRightsCycleProgress_publicKeyHash = pkh
             , _bakerRightsCycleProgress_cycle = _rightsCycleInfo_cycle aCycleInfo
-            , _bakerRightsCycleProgress_progress = lvl
+            , _bakerRightsCycleProgress_progress = maxLvl
             }
           bakerRights :: Maybe (Id BakerRightsCycleProgress) -> PublicKeyHash -> [BakerRight]
-          bakerRights pid pkh =
-            [ BakerRight pid' lvl RightKind_Baking Nothing
-              | pid' <- toList pid
-              , pri1' <- toList pri1baker
-              , _bakingRights_delegate pri1' == pkh
-              ] ++
-            [ BakerRight pid' lvl RightKind_Endorsing (Just $ length $ _endorsingRights_slots end)
-              | pid' <- toList pid
-              , end <- toList endorsers
-              , _endorsingRights_delegate end == pkh
-              ]
+          bakerRights pid pkh = flip (maybe mempty) pid $ \pid' ->
+            map (\br -> BakerRight
+              { _bakerRight_branch = pid'
+              , _bakerRight_level = _bakingRights_level br
+              , _bakerRight_right = RightKind_Baking
+              , _bakerRight_slots = Nothing
+              }) (filter ((== pkh) ._bakingRights_delegate) pri1bakers) ++
+            map (\end -> BakerRight
+              { _bakerRight_branch = pid'
+              , _bakerRight_level = _endorsingRights_level end
+              , _bakerRight_right = RightKind_Endorsing
+              , _bakerRight_slots = Just $ length $ _endorsingRights_slots end
+              }) (filter ((== pkh) ._endorsingRights_delegate) endorsers)
 
-        when (mod lvl 100 == 0) $ $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel lvl))
+        $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel $ Set.findMax lvls))
         lift @(ExceptT CacheError) $ runDb (Identity db) $ for_ pkhs $ \pkh -> do
           let
             newProgress = bakerRightCycleInfo pkh
@@ -206,10 +219,10 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
             Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
             Just ((pId, p):|_)
               --  | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
-              | _bakerRightsCycleProgress_progress p < lvl -> do
+              | _bakerRightsCycleProgress_progress p < maxLvl -> do
                 _ <- [executeQ|
                   UPDATE "BakerRightsCycleProgress"
-                  SET progress = ?lvl
+                  SET progress = ?maxLvl
                   WHERE "id" = ?pId
                   |]
 
@@ -308,7 +321,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     <$> enumerateBranches headHash detailsBranch
   $(logDebugSH) ("getWantedAction" :: Text, baker, headHash, headLvl, headBranch)
   bakingEndorsingAlerts :: [AppSerializable ()] <- for headBranch $ \(lvl, thisHash) -> do
-    bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash lvl
+    bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
     bakingAlerts :: [AppSerializable ()]
                  <- whenM (any (\br -> ((== 0) . _bakingRights_priority) br && ((== _baker_publicKeyHash baker) . _bakingRights_delegate) br) bakingRights) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
@@ -321,7 +334,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
       return $ pure action
 
     -- endorsements *on* this block are *of* the previous block
-    endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (lvl - 1)
+    endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
     endorsingAlerts :: [AppSerializable ()]
                     <- whenM (elem (_baker_publicKeyHash baker) $ _endorsingRights_delegate <$> endorsers) $ do
       thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
