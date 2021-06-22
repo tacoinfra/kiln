@@ -73,7 +73,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError,
                        clearPastVotingPeriodErrors, reportVotingReminderError)
 import Backend.CachedNodeRPC
-import Backend.Common (AppSerializable, unsupervisedWorkerWithDelay, threadDelay', worker', workerWithDelay, timeout')
+import Backend.Common (AppSerializable, threadDelay', timeout', unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.IndexQueries
 import Backend.Schema
@@ -398,11 +398,16 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
       let
         reconnectDelay = 5
 
+        -- 2 minutes
+        chunkedQueryTimeout :: Maybe NominalDiffTime
+        chunkedQueryTimeout = Just 120
+
         nodeQuery :: RpcQuery a -> IO (Either RpcError a)
         nodeQuery f = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPC f) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
 
         chunkedNodeQuery :: PlainNodeStream a -> (a -> IO ()) -> IO (Either RpcError ())
-        chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k) $ NodeRPCContext httpMgr $ Uri.render nodeAddr
+        chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k chunkedQueryTimeout) $
+          NodeRPCContext httpMgr $ Uri.render nodeAddr
 
         updateCheckpoint :: (MonadIO m, MonadLogger m)
           => MonitorBlock
@@ -439,7 +444,6 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
           nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
 
           nodeVersionMonitor nds nodeAddr nodeId
-
         liftIO (nodeQuery rChain) >>= inDb . \case
           Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
           Right actualChainId
