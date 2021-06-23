@@ -23,6 +23,7 @@ import Database.Groundhog.Core (PersistBackend)
 import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
+import qualified Data.Set as Set (singleton)
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Postgresql (Postgresql)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, PostgresRaw)
@@ -192,6 +193,6 @@ loadPossibles
   :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, PostgresRaw m, MonadMask m, PersistBackend m)
   => BlockHash -> RawLevel -> NodeQueryT m (Seq.Seq PublicKeyHash, Seq.Seq PublicKey)
 loadPossibles blockHash accusedLevel = do
-  possibles <- (fmap.fmap) _endorsingRights_delegate $ nodeQueryIx $ NodeQueryIx_EndorsingRights blockHash accusedLevel
+  possibles <- (fmap.fmap) _endorsingRights_delegate $ nodeQueryIx $ NodeQueryIx_EndorsingRights blockHash (Set.singleton accusedLevel)
   possiblesKeys <- traverse (nodeQueryDataSourceSafe . NodeQuery_PublicKey . Implicit) possibles
   pure (possibles, possiblesKeys)

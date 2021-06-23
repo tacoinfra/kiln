@@ -17,6 +17,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
 import Data.Sequence (Seq)
+import qualified Data.Set as Set (singleton)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -146,16 +147,16 @@ snapBlockHeader = runExceptT $ do
   asTextExcept @CacheError $ nodeQueryDataSource $ NodeQuery_BlockHeader block
 
 snapBakingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq BakingRights))
-snapBakingRights = snapRights NodeQueryIx_BakingRights
+snapBakingRights = snapRights $ \branch lvl -> NodeQueryIx_BakingRights branch (Set.singleton lvl)
 
 snapEndorsingRights :: (MonadSnap m, MonadReader r m, HasNodeDataSource r) => m (Either Text (Seq EndorsingRights))
-snapEndorsingRights = snapRights NodeQueryIx_EndorsingRights
+snapEndorsingRights = snapRights $ \branch lvl -> NodeQueryIx_EndorsingRights branch (Set.singleton lvl)
 
 snapRights :: forall a r m .
   ( MonadSnap m
   , MonadReader r m
   , HasNodeDataSource r
-  , Aeson.FromJSON a, Aeson.ToJSON a
+  , Aeson.FromJSON a, Aeson.ToJSON a, Monoid a
   )
   => (BlockHash -> RawLevel -> NodeQueryIx a)
   -> m (Either Text a)
