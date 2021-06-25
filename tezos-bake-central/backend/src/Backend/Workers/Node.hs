@@ -16,7 +16,7 @@
 
 module Backend.Workers.Node where
 
-import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar, withMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Exception.Safe (try)
 import Control.Lens (set)
@@ -139,10 +139,18 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
             pure Nothing
       for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> IO ()
-nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
+nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> MVar () -> IO ()
+nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData blockTodoLock = do
   let db = _nodeDataSource_pool nds
-  runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ flip runReaderT appConfig $ do
+      newHash = headBlockInfo ^. hash
+      newLevel = headBlockInfo ^. level
+      chainId = _nodeDataSource_chain nds
+      runApp :: ReaderT AppConfig Serializable a -> IO a
+      runApp = runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity db) . flip runReaderT appConfig
+  -- We'd like to avoid the situation when the same data is inserted into the DB multiple
+  -- times simultaneously, because it may cause a thread to hang, so we're making
+  -- sure that threads don't do insertions at the same time.
+  withMVar blockTodoLock $ \_ -> runApp $ do
     $(logDebug) $ fold
       [ "Updating node "
       , tshow nodeId
@@ -153,18 +161,14 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
       , " savepoint "
       , tshow mSpData
       ]
-    -- This isn't very nuanced: old, stale nodes, even if they are catching
-    -- up, will churn a lot here.  Maybe we could improve this to filter
-    -- out "new" blocks that are already on the branch of `oldHead`?
+    void [executeQ|
+      insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
+      values (?newHash, ?newLevel, ?chainId, null, null, false, false)
+      on conflict do nothing
+    |]
+
+  runApp $ do
     now <- getTime
-    let newHash = headBlockInfo ^. hash
-        newLevel = headBlockInfo ^. level
-        chainId = _nodeDataSource_chain nds
-     in void [executeQ|
-          insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
-          values (?newHash, ?newLevel, ?chainId, null, null, false, false)
-          on conflict do nothing
-          |]
     let p = (NodeDetails_dataField ~>)
     project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
       [] -> insert $ NodeDetails
@@ -361,6 +365,7 @@ nodeWorker
   -> IO (IO ())
 nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ withTermination $ \addFinalizer -> do
   nodePool :: MVar (Map URI (IO ())) <- newMVar mempty
+  blockTodoLock :: MVar () <- newMVar ()
   let httpMgr = _nodeDataSource_httpMgr nds
   workerWithDelay "nodeWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
     $(logDebug) "Update node cycle."
@@ -441,7 +446,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
               pure (mSavePoint, mProto)
             updateCheckpoint block mSavePointAndProto
 
-          nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
+          nodeMonitor nds appConfig nodeAddr nodeId block mNewSp blockTodoLock
 
           nodeVersionMonitor nds nodeAddr nodeId
         liftIO (nodeQuery rChain) >>= inDb . \case
