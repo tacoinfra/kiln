@@ -2,51 +2,51 @@
 # https://github.com/serokell/tezos-packaging/releases/download/v9.0-rc1-1/tezos-accuser-009-PsFLoren-v9.0-rc1-1.${macos_version}.bottle.tar.gz
 with pkgs;
 let
-  outer-version = "v9.2-1";
+  outer-version = "v9.3-1";
   macos_version = "mojave";
     tezos-accuser-009-PsFLoren = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-accuser-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0ha70mxvf9m6isnxpc3w27crj6jq9lgzfpfk3317pk66xmrannvz";
+      sha256 = "02wb5jjiajam151rnxw8nmk24rfvcswa4zy47z426rahvs3gx4m9";
     };
     tezos-accuser-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-accuser-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1xg17m5xm2s3f2biyjrzjch3gxmpl4rryn55v0k0wxci62hv8f7v";
+      sha256 = "077gq40bwvpbgrsaprz89l3hxrn2lk55rqf8rq6kjg4xpmqmr5pd";
     };
     tezos-admin-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "16jfd7da3j2bsi47byhks8lq6c5rg995748j94c9zyqn5ijczj3g";
+      sha256 = "1jfcxxqc0azybwnrvsyh2rvcszap9maclz0yg2afqm6ildpzqpcj";
     };
     tezos-baker-009-PsFLoren = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0f7md72654sx3l95yl63j5nxkwchjvna0v8pgr1bb1faxxy0nlp9";
+      sha256 = "0wyfkxq47qhmn8gy722v69d6f8pm06j1i3qrvh840rj29gsvqwdi";
     };
     tezos-baker-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1wgrkk6jmxwnpapp2fb062arbrk8whc2f8crg1ygs60zvh3xb1gv";
+      sha256 = "0905i6bivdnkvl8zkkvl4ih4wmpcd6byqzsr0wr7mi8wf8x9avh9";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "17b00ccfyccrkrxx08pbbb3mwrffpigbymh1dsx9ir00dikh6n0m";
+      sha256 = "1v3rx7bqxh688l1732hg1scdvjsvrvkz9ww2rwvcak4zdckaagqs";
     };
     tezos-codec = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-codec-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "04grk4fk42qh7fzpaqmhnw0g5szx2iq73z5rinffd009ia9c9y7f";
+      sha256 = "0damd8w7r0j29giymfkk9hqqa9azfz9j92p3y4k84hd7z5js9dx5";
     };
     tezos-endorser-009-PsFLoren = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "06ywyvp9djxz717kmfln4hbjic4ymgddxwfviwhy94xw6l2imh3g";
+      sha256 = "0f2280aw7iwmcr8vr8cg7kkawgjbccmzb00ggdc73pc4d3rbg0gw";
     };
     tezos-endorser-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1s5szj4z1d9xgiwzz7jl30c5zy14zk8lshkarf45s2l99mxjak2i";
+      sha256 = "1mvqvarqml1r7kbw3g9dn7bvrgx63235qmwwrs84knmaiqc66i2l";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1r4f042jb3hmkims41dzza40vlahy1dlfsdq5py64yn9qsbz3vfn";
+      sha256 = "05fypvqdnig8gcfnqdbqdfqj99ls67sx9qmfhrar31vndqv06qw8";
     };
     tezos-signer = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-signer-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1qv540r1z545qpvij53a5xbjh0lllr9bdq4nnazr18968rkwl3mk";
+      sha256 = "16j2j4w00yqsl6qd0wwpy7fn1z8dz8qvr4cd9gsd17v0600mbbml";
     };
 
 in stdenv.mkDerivation rec {
