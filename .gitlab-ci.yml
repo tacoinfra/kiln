@@ -1,0 +1,12 @@
+stages:
+  - build
+
+default:
+  tags: [shell-executor]
+
+build-kiln:
+  stage: build
+  rules: &if_merge_request
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - nix-build -A exe --no-out-link
