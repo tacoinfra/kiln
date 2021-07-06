@@ -38,7 +38,7 @@ Unless the setting is disabled, the monitor should automically check for newer v
       1. locate the project ID for the new fork;  it may be displayed under the `tezos` title in the top center of the page
 
   1. Use the command line argument `--network-gitlab-project-id` to reference
-     your forked version of Tezos.  
+     your forked version of Tezos.
      `./backend --network-gitlab-project-id=PROJECTID [OTHER OPTIONS]`
 
       1. Alternatively, you should be able to place the project ID in this file, but that did not work for me - https://gitlab.com/obsidian.systems/kiln/blob/f34428af76ed11add0c973facffe392f0e283f05/tezos-bake-central/config/network-gitlab-project-id

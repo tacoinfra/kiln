@@ -165,7 +165,7 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
       let bakerMinBound = minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished
           bakerMaxBound = rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo
           -- Block that begins a new cycle is a corner-case for gathering baking and endorsing rights due to the fact
-          -- that endorsing rights are returned for the previous level, so the first level of each cycle is handled in a 
+          -- that endorsing rights are returned for the previous level, so the first level of each cycle is handled in a
           -- separate chunk that consists of a single level
           lvlChunks = [bakerMinBound] : toChunks 50 [(bakerMinBound + 1) .. bakerMaxBound]
       for_ lvlChunks $ \lvlChunk -> do

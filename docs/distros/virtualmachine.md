@@ -24,7 +24,7 @@ But this might work with other VM software like VMWare, and other hosts.
 
 - After successful import, run the "Kiln VM" by clicking the "Start" / "Normal Start" button on menu
 
-- Once the VM is running, Kiln will run automatically. 
+- Once the VM is running, Kiln will run automatically.
   You can use the browser (Firefox) in the VM to access Kiln by opening http://localhost:8000, but it is recommended that you use the browser of the host OS as described below.
 
 ## Using host browser
@@ -37,7 +37,7 @@ To use the host browser you need to change the network settings of the VM to exp
 - Go to "Machine" -> "Settings" -> "Network"
 
   There you will see tab of "Adapter 1"
-  
+
   Click on "Advanced" and then "Port Forwarding"
 
 - This would open a table (which would be empty first time)
@@ -90,7 +90,7 @@ In order to do baking with Kiln you need to enable the Ledger device from its US
 
 - In the USB settings, click the button with a ‘+’ mark ('Add new USB filter with all fields set to values of the selected USB device'), and select the “Ledger Nano S” device
 
- 
+
 - After enabling this reconnect the Ledger device, and enter the passcode again. Then restart the VM.
 
 - After restarting VM you can check if the device is detected properly by the `tezos-client list connected ledgers` command.
