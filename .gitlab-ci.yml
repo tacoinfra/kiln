@@ -1,12 +1,27 @@
 stages:
+  - validate
   - build
 
 default:
   tags: [shell-executor]
 
-build-kiln:
-  stage: build
+hlint:
+  stage: validate
   rules: &if_merge_request
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  # There is so much hlint suggestions, one day we'll handle them all
+  allow_failure: true
+  script:
+    - nix run nixpkgs.haskellPackages.hlint -c ./scripts/hlint.sh
+
+check-trailing-whitespace:
+  stage: validate
+  rules: *if_merge_request
+  script:
+    - ./scripts/check-trailing-whitespace.sh
+
+build-kiln:
+  stage: build
+  rules: *if_merge_request
   script:
     - nix-build -A exe --no-out-link
