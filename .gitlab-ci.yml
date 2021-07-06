@@ -2,6 +2,7 @@ stages:
   - validate
   - fetch-binaries
   - build
+  - extras
 
 default:
   tags: [shell-executor]
@@ -38,3 +39,12 @@ build-kiln:
   rules: *if_merge_request
   script:
     - nix-build -A exe --no-out-link
+
+xrefcheck:
+  stage: extras
+  rules: *if_merge_request
+  script:
+    - nix run -f ./dep/xrefcheck -c xrefcheck
+  retry:
+    max: 2
+    when: script_failure
