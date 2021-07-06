@@ -250,7 +250,7 @@
 
 **NOTICE: An important update to Tezos is coming on Monday, November 26. We strongly recommend you join the Baker Slack channel for updates surrounding this breaking change. Please email <tezos@obsidian.systems> to join.**
 
-  * **Critical update:** Support for [protocol 003_PsddFKi3](https://tezos.gitlab.io/master/protocols/003_PsddFKi3.html).
+  * **Critical update:** Support for [protocol 003_PsddFKi3](https://tezos.gitlab.io/protocols/003_PsddFKi3.html).
   * Alerts for when your node is behind or on a branch will now only trigger after the error state has existed for 3 minutes or more. Kiln is also a bit more particular about what triggers this alert in the first place.
   * The alert panel in the web interface now only shows alerts that have been last seen in the last 36 hours. This is a temporary solution that makes the app work for users who have thousands of alerts.
 

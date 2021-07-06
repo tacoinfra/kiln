@@ -116,4 +116,4 @@ Specify the target location in the next dialog.
 
 [1]: https://www.virtualbox.org/wiki/Downloads
 [2]: https://gitlab.com/obsidian.systems/kiln/blob/develop/docs/config.md
-[3]: https://gitlab.com/tezos-kiln/kiln/-/
+[3]: https://gitlab.com/tezos-kiln/kiln/

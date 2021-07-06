@@ -295,7 +295,7 @@ left side of the modal. Kiln will generate an identity for a local
 node with the RPC port 8733 and immediately begin syncing with the
 blockchain. If this port is already in use, Kiln will have difficulty
 monitoring this node (the port can be modified by [command line
-options](#command-line-options)). The Kiln Node can be stopped or
+options](./docs/distros/build-from-source.md#command-line-options)). The Kiln Node can be stopped or
 restarted through the options menu on the Node's tile on the
 Dashboard.
 

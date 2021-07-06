@@ -88,7 +88,9 @@ git checkout master
 git pull
 ```
 
-Then follow the steps in [Running the build](#running-the-build). However, you'll already have an `app` directory. Deleting it would remove your database as well since your database is stored in `app/db`. You can simply overwrite the necessary application files by rerunning the `install-kiln` command.
+Then follow the steps in [Running the build and installing Kiln](#running-the-build-and-installing-kiln).
+However, you'll already have an `app` directory. Deleting it would remove your database as well since
+your database is stored in `app/db`. You can simply overwrite the necessary application files by rerunning the `install-kiln` command.
 
 ```shell
 $(nix-build -A installKiln --no-out-link)/bin/install-kiln
