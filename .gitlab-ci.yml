@@ -1,5 +1,6 @@
 stages:
   - validate
+  - fetch-binaries
   - build
 
 default:
@@ -19,6 +20,18 @@ check-trailing-whitespace:
   rules: *if_merge_request
   script:
     - ./scripts/check-trailing-whitespace.sh
+
+fetch-linux-binaries:
+  stage: fetch-binaries
+  rules: *if_merge_request
+  script:
+    - nix-build dep/serokell-tezos-binaries/build.nix
+
+fetch-macos-binaries:
+  stage: fetch-binaries
+  rules: *if_merge_request
+  script:
+    - nix-build dep/brew-tezos-binaries/build.nix
 
 build-kiln:
   stage: build
