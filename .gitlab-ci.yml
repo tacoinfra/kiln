@@ -3,6 +3,7 @@ stages:
   - fetch-binaries
   - build
   - extras
+  - package
 
 default:
   tags: [shell-executor]
@@ -48,3 +49,22 @@ xrefcheck:
   retry:
     max: 2
     when: script_failure
+
+build-docker-image:
+  stage: package
+  rules: &if_develop
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+  script:
+    - nix-build -A dockerImage --out-link docker
+  artifacts:
+    paths:
+      - docker/*
+
+build-deb-package:
+  stage: package
+  rules: *if_develop
+  script:
+    - nix-build -A kiln-debian --out-link debian
+  artifacts:
+    paths:
+      - debian/*
