@@ -13,7 +13,7 @@ To get started:
 
 By default, the ubuntu installation runs on mainnet with a standard options, like using port `8000`. You can use Kiln on a test network and configure advanced settings in its config file, located at `/etc/kiln`.
 
-To change the port, network, or specify other arguments, add the relevant options in file `/etc/kiln/args`. For example: 
+To change the port, network, or specify other arguments, add the relevant options in file `/etc/kiln/args`. For example:
 
 ```
 KILNARGS="--network=zeronet -- --port=8080"

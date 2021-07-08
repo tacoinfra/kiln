@@ -35,7 +35,8 @@ docker run  --tmpfs /tmp -p 8000:8000 registry.gitlab.com/tezos-kiln/kiln:0.8.2 
 
 Replace `mysecretpassword` with your *actually secret* password.
 
-Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found below in [Initial Setup](#initial-setup).
+Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found in
+[Initial Setup](../../README.md#initial-setup).
 
 Check out `docker run --rm registry.gitlab.com/tezos-kiln/kiln:0.8.2 --help` for more command-line options. For example, you can run the monitor on babylonnet by passing `--network=babylonnet`.
 
@@ -63,7 +64,9 @@ pg_dump "host=host.docker.internal port=5432 dbname=postgres user=postgres passw
 
 ### Running the newer version
 
-Now you can simply run the newer version. It will automatically migrate your database. Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor) for instructions, replacing version numbers where necessary. For example, when you see
+Now you can simply run the newer version. It will automatically migrate your database.
+Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor-docker-image)
+for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
 docker run  --tmpfs /tmp --network host --rm registry.gitlab.com/tezos-kiln/kiln:0.8.2 ...

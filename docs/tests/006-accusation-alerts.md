@@ -33,7 +33,7 @@ These alerts should appear whenever an accusation presenting evidence of double 
        Flextesa.accusing:
         Successful bake (C-Simple000: first bakes: [1/49]): [
           "Injected block BKye6FJuSrfs"
-        ]    
+        ]
      ```
 
   1. Start Kiln: (At the moment it is necessary to remove the file `config/binary-paths` manually)
@@ -49,7 +49,7 @@ These alerts should appear whenever an accusation presenting evidence of double 
      Flextesa.accusing:
        Pause
          Clients ready Node 0 baked 49 times. All nodes should be at level 50.
-     
+
      Flextesa.accusing: Please enter command:
   ```
 
@@ -65,11 +65,11 @@ These alerts should appear whenever an accusation presenting evidence of double 
 
      Flextesa.accusing: Please enter command:
   ```
-  
+
   1. Once the script pauses this time and displays a similar message, check Kiln for the accusation alert.
      Notifications for missed bakes and endorses may also occur.
      After confirming the alert Enter `q` to continue the test script.
-  
+
   ```
      Flextesa.accusing:
        Successful bake (C-Simple002: all at lvl 52): [

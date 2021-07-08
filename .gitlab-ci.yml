@@ -1,0 +1,70 @@
+stages:
+  - validate
+  - fetch-binaries
+  - build
+  - extras
+  - package
+
+default:
+  tags: [shell-executor]
+
+hlint:
+  stage: validate
+  rules: &if_merge_request
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  # There is so much hlint suggestions, one day we'll handle them all
+  allow_failure: true
+  script:
+    - nix run nixpkgs.haskellPackages.hlint -c ./scripts/hlint.sh
+
+check-trailing-whitespace:
+  stage: validate
+  rules: *if_merge_request
+  script:
+    - ./scripts/check-trailing-whitespace.sh
+
+fetch-linux-binaries:
+  stage: fetch-binaries
+  rules: *if_merge_request
+  script:
+    - nix-build dep/serokell-tezos-binaries/build.nix
+
+fetch-macos-binaries:
+  stage: fetch-binaries
+  rules: *if_merge_request
+  script:
+    - nix-build dep/brew-tezos-binaries/build.nix
+
+build-kiln:
+  stage: build
+  rules: *if_merge_request
+  script:
+    - nix-build -A exe --no-out-link
+
+xrefcheck:
+  stage: extras
+  rules: *if_merge_request
+  script:
+    - nix run -f ./dep/xrefcheck -c xrefcheck
+  retry:
+    max: 2
+    when: script_failure
+
+build-docker-image:
+  stage: package
+  rules: &if_develop
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+  script:
+    - nix-build -A dockerImage --out-link docker
+  artifacts:
+    paths:
+      - docker/*
+
+build-deb-package:
+  stage: package
+  rules: *if_develop
+  script:
+    - nix-build -A kiln-debian --out-link debian
+  artifacts:
+    paths:
+      - debian/*
