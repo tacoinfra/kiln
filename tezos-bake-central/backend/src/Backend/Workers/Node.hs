@@ -61,6 +61,7 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
+import qualified Tezos.LRUHashMap as LRUHashMap
 import Tezos.NodeRPC hiding (DataSource, getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
 import qualified Tezos.V005.Types as V005
@@ -102,42 +103,36 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
     historyVar = _nodeDataSource_history nds
   $(logInfo) [i|Node reported new head: ${headBlockInfo ^. hash}, level ${headBlockInfo ^. level}|]
   (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
-  res <- do
-    -- TODO: Why do we accumHistory if it's not a new block?
-    let isNewBlock = not $ Map.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
-    newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
-      headBlockHeader <- withExceptT Right $ do
-        -- Only OS public node can do a NodeQuery_BlockHeader, and that will be automatically chosen
-        -- to do the query if there are no other nodes/the query is not cached.
-        -- Also dont specify the nodeAddr for the OS public node here, as the OS public node query logic is special
-        -- and doesn't work like usual node RPC.
-        flip runReaderT (if pn == Nothing then nds { _nodeDataSource_nodeForQuery = Just nodeAddr } else nds) $ do
-          nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
+  let isNewBlock = not $ LRUHashMap.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
+  when isNewBlock $ do
+    res <- do
+      newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
+        headBlockHeader <- withExceptT Right $ do
+          flip runReaderT (if pn == Nothing then nds { _nodeDataSource_nodeForQuery = Just nodeAddr } else nds) $ do
+            nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
+        withExceptT Left $
+          flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
+            accumHistory chainId (const ()) headBlockHeader
+            $(logInfo) [i|${if isNewBlock then "New" else "Known" :: Text} block from ${pn}, URI ${Uri.render nodeAddr}, ${mkVeryBlockLike headBlockInfo}|]
 
-      withExceptT Left $
-        flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
-          accumHistory chainId (const ()) headBlockHeader
-          $(logInfo) [i|${if isNewBlock then "New" else "Known" :: Text} block from ${pn}, URI ${Uri.render nodeAddr}, ${mkVeryBlockLike headBlockInfo}|]
+        pure headBlockHeader
 
-      pure headBlockHeader
-
-    case newStateRsp of
-      Left (Left e) -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left (Left e)
-      Left (Right e) -> $(logWarn) (cacheErrorLogMessage "Handle new node head" e) $> Left (Right e)
-      Right headBlockHeader -> pure $ Right (isNewBlock, headBlockHeader)
-
-  for_ res $ \(isNewBlock, headBlockHeader) ->
-    when (isNewBlock && Just (headBlockHeader ^. fitness) > oldHead ^? _Just . fitness) $ do
-      updatedLevel <- liftIO $ atomically $ do
-        let latestHeadTVar = _nodeDataSource_latestHead nds
-        latestHead <- readTVar latestHeadTVar
-        if Just (headBlockHeader ^. fitness) > latestHead ^? _Just . fitness
-          then do
-            writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockHeader
-            pure $ Just $ headBlockHeader ^. level
-          else
-            pure Nothing
-      for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
+      case newStateRsp of
+        Left (Left e) -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left (Left e)
+        Left (Right e) -> $(logWarn) (cacheErrorLogMessage "Handle new node head" e) $> Left (Right e)
+        Right headBlockHeader -> pure $ Right headBlockHeader
+    for_ res $ \headBlockHeader ->
+      when (Just (headBlockHeader ^. fitness) > oldHead ^? _Just . fitness) $ do
+        updatedLevel <- liftIO $ atomically $ do
+          let latestHeadTVar = _nodeDataSource_latestHead nds
+          latestHead <- readTVar latestHeadTVar
+          if Just (headBlockHeader ^. fitness) > latestHead ^? _Just . fitness
+            then do
+              writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockHeader
+              pure $ Just $ headBlockHeader ^. level
+            else
+              pure Nothing
+        for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
@@ -483,7 +478,6 @@ publicNodesWorker nds = foldMap workerForSource
             pure secsTillNextBlock
 
       publicVersionMonitor nds pn chain
-
       _ <- timeout' (fromMaybe 5 $ secsTillNextBlock ^? _Right . _Just) (waitForNewHead nds)
       threadDelay' 5 -- always give a little extra delay to make it more likely the public node reports the new block
 
@@ -575,8 +569,8 @@ nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nd
              | levelsBehindNode == 0 -> return bad
              | otherwise -> do
                  history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
-                 let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ Map.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
-                     uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ Map.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
+                 let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ LRUHashMap.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
+                     uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ LRUHashMap.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
                  latestParent <- nodeQueryDataSource (NodeQuery_BlockHeader parentHash)
                  latestUncle <- nodeQueryDataSource (NodeQuery_BlockHeader uncleHash)
                  if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
@@ -639,7 +633,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
   let
     blocksPerVotingPeriod = _protoInfo_blocksPerVotingPeriod protoInfo
     chainId = _nodeDataSource_chain nds
-    minLevel = _cachedHistory_minLevel history
+    minLevel = cachedHistoryMinLevel history
 
     -- The RPCs under /votes/ return the information for the *next block*, not the current block.
     -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block

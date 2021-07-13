@@ -20,9 +20,6 @@ import Control.Exception.Safe (IOException)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger
-import Data.ByteString.Base58
-import qualified Data.ByteString as BS
-import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
@@ -42,7 +39,7 @@ import System.Posix.Signals (signalProcess, sigKILL)
 
 import Tezos.NodeRPC (_cachedHistory_blocks)
 import Tezos.Types
-import Tezos.Common.Base58Check
+import qualified Tezos.LRUHashMap as LRUHashMap
 
 import Backend.CachedNodeRPC
 import Backend.Common
@@ -284,24 +281,11 @@ updateSnapshotMeta blkDetails smId = do
       (AutoKeyField ==. smId)
   traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
 
--- Simple test
--- for_ (Map.keys $ _cachedHistory_blocks hist) $ \blk ->
---   when (Just blk /= (completeBlockHash (T.take 12 $ toBase58Text blk) hist)) $ print $ ("Did not work", blk)
+-- | Find the block with the given hash prefix
 completeBlockHash :: Text -> CachedHistory' -> Maybe BlockHash
-completeBlockHash prefix' history = (checkBlockHash =<< fst =<< mHashes)
-  <|> (checkBlockHash =<< snd =<< mHashes)
-  where
-    checkBlockHash blk = if T.isPrefixOf prefix' (toBase58Text blk)
-      then Just blk
-      else Nothing
-    mHashes :: Maybe (Maybe BlockHash, Maybe BlockHash)
-    mHashes = (\p -> (fst <$> Map.lookupLE p blks, fst <$> Map.lookupGE p blks)) <$> mPrefix
-    blks = _cachedHistory_blocks history
-    mPrefix :: Maybe BlockHash
-    mPrefix = HashedValue . toShort . BS.drop prefixDropLen <$> decodeBase58 bitcoinAlphabet (T.encodeUtf8 appendedPrefix)
-    prefixDropLen = BS.length $ Tezos.Common.Base58Check.prefix (Proxy @'HashType_BlockHash)
-    blkHashLength = 51 :: Int
-    appendedPrefix = prefix' <> T.replicate (blkHashLength - T.length prefix') "1"
+completeBlockHash prefix' history =
+  find (T.isPrefixOf prefix' . toBase58Text) $
+    LRUHashMap.keys $ _cachedHistory_blocks history
 
 removeFileLogging :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 removeFileLogging f = liftIO (removeFile f) `catch` \(e :: IOException) -> $(logError) $ "Failed to remove file: " <> T.pack f <> ": " <> tshow e
