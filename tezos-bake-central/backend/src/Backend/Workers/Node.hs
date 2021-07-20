@@ -16,14 +16,14 @@
 
 module Backend.Workers.Node where
 
-import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar, withMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
-import Control.Monad.Reader (ReaderT)
+import Control.Monad.Reader (ReaderT, forM)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
 import Data.Align
@@ -139,18 +139,10 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
             pure Nothing
       for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> MVar () -> IO ()
-nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData blockTodoLock = do
+nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> IO ()
+nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
   let db = _nodeDataSource_pool nds
-      newHash = headBlockInfo ^. hash
-      newLevel = headBlockInfo ^. level
-      chainId = _nodeDataSource_chain nds
-      runApp :: ReaderT AppConfig Serializable a -> IO a
-      runApp = runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity db) . flip runReaderT appConfig
-  -- We'd like to avoid the situation when the same data is inserted into the DB multiple
-  -- times simultaneously, because it may cause a thread to hang, so we're making
-  -- sure that threads don't do insertions at the same time.
-  withMVar blockTodoLock $ \_ -> runApp $ do
+  runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity db) . flip runReaderT appConfig $ do
     $(logDebug) $ fold
       [ "Updating node "
       , tshow nodeId
@@ -161,13 +153,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData blockTodoLock = 
       , " savepoint "
       , tshow mSpData
       ]
-    void [executeQ|
-      insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
-      values (?newHash, ?newLevel, ?chainId, null, null, false, false)
-      on conflict do nothing
-    |]
 
-  runApp $ do
     now <- getTime
     let p = (NodeDetails_dataField ~>)
     project NodeDetails_idField (NodeDetails_idField `in_` [nodeId]) >>= \case
@@ -365,7 +351,6 @@ nodeWorker
   -> IO (IO ())
 nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $ withTermination $ \addFinalizer -> do
   nodePool :: MVar (Map URI (IO ())) <- newMVar mempty
-  blockTodoLock :: MVar () <- newMVar ()
   let httpMgr = _nodeDataSource_httpMgr nds
   workerWithDelay "nodeWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
     $(logDebug) "Update node cycle."
@@ -446,7 +431,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
               pure (mSavePoint, mProto)
             updateCheckpoint block mSavePointAndProto
 
-          nodeMonitor nds appConfig nodeAddr nodeId block mNewSp blockTodoLock
+          nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
 
           nodeVersionMonitor nds nodeAddr nodeId
         liftIO (nodeQuery rChain) >>= inDb . \case
@@ -534,13 +519,6 @@ updateDataSource nds (pn, chain, uri) = do
       Right b -> do
         haveNewHead nds (Just pn) uri b
         runDb (Identity db) $ do
-          let newHash = b ^. hash
-              newLevel = b ^. level
-           in void [executeQ|
-                insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
-                values (?newHash, ?newLevel, ?chainId, null, null, false, false)
-                on conflict do nothing
-                |]
           let chainField = NamedChainOrChainId chain
           now <- getTime
           eid' :: Maybe (Id PublicNodeHead) <-
@@ -1046,3 +1024,33 @@ waitTillEndOfCycle nds blk = do
     liftIO $ atomically $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
       when (newHead ^. level < lvl) retry
+
+blockTodoWorker
+  :: NominalDiffTime -> NodeDataSource -> [DataSource] -> AppConfig -> Pool Postgresql -> IO (IO ())
+blockTodoWorker delay nds publicDataSource appConfig db = workerWithDelay "blockTodoWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+  theseNodeRecords <- getNodes db CondEmpty
+  let httpMgr = nds ^. nodeDataSource_httpMgr
+      chainId = _nodeDataSource_chain nds
+  heads :: Set (BlockHash, RawLevel) <- fmap (S.fromList . catMaybes) $ forM (Map.toList theseNodeRecords) $ \(_, (_, node, _)) -> do
+    b <- runExceptT @RpcError $ flip runReaderT
+      (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $
+      nodeRPC $ rHead $ ChainTag_Hash chainId
+    fetchBlockData b
+  headsPublic :: Set (BlockHash, RawLevel) <- fmap (S.fromList . catMaybes) $ forM publicDataSource $ \(pn, _, uri) -> do
+    b <- runExceptT @RpcError $ flip runReaderT
+      (PublicNodeContext (NodeRPCContext httpMgr (Uri.render uri)) (Just pn)) $
+      getCurrentHead chainId
+    fetchBlockData b
+
+  for_ (heads <> headsPublic) $ \(blockHash, blockLevel) ->
+    runDb (Identity db) $
+      void [executeQ|
+        insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
+        values (?blockHash, ?blockLevel, ?chainId, null, null, false, false)
+        on conflict do nothing
+      |]
+  where
+    fetchBlockData :: (BlockLike b, Monad m) => Either RpcError b -> m (Maybe (BlockHash, RawLevel))
+    fetchBlockData b = case b of
+      Left _e -> return Nothing
+      Right block -> return $ Just (block ^. hash, block ^. level)

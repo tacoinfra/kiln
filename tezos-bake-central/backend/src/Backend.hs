@@ -106,7 +106,7 @@ import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Node (DataSource, amendmentProcessWorker, nodeAlertWorker, nodeWorker,
+import Backend.Workers.Node (DataSource, amendmentProcessWorker, blockTodoWorker, nodeAlertWorker, nodeWorker,
                              protocolMonitorWorker, publicNodesWorker)
 import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker, computeChainId)
 import Backend.Workers.TezosRelease
@@ -501,6 +501,7 @@ backendImpl cfg serve = do
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
+      addFinalizer =<< blockTodoWorker 5 dataSrc publicDataSources appConfig db
       addFinalizer =<< bakerRightsWorker dataSrc
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
