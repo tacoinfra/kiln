@@ -4,6 +4,8 @@ stages:
   - build
   - extras
   - package
+  - upload
+  - release
 
 default:
   tags: [shell-executor]
@@ -52,19 +54,55 @@ xrefcheck:
 
 build-docker-image:
   stage: package
-  rules: &if_develop
-    - if: '$CI_COMMIT_BRANCH == "develop"'
+  rules: &if_tag
+    - if: '$CI_COMMIT_TAG != null && $CI_COMMIT_BRANCH == "develop"'
   script:
-    - nix-build -A dockerImage --out-link docker
+    - nix-build -A dockerImage --out-link docker-image
   artifacts:
     paths:
-      - docker/*
+      - docker-image
 
 build-deb-package:
   stage: package
-  rules: *if_develop
+  rules: *if_tag
   script:
     - nix-build -A kiln-debian --out-link debian
   artifacts:
     paths:
       - debian/*
+
+upload-release-artifacts:
+  stage: upload
+  rules: *if_tag
+  variables:
+    PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/kiln/${CI_COMMIT_TAG}"
+    HEADER: "JOB-TOKEN: $CI_JOB_TOKEN"
+  needs:
+    - build-docker-image
+    - build-deb-package
+  script:
+    - DEST_CREDS="$CI_REGISTRY_USER":"$CI_REGISTRY_PASSWORD"
+    - nix run nixpkgs.skopeo -c skopeo --insecure-policy copy --dest-creds
+        "$DEST_CREDS" docker-archive:./docker-image docker://"$CI_REGISTRY_IMAGE":"$CI_COMMIT_TAG"
+    - DEB_PACKAGE_NAME="$(basename "$(ls ./debian/*.deb)")"
+    - nix run nixpkgs.curl -c curl --header "$HEADER" --upload-file "./debian/$DEB_PACKAGE_NAME"
+        "$PACKAGE_REGISTRY_URL/$DEB_PACKAGE_NAME"
+    - echo "DEB_PACKAGE_NAME=$DEB_PACKAGE_NAME" >> build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+
+create-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli
+  needs:
+    - upload-release-artifacts
+  tags: []
+  rules: *if_tag
+  variables:
+    PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/kiln/${CI_COMMIT_TAG}"
+  script:
+    - >
+      deb_asset="{\"name\": \"Debian/Ubuntu\", \"url\": \"$PACKAGE_REGISTRY_URL/$DEB_PACKAGE_NAME\"}"
+    - >
+      release-cli create --name "$CI_COMMIT_TAG" --tag-name "$CI_COMMIT_TAG" --assets-link="$deb_asset"
