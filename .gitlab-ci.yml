@@ -73,7 +73,10 @@ build-deb-package:
 
 upload-release-artifacts:
   stage: upload
-  rules: *if_tag
+  rules: &if_release_tag
+    - if: '$CI_COMMIT_TAG =~ /rc/'
+      when: never
+    - if: '$CI_COMMIT_TAG != null && $CI_COMMIT_BRANCH == "develop"'
   variables:
     PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/kiln/${CI_COMMIT_TAG}"
     HEADER: "JOB-TOKEN: $CI_JOB_TOKEN"
@@ -98,7 +101,7 @@ create-release:
   needs:
     - upload-release-artifacts
   tags: []
-  rules: *if_tag
+  rules: *if_release_tag
   variables:
     PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/kiln/${CI_COMMIT_TAG}"
   script:
