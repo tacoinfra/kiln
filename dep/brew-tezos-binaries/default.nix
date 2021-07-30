@@ -2,35 +2,35 @@
 # https://github.com/serokell/tezos-packaging/releases/download/v9.0-rc1-1/tezos-accuser-009-PsFLoren-v9.0-rc1-1.${macos_version}.bottle.tar.gz
 with pkgs;
 let
-  outer-version = "v9.4-1";
+  outer-version = "v9.5-1";
   macos_version = "mojave";
     tezos-admin-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "11nk79yj32kckbgjaahxdxw2zm6imgs9n6az2h8vqklgh1kblia0";
+      sha256 = "1y0d27za2acz1px6j7pqcy17h8snzb8iqywzgv8n36nriqx7kygw";
     };
     tezos-baker-009-PsFLoren = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "05iim7mz7559r7rffkqahjgnmdh9l2qcl73i7fp4p8l7hkws7495";
+      sha256 = "0s01lw03wq4rdsvisi22grp2i7a44f1blhhnv51ipgadm7dyhdfk";
     };
     tezos-baker-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0hfvjmwy248f9nkm6p8z0gk2xr9n0p3nhfkxmmfgjbfrxb35bbg4";
+      sha256 = "1png13vxhc3wdn9i5is6ih4rypy7mjgv86dhwlzq2j2b9aaynxyr";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0i7g81mhxya33qdlszd6hvngri7k6hkxlcjdnq2fpdlg5a8vl96j";
+      sha256 = "1gq70inz83ayhx3qprcjd7948gangc29rmhi18aglpshqrd4mgqq";
     };
     tezos-endorser-009-PsFLoren = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1062gyfczwkrc2lhf1xld2n3wr2pj9404fi2d9p36xydcsilm16g";
+      sha256 = "0dyp7vyndvj3zbshrrjj83lji54z9bffnrlwvhfll6d8sr9zf7na";
     };
     tezos-endorser-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1l23601pn81bm2df2dmdrb2rp63cmy6nhiyjzw09xpwf0vhpkd9x";
+      sha256 = "1h3vanamf8yhv9vwy8v0c9r4rr98qgpz7b8nb85j47b1dxiiyzqj";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1cispfszmvxl3hg7l0kzxifdizdhzskgi6f90m31n6ciy8y5nfrs";
+      sha256 = "1m1yb26g0abhhpyrzpn4m5c0wgdyvjdv48q5iik0m2xyzqcn45s0";
     };
 
 in stdenv.mkDerivation rec {
