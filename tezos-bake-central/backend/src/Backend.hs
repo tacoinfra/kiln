@@ -411,8 +411,7 @@ backendImpl cfg serve = do
         Left namedChain -> pure $ showNamedChain namedChain
         Right chainId' -> fmap showNamedChain $ identifyChain chainId'
 
-      minLevel :: RawLevel
-      minLevel = 2
+      cacheCapacity = 100000
 
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
@@ -430,7 +429,7 @@ backendImpl cfg serve = do
 
 
     dataSrc <- liftIO $ do
-      hist <- newTVarIO $ emptyCache minLevel
+      hist <- newTVarIO $ emptyCache cacheCapacity
       cache <- newTVarIO mempty
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO

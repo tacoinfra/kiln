@@ -123,6 +123,7 @@ import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
+import qualified Tezos.LRUHashMap as LRUHashMap
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
 import Tezos.Unsafe (unsafeAssumptionRightsContextLevel)
@@ -710,6 +711,11 @@ tryNodeQueryT f = do
     NodeQueryTResult_Done a -> Just a
     NodeQueryTResult_Query{} -> Nothing
 
+-- | Helper to get the current minimal level in @CachedHistory'@.
+-- Returns '1' in case the cache is empty.
+cachedHistoryMinLevel :: CachedHistory' -> RawLevel
+cachedHistoryMinLevel = fromMaybe 1 . getMinLevel
+
 -- get lca between two blocks
 branchPoint
   :: forall r m. (HasNodeDataSource r, MonadSTM m, MonadReader r m)
@@ -720,11 +726,11 @@ branchPoint x y =
 branchPointPure :: BlockHash -> BlockHash -> CachedHistory' -> Maybe VeryBlockLike
 branchPointPure x y history =
   let
-    xPath = Map.lookup x $ _cachedHistory_blocks history
-    yPath = Map.lookup y $ _cachedHistory_blocks history
+    xPath = LRUHashMap.lookup x $ _cachedHistory_blocks history
+    yPath = LRUHashMap.lookup y $ _cachedHistory_blocks history
   in liftA2 LCA.lca xPath yPath >>= \v -> case LCA.view v of
       LCA.Root -> Nothing
-      LCA.Node blockHash () path -> Just $ histToBlockLike (_cachedHistory_minLevel history) blockHash path
+      LCA.Node blockHash () path -> Just $ histToBlockLike (cachedHistoryMinLevel history) blockHash path
 
 
 -- | enumerate the block hashes between lca(x, y) and (x,y), respectively, from newest to oldest
@@ -737,8 +743,8 @@ enumerateBranches x y = do
   dsrc <- asks (^. nodeDataSource)
   history <- readTVar' $ _nodeDataSource_history dsrc
   pure $ do
-    xPath <- Map.lookup x $ _cachedHistory_blocks history
-    yPath <- Map.lookup y $ _cachedHistory_blocks history
+    xPath <- LRUHashMap.lookup x $ _cachedHistory_blocks history
+    yPath <- LRUHashMap.lookup y $ _cachedHistory_blocks history
     let pathPrefix long = fmap fst $ take (LCA.length long - LCA.length (LCA.lca xPath yPath)) $ LCA.toList long
     pure (pathPrefix xPath, pathPrefix yPath)
 
@@ -749,10 +755,10 @@ lookupBlock
 lookupBlock nds x = do
   let dsrc = nds ^. nodeDataSource
   history <- readTVar' $ _nodeDataSource_history dsrc
-  let xPath = Map.lookup x $ _cachedHistory_blocks history
+  let xPath = LRUHashMap.lookup x $ _cachedHistory_blocks history
   pure $ xPath >>= \v -> case LCA.view v of
     LCA.Root -> Nothing
-    LCA.Node blockHash () path -> Just $ histToBlockLike (_cachedHistory_minLevel history) blockHash path
+    LCA.Node blockHash () path -> Just $ histToBlockLike (cachedHistoryMinLevel history) blockHash path
 
 {-
 
@@ -789,12 +795,11 @@ waitForNewHeadWithTimeout nds = do
 waitForNewHead :: (HasNodeDataSource nds) => nds -> IO VeryBlockLike
 waitForNewHead nds = do
   history <- readTVarIO $ nds ^. nodeDataSource . nodeDataSource_history
-  let minLevel =  _cachedHistory_minLevel history
   oldHead <- readTVarIO $ nds ^. nodeDataSource . nodeDataSource_latestHead
 
   atomically $ do
     newHead <- maybe retry pure =<< readTVar (nds ^. nodeDataSource . nodeDataSource_latestHead)
-    when (oldHead == Just newHead || newHead ^. level <= minLevel) retry
+    when (oldHead == Just newHead || newHead ^. level <= cachedHistoryMinLevel history) retry
     pure newHead
 
 -- turn the result of an LCA.view on the block history into a VeryBlockLike
@@ -830,8 +835,8 @@ dataSourceNode nds = do
 levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
 levelAncestor hist lvl ctx = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel + 1) <$> branch
   where
-    minLevel = _cachedHistory_minLevel hist
-    branch = Map.lookup ctx $ _cachedHistory_blocks hist
+    minLevel = cachedHistoryMinLevel hist
+    branch = LRUHashMap.lookup ctx $ _cachedHistory_blocks hist
 
 -- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
 -- requested level, that is on the correct branch.
@@ -1471,7 +1476,7 @@ ancestors ::
   => RawLevel -> BlockHash -> m [BlockHash]
 ancestors (RawLevel n) branch = do
   hist <- liftIO . readTVarIO =<< asks (_nodeDataSource_history . view nodeDataSource)
-  case Map.lookup branch (_cachedHistory_blocks hist) of
+  case LRUHashMap.lookup branch (_cachedHistory_blocks hist) of
     Just branchPath -> return $ fmap fst $ genericTake n $ LCA.toList branchPath
     Nothing -> throwError $ RpcError_UnexpectedStatus "View note in commments in source code(module Backend.CachedNodeRPC)" 404 "NO BRANCH" ^. re asRpcError
 
@@ -1709,11 +1714,12 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
      ! #currentProtocol (branchBlock ^. protocolHash)
      ! #protocolHistory mempty
   where
+    minLevel = cachedHistoryMinLevel history
     levelsBefore blk lvls = maybe (nqThrowError CacheError_NotEnoughHistory) pure $
       if blk ^. level - lvls < 0
       then Nothing
       else
-        levelAncestor history (max (blk ^. level - lvls) (history ^. cachedHistory_minLevel)) (blk ^. hash)
+        levelAncestor history (max (blk ^. level - lvls) minLevel) (blk ^. hash)
 
     votingPeriodPosition = blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
 
@@ -1722,7 +1728,7 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
        -> "protocolHistory" :! Map ProtocolHash BlockCrossCompat
        -> NodeQueryT m (Map ProtocolHash BlockCrossCompat)
     go (Arg currentBlock) (Arg currentProtocol) (Arg protocolHistory) =
-      case currentBlock ^. level == history ^. cachedHistory_minLevel of
+      case currentBlock ^. level == minLevel of
         True -> do
           $(logDebug) [i|Got to the root searching for protocol: ${currentProtocol}|]
           -- If 'currentBlock' is at the minimum level, we call it the beginning of 'currentProtocol'.

@@ -15,9 +15,9 @@ module Backend.IndexQueries where
 import Control.Applicative (ZipList (..))
 import Control.Monad.Catch (MonadMask)
 import qualified Data.LCA.Online.Polymorphic as LCA
-import qualified Data.Map as Map
 import Database.Groundhog.Postgresql (PersistBackend)
 
+import qualified Tezos.LRUHashMap as LRUHashMap
 import Tezos.NodeRPC
 import Tezos.Types
 import qualified Tezos.Unsafe
@@ -32,6 +32,8 @@ import Backend.CachedNodeRPC
   , getProtocolIndex
   , getProtocolConstants
   )
+
+import Backend.CachedNodeRPC (cachedHistoryMinLevel)
 import Backend.STM (readTVar')
 import Common.Schema
 import ExtraPrelude
@@ -105,7 +107,7 @@ cycleStartHashes branchBlock = do
   branchProtocolConstants <- getProtocolConstants $ Left branchBlockHash
   cycle' <- levelToCycle $ branchBlock ^. level
   let
-    minLvl = _cachedHistory_minLevel history
+    minLvl = cachedHistoryMinLevel history
     preservedCycles = branchProtocolConstants ^. protoInfo_preservedCycles
     cycles = [max 0 (cycle' - (1 + preservedCycles)) .. cycle' - 1] -- ignore the unconfirmed "current" cycle.
   (minLevels, maxLevels) <- fmap unzip $ for cycles $ \c -> liftA2 (,)
@@ -113,7 +115,7 @@ cycleStartHashes branchBlock = do
     (pred <$> firstLevelInCycle branchBlockHash (succ c))
   let
     branches = maybe [] (\branch -> fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels) mbranch
-    mbranch = branchBlockHash `Map.lookup` _cachedHistory_blocks history
+    mbranch = branchBlockHash `LRUHashMap.lookup` _cachedHistory_blocks history
   return $ getZipList $ RightsCycleInfo
     <$> ZipList branches
     <*> ZipList cycles
