@@ -45,7 +45,7 @@ case $OS in
         ;;
 
     Linux)
-        KILNDIR=/var/lib/kiln/
+        KILNDIR=/var/lib/kiln
         CONFIGDIR=$KILNDIR/exe-dir/config
         TEZDIR=$KILNDIR/"tezos-$TEZVER"
         apt install curl
