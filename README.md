@@ -38,7 +38,7 @@ sudo ./kiln-configure-tezos.sh 9.6
 
 **On MacOS:**
 ```
-curl https://gitlab.com/tezos-kiln/kiln/-/raw/develop/scripts/kiln-configure-tezos.sh
+curl https://gitlab.com/tezos-kiln/kiln/-/raw/develop/scripts/kiln-configure-tezos.sh -o kiln-configure-tezos.sh
 chmod +x ./kiln-configure-tezos.sh
 ```
 To update to Tezos 9.7:
