@@ -17,6 +17,8 @@ EOF
 }
 
 TEZVER=${1-"9.7"}
+MAJORVER=$(echo $TEZVER | cut -d "." -f 1)
+MAINNET_CHAIN_ID="NetXdQprcVkpaWU"
 
 case $OS in
 
@@ -24,6 +26,7 @@ case $OS in
         KILNDIR=$HOME/Library/Kiln
         CONFIGDIR=$KILNDIR/config
         TEZDIR=$KILNDIR/"tezos-$TEZVER"
+        DATA_DIR=$KILNDIR/.kiln/tezos-node/$MAINNET_CHAIN_ID
 
         download() {
 	    ver=v${TEZVER}-1
@@ -36,9 +39,15 @@ case $OS in
             rm $archive
         }
 
-        restart() {
+        upgrade_storage() {
+            $TEZDIR/tezos-node upgrade --data-dir $DATA_DIR storage
+        }
+
+        stop() {
             launchctl stop tezos.kiln
-            sleep 5
+        }
+
+        start() {
             launchctl start tezos.kiln
         }
 
@@ -48,6 +57,7 @@ case $OS in
         KILNDIR=/var/lib/kiln
         CONFIGDIR=$KILNDIR/exe-dir/config
         TEZDIR=$KILNDIR/"tezos-$TEZVER"
+        DATA_DIR=$KILNDIR/data-dir/tezos-node/$MAINNET_CHAIN_ID
         apt install curl
 
         download() {
@@ -57,8 +67,16 @@ case $OS in
             curl -L $url -o $binary
         }
 
-        restart() {
-            systemctl restart kiln
+        upgrade_storage() {
+            sudo -u kiln $TEZDIR/tezos-node upgrade --data-dir $DATA_DIR storage
+        }
+
+        stop() {
+            systemctl stop kiln
+        }
+
+        start() {
+            systemctl start kiln
         }
 
         ;;
@@ -68,6 +86,43 @@ case $OS in
         exit 1
         ;;
 esac
+
+FREE_SPACE=$(df -h $DATA_DIR/ | awk '$3 ~ /[0-9]+/ { print $4 }')
+
+if [ $MAJORVER == "10" ]
+then
+    cat <<EOF
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+Tezos 10.x node requires storage migration.
+Kiln node will be stopped for the duration of storage migration,
+which may take anywhere between several minutes and several hours
+depending on node's history mode (rolling or full) and your hardware.
+
+Note that Tezos 10.x storage format cannot be converted back to 9.x,
+so the only way to downgrade is to re-create Kiln node from a snapshot.
+
+Tezos documentation recommends at least 10G of free space.
+You have ${FREE_SPACE}.
+
+See https://tezos.gitlab.io/releases/version-10.html#storage-upgrade
+for more details.
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+EOF
+    read -p "Type Y to continue, anything else to exit: " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]
+    then
+        echo "Updating Kiln to $TEZVER..."
+    else
+        echo "Update cancelled, exiting..."
+        exit 1
+    fi
+fi
+
 
 #download tezos binaries
 mkdir -p $TEZDIR
@@ -94,5 +149,17 @@ chmod +x $TEZDIR/*
 #tell kiln about new binaries
 write_paths_config
 
-#restart kiln for config to take effect
-restart
+echo "Stopping Kiln..."
+stop
+sleep 5
+
+if [ $MAJORVER == "10" ]
+then
+    echo "Running storage upgrade..."
+    upgrade_storage
+fi
+
+echo "Starting Kiln..."
+start
+
+echo "Done."
