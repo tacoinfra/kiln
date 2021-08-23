@@ -27,7 +27,8 @@ case $OS in
         CONFIGDIR=$KILNDIR/config
         TEZDIR=$KILNDIR/"tezos-$TEZVER"
         DATA_DIR=$KILNDIR/.kiln/tezos-node/$MAINNET_CHAIN_ID
-
+	export DYLD_FALLBACK_LIBRARY_PATH=/usr/local/kiln-nix/lib/
+	
         download() {
 	    ver=v${TEZVER}-1
             binary=$1
