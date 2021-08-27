@@ -82,11 +82,7 @@ getPath f paths = \case
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
 tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
 tezosBinaryPaths = NonEmpty.fromList
-  [ ("PsFLorenaUUuikDWvMDr6fGBRG8kt3e3D3fHoXK1j1BFRxeSH4i"
-    , $(staticWhich "tezos-baker-009-PsFLoren")
-    , $(staticWhich "tezos-endorser-009-PsFLoren")
-    )
-  , ("PtGRANADsDU8R9daYKAgWnQYAJ64omN1o3KMGVCykShA97vQbvV"
+  [ ("PtGRANADsDU8R9daYKAgWnQYAJ64omN1o3KMGVCykShA97vQbvV"
     , $(staticWhich "tezos-baker-010-PtGRANAD")
     , $(staticWhich "tezos-endorser-010-PtGRANAD")
     )
