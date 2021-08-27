@@ -25,7 +25,7 @@ import Data.ByteString.Builder as Builder
 import Data.Dependent.Map (DSum (..))
 import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
-import Data.List (find)
+import Data.List (find, isInfixOf)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Version
@@ -35,7 +35,7 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
-import System.Directory (doesFileExist)
+import System.Directory (doesDirectoryExist, doesFileExist, removePathForcibly)
 import System.Exit (ExitCode(..))
 import qualified System.FilePath as FilePath
 import System.Process as Proc
@@ -168,6 +168,7 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
   let dataDir = nodeDataDir appConfig
   let identityFile = dataDir `FilePath.combine` "identity.json"
       versionFile  = dataDir `FilePath.combine` "version.json"
+      storeFolder  = dataDir `FilePath.combine` "store"
 
   versionFileExists <- liftIO $ doesFileExist versionFile
   mVersion <- if not versionFileExists then pure Nothing else getKilnNodeVersion versionFile
@@ -178,6 +179,25 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
     -- Generate Identity
     lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
     runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+  storeExists <- liftIO $ doesDirectoryExist storeFolder
+  -- If there is some data in the storage, we try to upgrade it in case upgrade
+  -- is required
+  when storeExists $ do
+    -- In case node storage is up to date this is essentially a no-op
+    (exitCode, out', err') <- liftIO $ readProcessWithExitCode nodePath
+      ["upgrade", "--data-dir", dataDir, "--config-file", nodeConfigPath, "storage"] ""
+    -- Currently there is no nice way to check whether upgrade was successful, see
+    -- https://gitlab.com/tezos/tezos/-/issues/1687.
+    -- However, we still do this check and hope that the aformentioned issue
+    -- will be resolved in the future release.
+    case exitCode of
+      ExitSuccess ->
+        unless ("node dir is up-to-date" `isInfixOf` out') $ do
+          liftIO $ removePathForcibly $ dataDir `FilePath.combine` "lmdb_store_to_remove"
+          logInfoNS "kiln-node" "Kiln node storage was successfully upgraded"
+      _ -> do
+        logErrorNS "kiln-node" $ "Kiln node storage upgrade failed with: " <> T.pack err'
+        liftIO $ throwIO exitCode
   let useArchiveMode = False
       extraArgs = if useArchiveMode
         then ["--history-mode", "archive"]
