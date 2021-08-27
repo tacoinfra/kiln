@@ -2,35 +2,27 @@
 # https://github.com/serokell/tezos-packaging/releases/download/v9.0-rc1-1/tezos-accuser-009-PsFLoren-v9.0-rc1-1.${macos_version}.bottle.tar.gz
 with pkgs;
 let
-  outer-version = "v9.7-1";
+  outer-version = "v10.2-1";
   macos_version = "mojave";
     tezos-admin-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1pv7ly4hppyhxvvcin8ysql2k9bmdvhaq2s35h7126vnihc1gjjc";
-    };
-    tezos-baker-009-PsFLoren = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1jyv45klb109qrwbjrmadpnbmk7b2fw4c4ldv451426kl111k1a4";
+      sha256 = "09jfnwvrfzj01xd2r8p9i9lp98kbjp29l41mk7w6l8aqk52xh1rs";
     };
     tezos-baker-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "06yq2cbfq9xawgrad27nyjhvp781p5pddpjs0f4kw4h64hjcz7xv";
+      sha256 = "0w4ppa09frag4nnpyn5d63vjxjgql458x14x44z2l87zi6kwjkz0";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0y6csbhnqw9252kpyg3z3vglm25snp052h7r3rlrrl34cm84smrk";
-    };
-    tezos-endorser-009-PsFLoren = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-009-PsFLoren-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0wy9z82vxb9r7nfcmcnasfmnhhr6qpidvx83fxy87cpx32z9iyaa";
+      sha256 = "1gni14w1k21dd43wnmmxbddsrd1dpyl4wc4ya20iswkcwzjcv75j";
     };
     tezos-endorser-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1vp7cd74sp8kj2kl45fs76icgv6m4g28f7blr9m9083cdwj8qmf7";
+      sha256 = "0h3l3q3h4fdy5kv8nv41sc61cj2f509vbhfavfl5nzv4mzgfpw8c";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "03bbl4gmb9dsbm44bnxig959zn4yfmhyanp4lxgxx15a92zlxsz0";
+      sha256 = "1rh1hnfip7zb3pn6k9144hf61m8fmf5hnv5vg62xmi1iz51n9i4z";
     };
 
 in stdenv.mkDerivation rec {
@@ -44,17 +36,11 @@ in stdenv.mkDerivation rec {
   cp ${tezos-admin-client}/${outer-version}/bin/tezos-admin-client $out/bin/tezos-admin-client
   chmod +x $out/bin/tezos-admin-client
 
-  cp ${tezos-baker-009-PsFLoren}/${outer-version}/bin/tezos-baker-009-PsFLoren $out/bin/tezos-baker-009-PsFLoren
-  chmod +x $out/bin/tezos-baker-009-PsFLoren
-
   cp ${tezos-baker-010-PtGRANAD}/${outer-version}/bin/tezos-baker-010-PtGRANAD $out/bin/tezos-baker-010-PtGRANAD
   chmod +x $out/bin/tezos-baker-010-PtGRANAD
 
   cp ${tezos-client}/${outer-version}/bin/tezos-client $out/bin/tezos-client
   chmod +x $out/bin/tezos-client
-
-  cp ${tezos-endorser-009-PsFLoren}/${outer-version}/bin/tezos-endorser-009-PsFLoren $out/bin/tezos-endorser-009-PsFLoren
-  chmod +x $out/bin/tezos-endorser-009-PsFLoren
 
   cp ${tezos-endorser-010-PtGRANAD}/${outer-version}/bin/tezos-endorser-010-PtGRANAD $out/bin/tezos-endorser-010-PtGRANAD
   chmod +x $out/bin/tezos-endorser-010-PtGRANAD
