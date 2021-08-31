@@ -20,36 +20,22 @@ distributions](https://github.com/serokell/tezos-packaging/blob/master/docs/baki
 
 ## Important: Update to Tezos 9.7
 
-Everyone running Kiln 0.10.1 should update their Tezos version to 9.7 to improve performance. Here's a script to download Tezos 9.7 binaries and configure Kiln 0.10.1 to use them:
+Everyone running Kiln 0.10.1 should update their Tezos version to 9.7. Here's a script to download Tezos 9.7 binaries and configure Kiln 0.10.1 to use them:
 
-**On Ubuntu:**
 ```
-wget https://gitlab.com/tezos-kiln/kiln/-/raw/develop/scripts/kiln-configure-tezos.sh
+curl -O https://gitlab.com/tezos-kiln/kiln/-/raw/develop/scripts/kiln-configure-tezos.sh
 chmod +x ./kiln-configure-tezos.sh
 ```
-To update to Tezos 9.7:
+
+**Ubuntu:**
 ```
 sudo ./kiln-configure-tezos.sh 9.7
 ```
-To update to Tezos 9.6 (not recommended):
-```
-sudo ./kiln-configure-tezos.sh 9.6
-```
 
-**On MacOS:**
-```
-curl https://gitlab.com/tezos-kiln/kiln/-/raw/develop/scripts/kiln-configure-tezos.sh -o kiln-configure-tezos.sh
-chmod +x ./kiln-configure-tezos.sh
-```
-To update to Tezos 9.7:
+**MacOS:**
 ```
 ./kiln-configure-tezos.sh 9.7
 ```
-To update to Tezos 9.6 (not recommended):
-```
-./kiln-configure-tezos.sh 9.6
-```
-
 
 ## Quick Start
 
