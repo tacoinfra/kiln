@@ -24,17 +24,16 @@ Everyone running Kiln 0.10.1 should update their Tezos version to 9.7. Here's a 
 
 ```
 curl -O https://gitlab.com/tezos-kiln/kiln/-/raw/develop/scripts/kiln-configure-tezos.sh
-chmod +x ./kiln-configure-tezos.sh
 ```
 
 **Ubuntu:**
 ```
-sudo ./kiln-configure-tezos.sh 9.7
+sudo bash kiln-configure-tezos.sh 9.7
 ```
 
 **MacOS:**
 ```
-./kiln-configure-tezos.sh 9.7
+bash kiln-configure-tezos.sh 9.7
 ```
 
 ## Quick Start
