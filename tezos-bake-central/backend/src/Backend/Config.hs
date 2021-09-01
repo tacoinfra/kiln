@@ -88,7 +88,7 @@ nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
     </> case _appConfig_kilnNodeConfig appConfig of
           Left json -> fromMaybe (error jsonOrEnvErrMsg) $ getDataDir json <|> _appConfig_tezosNodeEnvVar appConfig
-          Right ncf -> fromMaybe (error "specify data-dir") (_nodeConfigFile_dataDir ncf) </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
+          Right ncf -> fromMaybe "tezos-node" (_nodeConfigFile_dataDir ncf) </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
   where getDataDir json = T.unpack <$> json ^? key "data-dir" . _String
         jsonOrEnvErrMsg = "Either specify data-dir in JSON config or point to the data directory in the TEZOS_NODE_DIR environment variable]"
 
@@ -106,7 +106,7 @@ defaultNodeConfigFile = NodeConfigFile'
     , _nodeConfigP2P_privateMode = Nothing
     , _nodeConfigP2P_disableMempool = Nothing
   }
-  , _nodeConfigFile_dataDir = Just "tezos-node"
+  , _nodeConfigFile_dataDir = Nothing
   , _nodeConfigFile_rpc = Just NodeConfigRPC
     { _nodeConfigRPC_listenAddr = Just "127.0.0.1"
     , _nodeConfigRPC_corsOrigin = Nothing

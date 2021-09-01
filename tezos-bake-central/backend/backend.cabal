@@ -78,6 +78,7 @@ library
     , random-fu
     , reflex
     , reflex-dom-core
+    , regex-tdfa
     , resource-pool
     , retry
     , rhyolite-backend

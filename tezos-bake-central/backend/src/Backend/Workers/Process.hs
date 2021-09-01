@@ -40,9 +40,9 @@ import System.Posix.Signals (signalProcess, sigKILL)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
 import qualified System.Process as Proc
 import System.Exit (ExitCode(..))
-import System.IO (hFlush, hGetLine)
+import System.FilePath ((</>))
+import System.IO (IOMode(..), hFlush, hGetLine, withFile)
 import System.IO.Error (isEOFError)
-import System.IO.Temp (withTempFile)
 
 import Backend.Alerts (reportInternalNodeFailed)
 import Backend.Common
@@ -237,7 +237,7 @@ updateProcessState pid makeNotify state = do
             }
 
 withNodeConfig :: AppConfig -> (FilePath -> IO a) -> IO a
-withNodeConfig appConfig f = withTempFile (_appConfig_kilnDataDir appConfig) ".tezos-node-config.json" $ \nodeConfigPath nodeConfigHandle -> do
+withNodeConfig appConfig f = withFile (nodeDataDir appConfig </> "config.json") ReadWriteMode $ \nodeConfigHandle -> do
   LBS.hPut nodeConfigHandle $ either Aeson.encode Aeson.encode $ _appConfig_kilnNodeConfig appConfig
   hFlush nodeConfigHandle
-  f nodeConfigPath
+  f $ nodeDataDir appConfig </> "config.json"
