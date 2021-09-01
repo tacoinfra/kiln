@@ -65,6 +65,7 @@ import qualified Tezos.LRUHashMap as LRUHashMap
 import Tezos.NodeRPC hiding (DataSource, getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
 import qualified Tezos.V005.Types as V005
+import qualified Tezos.V009.Types as V009
 import qualified Tezos.V010.Types as V010
 import qualified Tezos.Types as Tezos
 import qualified Tezos.Unsafe
@@ -411,8 +412,9 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
               $(logInfo) [i|nodeWorker: fetching checkpoint for Node: ${nodeAddr}|]
               liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
                 Left (RpcError_UnexpectedStatus _url 404 _) -> pure (Just 0, mCurrentCycle)
-                Right checkpoint -> pure (Just $ _checkpoint_savePoint checkpoint, mCurrentCycle)
-                _ -> (Nothing, Nothing) <$ $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr}|]
+                Right (CheckpointV009 checkpoint) -> pure (Just $ V009._checkpoint_savePoint checkpoint, mCurrentCycle)
+                Right (CheckpointV010 checkpoint) -> pure (Just $ V010._checkpoint_savepoint checkpoint, mCurrentCycle)
+                Left err -> (Nothing, Nothing) <$ $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr} ${err}|]
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
