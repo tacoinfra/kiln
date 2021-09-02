@@ -134,13 +134,15 @@ internalNodeWorker appConfig logger db maybePaths = do
       ++ nodeExtraArgs
 
   processWorker
-    (initNode ! #logger logger ! #config appConfig ! #nodePath nodePath)
+    (\updateState -> withNodeConfig appConfig $ \nodeConfigPath ->
+      initNode ! #logger logger ! #config appConfig ! #nodePath nodePath ! #configFile nodeConfigPath ! #db db ! #updateState updateState
+    )
     ! #logger logger
     ! #db db
     ! #config appConfig
     ! #logNamespace "kiln-node"
-    ! #mkProcess (\(dataDir, extraArgs) nodeConfigPath ->
-                    proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
+    ! #mkProcess (\(dataDir, extraArgs) -> withNodeConfig appConfig $ \nodeConfigPath ->
+                    return $ proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
     ! #pid pid
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
@@ -156,11 +158,11 @@ initNode
   :: "logger" :! LoggingEnv
   -> "config" :! AppConfig
   -> "nodePath" :! FilePath
+  -> "configFile" :! FilePath
   -> "db" :! Pool Postgresql
   -> "updateState" :! (ProcessState -> IO ())
-  -> "configFile" :! FilePath
   -> IO (FilePath, [String])
-initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
+initNode (Arg logger) (Arg appConfig) (Arg nodePath) (Arg nodeConfigPath) _ (Arg updateState) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
   let identityFile = dataDir `FilePath.combine` "identity.json"
       versionFile  = dataDir `FilePath.combine` "version.json"
@@ -274,11 +276,11 @@ bakerDaemonProcess appConfig logger db maybePaths = do
                    , "run"
                    , alias]
     pw (pathF, args) pid = processWorker
-      (\_ _ _ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
+      (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
       ! #db db
       ! #config appConfig
-      ! #mkProcess (\proto _nodeConfigPath -> proc (pathF proto) args)
+      ! #mkProcess (\proto -> return $ proc (pathF proto) args)
       ! #pid pid
       ! #pidToRunAfter nodePPid
       ! #mkNotify Nothing

@@ -74,16 +74,14 @@ import Orphans.Instances ()
 
 processWorker
   :: (MonadIO m)
-  => (    "db" :! Pool Postgresql
-       -> "updateState" :! (ProcessState -> IO ())
-       -> "configFile" :! FilePath
+  => (    (ProcessState -> IO ())
        -> IO a
      )
   -> "logger" :! LoggingEnv
   -> "db" :! Pool Postgresql
   -> "config" :! AppConfig
   -> "logNamespace" :! Text
-  -> "mkProcess" :! (a -> FilePath -> CreateProcess)
+  -> "mkProcess" :! (a -> IO CreateProcess)
   -> "pid" :! Id ProcessData
   -> "pidToRunAfter" :! Maybe (Id ProcessData)
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
@@ -92,25 +90,25 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
     inDb $ updateState ProcessState_Initializing
-    withNodeConfig appConfig $ \configFile -> do
-      let
-        initialize = initialize' ! #db db ! #updateState (\ps -> inDb $ updateState ps) ! #configFile configFile
-        initFailed = do
-          update [control_ =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
-          updateState ProcessState_Failed
-      v <- catches initialize
-        [ Handler $ \(e :: InternalNodeFailureReason) ->
-            inDb (initFailed *> runReaderT (reportInternalNodeFailed pid e) appConfig) *> throwIO e
-        , Handler $ \(e :: ExitCode) -> inDb initFailed *> throwIO e
-        ]
-      inDb $ updateState ProcessState_Starting
-      let
-        procSpec = (mkProcess v configFile)
-          { Proc.std_out = Proc.CreatePipe
-          , Proc.std_err = Proc.CreatePipe
-          }
-      runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, procSpec)
-      withCreateProcess procSpec procMonitor
+    let
+      initialize = initialize' (\ps -> inDb $ updateState ps)
+      initFailed = do
+        update [control_ =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
+        updateState ProcessState_Failed
+    v <- catches initialize
+      [ Handler $ \(e :: InternalNodeFailureReason) ->
+          inDb (initFailed *> runReaderT (reportInternalNodeFailed pid e) appConfig) *> throwIO e
+      , Handler $ \(e :: ExitCode) -> inDb initFailed *> throwIO e
+      ]
+    inDb $ updateState ProcessState_Starting
+    procHandler <- mkProcess v
+    let
+      procSpec = procHandler
+        { Proc.std_out = Proc.CreatePipe
+        , Proc.std_err = Proc.CreatePipe
+        }
+    runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, procSpec)
+    withCreateProcess procSpec procMonitor
     threadDelay' 10
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => Serializable a -> m a
