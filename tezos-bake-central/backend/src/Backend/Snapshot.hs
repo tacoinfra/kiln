@@ -18,7 +18,6 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception.Safe (IOException)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
-import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -36,6 +35,7 @@ import System.Directory
 import System.Exit (ExitCode(..))
 import qualified System.Process as Process
 import System.Posix.Signals (signalProcess, sigKILL)
+import Text.Regex.TDFA ((=~))
 
 import Tezos.NodeRPC (_cachedHistory_blocks)
 import Tezos.Types
@@ -216,16 +216,17 @@ importSnapshotData appConfig nds sm smId = do
               case exitCode of
                 ExitSuccess -> void $ do
                   $(logDebug) $ "importSnapshotData success: stderr: " <> stderr
-                  let
-                    prefixStr = "Setting current head to block "
-                    mBlkHashPrefix = headMay =<< T.words <$> T.stripPrefix prefixStr (snd $ T.breakOn prefixStr stderr)
-                  case mBlkHashPrefix of
-                    Nothing -> inDb $ importFailed "importSnapshotData failed: could not parse blk blkHash" stderr
-                    Just blkHashPrefix -> void $ do
+                  (infoExitCode, infoStdout, _) <- liftIO $ Process.readProcessWithExitCode nodePath ["snapshot", "info", storePath] ""
+                  when (infoExitCode == ExitSuccess) $ do
+                    let
+                      (_, _, _, matches) = infoStdout =~ ("block hash ([A-Za-z0-9]*)" :: String) :: (String, String, String, [String])
+                      mBlkHashPrefix = case matches of
+                        [] -> Nothing
+                        (blkHash : _) -> Just $ T.pack blkHash
+                    whenJust mBlkHashPrefix $ \blkHashPrefix -> void $ do
                       hist <- liftIO $ readTVarIO $ _nodeDataSource_history nds
                       let
                         mBlkHash = completeBlockHash blkHashPrefix hist
-
                       mBlk <- for mBlkHash $ \blkHash -> flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
                         nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
                       let
@@ -237,7 +238,7 @@ importSnapshotData appConfig nds sm smId = do
                             Nothing -> BlockPrefixHash blkHashPrefix
                       inDb $ do
                         updateSnapshotMeta blkDetails smId
-                        updateState NodeProcessState_ImportComplete
+                  inDb $ updateState NodeProcessState_ImportComplete
                 ExitFailure _ -> inDb $ importFailed "importSnapshotData failed: " stderr
 
   liftIO $ withNodeConfig appConfig $ \configFile -> do

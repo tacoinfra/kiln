@@ -25,7 +25,7 @@ import Data.ByteString.Builder as Builder
 import Data.Dependent.Map (DSum (..))
 import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
-import Data.List (find)
+import Data.List (find, isInfixOf)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Version
@@ -35,7 +35,7 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
-import System.Directory (doesFileExist)
+import System.Directory (doesDirectoryExist, doesFileExist, removePathForcibly)
 import System.Exit (ExitCode(..))
 import qualified System.FilePath as FilePath
 import System.Process as Proc
@@ -82,11 +82,7 @@ getPath f paths = \case
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
 tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
 tezosBinaryPaths = NonEmpty.fromList
-  [ ("PsFLorenaUUuikDWvMDr6fGBRG8kt3e3D3fHoXK1j1BFRxeSH4i"
-    , $(staticWhich "tezos-baker-009-PsFLoren")
-    , $(staticWhich "tezos-endorser-009-PsFLoren")
-    )
-  , ("PtGRANADsDU8R9daYKAgWnQYAJ64omN1o3KMGVCykShA97vQbvV"
+  [ ("PtGRANADsDU8R9daYKAgWnQYAJ64omN1o3KMGVCykShA97vQbvV"
     , $(staticWhich "tezos-baker-010-PtGRANAD")
     , $(staticWhich "tezos-endorser-010-PtGRANAD")
     )
@@ -138,13 +134,15 @@ internalNodeWorker appConfig logger db maybePaths = do
       ++ nodeExtraArgs
 
   processWorker
-    (initNode ! #logger logger ! #config appConfig ! #nodePath nodePath)
+    (\updateState -> withNodeConfig appConfig $ \nodeConfigPath ->
+      initNode ! #logger logger ! #config appConfig ! #nodePath nodePath ! #configFile nodeConfigPath ! #db db ! #updateState updateState
+    )
     ! #logger logger
     ! #db db
     ! #config appConfig
     ! #logNamespace "kiln-node"
-    ! #mkProcess (\(dataDir, extraArgs) nodeConfigPath ->
-                    proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
+    ! #mkProcess (\(dataDir, extraArgs) -> withNodeConfig appConfig $ \nodeConfigPath ->
+                    return $ proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
     ! #pid pid
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
@@ -160,14 +158,15 @@ initNode
   :: "logger" :! LoggingEnv
   -> "config" :! AppConfig
   -> "nodePath" :! FilePath
+  -> "configFile" :! FilePath
   -> "db" :! Pool Postgresql
   -> "updateState" :! (ProcessState -> IO ())
-  -> "configFile" :! FilePath
   -> IO (FilePath, [String])
-initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg nodeConfigPath) = runLoggingEnv logger $ do
+initNode (Arg logger) (Arg appConfig) (Arg nodePath) (Arg nodeConfigPath) _ (Arg updateState) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
   let identityFile = dataDir `FilePath.combine` "identity.json"
       versionFile  = dataDir `FilePath.combine` "version.json"
+      storeFolder  = dataDir `FilePath.combine` "store"
 
   versionFileExists <- liftIO $ doesFileExist versionFile
   mVersion <- if not versionFileExists then pure Nothing else getKilnNodeVersion versionFile
@@ -178,6 +177,25 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) _ (Arg updateState) (Arg no
     -- Generate Identity
     lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
     runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
+  storeExists <- liftIO $ doesDirectoryExist storeFolder
+  -- If there is some data in the storage, we try to upgrade it in case upgrade
+  -- is required
+  when storeExists $ do
+    -- In case node storage is up to date this is essentially a no-op
+    (exitCode, out', err') <- liftIO $ readProcessWithExitCode nodePath
+      ["upgrade", "--data-dir", dataDir, "--config-file", nodeConfigPath, "storage"] ""
+    -- Currently there is no nice way to check whether upgrade was successful, see
+    -- https://gitlab.com/tezos/tezos/-/issues/1687.
+    -- However, we still do this check and hope that the aformentioned issue
+    -- will be resolved in the future release.
+    case exitCode of
+      ExitSuccess ->
+        unless ("node dir is up-to-date" `isInfixOf` out') $ do
+          liftIO $ removePathForcibly $ dataDir `FilePath.combine` "lmdb_store_to_remove"
+          logInfoNS "kiln-node" "Kiln node storage was successfully upgraded"
+      _ -> do
+        logErrorNS "kiln-node" $ "Kiln node storage upgrade failed with: " <> T.pack err'
+        liftIO $ throwIO exitCode
   let useArchiveMode = False
       extraArgs = if useArchiveMode
         then ["--history-mode", "archive"]
@@ -258,11 +276,11 @@ bakerDaemonProcess appConfig logger db maybePaths = do
                    , "run"
                    , alias]
     pw (pathF, args) pid = processWorker
-      (\_ _ _ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
+      (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
       ! #db db
       ! #config appConfig
-      ! #mkProcess (\proto _nodeConfigPath -> proc (pathF proto) args)
+      ! #mkProcess (\proto -> return $ proc (pathF proto) args)
       ! #pid pid
       ! #pidToRunAfter nodePPid
       ! #mkNotify Nothing
