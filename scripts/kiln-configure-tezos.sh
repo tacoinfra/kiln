@@ -69,7 +69,7 @@ case $OS in
         }
 
         upgrade_storage() {
-            sudo -u kiln $TEZDIR/tezos-node upgrade --data-dir $DATA_DIR storage
+            sudo -H -u kiln $TEZDIR/tezos-node upgrade --data-dir $DATA_DIR storage
         }
 
         stop() {
