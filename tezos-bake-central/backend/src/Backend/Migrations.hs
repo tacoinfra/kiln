@@ -72,6 +72,7 @@ preMigrate chainId =
   >=> renameTableIfExists (QualifiedIdentifier Nothing "Delegate") "Baker"
   >=> migrateNodesToSplitTable
   >=> migrateProcessDataToSplitTable
+  >=> migrateErrorLogBadNodeHeadTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -637,6 +638,29 @@ migrateLedgerAccountTable ta = do
             ALTER TABLE "LedgerAccount"
             ALTER COLUMN "shouldRegister" SET NOT NULL,
             DROP COLUMN "shouldRegisterFee";
+          |]
+        pure ta
+    _ -> pure ta
+
+migrateErrorLogBadNodeHeadTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateErrorLogBadNodeHeadTable ta = do
+  let table = (Nothing, "ErrorLogBadNodeHead")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | any ((== "lca") . colName) $ tableColumns analyzedTable
+      -> do
+        -- It should be safe to drop existing bad node heads reports.
+        -- If the bad node head error was resolved we no longer interested
+        -- in its details. If the error still persists, it will be reported
+        -- again after the Kiln is restarted and migration is applied.
+        -- Additionally, some of the errors' reports can be false positive.
+        void
+          [traceExecuteQ|
+            DELETE FROM "ErrorLogBadNodeHead";
+            ALTER TABLE "ErrorLogBadNodeHead"
+            DROP COLUMN "lca",
+            ADD COLUMN "bootstrapped" BOOLEAN NOT NULL,
+            ADD COLUMN "chainStatus" INT8 NOT NULL;
           |]
         pure ta
     _ -> pure ta
