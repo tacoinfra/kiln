@@ -565,13 +565,13 @@ queryNodeTables :: Monad m => (Identifier -> m (Maybe a)) -> m (Maybe a)
 queryNodeTables q = firstSuccess $ fmap q ["NodeExternal", "NodeInternal"]
 
 reportBadNodeHeadError
-  :: forall m a latestHead nodeHead lca.
+  :: forall m a latestHead nodeHead.
      ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m
      , SqlDb (PhantomDb m)
      , MonadBase Serializable m
-     , BlockLike latestHead, BlockLike nodeHead, BlockLike lca, MonadLogger m)
-  => Id Node -> latestHead -> nodeHead -> Maybe lca -> m ()
-reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted nodeId) $ do
+     , BlockLike latestHead, BlockLike nodeHead, MonadLogger m)
+  => Id Node -> latestHead -> nodeHead -> Bool -> SyncState -> m ()
+reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus = when' (nodeNotDeleted nodeId) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   let existingLog :: Identifier -> m (Maybe (Id ErrorLog, Id ErrorLogBadNodeHead))
       existingLog nodeTable = listToMaybe <$> [queryQ|
@@ -591,14 +591,16 @@ reportBadNodeHeadError nodeId latestHead nodeHead lca = when' (nodeNotDeleted no
       void $ insertErrorLog $ \logId -> ErrorLogBadNodeHead
         { _errorLogBadNodeHead_log = logId
         , _errorLogBadNodeHead_node = nodeId
-        , _errorLogBadNodeHead_lca = Json . mkVeryBlockLike <$> lca
+        , _errorLogBadNodeHead_bootstrapped = bootstrapped
+        , _errorLogBadNodeHead_chainStatus = chainStatus
         , _errorLogBadNodeHead_nodeHead = Json $ mkVeryBlockLike nodeHead
         , _errorLogBadNodeHead_latestHead = Json $ mkVeryBlockLike latestHead
         }
 
     Just (logId, _specificLogId) -> do
       (g,l) <- returnUpdateErrorLogBy logId ErrorLogBadNodeHead_logField
-        [ ErrorLogBadNodeHead_lcaField =. (Json . mkVeryBlockLike <$> lca)
+        [ ErrorLogBadNodeHead_bootstrappedField =. bootstrapped
+        , ErrorLogBadNodeHead_chainStatusField =. chainStatus
         , ErrorLogBadNodeHead_nodeHeadField =. Json (mkVeryBlockLike nodeHead)
         , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
         ]

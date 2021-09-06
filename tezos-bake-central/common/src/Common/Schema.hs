@@ -845,7 +845,8 @@ instance HasId ErrorLogBakerAccused where
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   { _errorLogBadNodeHead_log :: !(Id ErrorLog)
   , _errorLogBadNodeHead_node :: !(Id Node)
-  , _errorLogBadNodeHead_lca :: !(Maybe (Json VeryBlockLike))
+  , _errorLogBadNodeHead_bootstrapped :: !Bool
+  , _errorLogBadNodeHead_chainStatus :: !SyncState
   , _errorLogBadNodeHead_nodeHead :: !(Json VeryBlockLike)
   , _errorLogBadNodeHead_latestHead :: !(Json VeryBlockLike)
   } deriving (Eq, Ord, Generic, Typeable, Show)

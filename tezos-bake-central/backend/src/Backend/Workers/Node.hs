@@ -30,7 +30,6 @@ import Data.Align
 import qualified Data.ByteString.Lazy as LB
 import Data.Foldable (foldl', length)
 import Data.Functor.Apply
-import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.List (dropWhileEnd)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
@@ -80,7 +79,6 @@ import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.IndexQueries
 import Backend.Schema
 import Backend.Supervisor (withTermination)
-import Backend.STM (atomicallyWith)
 import Backend.ViewSelectorHandler (getProposals)
 import Common.App (getEndTimeForPeriod)
 import Common.Schema
@@ -538,44 +536,29 @@ updateDataSource nds (pn, chain, uri) = do
                 ]
               notify NotifyTag_PublicNodeHead . (eid,) =<< getId eid
 
-{- Send a 'bad branch' alert if either:
- - 1) last common ancestor is at least 3 levels old (on either branch)
- - 2) last common ancestor is 2 levels old (on the best branch) and the node is still on it
- - 3) last common ancestor is 2 levels old (on the best branch) and the best branch's parent was better than what the other branch had on the same level
- -}
+-- Send a 'bad branch' alert if 'is_bootstrapped' response isn't bootstrapped and synced.
 nodeAlertWorker
   :: NodeDataSource
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nds >>= \latestHead -> do
-  nodeHeadHashes <- fmap (Map.mapMaybe $ view $ _3 . nodeDetailsData_headBlockHash) $ runLoggingEnv (_nodeDataSource_logger nds) $ getNodes db (Not (isFieldNothing (NodeDetails_dataField ~> NodeDetailsData_headBlockHashSelector)))
-
-  ifor_ nodeHeadHashes $ \nodeId nodeHeadHash -> do
+nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+  let httpMgr = nds ^. nodeDataSource_httpMgr
+      chainId = nds ^. nodeDataSource_chain
+  nodes <- getNodes db (Not (isFieldNothing (NodeDetails_dataField ~> NodeDetailsData_headBlockHashSelector)))
+  ifor_ nodes $ \nodeId (Node, node, nodeDetails) -> whenJust (nodeDetails ^. nodeDetailsData_headBlockHash) $ \nodeHeadHash -> do
+    isBootstrapped :: Either RpcError IsBootstrapped <-
+      runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ nodeRPC $ rIsBootstrapped chainId
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
-      lcaBlock' <- atomicallyWith $ branchPoint nodeHeadHash (latestHead ^. hash)
-      let bad = reportBadNodeHeadError nodeId latestHead nodeHead lcaBlock'
+      let bad = \bootstrapped chainStatus -> reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus
           good = clearBadNodeHeadError nodeId
-      case lcaBlock' of
-        Nothing -> return bad
-        Just lcaBlock -> do
-          let
-            -- Two cases to consider:
-            --   * Node is behind, so the LCA block and node block will be the same
-            --   * Node is branched, so the LCA block will be behind both the node *and* the latest
-            levelsBehindHead = latestHead ^. level - lcaBlock ^. level
-            levelsBehindNode = nodeHead ^. level - lcaBlock ^. level
-          if | max levelsBehindHead levelsBehindNode > 2 -> return bad
-             | levelsBehindHead < 2 -> return good
-             | levelsBehindNode == 0 -> return bad
-             | otherwise -> do
-                 history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
-                 let parentHash = view _1 $ fromMaybe (error "latest hash should have a parent because it has a grandparent") $ LCA.uncons $ LCA.drop 1 $ fromMaybe (error "latest hash was already looked up once") $ LRUHashMap.lookup (latestHead ^. hash) $ _cachedHistory_blocks history
-                     uncleHash = view _1 $ fromMaybe (error "node hash should have an ancestor at the level above the branch point") $ LCA.uncons $ LCA.drop (fromIntegral $ levelsBehindNode - 1) $ fromMaybe (error "node head hash was already looked up once") $ LRUHashMap.lookup (nodeHead ^. hash) $ _cachedHistory_blocks history
-                 latestParent <- nodeQueryDataSource (NodeQuery_BlockHeader parentHash)
-                 latestUncle <- nodeQueryDataSource (NodeQuery_BlockHeader uncleHash)
-                 if latestParent ^. fitness > latestUncle ^. fitness then return bad else return good
+      case isBootstrapped of
+        Left _ -> return $ bad False SyncState_Unsynced
+        Right (IsBootstrapped bootstrapped chainStatus) -> do
+          case (bootstrapped, chainStatus) of
+            (True, SyncState_Synced) -> return good
+            _ -> return $ bad bootstrapped chainStatus
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
 safePred :: (Eq a, Enum a, Bounded a) => a -> a
