@@ -19,7 +19,7 @@ import Data.Time (UTCTime, TimeZone)
 import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
-import Tezos.Types (getMicroTez, BlockHash, BlockLike (..), Cycle(..), RawLevel (..), Tez(..), VotingPeriodKind(..))
+import Tezos.Types (getMicroTez, BlockHash, BlockLike (..), Cycle(..), RawLevel (..), SyncState(..), Tez(..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
 import Common (nominalDiffTimeToSeconds)
@@ -50,44 +50,29 @@ badNodeHeadMessage
   -> ErrorLogBadNodeHead
   -> (Text, f ())
 badNodeHeadMessage text blockHashLink l =
-  case _errorLogBadNodeHead_lca l of
-    Nothing ->
-      ( branchHeader
+  case (_errorLogBadNodeHead_bootstrapped l, _errorLogBadNodeHead_chainStatus l) of
+    (False, _) ->
+      ( behindHeader
       , sequenceA_
-          [ text "The node's head of "
-          , blockHashLink $ nodeHead ^. hash
-          , text " has no common history with the latest known head of "
-          , blockHashLink $ latestHead ^. hash
-          , text "."
-          ]
+        [ text "The node's head is "
+        , blockHashLink $ nodeHead ^. hash
+        , text $ " at level " <> tshow (unRawLevel $ nodeHead ^. level)
+        , text " the latest know head is "
+        , blockHashLink $ latestHead ^. hash
+        , text $ " at level " <> tshow (unRawLevel $ latestHead ^. level)
+        ]
       )
-    Just (Json lca)
-      | levelsBehindNode > 0 ->
-          ( branchHeader
-          , sequenceA_
-              [ text $ "The node is on a branch " <> tshow (unRawLevel levelsBehindNode) <> " blocks long."
-              , text " The branch began at "
-              , blockHashLink $ lca ^. hash
-              , text $ " which is " <> tshow (unRawLevel levelsBehindHead) <> " blocks behind the latest head of "
-              , blockHashLink $ latestHead ^. hash
-              , text ". (Node's head is "
-              , blockHashLink $ nodeHead ^. hash
-              , text ")"
-              ]
-          )
-      | otherwise ->
-          ( behindHeader
-          , sequenceA_
-              [ text "The node's head at "
-              , blockHashLink $ nodeHead ^. hash
-              , text $ " is " <> tshow (unRawLevel levelsBehindHead) <> " blocks behind the latest head of "
-              , blockHashLink $ latestHead ^. hash
-              , text "."
-              ]
-          )
-      where
-        levelsBehindHead = latestHead ^. level - lca ^. level
-        levelsBehindNode = nodeHead ^. level - lca ^. level
+    (True, SyncState_Stuck) ->
+      ( stuckHeader
+      , text "The node considers itself synchronized with its peers but \
+             \the chain seems to be halted from its viewpoint"
+      )
+    (True, SyncState_Unsynced) ->
+      ( branchHeader
+      , text "The node is not currently synchronized with its peers.\
+             \This can mean that node is currently running on a branch."
+      )
+    _ -> error "Node is bootstrapped and synced, but we're trying to report an error"
 
   where
     Json nodeHead = _errorLogBadNodeHead_nodeHead l
@@ -95,6 +80,7 @@ badNodeHeadMessage text blockHashLink l =
 
     branchHeader = "Node is on a branch"
     behindHeader = "Node is behind"
+    stuckHeader = "Node is stuck"
 
 data ErrorDescription
   = ErrorDescription_Plain Text

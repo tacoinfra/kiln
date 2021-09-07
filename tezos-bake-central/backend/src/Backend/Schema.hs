@@ -420,6 +420,12 @@ instance PersistField TezosVersion where
   fromPersistValues = primFromPersistValue
   dbType p x = DbTypePrimitive DbString False Nothing Nothing
 
+instance FromField SyncState where
+  fromField f = maybe (fail "Invalid value for SyncState") pure . readMaybe <=< fromField f
+
+instance ToField SyncState where
+  toField v = toField (show v)
+
 instance ToField PublicNode where
   toField = toField . show
 
@@ -983,6 +989,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - primitive: NamedChain
   - entity: ErrorLog
 
+  - primitive: SyncState
   - entity: ErrorLogBadNodeHead
     autoKey: null
     keys:
