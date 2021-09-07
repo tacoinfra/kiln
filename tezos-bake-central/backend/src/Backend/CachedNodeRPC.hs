@@ -314,17 +314,8 @@ instance MonadNodeQuery NodeQueryQueued where
 
     result <- case mNodesToTry of
       -- The public node is the last resort
-      [] -> case _nodeDataSource_archivalPublicNode dsrc of
-        Nothing -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
-        Just uri ->
-          let
-            ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render uri)
-          -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
-          -- ### IMPORTANT ### We are using another node for this fallback case.
-          in NodeQueryQueued $ liftIO $ archivalNodeRetry qBranch q dsrc uri $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
-          -- NodeQueryQueued $ liftIO $ nodeQueryOsPubNodeImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+      [] -> queryArchivalNode dsrc badCandidates
       -- But if we have candidate nodes, try them until we succeed
-      -- TODO: Why isn't there a public node call as the last attempt here?
       nodesToTry -> do
         res <- foldM `flip` Left [] `flip` nodesToTry $ \case
             answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
@@ -332,9 +323,22 @@ instance MonadNodeQuery NodeQueryQueued where
               let ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
               r <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
               pure $ first ((:es).(anyNode,)) r
-        pure $ first (CacheError_NoSuitableNode (tshow q) . fmap (second (UnsuitableNodeReason_QueryFailed . tshow))) res
+        case res of
+          Right r -> pure $ Right r
+          Left failedNodes -> do
+            queryArchivalNode dsrc (badCandidates <> fmap (second (UnsuitableNodeReason_QueryFailed . tshow)) failedNodes)
 
     nqLiftEither result
+    where
+      queryArchivalNode nds badCandidates = case _nodeDataSource_archivalPublicNode nds of
+        Nothing -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
+        Just uri ->
+          let
+            ctx = NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)
+          -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
+          -- ### IMPORTANT ### We are using another node for this fallback case.
+          in NodeQueryQueued $ liftIO $ archivalNodeRetry qBranch q nds uri $
+              nodeQueryDataSourceImpl (_nodeDataSource_chain nds) qBranch ctx (_nodeDataSource_logger nds) q
 
 archivalNodeRetry :: BlockHash -> NodeQuery a -> NodeDataSource -> URI -> IO (Either CacheError (RpcResult a)) -> IO (Either CacheError (RpcResult a))
 archivalNodeRetry qBranch q nds archivalNodeURI' action = runLoggingEnv logger $ runDb (Identity db) $ do
