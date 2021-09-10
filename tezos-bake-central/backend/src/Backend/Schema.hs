@@ -948,9 +948,9 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     constructors:
       - name: BakerRightsCycleProgress
         uniques:
-          - name: _bakerRightsCycleProgress_branch
+          - name: _bakerRightsCycleProgress_chain
             type: constraint
-            fields: [_bakerRightsCycleProgress_chainId, _bakerRightsCycleProgress_publicKeyHash, _bakerRightsCycleProgress_branch]
+            fields: [_bakerRightsCycleProgress_chainId, _bakerRightsCycleProgress_publicKeyHash]
   - entity: BakerRight
     constructors:
       - name: BakerRight

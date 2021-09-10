@@ -14,12 +14,11 @@ module Backend.IndexQueries where
 
 import Control.Applicative (ZipList (..))
 import Control.Monad.Catch (MonadMask)
-import qualified Data.LCA.Online.Polymorphic as LCA
+import Control.Monad.State (State, evalState, get, replicateM, put)
 import Database.Groundhog.Postgresql (PersistBackend)
 
-import qualified Tezos.LRUHashMap as LRUHashMap
-import Tezos.NodeRPC
 import Tezos.Types
+import Tezos.V010.NodeRPC.CrossCompat
 import qualified Tezos.Unsafe
 
 import Backend.CachedNodeRPC
@@ -33,7 +32,6 @@ import Backend.CachedNodeRPC
   , getProtocolConstants
   )
 
-import Backend.CachedNodeRPC (cachedHistoryMinLevel)
 import Backend.STM (readTVar')
 import Common.Schema
 import ExtraPrelude
@@ -85,8 +83,7 @@ rightsContextLevel ctx lvl = do
   pure $ Tezos.Unsafe.unsafeAssumptionRightsContextLevel protoInfo lvl
 
 data RightsCycleInfo = RightsCycleInfo
-  { _rightsCycleInfo_branch :: !BlockHash  -- the hash of the first block in some cycle
-  , _rightsCycleInfo_cycle :: !Cycle
+  { _rightsCycleInfo_cycle :: !Cycle
   , _rightsCycleInfo_minLevel :: !RawLevel -- the first level of _rightsCycleInfo_cycle
   , _rightsCycleInfo_maxLevel :: !RawLevel -- the last level of _rightsCycleInfo_cycle
   } deriving (Eq, Ord, Show, Generic, Typeable)
@@ -101,26 +98,48 @@ cycleStartHashes
      )
   => blk -> NodeQueryT m [RightsCycleInfo]
 cycleStartHashes branchBlock = do
-  history <- nqAtomically . readTVar' =<< asksNodeDataSource _nodeDataSource_history
 
   let branchBlockHash = branchBlock ^. hash
   branchProtocolConstants <- getProtocolConstants $ Left branchBlockHash
   cycle' <- levelToCycle $ branchBlock ^. level
   let
-    minLvl = cachedHistoryMinLevel history
     preservedCycles = branchProtocolConstants ^. protoInfo_preservedCycles
     cycles = [max 0 (cycle' - (1 + preservedCycles)) .. cycle' - 1] -- ignore the unconfirmed "current" cycle.
   (minLevels, maxLevels) <- fmap unzip $ for cycles $ \c -> liftA2 (,)
     (firstLevelInCycle branchBlockHash c)
     (pred <$> firstLevelInCycle branchBlockHash (succ c))
-  let
-    branches = maybe [] (\branch -> fmap (^. _1) $ takeWhileJust $ LCA.uncons . flip LCA.keep branch . fromIntegral . unRawLevel . subtract minLvl <$> minLevels) mbranch
-    mbranch = branchBlockHash `LRUHashMap.lookup` _cachedHistory_blocks history
   return $ getZipList $ RightsCycleInfo
-    <$> ZipList branches
-    <*> ZipList cycles
+    <$> ZipList cycles
     <*> ZipList minLevels
     <*> ZipList maxLevels
+
+-- | Produces the list of the @RightCycleInfo@ for the last 'preserved_cycles' from the given
+-- cycle provided by the block in it.
+preservedCyclesInfo
+  :: forall m
+   . ( MonadNodeQuery (NodeQueryT m)
+     , MonadMask m
+     , PersistBackend m
+     )
+  => BlockCrossCompat -> NodeQueryT m [RightsCycleInfo]
+preservedCyclesInfo block = do
+  protocolConstants <- getProtocolConstants $ Left $ block ^. hash
+  let minLevel = block ^. level - block ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cyclePosition
+      cycle' = block ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
+      res = flip evalState (minLevel, cycle', protocolConstants) $
+        replicateM (fromIntegral $ protocolConstants ^. protoInfo_preservedCycles + 1) buildRightsCycleInfo
+  return res
+  where
+    buildRightsCycleInfo :: State (RawLevel, Cycle, ProtoInfo) RightsCycleInfo
+    buildRightsCycleInfo = do
+      (minLevel, cycle', protocolConstants) <- get
+      let res = RightsCycleInfo
+            { _rightsCycleInfo_cycle = cycle'
+            , _rightsCycleInfo_minLevel = minLevel
+            , _rightsCycleInfo_maxLevel = minLevel + protocolConstants ^. protoInfo_blocksPerCycle - 1
+            }
+      put (minLevel - protocolConstants ^. protoInfo_blocksPerCycle , cycle' - 1, protocolConstants)
+      return res
 
 takeWhileJust :: [Maybe a] -> [a]
 takeWhileJust [] = []

@@ -32,7 +32,6 @@ import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql(..), SqlDb, in_)
 import Database.Id.Class
 import Database.Id.Groundhog
-import qualified Database.PostgreSQL.Simple as Pg
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
@@ -57,7 +56,6 @@ import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (AppSerializable, addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout')
 import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI', kilnNodeRpcURI, BinaryPaths(..))
-import Backend.IndexQueries
 import Backend.Schema
 import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
 import Common.Schema
@@ -640,10 +638,8 @@ checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource
       (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
 
     rightsMay :: Maybe [(RightKind, RawLevel)] <- for bakerInt $ \pkh -> do
-      rightsInfo <- cycleStartHashes blk
       let headLevel = blk ^. level
           chainId = _appConfig_chainId appConfig
-          rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
 
       [queryQ|
           SELECT br."right", MIN(br.level)
@@ -652,7 +648,6 @@ checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource
             ON br.branch = brcp.id
             AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
           WHERE brcp."chainId" = ?chainId
-            AND brcp.branch in ?rightsHashes
             AND brcp."publicKeyHash" = ?pkh
           GROUP BY brcp."publicKeyHash", br."right"
         |]

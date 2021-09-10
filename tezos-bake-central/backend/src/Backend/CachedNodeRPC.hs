@@ -118,7 +118,7 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Schema (Json (..), LargeObjectId (..))
-import Safe (headMay, minimumMay)
+import Safe (headMay)
 import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -1092,16 +1092,10 @@ validNodes nodes q = case q of
     findNodes mLvl = do
       case mLvl of
         Nothing ->
-          (\(nUri, mBlk, _) -> (nUri,note UnsuitableNodeReason_MissingBlockInfo mBlk)) <$> nodes
-        Just lvl -> (\(nUri, mBlk, mSp) -> (nUri, suitableNodeBlock mBlk mSp)) <$> nodes
+          (\(nUri, mBlk, _) -> (nUri, note UnsuitableNodeReason_MissingBlockInfo mBlk)) <$> nodes
+        Just _ -> (\(nUri, mBlk, _) -> (nUri, suitableNodeBlock mBlk)) <$> nodes
           where
-            suitableNodeBlock mBlk mSp =
-              -- If our node has a save point, check that the query that we are doing is not
-              -- for a level prior to this savepoint.
-              note UnsuitableNodeReason_MissingSavepoint mSp >>= \savepoint ->
-                if savepoint <= lvl
-                  then note UnsuitableNodeReason_MissingBlockInfo mBlk
-                  else Left $ UnsuitableNodeReason_QueryBeforeSavepoint savepoint lvl
+            suitableNodeBlock mBlk = note UnsuitableNodeReason_MissingBlockInfo mBlk
 
 -- Sort candidate nodes into suitable and unsuitable buckets based on whether the supplied branch
 -- is contained within the node.
@@ -1281,47 +1275,22 @@ nodeQueryIx
   => NodeQueryIx a -> NodeQueryT m a
 nodeQueryIx q = do
   $(logDebugSH) ("nodeQueryIx called" :: Text,q)
-  dsrc <- askNodeDataSource
-  protoInfo <- getProtocolConstants $ Left $ case q of
-    NodeQueryIx_BakingRights ctx _lvl -> ctx
-    NodeQueryIx_EndorsingRights ctx _lvl -> ctx
-  hist <- do
-      histVar <- asksNodeDataSource _nodeDataSource_history
-      nqAtomically $ readTVar' histVar
-  let
-    getRightsContext ctx lvl = maybe (nqThrowError CacheError_NotEnoughHistory) pure mCtx
-      where (_, mCtx) = rightsContext protoInfo hist ctx lvl
-    getCheckpointContext ctx lvl = do
-      let (ctxLvl, _) = rightsContext protoInfo hist ctx lvl
-      nodes <- nqInDB $ getActiveNodeDetails $ _nodeDataSource_kilnNodeUri dsrc
-      let
-        fitNodes :: [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
-        fitNodes = filter (\v -> v ^? _2 . _Just . level >= Just ctxLvl) nodes
-        mCtxCp = (\l -> levelAncestor hist l ctx) =<< fmap (max ctxLvl) (minimumMay $
-          mapMaybe (view _3) fitNodes)
-      pure $ fromMaybe ctx mCtxCp
 
-  q1 <- modifyContext getRightsContext q
-  (cachedLvls, cachedRights) <- fmap unzip $ checkCacheDb q1
+  (cachedLvls, cachedRights) <- fmap unzip $ checkCacheDb q
   let cachedLvlsSet = Set.fromList cachedLvls
       lvlsToFetch = queryLvls `Set.difference` cachedLvlsSet
       chunkedRights = mconcat $ catMaybes cachedRights
   if Set.size lvlsToFetch == 0
     then pure chunkedRights
     else do
-      q2 <- modifyContext getCheckpointContext q
-      result <- nodeQueryDataSourceSafe $ getNodeQuery (filterCachedLvls cachedLvlsSet q2)
-      addToDb result q1
+      result <- nodeQueryDataSourceSafe $ getNodeQuery (filterCachedLvls cachedLvlsSet q)
+      addToDb result q
       pure $ result <> chunkedRights
   where
     queryLvls :: Set RawLevel
     queryLvls = case q of
       NodeQueryIx_BakingRights _ lvls -> lvls
       NodeQueryIx_EndorsingRights _ lvls -> lvls
-    modifyContext :: Functor f => (BlockHash -> RawLevel -> f BlockHash) -> NodeQueryIx a -> f (NodeQueryIx a)
-    modifyContext f = \case
-      NodeQueryIx_BakingRights ctx lvls -> (\ctx' -> NodeQueryIx_BakingRights ctx' lvls) <$> f ctx (Set.findMin lvls)
-      NodeQueryIx_EndorsingRights ctx lvls -> (\ctx' -> NodeQueryIx_EndorsingRights ctx' lvls) <$> f ctx (Set.findMin lvls)
 
     getNodeQuery :: NodeQueryIx a -> NodeQuery a
     getNodeQuery = \case
@@ -1339,22 +1308,22 @@ nodeQueryIx q = do
       , MonadLogger m1)
       => NodeQueryIx a -> m1 [(RawLevel, Maybe a)]
     checkCacheDb = \case
-      NodeQueryIx_BakingRights ctx lvls -> do
+      NodeQueryIx_BakingRights _ lvls -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
         (rawData :: [(RawLevel, Json Aeson.Value)]) <- [queryQ|
           SELECT "level", "result"
           FROM "CacheBakingRights"
-          WHERE "context" = ?ctx AND "level" BETWEEN ?minLvl AND ?maxLvl
+          WHERE "level" BETWEEN ?minLvl AND ?maxLvl
         |]
         mapM (\(lvl, rawRight) -> fmap (lvl,) (getResult rawRight)) rawData
-      NodeQueryIx_EndorsingRights ctx lvls -> do
+      NodeQueryIx_EndorsingRights _ lvls -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
         (rawData :: [(RawLevel, Json Aeson.Value)]) <- [queryQ|
           SELECT "level", "result"
           FROM "CacheEndorsingRights"
-          WHERE "context" = ?ctx AND "level" BETWEEN ?minLvl AND ?maxLvl
+          WHERE "level" BETWEEN ?minLvl AND ?maxLvl
         |]
         mapM (\(lvl, rawRight) -> fmap (lvl,) (getResult rawRight)) rawData
       where
