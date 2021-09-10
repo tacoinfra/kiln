@@ -375,4 +375,5 @@ email address to receive alerts and click *Save Settings*.
 
 ## Contact Us
 
-Users can join [Tezos Baking Slack](https://join.slack.com/t/tezos-baking/shared_invite/zt-unh4wn6q-Y6uprZexfwF5Gf9XfVTtfQ) to provide feedback.
+Users can join [Tezos Baking
+Slack](https://tezos-kiln.org/joinbakingslack) to provide feedback.
