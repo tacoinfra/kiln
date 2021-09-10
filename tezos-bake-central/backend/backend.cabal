@@ -141,7 +141,6 @@ library
     Backend.Upgrade
     Backend.Version
     Backend.ViewSelectorHandler
-    Backend.WebApi
     Backend.Workers.Accusation
     Backend.Workers.Baker
     Backend.Workers.Block

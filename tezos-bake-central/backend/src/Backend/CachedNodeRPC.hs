@@ -25,7 +25,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-} -- for MonadError instance
 
-{-# OPTIONS_GHC -Wall -Wwarn #-}
+{-# OPTIONS_GHC -Wall -Werror -fno-warn-orphans #-}
 
 -- TODO: move this to ~lib?
 module Backend.CachedNodeRPC where
@@ -65,7 +65,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logWarnSH)
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -73,7 +73,6 @@ import qualified Control.Monad.State as S
 import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
-import Control.Retry
 import qualified Data.Aeson as Aeson
 import Data.Aeson (ToJSON, FromJSON)
 import Data.Aeson.Encoding (emptyObject_)
@@ -211,7 +210,6 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
   , _nodeDataSource_logger :: !LoggingEnv
   , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
-  , _nodeDataSource_archivalPublicNode :: !(Maybe URI)
   , _nodeDataSource_kilnNodeUri :: !URI
   , _nodeDataSource_nodeForQuery :: !(Maybe URI) -- Override the node selection algo, and do RPC using this node
   } deriving (Typeable, Generic)
@@ -313,9 +311,7 @@ instance MonadNodeQuery NodeQueryQueued where
     let
 
     result <- case mNodesToTry of
-      -- The public node is the last resort
-      [] -> queryArchivalNode dsrc badCandidates
-      -- But if we have candidate nodes, try them until we succeed
+      [] -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
       nodesToTry -> do
         res <- foldM `flip` Left [] `flip` nodesToTry $ \case
             answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
@@ -325,137 +321,10 @@ instance MonadNodeQuery NodeQueryQueued where
               pure $ first ((:es).(anyNode,)) r
         case res of
           Right r -> pure $ Right r
-          Left failedNodes -> do
-            queryArchivalNode dsrc (badCandidates <> fmap (second (UnsuitableNodeReason_QueryFailed . tshow)) failedNodes)
+          Left failedNodes -> pure $ Left $ CacheError_NoSuitableNode (tshow q) $
+            badCandidates <> fmap (second (UnsuitableNodeReason_QueryFailed . tshow)) failedNodes
 
     nqLiftEither result
-    where
-      queryArchivalNode nds badCandidates = case _nodeDataSource_archivalPublicNode nds of
-        Nothing -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
-        Just uri ->
-          let
-            ctx = NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)
-          -- TODO: If the public node fails, we lose all history of the nodes that we found unsuitable. Probably bad.
-          -- ### IMPORTANT ### We are using another node for this fallback case.
-          in NodeQueryQueued $ liftIO $ archivalNodeRetry qBranch q nds uri $
-              nodeQueryDataSourceImpl (_nodeDataSource_chain nds) qBranch ctx (_nodeDataSource_logger nds) q
-
-archivalNodeRetry :: BlockHash -> NodeQuery a -> NodeDataSource -> URI -> IO (Either CacheError (RpcResult a)) -> IO (Either CacheError (RpcResult a))
-archivalNodeRetry qBranch q nds archivalNodeURI' action = runLoggingEnv logger $ runDb (Identity db) $ do
-
-    history <- liftIO $ atomically $ readTVar $ _nodeDataSource_history nds
-
-    let fittestBranch = fittestBranchInHistory history
-        mProtoHash = _withProtocolHash_protocolHash <$> fittestBranch
-
-    mProtoInfo <- case mProtoHash of
-        Just protoHash ->
-            project1 ProtocolIndex_constantsField $
-              ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
-        Nothing -> pure Nothing
-
-    let (maxCumulativeDelay, policy) = maybe defaultPolicyAndDelay formPolicyAndDelay mProtoInfo
-
-    retrying policy (toRetry maxCumulativeDelay) (const $ liftIO action)
-
-  where
-
-    -- GADTs can be a little painful at times unfortunately. I would
-    -- love to know if there is a cleaner way to write this code.
-    uriResource =  case q of
-        NodeQuery_ProtocolConstants branch ->
-         _RpcQuery_resource $ rProtoConstants @RpcQuery chainId branch
-        NodeQuery_ProtocolIndex protoHash ->
-         _RpcQuery_resource $ rProtocolIndex @RpcQuery chainId protoHash
-        NodeQuery_BakingRights branch targetLevels ->
-         _RpcQuery_resource $ rBakingRights @RpcQuery (Set.map Left targetLevels) chainId branch
-        NodeQuery_EndorsingRights branch targetLevels ->
-         _RpcQuery_resource $ rEndorsingRights @RpcQuery (Set.map Left targetLevels) chainId branch
-        NodeQuery_Account branch contractId ->
-         _RpcQuery_resource $ rContract @RpcQuery contractId (ChainTag_Hash chainId) branch
-        NodeQuery_Ballots branch ->
-         _RpcQuery_resource $ rBallots @RpcQuery chainId branch
-        NodeQuery_Ballot branch pkh ->
-         _RpcQuery_resource $ rBallot @RpcQuery chainId branch pkh
-        NodeQuery_ProposalVote branch pkh ->
-         _RpcQuery_resource $ rProposalVote @RpcQuery chainId branch pkh
-        NodeQuery_Listings branch ->
-         _RpcQuery_resource $ rListings @RpcQuery chainId branch
-        NodeQuery_Proposals branch ->
-         _RpcQuery_resource $ rProposals @RpcQuery chainId branch
-        NodeQuery_CurrentProposal branch ->
-         _RpcQuery_resource $ rCurrentProposal @RpcQuery chainId branch
-        NodeQuery_CurrentQuorum branch ->
-         _RpcQuery_resource $ rCurrentQuorum @RpcQuery chainId branch
-        NodeQuery_Block branch ->
-         _RpcQuery_resource $ rBlock @RpcQuery (ChainTag_Hash chainId) branch
-        NodeQuery_BlockHeader branch ->
-         _RpcQuery_resource $ rBlockHeader @RpcQuery (ChainTag_Hash chainId) branch
-        NodeQuery_DelegateInfo branch _lvl pkh ->
-         _RpcQuery_resource $ rDelegateInfo @RpcQuery pkh chainId branch
-        NodeQuery_PublicKey contractId ->
-         _RpcQuery_resource $ rManagerKey @RpcQuery contractId chainId qBranch
-
-    toRetry mcd rs r = do
-
-        let doRetry = case r of
-              Left (CacheError_RpcError rpcError) -> case rpcError of
-                RpcError_UnexpectedStatus _ status _ -> status == 404
-                _ -> False
-              _ -> False
-
-        if not doRetry
-          then
-            logDebugNS "kiln-archival-noderpc" $
-                fold [
-                    "RPC call ("
-                    , uriResource
-                    , " for Archival Node (URI: "
-                    , archivalNodeURI
-                    , ") \"succeeded\" after "
-                    , tshow (succ $ rsIterNumber rs)
-                    , " retries!"
-                    ]
-          else do
-
-            -- This will let us know if we are retrying for the final time
-            let isFinal = mcd <= rsCumulativeDelay rs + 2 * fromMaybe 0 (rsPreviousDelay rs)
-            if isFinal
-              then logDebugNS "Kiln-archival-noderpc" $
-                      fold ["For RPC call ("
-                           , uriResource
-                           , ") for Archival Node (URI: "
-                           , archivalNodeURI
-                           , ") this will be the final retry after "
-                           , tshow (succ $ rsIterNumber rs)
-                           , " retries."]
-              else logDebugNS "kiln-archival-noderpc" $
-                      fold [
-                           "Retrying rpc call ("
-                           , uriResource
-                           , ") for Archival Node (URI: "
-                           , archivalNodeURI
-                           , "). Attempt number: {"
-                           , tshow (succ $ rsIterNumber rs)
-                           , "}."
-                           ]
-        return doRetry
-
-    oneSecond = 1e6 -- in microseconds
-    delay = oneSecond
-
-    defaultPolicyAndDelay = ((5 * oneSecond), limitRetriesByCumulativeDelay (5 * oneSecond) $ exponentialBackoff delay)
-
-    formPolicyAndDelay protoInfo =
-        -- TOOD: Just get the first one for now. Maybe use the others
-        -- once the reason for their existence is understood.
-        let blockTime = NE.head $ unPeriodSequence $ _protoInfo_timeBetweenBlocks protoInfo -- in seconds
-        in ((fromIntegral blockTime * oneSecond), limitRetriesByCumulativeDelay (fromIntegral blockTime * oneSecond) $ exponentialBackoff delay)
-
-    logger = _nodeDataSource_logger nds
-    db = _nodeDataSource_pool nds
-    chainId = _nodeDataSource_chain nds
-    archivalNodeURI = Uri.render archivalNodeURI'
 
 newtype NodeQueryImmediate a = NodeQueryImmediate { unNodeQueryImmediate :: NodeQueryQueued a }
 

@@ -560,31 +560,20 @@ nodesTabOrWelcome = do
       haveNodesMaybe =
         (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
         (fmap . fmap) (not . null) nodesMaybe
-      onlyOsPubNode = ffor2 publicNodesMaybe mUsingNodeOption $ liftA2 $ \pNodes usingOption -> do
-        let actuallyUsingArchivalNode = and
-                     [
-                      Just UsingArchivalNode == usingOption
-                     , length (filter _publicNodeConfig_enabled $ MMap.elems pNodes) == 1
-                     , maybe False (_publicNodeConfig_enabled . snd) (headMay (filter ((== PublicNode_Archival) . fst) $ MMap.assocs pNodes))
-                     ]
-        case usingOption of
-          Just UsingArchivalNode -> bool Nothing (Just UsingArchivalNode) actuallyUsingArchivalNode
-          _ -> usingOption
 
   haveBakersHaveNodesMaybe <- holdUniqDyn $
-    (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe onlyOsPubNode
+    (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe mUsingNodeOption
 
   globalAlerts
 
   dyn_ $ ffor haveBakersHaveNodesMaybe $ \case
     Nothing -> divClass "app-content app-welcome" waitingForResponse
-    Just (False, False, Nothing) -> divClass "app-content app-welcome" $ welcomeScreen Nothing
+    Just (False, False, Nothing) -> divClass "app-content app-welcome" welcomeScreen
     Just (haveBakers, haveNodes, usingNodeOption) -> divClass "app-content" $ do
-      when ((Just UsingArchivalNode == usingNodeOption) && not haveBakers) $ welcomeScreen (Just UsingArchivalNode)
       let isCustomNode = \case
             Just (UsingCustomNode _) -> True
             _ -> False
-      when (isCustomNode usingNodeOption && not haveBakers) $ welcomeScreen usingNodeOption
+      when (isCustomNode usingNodeOption && not haveBakers) welcomeScreen
       when haveBakers bakersTab
       when haveNodes $ do
         nodesTab usingNodeOption
@@ -680,8 +669,8 @@ kilnUpdateAlert v = do
     Nothing
     body
 
-welcomeScreen :: forall t m js. MonadAppWidget js t m => Maybe UsingNodeOption -> m ()
-welcomeScreen usingNodeOption = mdo
+welcomeScreen :: forall t m js. MonadAppWidget js t m => m ()
+welcomeScreen = mdo
   closeEv <- switch . current <$> widgetHold banner (pure never <$ closeEv)
   pure ()
   where
@@ -695,14 +684,9 @@ welcomeScreen usingNodeOption = mdo
             text $ "Welcome to " <> appName <> "."
       divClass "welcome-description" $ do
         el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
-        el "p" $ text $ "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
-          <> customMessage
+        el "p" $ text "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
         el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
       pure $ domEvent Click closeEl
-    customMessage = case usingNodeOption of
-      Just UsingArchivalNode -> " The Archival node, provided by Giganode, has been added to provide a baseline source of network data."
-      Just (UsingCustomNode _) -> "You are currently using Kiln to run a custom network. Accordingly, the archivaln node has been disabled."
-      Nothing -> ""
 
 
 
@@ -1436,7 +1420,7 @@ addNodeModal chain close = ffor (workflow splash) $ \d -> let (c, e) = splitDynP
       divClass "ui grid stackable divided" $ do
         startNodeEv <- addInternal
         e <- addExternal
-        let anyPublicNodesAvailable = any (`publicNodeAvailable` chain) [PublicNode_Archival, PublicNode_Blockscale]
+        let anyPublicNodesAvailable = PublicNode_Blockscale `publicNodeAvailable` chain
         bool noPublic addPublic anyPublicNodesAvailable
         pure ((pure "add-node", e), startNodeWorkflow splash <$ startNodeEv)
 
@@ -1633,43 +1617,28 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
   close1 <- uiButton "primary" "Close"
   pure (pure ["show-error-log"], leftmost [close1, close])
 
-osPublicNodeRemoveMessage :: DomBuilder t m => m ()
-osPublicNodeRemoveMessage = do
-  text "This Node can only be turned off via "
-  let url = "https://gitlab.com/tezos-kiln/kiln/-/blob/develop/docs/config.md#enable-archival-node-bool"
-  elAttr "a" ("href" =: url <> "target" =: "_blank" <> "rel" =: "noopener") $ text "command line or config file."
-
 publicNodeOptions :: MonadAppWidget js t m => Either NamedChain ChainId -> m ()
 publicNodeOptions chain = do
   let
-    publicNodesInOrder = filter (`publicNodeAvailable` chain)
-      [ PublicNode_Archival
-      , PublicNode_Blockscale
-      ]
-
-    describePublicNode = \case
-      PublicNode_Archival -> text "Public Node Caching Service provided by Giganode. " *> osPublicNodeRemoveMessage
-      PublicNode_Blockscale -> text "Load-balanced collection of nodes provided by the Tezos Foundation."
+    isBlockscaleNodeAvailable = PublicNode_Blockscale `publicNodeAvailable` chain
+    describeBlockScaleNode = text "Load-balanced collection of nodes provided by the Tezos Foundation."
 
   pncDyn <- watchPublicNodeConfig
-  divClass "ui publicnodes" $ for_ publicNodesInOrder $ \pn -> do
-    let pnActiveDyn = isPublicNodeEnabled pn <$> pncDyn
-        activeClass = if pn == PublicNode_Archival
-          then constDyn "active"
-          else bool "" "active" <$> pnActiveDyn
+  divClass "ui publicnodes" $ when isBlockscaleNodeAvailable $ do
+    let blockscaleNodeActiveDyn = isPublicNodeEnabled PublicNode_Blockscale <$> pncDyn
+        activeClass = bool "" "active" <$> blockscaleNodeActiveDyn
     (element', ()) <- SemUi.ui' "div"
         (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> SemUi.Dyn activeClass) $ divClass "row" $ do
       divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
-        SemUi.ui "i" (def & SemUi.elConfigClasses .~ SemUi.Dyn (bool "" "icon icon-check" <$> pnActiveDyn)) blank
-        dynText $ bool (if pn == PublicNode_Archival then "Disabled" else "Add Node") "Added" <$> pnActiveDyn
+        SemUi.ui "i" (def & SemUi.elConfigClasses .~ SemUi.Dyn (bool "" "icon icon-check" <$> blockscaleNodeActiveDyn)) blank
+        dynText $ bool "Add Node" "Added" <$> blockscaleNodeActiveDyn
       divClass "twelve wide column" $ do
-        divClass "header" $ text $ publicNodeShortName pn
-        divClass "description" $ describePublicNode pn
+        divClass "header" $ text $ publicNodeShortName PublicNode_Blockscale
+        divClass "description" describeBlockScaleNode
 
-    let toggled = if pn == PublicNode_Archival
-          then never
-          else not . isPublicNodeEnabled pn <$> current pncDyn  <@ domEvent Click element'
-    void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig pn enabled)
+    let toggled = not . isPublicNodeEnabled PublicNode_Blockscale <$> current pncDyn  <@ domEvent Click element'
+    void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig PublicNode_Blockscale enabled)
+
 
 thirtySixHoursToInfinity
   ::
@@ -1790,8 +1759,7 @@ nodesTab usingNodeOption =
       -- Node tiles
       dyn_ $ ffor useBlocker $ \case
         True -> case usingNodeOption of
-            Just (UsingCustomNode _) -> divClass "app-content app-welcome" $ welcomeScreen usingNodeOption
-            Just UsingArchivalNode -> blank
+            Just (UsingCustomNode _) -> divClass "app-content app-welcome" welcomeScreen
             _ -> waitingForResponse
         False -> divClass "ui stackable cards" $ do
           ebn <- snd <$$$$> watchErrorsByNode everythingWindow
@@ -2009,9 +1977,7 @@ nodesTab usingNodeOption =
               publicNodeMenu :: m ()
               publicNodeMenu = do
                 let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                dyn_ $ ffor source $ \s -> if s == PublicNode_Archival
-                  then osPublicNodeRemoveMessage
-                  else tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
+                dyn_ $ ffor source $ \_ -> tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
 
             version <- watchPublicVersion source
 
