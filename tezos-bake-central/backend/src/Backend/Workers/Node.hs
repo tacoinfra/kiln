@@ -20,7 +20,7 @@ import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Exception.Safe (try)
 import Control.Lens (set)
-import Control.Monad.Catch (MonadMask)
+import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT, forM)
@@ -802,6 +802,14 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                                   ]
               _ -> T.unpack logMessage
 
+    catchUnsuitableNode :: (Monad m, MonadLogger m, MonadThrow m) => ExceptT CacheError (ReaderT NodeDataSource m) a -> m (Maybe a)
+    catchUnsuitableNode action = do
+      res <- flip runReaderT nds $ runExceptT @CacheError action
+      case res of
+        Right r -> pure $ Just r
+        Left (CacheError_NoSuitableNode _ _) -> pure Nothing
+        Left e -> throwM e
+
     runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
 
@@ -832,24 +840,25 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         notify NotifyTag_Amendment (p, Just amendment)
       case p of
         VotingPeriodKind_Proposal -> do
-          proposals <- throwing $ nodeQueryDataSource $ NodeQuery_Proposals (predBlk ^. hash)
-          runDb (Identity db) $ do
-            deletedIds <- [queryQ|
-              DELETE FROM "BakerProposal"
-              WHERE proposal IN (SELECT id FROM "PeriodProposal" WHERE "votingPeriod" < ?votingPeriod);
-              DELETE FROM "PeriodProposal"
-              WHERE "votingPeriod" < ?votingPeriod
-              RETURNING id
-            |]
-            for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
-            inserted <- returning [sql|
-              INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
-              VALUES (?, ?, ?, ?)
-              ON CONFLICT (hash, "chainId", "votingPeriod") DO UPDATE SET votes = EXCLUDED.votes
-              RETURNING id, hash, "chainId", "votingPeriod", votes, (SELECT bp.pkh FROM "BakerProposal" bp WHERE bp.proposal = id), (SELECT bp.included FROM "BakerProposal" bp WHERE bp.proposal = id)
-            |] $ (\(ProposalVotes (phash, votes)) -> (phash, chainId, votingPeriod, votes)) <$> toList proposals
-            for_ inserted $ \(pid, phash, chain, vp, votes, includedPkh :: Maybe PublicKeyHash, includedBlock :: Maybe BlockHash) ->
-              notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
+          mbProposals <- catchUnsuitableNode $ nodeQueryDataSource $ NodeQuery_Proposals (predBlk ^. hash)
+          whenJust mbProposals $ \proposals -> do
+            runDb (Identity db) $ do
+              deletedIds <- [queryQ|
+                DELETE FROM "BakerProposal"
+                WHERE proposal IN (SELECT id FROM "PeriodProposal" WHERE "votingPeriod" < ?votingPeriod);
+                DELETE FROM "PeriodProposal"
+                WHERE "votingPeriod" < ?votingPeriod
+                RETURNING id
+              |]
+              for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
+              inserted <- returning [sql|
+                INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (hash, "chainId", "votingPeriod") DO UPDATE SET votes = EXCLUDED.votes
+                RETURNING id, hash, "chainId", "votingPeriod", votes, (SELECT bp.pkh FROM "BakerProposal" bp WHERE bp.proposal = id), (SELECT bp.included FROM "BakerProposal" bp WHERE bp.proposal = id)
+              |] $ (\(ProposalVotes (phash, votes)) -> (phash, chainId, votingPeriod, votes)) <$> toList proposals
+              for_ inserted $ \(pid, phash, chain, vp, votes, includedPkh :: Maybe PublicKeyHash, includedBlock :: Maybe BlockHash) ->
+                notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
         VotingPeriodKind_Exploration -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
         VotingPeriodKind_Cooldown -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
