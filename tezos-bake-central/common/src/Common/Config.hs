@@ -61,12 +61,6 @@ upgradeBranchDefault = "master"
 networkGitLabProjectIdDefault :: Text
 networkGitLabProjectIdDefault = "3836952"
 
-serveNodeCache :: FilePath
-serveNodeCache = "serve-node-cache"
-
-enableArchivalPublicNode :: FilePath
-enableArchivalPublicNode = "enable-archival-node"
-
 ledgerCheckDelay :: FilePath
 ledgerCheckDelay = "ledger-check-delay"
 
@@ -118,9 +112,6 @@ tzscanApiUri = "tzscan-api-uri"
 
 blockscaleApiUri :: FilePath
 blockscaleApiUri = "blockscale-api-uri"
-
-archivalNodeApiUri :: FilePath
-archivalNodeApiUri = "archival-node-api-uri"
 
 nodeConfigFile :: FilePath
 nodeConfigFile = "node-config-file"
@@ -196,9 +187,7 @@ parsePortUnsafe = unsafeParse "port number" $ \a -> case readMaybe (T.unpack a) 
   Nothing -> Left "Not a port number"
   Just b -> Right b
 
-data UsingNodeOption =
-  UsingArchivalNode
-  | UsingCustomNode Aeson.Value
+newtype UsingNodeOption = UsingCustomNode Aeson.Value
   deriving (Eq, Show, Generic)
 
 instance Aeson.ToJSON UsingNodeOption
