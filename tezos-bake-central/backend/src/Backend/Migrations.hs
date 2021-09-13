@@ -73,6 +73,7 @@ preMigrate chainId =
   >=> migrateNodesToSplitTable
   >=> migrateProcessDataToSplitTable
   >=> migrateErrorLogBadNodeHeadTable
+  >=> migrateBakerRightsCycleProgressTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -661,6 +662,21 @@ migrateErrorLogBadNodeHeadTable ta = do
             DROP COLUMN "lca",
             ADD COLUMN "bootstrapped" BOOLEAN NOT NULL,
             ADD COLUMN "chainStatus" INT8 NOT NULL;
+          |]
+        pure ta
+    _ -> pure ta
+
+migrateBakerRightsCycleProgressTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateBakerRightsCycleProgressTable ta = do
+  let table = (Nothing, "BakerRightsCycleProgress")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | any ((== "branch") . colName) $ tableColumns analyzedTable
+      -> do
+        void
+          [traceExecuteQ|
+            ALTER TABLE "BakerRightsCycleProgress"
+            DROP COLUMN "branch";
           |]
         pure ta
     _ -> pure ta

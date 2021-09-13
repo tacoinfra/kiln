@@ -661,7 +661,6 @@ instance HasId BakerDetails where
 
 data BakerRightsCycleProgress = BakerRightsCycleProgress
   { _bakerRightsCycleProgress_chainId :: !ChainId
-  , _bakerRightsCycleProgress_branch :: !BlockHash -- The hash of the first block in the cycle that confers rights.
   -- | we reuse this table to also give us clues about which cycles we've ever
   -- tried to cache, so we can start caching before any delegates have been
   -- configured.

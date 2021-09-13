@@ -741,8 +741,6 @@ getBakerAddresses nds bid = do
 
   let
     maxProgress = maxProgress_rightsInfo ^? _Right . _Just . _1 . _Just
-    rightsInfo = fromMaybe [] $ maxProgress_rightsInfo ^? _Right . _Just . _2
-    rightsHashes :: Pg.In [BlockHash] = Pg.In $ _rightsCycleInfo_branch <$> rightsInfo
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
     bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
@@ -756,14 +754,12 @@ getBakerAddresses nds bid = do
           FROM "BakerRightsCycleProgress" b1
           WHERE b1."publicKeyHash" = brcp."publicKeyHash"
             AND b1."chainId" = ?chainId
-            AND b1."branch" in ?rightsHashes
         ), br."right", MIN(br.level)
       FROM "BakerRightsCycleProgress" brcp
       LEFT OUTER JOIN "BakerRight" br
         ON br.branch = brcp.id
         AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
       WHERE brcp."chainId" = ?chainId
-        AND brcp.branch in ?rightsHashes
         AND brcp."publicKeyHash" in ?bakerHashes
       GROUP BY brcp."publicKeyHash", br."right"
       |]

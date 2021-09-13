@@ -60,7 +60,7 @@ import Backend.Alerts
 import Backend.CachedNodeRPC
 import Backend.Common (worker', AppSerializable)
 import Backend.Config (AppConfig (..))
-import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle, getLatestProtocolConstants)
+import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle, getLatestProtocolConstants, preservedCyclesInfo)
 import Backend.Schema
 import Backend.STM (atomicallyWith)
 import Backend.Alerts (clearMissedBake, reportMissedBake)
@@ -81,7 +81,8 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
   res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ do
     (headBlock, protoInfo, cycleHashes) <- runNodeQueryT $ do
       (headBlock, protoInfo) <- getLatestProtocolConstants
-      cycleHashes <- cycleStartHashes headBlock
+      block <- nodeQueryDataSource (NodeQuery_Block $ headBlock ^. hash)
+      cycleHashes <- preservedCyclesInfo block
       pure (headBlock, protoInfo, cycleHashes)
 
     $(logDebug) "Update baker cycle."
@@ -97,26 +98,22 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
       -- well just swizzle these around
       cycleHashesByCycle = Map.fromList $ (_rightsCycleInfo_cycle &&& id) <$> cycleHashes
 
-    $(logDebug) $ "BAKER baseline " <> tshow (_rightsCycleInfo_branch <$> cycleHashes)
-
     --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
     needProgress :: MonoidalMap (Cycle, PublicKeyHash) (Max BakerRightsCycleProgress) <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
       bakerPKHs :: [PublicKeyHash] <- project Baker_publicKeyHashField (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       let
         inBakerPKHs = In bakerPKHs
-        inCycleHashes = In $ _rightsCycleInfo_branch <$> cycleHashes
 
       -- hot table, rewrite using psql-simple to avoid ==.
       bakerRightsCycleProgress' :: Map (Id BakerRightsCycleProgress) BakerRightsCycleProgress <-
         [queryQ|
-          SELECT "id", "chainId", "branch", "publicKeyHash", "cycle", "progress"
+          SELECT "id", "chainId", "publicKeyHash", "cycle", "progress"
           FROM "BakerRightsCycleProgress"
           WHERE "publicKeyHash" in ?inBakerPKHs
             AND "chainId" = ?chainId
-            AND "branch" in ?inCycleHashes
             AND "cycle" BETWEEN ?minCycle AND ?maxCycle
-        |] <&> Map.fromList . fmap (\(i, ch, b, p, cy, pr) -> (i, BakerRightsCycleProgress ch b p cy pr))
+        |] <&> Map.fromList . fmap (\(i, ch, p, cy, pr) -> (i, BakerRightsCycleProgress ch p cy pr))
 
       -- here's what we've got:
       let
@@ -132,7 +129,6 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
           cycle = _rightsCycleInfo_cycle cycleHash
           v = BakerRightsCycleProgress
             { _bakerRightsCycleProgress_chainId = chainId
-            , _bakerRightsCycleProgress_branch = _rightsCycleInfo_branch cycleHash
             , _bakerRightsCycleProgress_publicKeyHash = pkh
             , _bakerRightsCycleProgress_cycle = cycle
             , _bakerRightsCycleProgress_progress = rightsLookAhead + _rightsCycleInfo_minLevel cycleHash - 1
@@ -180,13 +176,10 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
           pri1bakers = filter (\br -> (flip Set.member pkhs . _bakingRights_delegate) br && ((== 0) . _bakingRights_priority) br) $ toList reqBakers
           endorsers :: [EndorsingRights]
           endorsers = filter (flip Set.member pkhs . _endorsingRights_delegate) $ toList reqEndorsers
-          branch :: BlockHash
-          branch = _rightsCycleInfo_branch aCycleInfo
 
           bakerRightCycleInfo :: PublicKeyHash -> BakerRightsCycleProgress
           bakerRightCycleInfo pkh = BakerRightsCycleProgress
             { _bakerRightsCycleProgress_chainId = chainId
-            , _bakerRightsCycleProgress_branch = branch
             , _bakerRightsCycleProgress_publicKeyHash = pkh
             , _bakerRightsCycleProgress_cycle = _rightsCycleInfo_cycle aCycleInfo
             , _bakerRightsCycleProgress_progress = maxLvl
@@ -213,7 +206,6 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
           progress' :: [(Id BakerRightsCycleProgress, BakerRightsCycleProgress)] <- Map.toList <$> selectMap BakerRightsCycleProgressConstructor  -- BakerRightsCycleProgressConstructor
             ( BakerRightsCycleProgress_publicKeyHashField `in_` [pkh]
             &&. BakerRightsCycleProgress_chainIdField `in_` [chainId]
-            &&. BakerRightsCycleProgress_branchField `in_` [branch]
             )
           progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
             Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
