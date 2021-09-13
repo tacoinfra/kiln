@@ -64,7 +64,7 @@ watchProtocolConstants protocol = do
 
 watchHeadWithProtocol
   :: forall js t m. MonadAppWidget js t m
-  => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)), Dynamic t (Maybe ProtocolIndex))
+  => m (Dynamic t (Maybe BranchInfo), Dynamic t (Maybe ProtocolIndex))
 watchHeadWithProtocol = do
   latestHead <- watchLatestHead
   protoHash' <- maybeDyn $ (fmap.fmap) (^. protocolHash) latestHead
@@ -81,7 +81,7 @@ watchLatestProtoInfo = do
   (_, knownProto) <- watchHeadWithProtocol
   pure $ fmap _protocolIndex_constants <$> knownProto
 
-watchLatestHead :: MonadAppWidget js t m => m (Dynamic t (Maybe (WithProtocolHash VeryBlockLike)))
+watchLatestHead :: MonadAppWidget js t m => m (Dynamic t (Maybe BranchInfo))
 watchLatestHead =
   (fmap . fmap) (getMaybeView . _bakeView_latestHead) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_latestHead = viewJust 1

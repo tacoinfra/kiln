@@ -38,12 +38,12 @@ import ExtraPrelude
 
 getLatestProtocolConstants
   :: (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
-  => NodeQueryT m (WithProtocolHash VeryBlockLike, ProtoInfo)
+  => NodeQueryT m (BranchInfo, ProtoInfo)
 getLatestProtocolConstants = do
   histVar <- asksNodeDataSource _nodeDataSource_history
   hist <- nqAtomically $ readTVar' histVar
-  branchBlock <- maybe (nqThrowError CacheError_NotEnoughHistory) pure $ fittestBranchInHistory hist
-  (branchBlock,) . _protocolIndex_constants <$> getProtocolIndex (branchBlock ^. hash) (branchBlock ^. protocolHash)
+  branchInfo <- maybe (nqThrowError CacheError_NotEnoughHistory) pure $ fittestBranchInHistory hist
+  (branchInfo,) . _protocolIndex_constants <$> getProtocolIndex (branchInfo ^. hash) (branchInfo ^. protocolHash)
 
 
 levelToCycle
