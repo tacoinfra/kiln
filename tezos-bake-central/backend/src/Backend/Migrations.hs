@@ -74,6 +74,7 @@ preMigrate chainId =
   >=> migrateProcessDataToSplitTable
   >=> migrateErrorLogBadNodeHeadTable
   >=> migrateBakerRightsCycleProgressTable
+  >=> removeArchivalNodeFromTables
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -680,3 +681,23 @@ migrateBakerRightsCycleProgressTable ta = do
           |]
         pure ta
     _ -> pure ta
+
+removeArchivalNodeFromTables :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+removeArchivalNodeFromTables ta = do
+  analyzeTable ta (Nothing, "PublicNodeConfig") >>= \case
+    Just _
+      -> do
+        void
+          [traceExecuteQ|
+            DELETE FROM "PublicNodeConfig" where source = 'PublicNode_Archival';
+          |]
+    _ -> pure ()
+  analyzeTable ta (Nothing, "PublicNodeHead") >>= \case
+    Just _
+      -> do
+        void
+          [traceExecuteQ|
+            DELETE FROM "PublicNodeHead" where source = 'PublicNode_Archival';
+          |]
+    _ -> pure ()
+  pure ta
