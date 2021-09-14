@@ -1498,6 +1498,7 @@ startNodeWorkflow backWF = Workflow $ do
       el "div" $ text "Snapshot (Recommended)"
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
+        el "p" $ text "Make sure that you're using a snapshot from a trusted provider."
         el "p" $ text "You can download snapshot from one of the following providers:"
         el "ul" $ traverse_ (\(url, name) -> el "li" $ hrefLink url $ text name)
           [ ("https://xtz-shots.io/", "XTZ-Shots")
@@ -1578,30 +1579,28 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
         divClass "header" $ text "Verifying the Block Hash"
         divClass "explanation" $ do
           el "p" $ text "It is highly recommended to verify the hash of the highest block level of the snapshot. Use a third-party source that you trust to verify the data below."
-          el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid and that the block date corresponds to the date the snapshot was taken."
+          el "p" $ text "Copy the block hash and search for it on a block explorer. Make sure the block is valid."
           el "p" $ text "If you are in doubt that the snapshot is valid, close this window, remove the node and restart using a snapshot you trust."
       Nothing -> do
-        divClass "header" $ text "Check your snapshot provider"
+        divClass "header" $ text "Check your snapshot"
         divClass "explanation" $ do
           el "p" $ text "The provided snapshot probably has the old v1 legacy format and doesn't provide information about its head block."
-          el "p" $ text "Make sure you have downloaded it from the trusted snapshot provider before proceeding."
 
-  whenJust (smd ^. snapshotMeta_headBlock) $ \_ -> do
+  whenJust (smd ^. snapshotMeta_headBlock) $ \headBlock -> do
     divClass "field" $ do
       divClass "detail" $ text "Snapshot's Highest Block Hash:"
-      let
-        hashText = case smd ^. snapshotMeta_headBlock of
-          Just blk -> toBase58Text blk
-          Nothing -> fromMaybe "<not-available>" $ smd ^. snapshotMeta_headBlockPrefix
+      let hashText = toBase58Text headBlock
       divClass "proposal-hash" $ do
         copyButton $ pure hashText
         text hashText
-    divClass "field" $ do
-      divClass "detail" $ text "Highest Block Level:"
-      divClass "" $ text $ maybe "" (tshow . unRawLevel) (smd ^. snapshotMeta_headBlockLevel)
-    divClass "field" $ do
-      divClass "detail" $ text "Date Baked:"
-      divClass "" $ maybe (text "") (localHumanizedTimestampBasic . constDyn) (smd ^. snapshotMeta_headBlockBakeTime)
+    whenJust (smd ^. snapshotMeta_headBlockLevel) $ \headBlockLevel ->
+      divClass "field" $ do
+        divClass "detail" $ text "Highest Block Level:"
+        divClass "" $ text $ (tshow . unRawLevel) headBlockLevel
+    whenJust (smd ^. snapshotMeta_headBlockBakeTime) $ \headBlockTimestamp ->
+      divClass "field" $ do
+        divClass "detail" $ text "Date Baked:"
+        divClass "" $ (localHumanizedTimestampBasic . constDyn) headBlockTimestamp
   start <- divClass "buttons" $ uiButton "primary" "Start Node"
   response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
   pure (pure ["confirmation"], leftmost [() <$ response, close])
