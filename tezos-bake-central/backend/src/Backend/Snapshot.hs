@@ -15,14 +15,15 @@
 module Backend.Snapshot where
 
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Exception.Safe (IOException)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
 import Control.Monad.Logger
+import Data.Int (Int32)
+import Data.String (IsString(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
-import Data.Time.Clock (NominalDiffTime)
+import Data.Time.Clock (NominalDiffTime, UTCTime)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql(..), (=.), (==.))
 import Rhyolite.Backend.DB (getTime, runDb, project1, MonadBaseNoPureAborts)
@@ -35,6 +36,7 @@ import System.Directory
 import System.Exit (ExitCode(..))
 import qualified System.Process as Process
 import System.Posix.Signals (signalProcess, sigKILL)
+import Text.Read (readMaybe)
 import Text.Regex.TDFA ((=~))
 
 import Tezos.NodeRPC (_cachedHistory_blocks)
@@ -219,25 +221,23 @@ importSnapshotData appConfig nds sm smId = do
                   (infoExitCode, infoStdout, _) <- liftIO $ Process.readProcessWithExitCode nodePath ["snapshot", "info", storePath] ""
                   when (infoExitCode == ExitSuccess) $ do
                     let
-                      (_, _, _, matches) = infoStdout =~ ("block hash ([A-Za-z0-9]*)" :: String) :: (String, String, String, [String])
-                      mBlkHashPrefix = case matches of
-                        [] -> Nothing
-                        (blkHash : _) -> Just $ T.pack blkHash
-                    whenJust mBlkHashPrefix $ \blkHashPrefix -> void $ do
-                      hist <- liftIO $ readTVarIO $ _nodeDataSource_history nds
-                      let
-                        mBlkHash = completeBlockHash blkHashPrefix hist
-                      mBlk <- for mBlkHash $ \blkHash -> flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+                      blockHashRegex, levelRegex :: String
+                      blockHashRegex = "block hash ([A-Za-z0-9]*)"
+                      levelRegex = "at level ([0-9]*)"
+
+                      extractFromSnapshotInfo :: String -> String -> (String -> Maybe a) -> Maybe a
+                      extractFromSnapshotInfo source regex parse =
+                        let (_, _, _, matches) = source =~ regex :: (String, String, String, [String]) in
+                          parse =<< listToMaybe matches
+
+                      mBlkHash  = extractFromSnapshotInfo infoStdout blockHashRegex
+                        ((either (const Nothing) Just) . fromBase58 . fromString)
+                      mLevel = extractFromSnapshotInfo infoStdout levelRegex (fmap fromIntegral . readMaybe @Int32)
+                    whenJust mBlkHash $ \blkHash -> void $ do
+                      mBlk <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
                         nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
-                      let
-                        blkDetails :: BlockLikeData
-                        blkDetails = case either (const Nothing) Just =<< mBlk of
-                          Just blk -> BlockLike blk
-                          Nothing -> case mBlkHash of
-                            Just blkHash -> BlockHash blkHash
-                            Nothing -> BlockPrefixHash blkHashPrefix
                       inDb $ do
-                        updateSnapshotMeta blkDetails smId
+                        updateSnapshotMeta mBlkHash mLevel (mBlk ^? _Right . timestamp) smId
                   inDb $ updateState NodeProcessState_ImportComplete
                 ExitFailure _ -> inDb $ importFailed "importSnapshotData failed: " stderr
 
@@ -257,29 +257,20 @@ importSnapshotData appConfig nds sm smId = do
 
 updateSnapshotMeta
   :: (PersistBackend m)
-  => BlockLikeData
+  => Maybe BlockHash
+  -> Maybe RawLevel
+  -> Maybe UTCTime
   -> Key SnapshotMeta BackendSpecific
   -> m ()
-updateSnapshotMeta blkDetails smId = do
+updateSnapshotMeta mbBlockHash mbLevel mbTimestamp smId = do
   now <- getTime
-  case blkDetails of
-    BlockPrefixHash hashPrefix -> update
-      [ SnapshotMeta_headBlockPrefixField =. Just hashPrefix
-      , SnapshotMeta_importCompleteTimeField =. Just now
-      ]
-      (AutoKeyField ==. smId)
-    BlockHash blkHash -> update
-      [ SnapshotMeta_headBlockField =. Just blkHash
-      , SnapshotMeta_importCompleteTimeField =. Just now
-      ]
-      (AutoKeyField ==. smId)
-    BlockLike blk -> update
-      [ SnapshotMeta_headBlockField =. (Just $ blk ^. hash)
-      , SnapshotMeta_headBlockLevelField =. (Just $ blk ^. level)
-      , SnapshotMeta_headBlockBakeTimeField =. (Just $ blk ^. timestamp)
-      , SnapshotMeta_importCompleteTimeField =. Just now
-      ]
-      (AutoKeyField ==. smId)
+  update
+    [ SnapshotMeta_headBlockField =. mbBlockHash
+    , SnapshotMeta_headBlockLevelField =. mbLevel
+    , SnapshotMeta_headBlockBakeTimeField =. mbTimestamp
+    , SnapshotMeta_importCompleteTimeField =. Just now
+    ]
+    (AutoKeyField ==. smId)
   traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
 
 -- | Find the block with the given hash prefix
