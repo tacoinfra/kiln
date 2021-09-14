@@ -105,30 +105,30 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
   let isNewBlock = not $ LRUHashMap.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
   when isNewBlock $ do
     res <- do
-      newStateRsp :: Either (Either PublicNodeError CacheError) BlockHeader <- runExceptT $ do
-        headBlockHeader <- withExceptT Right $ do
+      newStateRsp :: Either (Either PublicNodeError CacheError) BlockCrossCompat <- runExceptT $ do
+        headBlock <- withExceptT Right $ do
           flip runReaderT (if pn == Nothing then nds { _nodeDataSource_nodeForQuery = Just nodeAddr } else nds) $ do
-            nodeQueryDataSourceImmediate $ NodeQuery_BlockHeader $ headBlockInfo ^. hash
+            nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
         withExceptT Left $
           flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
-            accumHistory chainId (const ()) headBlockHeader
+            accumHistory chainId (const ()) headBlock
             $(logInfo) [i|${if isNewBlock then "New" else "Known" :: Text} block from ${pn}, URI ${Uri.render nodeAddr}, ${mkVeryBlockLike headBlockInfo}|]
 
-        pure headBlockHeader
+        pure headBlock
 
       case newStateRsp of
         Left (Left e) -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left (Left e)
         Left (Right e) -> $(logWarn) (cacheErrorLogMessage "Handle new node head" e) $> Left (Right e)
-        Right headBlockHeader -> pure $ Right headBlockHeader
-    for_ res $ \headBlockHeader ->
-      when (Just (headBlockHeader ^. fitness) > oldHead ^? _Just . fitness) $ do
+        Right headBlock -> pure $ Right headBlock
+    for_ res $ \headBlock ->
+      when (Just (headBlock ^. fitness) > oldHead ^? _Just . fitness) $ do
         updatedLevel <- liftIO $ atomically $ do
           let latestHeadTVar = _nodeDataSource_latestHead nds
           latestHead <- readTVar latestHeadTVar
-          if Just (headBlockHeader ^. fitness) > latestHead ^? _Just . fitness
+          if Just (headBlock ^. fitness) > latestHead ^? _Just . fitness
             then do
-              writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlockHeader
-              pure $ Just $ headBlockHeader ^. level
+              writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlock
+              pure $ Just $ headBlock ^. level
             else
               pure Nothing
         for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)

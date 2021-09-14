@@ -51,7 +51,6 @@ import Reflex.Query.Class (Query (QueryResult, crop))
 import Rhyolite.Schema (Email)
 import Rhyolite.App (PositivePart (..), standardPositivePart)
 import Data.MonoidMap (MonoidMap (..))
-
 import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
@@ -288,7 +287,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
   , _bakeViewSelector_latestTezosRelease :: !(MaybeSelector (Maybe MajorMinorVersion) a)
   , _bakeViewSelector_parameters :: !(MapSelector ProtocolHash ProtocolIndex a)
-  , _bakeViewSelector_latestHead :: !(MaybeSelector (WithProtocolHash VeryBlockLike) a)
+  , _bakeViewSelector_latestHead :: !(MaybeSelector BranchInfo a)
   , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
   , _bakeViewSelector_proposals :: !(RangeSelector' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
   , _bakeViewSelector_bakerVote :: !(MaybeSelector (Maybe BakerVote) a)
@@ -336,7 +335,7 @@ data BakeView a = BakeView
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
   , _bakeView_latestTezosRelease :: !(MaybeView (Maybe MajorMinorVersion) a)
   , _bakeView_parameters :: !(Common.Vassal.View (MapSelector ProtocolHash ProtocolIndex) a)
-  , _bakeView_latestHead :: !(MaybeView (WithProtocolHash VeryBlockLike) a)
+  , _bakeView_latestHead :: !(MaybeView BranchInfo a)
   , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)
   , _bakeView_proposals :: !(RangeView' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
   , _bakeView_bakerVote :: !(MaybeView (Maybe BakerVote) a)

@@ -645,7 +645,8 @@ fittestHead
   => m (Maybe (WithProtocolHash VeryBlockLike))
 fittestHead = do
   hist <- asks (^. nodeDataSource . nodeDataSource_history)
-  fittestBranchInHistory <$> readTVar' hist
+  branch <- fittestBranchInHistory <$> readTVar' hist
+  return $ branch ^? _Just . branchInfo_block
 
 -- | Blocks until a new head is seen or the time between blocks has elapsed.
 waitForNewHeadWithTimeout :: (HasNodeDataSource nds) => nds -> IO ()
@@ -682,14 +683,14 @@ histToBlockLike minLevel h path = VeryBlockLike h p mempty blkLevel unixEpoch
     blkLevel = minLevel + fromIntegral (length path)
     p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
 
-fittestBranchInHistory :: CachedHistory a -> Maybe (WithProtocolHash VeryBlockLike)
+fittestBranchInHistory :: CachedHistory a -> Maybe BranchInfo
 fittestBranchInHistory hist =
   maximumByMay (comparing $ view fitness) (Map.elems $ _cachedHistory_branches hist)
 
 -- | extracts the fittest known branch from cache
 dataSourceHead
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> m (Maybe (WithProtocolHash VeryBlockLike))
+  => nds -> m (Maybe BranchInfo)
 dataSourceHead nds =
   fittestBranchInHistory <$> readTVar' (nds ^. nodeDataSource . nodeDataSource_history)
 
@@ -749,7 +750,7 @@ getContext = \case
       histVar <- asksNodeDataSource _nodeDataSource_history
       hist <- nqAtomically $ readTVar' histVar
       let branches = _cachedHistory_branches hist
-          mHash = view hash <$> maximumByMay (comparing $ view fitness) (Map.elems branches)
+          mHash = view (branchInfo_block . hash) <$> maximumByMay (comparing $ view (branchInfo_block . fitness)) (Map.elems branches)
       maybe (nqThrowError CacheError_NotEnoughHistory) pure mHash
 
 -- | Caching query function simplified by blocking until we get a result.
@@ -1445,7 +1446,7 @@ getProtocolConstants ct = do
     Nothing -> do
       hash' <- case ct of
         Right _ -> askNodeDataSource >>= nqAtomically . dataSourceHead
-          >>= maybe (nqThrowError CacheError_NotEnoughHistory) (pure . view hash)
+          >>= maybe (nqThrowError CacheError_NotEnoughHistory) (pure . view (branchInfo_block . hash))
         Left hash' -> pure hash'
       getProtocolIndex hash' protoHash
 
