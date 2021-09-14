@@ -1,7 +1,7 @@
 {
   "url": "https://gitlab.com/tezos-kiln/tezos-bake-monitor-lib",
-  "rev": "75560b2fd92c865bfc12b20746e70b7283e7486e",
-  "sha256": "09w35q1g38kh1iznx4nxmyxlxm48ahdlkh2xihw3jm6vcrjmx0l4",
+  "rev": "df0949361802cdba2e95aadda6e9df859e8e7592",
+  "sha256": "0lzi0zb3ypi2xi28r76b5qcwmaa8mdb8x6rssa9vwfjirszclnqi",
   "fetchSubmodules": false,
   "branch": "kiln"
 }
