@@ -677,7 +677,7 @@ migrateBakerRightsCycleProgressTable ta = do
         void
           [traceExecuteQ|
             -- It's easier to drop all the existing data than
-            -- adopt it to the changed constraint that doesn't have 'branch' column.
+            -- adapt it to the changed constraint that doesn't have 'branch' column.
             DELETE FROM "BakerRightsCycleProgress";
             -- Purge data from table that depend on the 'BakerRightsCycleProgress'.
             DELETE FROM "BakerRight";
