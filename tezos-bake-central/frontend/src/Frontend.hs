@@ -1499,11 +1499,8 @@ startNodeWorkflow backWF = Workflow $ do
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
         el "p" $ text "Make sure that you're using a snapshot from a trusted provider."
-        el "p" $ text "You can download snapshot from one of the following providers:"
-        el "ul" $ traverse_ (\(url, name) -> el "li" $ hrefLink url $ text name)
-          [ ("https://xtz-shots.io/", "XTZ-Shots")
-          , ("https://snapshots-tezos.giganode.io/", "Giganode")
-          ]
+        el "p" $ text "You can download snapshot from one of the providers listed on"
+        el "p" $ hrefLink "https://tezos-kiln.org/" $ text "tezos-kiln.org"
       divClass "file-selection" $ do
         rec
           let fileName = headMay <$> _inputElement_files fi
