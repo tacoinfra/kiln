@@ -79,11 +79,11 @@ bakerRightsWorker
   -> m (IO ())
 bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ do
-    (headBlock, protoInfo, cycleHashes) <- runNodeQueryT $ do
-      (headBlock, protoInfo) <- getLatestProtocolConstants
+    (headBlock, cycleHashes) <- runNodeQueryT $ do
+      (headBlock, _) <- getLatestProtocolConstants
       block <- nodeQueryDataSource (NodeQuery_Block $ headBlock ^. hash)
       cycleHashes <- preservedCyclesInfo block
-      pure (headBlock, protoInfo, cycleHashes)
+      pure (headBlock, cycleHashes)
 
     $(logDebug) "Update baker cycle."
     let
@@ -92,7 +92,6 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
       headHash :: BlockHash = headBlock ^. hash
 
     let
-      rightsLookAhead = RawLevel $ (unCycle ( _protoInfo_preservedCycles protoInfo) + 1) * unRawLevel ( _protoInfo_blocksPerCycle protoInfo)
       minCycle = minimumDef 0 $ fmap _rightsCycleInfo_cycle cycleHashes
       maxCycle = maximumDef (-1) $ fmap _rightsCycleInfo_cycle cycleHashes
       -- well just swizzle these around
@@ -131,7 +130,7 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
             { _bakerRightsCycleProgress_chainId = chainId
             , _bakerRightsCycleProgress_publicKeyHash = pkh
             , _bakerRightsCycleProgress_cycle = cycle
-            , _bakerRightsCycleProgress_progress = rightsLookAhead + _rightsCycleInfo_minLevel cycleHash - 1
+            , _bakerRightsCycleProgress_progress = _rightsCycleInfo_minLevel cycleHash
             }
         return ((cycle, pkh), Max v)
 
@@ -143,7 +142,7 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
       unfinished = MMap.mapMaybe (nonEmpty . join . toList) $ curryMap $ flip MMap.mapMaybe needProgress $ \(Max p) -> do
         cycle' <- Map.lookup (_bakerRightsCycleProgress_cycle p) cycleHashesByCycle
         -- if we're already at maxLevel, then we're done here.
-        guard (_bakerRightsCycleProgress_progress p < rightsLookAhead + _rightsCycleInfo_maxLevel cycle')
+        guard (_bakerRightsCycleProgress_progress p < _rightsCycleInfo_maxLevel cycle')
         return [p]
 
       mNextUnfinished :: Maybe (NonEmpty BakerRightsCycleProgress, RightsCycleInfo) = do
@@ -157,9 +156,9 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
 
 
     $(logDebugSH) ("Baker rights TODO:" :: Text, unfinished)
-    for_ mNextUnfinished $ \(aBakerRight :| moreUnfinished, aCycleInfo) -> do
-      let bakerMinBound = minimumDef (_bakerRightsCycleProgress_progress aBakerRight) $ _bakerRightsCycleProgress_progress <$> moreUnfinished
-          bakerMaxBound = rightsLookAhead + _rightsCycleInfo_maxLevel aCycleInfo
+    for_ mNextUnfinished $ \(aBakerRight :| _, aCycleInfo) -> do
+      let bakerMinBound = _bakerRightsCycleProgress_progress aBakerRight
+          bakerMaxBound = _rightsCycleInfo_maxLevel aCycleInfo
           -- Block that begins a new cycle is a corner-case for gathering baking and endorsing rights due to the fact
           -- that endorsing rights are returned for the previous level, so the first level of each cycle is handled in a
           -- separate chunk that consists of a single level
@@ -176,12 +175,13 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
           pri1bakers = filter (\br -> (flip Set.member pkhs . _bakingRights_delegate) br && ((== 0) . _bakingRights_priority) br) $ toList reqBakers
           endorsers :: [EndorsingRights]
           endorsers = filter (flip Set.member pkhs . _endorsingRights_delegate) $ toList reqEndorsers
+          cycle = _rightsCycleInfo_cycle aCycleInfo
 
           bakerRightCycleInfo :: PublicKeyHash -> BakerRightsCycleProgress
           bakerRightCycleInfo pkh = BakerRightsCycleProgress
             { _bakerRightsCycleProgress_chainId = chainId
             , _bakerRightsCycleProgress_publicKeyHash = pkh
-            , _bakerRightsCycleProgress_cycle = _rightsCycleInfo_cycle aCycleInfo
+            , _bakerRightsCycleProgress_cycle = cycle
             , _bakerRightsCycleProgress_progress = maxLvl
             }
           bakerRights :: Maybe (Id BakerRightsCycleProgress) -> PublicKeyHash -> [BakerRight]
@@ -206,6 +206,7 @@ bakerRightsWorker nds = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ 
           progress' :: [(Id BakerRightsCycleProgress, BakerRightsCycleProgress)] <- Map.toList <$> selectMap BakerRightsCycleProgressConstructor  -- BakerRightsCycleProgressConstructor
             ( BakerRightsCycleProgress_publicKeyHashField `in_` [pkh]
             &&. BakerRightsCycleProgress_chainIdField `in_` [chainId]
+            &&. BakerRightsCycleProgress_cycleField `in_` [cycle]
             )
           progressId :: Maybe (Id BakerRightsCycleProgress) <- case nonEmpty progress' of
             Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
