@@ -751,11 +751,11 @@ getBakerAddresses nds bid = do
     Just headLevel -> [queryQ|
       SELECT brcp."publicKeyHash",
         ( SELECT MAX(progress) -- this is a subselect so that we get the highest result even if "BakerRight" rows are found
-          FROM "BakerRightsCycleProgress" b1
+          FROM "BakerRightsProgress" b1
           WHERE b1."publicKeyHash" = brcp."publicKeyHash"
             AND b1."chainId" = ?chainId
         ), br."right", MIN(br.level)
-      FROM "BakerRightsCycleProgress" brcp
+      FROM "BakerRightsProgress" brcp
       LEFT OUTER JOIN "BakerRight" br
         ON br.branch = brcp.id
         AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.

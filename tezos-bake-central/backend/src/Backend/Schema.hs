@@ -114,7 +114,7 @@ stripOnly = coerce
 data NotifyTag a where
   NotifyTag_Baker :: NotifyTag (Id Baker, Maybe BakerData)
   NotifyTag_BakerDetails :: NotifyTag BakerDetails
-  NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
+  NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsProgress, BakerRightsProgress, [BakerRight])
   NotifyTag_ErrorLog :: LogTag b -> NotifyTag (Id b)
   NotifyTag_ProtocolIndex :: NotifyTag (Id ProtocolIndex)
   NotifyTag_UpstreamVersion :: NotifyTag (Id UpstreamVersion, UpstreamVersion)
@@ -944,13 +944,13 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         - name: BakerDetailsKey
           type: primary
           fields: [_bakerDetails_publicKeyHash]
-  - entity: BakerRightsCycleProgress
+  - entity: BakerRightsProgress
     constructors:
-      - name: BakerRightsCycleProgress
+      - name: BakerRightsProgress
         uniques:
-          - name: _bakerRightsCycleProgress_chain
+          - name: _bakerRightsProgress_chain
             type: constraint
-            fields: [_bakerRightsCycleProgress_chainId, _bakerRightsCycleProgress_publicKeyHash, _bakerRightsCycleProgress_cycle]
+            fields: [_bakerRightsProgress_chainId, _bakerRightsProgress_publicKeyHash]
   - entity: BakerRight
     constructors:
       - name: BakerRight
@@ -1194,7 +1194,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   [ (''BakerDaemon, 'BakerDaemonKey)
-  , (''BakerRightsCycleProgress, 'BakerRightsCycleProgressKey)
+  , (''BakerRightsProgress, 'BakerRightsProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
   , (''RawCacheEntry, 'RawCacheEntryKey)
@@ -1396,7 +1396,7 @@ instance ArgDict c NotifyTag where
   type ConstraintsFor NotifyTag c =
     ( c (Id Baker, Maybe BakerData)
     , c BakerDetails
-    , c (Id BakerRightsCycleProgress, BakerRightsCycleProgress, [BakerRight])
+    , c (Id BakerRightsProgress, BakerRightsProgress, [BakerRight])
     , c (Id ErrorLogBadNodeHead)
     , c (Id ErrorLogBakerAccused)
     , c (Id ErrorLogBakerDeactivated)

@@ -220,6 +220,10 @@ backendImpl cfg serve = do
     (pure $ (Aeson.decodeStrict' . T.encodeUtf8) =<< _opts_binaryPaths cfg)
     (getJSONConfigFromFile $ configPath Config.binaryPaths)
 
+  (rightsHistoryWindow :: Int) <- fmap (fromMaybe Config.defaultRightsHistoryWindow) $ liftA2 (<|>)
+    (pure $ _opts_rightsHistoryWindow cfg)
+    (getConfigFromFile (Just . read . T.unpack) $ configPath Config.rightsHistoryWindow)
+
   let
     maybeNamedChain = either Just (const Nothing) chain
     maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
@@ -458,7 +462,7 @@ backendImpl cfg serve = do
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< blockTodoWorker 5 dataSrc publicDataSources appConfig db
-      addFinalizer =<< bakerRightsWorker dataSrc
+      addFinalizer =<< bakerRightsWorker dataSrc rightsHistoryWindow
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
       addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
@@ -554,6 +558,7 @@ data Opts = Opts
   , _opts_binaryPaths :: !(Maybe Text)
   , _opts_ledgerCheckDelaySeconds :: !(Maybe NominalDiffTime)
   , _opts_nodeConfigFile :: !(Maybe FilePath)
+  , _opts_rightsHistoryWindow :: !(Maybe Int)
   }
 makeLenses ''Opts
 
@@ -577,6 +582,7 @@ instance Semigroup Opts where
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     , _opts_ledgerCheckDelaySeconds = rightBiased (<|>) _opts_ledgerCheckDelaySeconds
     , _opts_nodeConfigFile = rightBiased (<|>) _opts_nodeConfigFile
+    , _opts_rightsHistoryWindow = rightBiased (<|>) _opts_rightsHistoryWindow
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
@@ -602,6 +608,7 @@ instance Monoid Opts where
       , _opts_binaryPaths = Nothing
       , _opts_ledgerCheckDelaySeconds = Nothing
       , _opts_nodeConfigFile = Nothing
+      , _opts_rightsHistoryWindow = Nothing
       }
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -657,6 +664,10 @@ optsArgDescr =
 
   , mkReqArg Config.nodeConfigFile "FILEPATH" (set opts_nodeConfigFile . Just . T.unpack)
       "The file containing the custom tezos-node configuration (for running custom networks)"
+
+  , mkReqArg Config.rightsHistoryWindow "INT" (set opts_rightsHistoryWindow . Just . read . T.unpack) $
+      "How much baking and endorsing rights will be gathered from the past in blocks. Defaults to " <>
+        show Config.defaultRightsHistoryWindow <> " blocks."
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

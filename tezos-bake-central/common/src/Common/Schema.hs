@@ -659,19 +659,16 @@ data BakerDetails = BakerDetails
 instance HasId BakerDetails where
   type IdData BakerDetails = PublicKeyHash
 
-data BakerRightsCycleProgress = BakerRightsCycleProgress
-  { _bakerRightsCycleProgress_chainId :: !ChainId
+data BakerRightsProgress = BakerRightsProgress
+  { _bakerRightsProgress_chainId :: !ChainId
   -- | we reuse this table to also give us clues about which cycles we've ever
   -- tried to cache, so we can start caching before any delegates have been
   -- configured.
-  , _bakerRightsCycleProgress_publicKeyHash :: !PublicKeyHash
-  , _bakerRightsCycleProgress_cycle :: !Cycle -- the cycle in which rights are determined: if this is 6, the associated rights are in cycle 12
-  , _bakerRightsCycleProgress_progress :: !RawLevel
-    -- ranging over the first level in this cycle to the last
-    -- this indicates that the amount already computed is from
-    -- the first level in the cycle to 'progress', inclusive
+  , _bakerRightsProgress_publicKeyHash :: !PublicKeyHash
+  -- | The last level for which rights were successfully gathered and stored.
+  , _bakerRightsProgress_progress :: !RawLevel
   } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId BakerRightsCycleProgress
+instance HasId BakerRightsProgress
 
 data RightKind = RightKind_Baking | RightKind_Endorsing
   deriving (Eq, Ord, Show, Read, Enum, Bounded)
@@ -683,7 +680,7 @@ instance Aeson.ToJSONKey RightKind
 -- rather than all possible.  For the same reason we /do/ include endorsement
 -- slots, since that affects expected returns.
 data BakerRight = BakerRight
-  { _bakerRight_branch :: !(Id BakerRightsCycleProgress)
+  { _bakerRight_branch :: !(Id BakerRightsProgress)
   , _bakerRight_level :: !RawLevel
   , _bakerRight_right :: !RightKind
   , _bakerRight_slots :: !(Maybe Int)
@@ -1042,7 +1039,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerDetails
   , ''BakerProposal
   , ''BakerRight
-  , ''BakerRightsCycleProgress
+  , ''BakerRightsProgress
   , ''BakerVote
   , ''BlockBaker
   , ''BlockTodo
@@ -1103,7 +1100,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerData
   , 'BakerDetails
   , 'BakerRight
-  , 'BakerRightsCycleProgress
+  , 'BakerRightsProgress
   , 'BlockBaker
   , 'BlockTodo
   , 'DeletableRow
