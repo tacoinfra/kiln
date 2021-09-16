@@ -211,6 +211,14 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
             {-# INLINE maybeNotify #-}
           sequence_ $ maybeNotify <$> progressId <*> pure newProgress <*> pure rights
 
+      -- Trim old rights from the database
+    let oldestLevel = headLevel - fromIntegral rightsHistoryWindow
+    void $ runDb (Identity db) [executeQ|
+      DELETE FROM "CacheBakingRights" WHERE "level" < ?oldestLevel;
+      DELETE FROM "CacheEndorsingRights" WHERE "level" < ?oldestLevel;
+      DELETE FROM "BakerRight" WHERE "level" < ?oldestLevel;
+      |]
+
   case res of
     Right _ -> pure ()
     Left err -> $(logErrorSH) (cacheErrorLogMessage "bakerRightsWorker" err)
