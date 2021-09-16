@@ -168,6 +168,12 @@ kilnNodeCustomArgs = "kiln-node-custom-args"
 binaryPaths :: FilePath
 binaryPaths = "binary-paths"
 
+defaultRightsHistoryWindow :: Int
+defaultRightsHistoryWindow = 720
+
+rightsHistoryWindow :: FilePath
+rightsHistoryWindow = "rights-history-window"
+
 singleQuoted :: (IsString a, Semigroup a) => a -> a
 singleQuoted s = "'" <> s <> "'"
 

@@ -15,8 +15,7 @@ Past release notes are available
 [here](https://medium.com/@obsidian.systems).
 
 If you don't need/want graphical user interface, consider baking
-setup with [Serokell Tezos
-distributions](https://github.com/serokell/tezos-packaging/blob/master/docs/baking.md) 
+setup with [Serokell Tezos distributions](https://github.com/serokell/tezos-packaging/blob/master/docs/baking.md)
 and using [Pyrometer](https://gitlab.com/tezos-kiln/pyrometer) for monitoring.
 
 ## Important: Update to Tezos 9.7

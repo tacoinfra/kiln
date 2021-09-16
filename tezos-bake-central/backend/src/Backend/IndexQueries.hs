@@ -14,11 +14,9 @@ module Backend.IndexQueries where
 
 import Control.Applicative (ZipList (..))
 import Control.Monad.Catch (MonadMask)
-import Control.Monad.State (State, evalState, get, replicateM, put)
 import Database.Groundhog.Postgresql (PersistBackend)
 
 import Tezos.Types
-import Tezos.V010.NodeRPC.CrossCompat
 import qualified Tezos.Unsafe
 
 import Backend.CachedNodeRPC
@@ -112,34 +110,6 @@ cycleStartHashes branchBlock = do
     <$> ZipList cycles
     <*> ZipList minLevels
     <*> ZipList maxLevels
-
--- | Produces the list of the @RightCycleInfo@ for the last 'preserved_cycles' from the given
--- cycle provided by the block in it.
-preservedCyclesInfo
-  :: forall m
-   . ( MonadNodeQuery (NodeQueryT m)
-     , MonadMask m
-     , PersistBackend m
-     )
-  => BlockCrossCompat -> NodeQueryT m [RightsCycleInfo]
-preservedCyclesInfo block = do
-  protocolConstants <- getProtocolConstants $ Left $ block ^. hash
-  let minLevel = block ^. level - block ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cyclePosition
-      cycle' = block ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
-      res = flip evalState (minLevel, cycle', protocolConstants) $
-        replicateM (fromIntegral $ protocolConstants ^. protoInfo_preservedCycles + 1) buildRightsCycleInfo
-  return res
-  where
-    buildRightsCycleInfo :: State (RawLevel, Cycle, ProtoInfo) RightsCycleInfo
-    buildRightsCycleInfo = do
-      (minLevel, cycle', protocolConstants) <- get
-      let res = RightsCycleInfo
-            { _rightsCycleInfo_cycle = cycle'
-            , _rightsCycleInfo_minLevel = minLevel
-            , _rightsCycleInfo_maxLevel = minLevel + protocolConstants ^. protoInfo_blocksPerCycle - 1
-            }
-      put (minLevel - protocolConstants ^. protoInfo_blocksPerCycle , cycle' - 1, protocolConstants)
-      return res
 
 takeWhileJust :: [Maybe a] -> [a]
 takeWhileJust [] = []

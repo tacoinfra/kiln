@@ -59,7 +59,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
   case _dbNotification_message notification of
     NotifyTag_Baker :=> args -> runIdentity $ uncurry handleBaker <$> args
     NotifyTag_BakerDetails :=> bakerDetails -> runIdentity $ handleBakerDetails <$> bakerDetails
-    NotifyTag_BakerRightsProgress :=> args -> runIdentity $ (handleBakerAddress . _bakerRightsCycleProgress_publicKeyHash . view _2) <$> args
+    NotifyTag_BakerRightsProgress :=> args -> runIdentity $ (handleBakerAddress . _bakerRightsProgress_publicKeyHash . view _2) <$> args
     NotifyTag_ErrorLog tag :=> Identity eid ->
       logAssume tag $ handleErrorLog (errorLogIdForErrorLogView . (tag :=>) . Identity) tag eid
     NotifyTag_ProtocolIndex :=> eid -> runIdentity $ handleParameters <$> eid
