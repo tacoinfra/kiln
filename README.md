@@ -18,24 +18,6 @@ If you don't need/want graphical user interface, consider baking
 setup with [Serokell Tezos distributions](https://github.com/serokell/tezos-packaging/blob/master/docs/baking.md)
 and using [Pyrometer](https://gitlab.com/tezos-kiln/pyrometer) for monitoring.
 
-## Important: Update to Tezos 9.7
-
-Everyone running Kiln 0.10.1 should update their Tezos version to 9.7. Here's a script to download Tezos 9.7 binaries and configure Kiln 0.10.1 to use them:
-
-```
-curl -O https://gitlab.com/tezos-kiln/kiln/-/raw/develop/scripts/kiln-configure-tezos.sh
-```
-
-**Ubuntu:**
-```
-sudo bash kiln-configure-tezos.sh 9.7
-```
-
-**MacOS:**
-```
-bash kiln-configure-tezos.sh 9.7
-```
-
 ## Quick Start
 
 - Download latest release from [Releases](https://gitlab.com/tezos-kiln/kiln/-/releases)
