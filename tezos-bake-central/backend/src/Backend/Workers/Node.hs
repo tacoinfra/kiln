@@ -23,7 +23,7 @@ import Control.Lens (set)
 import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
 import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
-import Control.Monad.Reader (ReaderT, forM)
+import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
 import Data.Align
@@ -53,7 +53,7 @@ import qualified Network.HTTP.Simple as Http
 import Reflex.Class (fmapMaybe)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ, In(..), sql, returning, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (In(..), sql, returning, queryQ)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Safe.Foldable (maximumMay, maximumByMay)
@@ -1012,33 +1012,3 @@ waitTillEndOfCycle nds blk = do
     liftIO $ atomically $ do
       newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
       when (newHead ^. level < lvl) retry
-
-blockTodoWorker
-  :: NominalDiffTime -> NodeDataSource -> [DataSource] -> AppConfig -> Pool Postgresql -> IO (IO ())
-blockTodoWorker delay nds publicDataSource appConfig db = workerWithDelay "blockTodoWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  theseNodeRecords <- getNodes db CondEmpty
-  let httpMgr = nds ^. nodeDataSource_httpMgr
-      chainId = _nodeDataSource_chain nds
-  heads :: Set (BlockHash, RawLevel) <- fmap (S.fromList . catMaybes) $ forM (Map.toList theseNodeRecords) $ \(_, (_, node, _)) -> do
-    b <- runExceptT @RpcError $ flip runReaderT
-      (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $
-      nodeRPC $ rHead $ ChainTag_Hash chainId
-    fetchBlockData b
-  headsPublic :: Set (BlockHash, RawLevel) <- fmap (S.fromList . catMaybes) $ forM publicDataSource $ \(pn, _, uri) -> do
-    b <- runExceptT @RpcError $ flip runReaderT
-      (PublicNodeContext (NodeRPCContext httpMgr (Uri.render uri)) (Just pn)) $
-      getCurrentHead chainId
-    fetchBlockData b
-
-  for_ (heads <> headsPublic) $ \(blockHash, blockLevel) ->
-    runDb (Identity db) $
-      void [executeQ|
-        insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
-        values (?blockHash, ?blockLevel, ?chainId, null, null, false, false)
-        on conflict do nothing
-      |]
-  where
-    fetchBlockData :: (BlockLike b, Monad m) => Either RpcError b -> m (Maybe (BlockHash, RawLevel))
-    fetchBlockData b = case b of
-      Left _e -> return Nothing
-      Right block -> return $ Just (block ^. hash, block ^. level)

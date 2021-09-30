@@ -595,14 +595,10 @@ data BakerVote = BakerVote
   , _bakerVote_attempted :: !(Maybe BlockHash)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
-data BlockTodo = BlockTodo
-  { _blockTodo_hash :: !BlockHash
-  , _blockTodo_level :: !Int
-  , _blockTodo_chain :: !ChainId
-  , _blockTodo_claimedBy :: !(Maybe Int) -- TODO WIP do backends have IDs?  they probably should if they're going to claim jobs...
-  , _blockTodo_claimedAt :: !(Maybe UTCTime)
-  , _blockTodo_parsedParent :: !Bool
-  , _blockTodo_parsedAccusations :: !Bool
+data AccusationBlock = AccusationBlock
+  { _accusationBlock_hash :: !BlockHash
+  , _accusationBlock_level :: !RawLevel
+  , _accusationBlock_chain :: !ChainId
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data ClientDaemonWorker
@@ -1029,6 +1025,7 @@ deriving instance Show (BakerLogTag a)
 
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
+  , ''AccusationBlock
   , ''AlertNotificationMethod
   , ''Amendment
   , ''BakeEfficiency
@@ -1042,7 +1039,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerRightsProgress
   , ''BakerVote
   , ''BlockBaker
-  , ''BlockTodo
   , ''CacheDelegateInfo
   , ''DeletableRow
   , ''ErrorLog
@@ -1092,6 +1088,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''UpstreamVersion
   ] ++ map makeLenses
   [ 'Accusation
+  , 'AccusationBlock
   , 'Amendment
   , 'BakeEfficiency
   , 'Baker
@@ -1102,7 +1099,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerRight
   , 'BakerRightsProgress
   , 'BlockBaker
-  , 'BlockTodo
   , 'DeletableRow
   , 'Error
   , 'ErrorLog
