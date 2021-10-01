@@ -5,7 +5,7 @@ Once crude way to monitor this is time-based notifications. Assuming no priority
 ## Data Sources and Discovery
 Kiln learns about the state of the Tezos network and builds a cache of this information by monitoring nodes chosen through the user’s configuration. These can include the Kiln Node, nodes the user has chosen to monitor via their IP address and port, and several public data sources which are pre-configured in Kiln and can be enabled via the “Add Nodes” modal. At Kiln’s release, these public data sources were:
 
-* The Tezos Foundation: An RPC to the Foundation’s load balanced nodes, currently available at [https://rpc.tezrpc.me/](https://rpc.tezrpc.me/chains/main/blocks/head)
+* The Tezos Foundation: An RPC to the Foundation’s load balanced nodes, currently available at [https://rpc.tzbeta.net/](https://rpc.tzbeta.net/chains/main/blocks/head/)
 * The TzScan API: A subset of node RPC commands exposed as an API provided by OCamlPro’s Block Explorer. This has since been removed as this API no longer exists for Tezos.
 * Obsidian Systems Public Node: An archive node run by Obsidian Systems for Kiln users
 
