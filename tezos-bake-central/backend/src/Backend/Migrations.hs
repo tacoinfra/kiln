@@ -75,6 +75,7 @@ preMigrate chainId =
   >=> migrateErrorLogBadNodeHeadTable
   >=> migrateBakerRightsCycleProgressTable
   >=> removeArchivalNodeFromTables
+  >=> migrateRawCacheEntryTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -716,3 +717,18 @@ removeArchivalNodeFromTables ta = do
           |]
     _ -> pure ()
   pure ta
+
+migrateRawCacheEntryTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateRawCacheEntryTable ta = do
+  let table = (Nothing, "RawCacheEntry")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | not $ any ((== "addedAt") . colName) $ tableColumns analyzedTable
+      -> do
+        void
+          [traceExecuteQ|
+            ALTER TABLE "RawCacheEntry"
+            ADD COLUMN "addedAt" timestamp NOT NULL DEFAULT now();
+          |]
+        pure ta
+    _ -> pure ta
