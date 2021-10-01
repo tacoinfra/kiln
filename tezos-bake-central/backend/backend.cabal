@@ -37,6 +37,7 @@ library
     , dependent-sum
     , dependent-sum-template
     , directory
+    , either
     , errors
     , exceptions
     , filepath

@@ -163,6 +163,7 @@ data NodeQuery a where
   NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeader
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
+  NodeQuery_Blocks          :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
 deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
@@ -743,6 +744,7 @@ getContext = \case
   NodeQuery_CurrentQuorum ctx -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
   NodeQuery_PublicKey _ -> getFittestBranch
+  NodeQuery_Blocks ctx _ -> pure ctx
 
   where
     getFittestBranch :: m BlockHash
@@ -952,6 +954,7 @@ validNodes nodes q = case q of
   NodeQuery_CurrentQuorum ctx -> findNodes <$> getLvl ctx
   NodeQuery_DelegateInfo _ctx lvl _pkh -> pure $ findNodes $ Just lvl
   NodeQuery_PublicKey _ -> pure $ findNodes Nothing
+  NodeQuery_Blocks ctx _ -> findNodes <$> getLvl ctx
   where
     getLvl :: BlockHash -> m (Maybe RawLevel)
     getLvl ctx = do
@@ -1032,6 +1035,10 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
     case view managerKeyCrossCompat_key managerkeyResp of
       Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
       Just pk -> pure (RpcResult raw pk)
+  NodeQuery_Blocks branch length' -> do
+    (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
+    let blocks = fromMaybe mempty (Map.lookup branch response)
+    pure $ RpcResult (Aeson.encode blocks) blocks
   where
     nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO (RpcResult c)
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx

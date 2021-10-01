@@ -15,19 +15,20 @@
 
 module Backend.Workers.Block where
 
-import Control.Lens ((^..))
 import Control.Monad.Catch (MonadMask)
-import Control.Monad.Logger (LoggingT, logDebug, logErrorSH, logDebugSH)
+import Control.Monad.Logger (logErrorSH, logDebugSH)
 import Data.ByteString as BS
-import Database.Groundhog.Core (PersistBackend)
+import Data.Either.Combinators (whenRight)
 import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
-import qualified Data.Set as Set (singleton)
+import qualified Data.Set as Set (fromList, notMember, singleton)
 import Data.Time (NominalDiffTime)
-import Database.Groundhog.Postgresql (Postgresql)
-import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ, PostgresRaw)
-import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Database.Groundhog.Core (PersistBackend)
+import Database.Groundhog.Postgresql (Postgresql(..))
+import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, fromOnly, queryQ)
+import Rhyolite.Backend.Logging (runLoggingEnv)
 
 import Tezos.Common.Binary as TBin
 import Tezos.NodeRPC
@@ -39,7 +40,7 @@ import Tezos.Signature.Verify as Sig
 import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
-import Backend.IndexQueries (rightsContextLevel, getLatestProtocolConstants)
+import Backend.IndexQueries (getLatestProtocolConstants)
 import Common.Schema
 import ExtraPrelude
 
@@ -49,64 +50,39 @@ blockWorker
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-blockWorker delay nds _appConfig _db = runLoggingEnv (_nodeDataSource_logger nds) $ do
-  let chainId = _nodeDataSource_chain nds
-  let claimTimeout = "15 seconds" :: Text
-  workerWithDelay "blockWorker" (pure delay) $ const $ (runLoggingEnv :: LoggingEnv -> LoggingT IO () -> IO ()) (_nodeDataSource_logger nds) $ do
-    queuedBlockOrNot :: Either CacheError [BlockTodo] <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
-      (headBlock, _) <- getLatestProtocolConstants
-      cutoffLevel <- rightsContextLevel (headBlock ^. hash) (headBlock ^. level)
-      [queryQ|
-        update "BlockTodo"
-        set "claimedBy" = 1
-          , "claimedAt" = now()
-        where hash = (
-          select hash
-          from "BlockTodo"
-          where (not "parsedParent" or not "parsedAccusations") and chain = ?chainId and ("claimedBy" is null or "claimedAt" < now() - interval ?claimTimeout) and level >= ?cutoffLevel
-          order by level desc
-          limit 1
-          for update skip locked
-          )
-        returning hash, level, chain, "claimedBy", "claimedAt" at time zone 'UTC', "parsedParent", "parsedAccusations"
-        |] <&> fmap (\(a,b,c,d,e,f,g) -> BlockTodo a b c d e f g)
-    -- c.f. https://blog.2ndquadrant.com/what-is-select-skip-locked-for-in-postgresql-9-5/
-    -- Note that we don't actually do a very long-running transaction here,
-    -- since we're doing something idempotent and it's okay for backends to
-    -- step on each other as long as it's rare, so it's better to let
-    -- leases on work items time out and let other backends just steal them,
-    -- rather than making postgres the central arbiter of locking.
-
-    for_ (queuedBlockOrNot ^.. _Right . traverse) $ \queuedBlock -> (either ($(logErrorSH) . cacheErrorLogMessage "blockWorker") pure =<<) $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
-      $(logDebug) $ "Scrape block " <> toBase58Text (_blockTodo_hash queuedBlock) <> "."
-      couldBeBlock <- unliftEither $ nodeQueryDataSourceSafe $ NodeQuery_Block (_blockTodo_hash queuedBlock)
+blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+  headBlockOrErr <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ fmap fst getLatestProtocolConstants
+  whenRight headBlockOrErr $ \headBlock -> do
+    let historyLength = 720
+        headBlockLevel = headBlock ^. level
+        headBlockHash = headBlock ^. hash
+        cutoffLevel = headBlockLevel - historyLength
+        chainId = _nodeDataSource_chain nds
+    blocksOrErr <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash historyLength
+    (parsedAccusationBlocks :: Set BlockHash) <- fmap (Set.fromList . fmap fromOnly) $ runDb (Identity db) [queryQ|
+        select "hash" from "AccusationBlock" where "level" between ?cutoffLevel and ?headBlockLevel and "chain" = ?chainId
+      |]
+    whenRight blocksOrErr $ \blocks -> for_ blocks $ \blockHash -> do
+      couldBeBlock <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
       case couldBeBlock of
         Left (CacheError_RpcError (RpcError_UnexpectedStatus _url 404 _)) ->
-          $(logDebugSH) ("blockWorker"::Text,"Error (404) in retrieving block from available nodes"::Text,toBase58Text (_blockTodo_hash queuedBlock))
+          $(logDebugSH) ("blockWorker" :: Text, "Error (404) in retrieving block from available nodes" :: Text, toBase58Text blockHash)
         Left (CacheError_NoSuitableNode q reasons) ->
-          $(logDebugSH) ("blockWorker"::Text, noSuitableNodeLogMessage q reasons)
-        Left e -> nqThrowError e
-        Right block -> do
-          let blockHash = block ^. hash
+          $(logDebugSH) ("blockWorker" :: Text, noSuitableNodeLogMessage q reasons)
+        Left CacheError_NotEnoughHistory -> $(logDebugSH) ("blockWorker" :: Text, "Not enough history" :: Text, toBase58Text blockHash)
+        Left e -> $(logErrorSH) $ cacheErrorLogMessage "blockWorker" e
+        Right block -> when (Set.notMember blockHash parsedAccusationBlocks) $ do
+          let blockLevel = block ^. level
+          void $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $
+            blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
+          void $ runDb (Identity db) [executeQ|
+            insert into "AccusationBlock" ("hash", "level", "chain")
+            values (?blockHash, ?blockLevel, ?chainId)
+          |]
 
-          let parentHash = block ^. predecessor
-              parentLevel = block ^. level - 1
-           in void [executeQ|
-                insert into "BlockTodo" (hash, level, chain, "claimedBy", "claimedAt", "parsedParent", "parsedAccusations")
-                values (?parentHash, ?parentLevel, ?chainId, null, null, false, false)
-                on conflict do nothing
-                |]
-
-          blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
-
-          void [executeQ|
-            update "BlockTodo"
-            set "claimedBy" = null,
-                "claimedAt" = null,
-                "parsedParent" = true,
-                "parsedAccusations" = true
-            where chain = ?chainId and hash = ?blockHash
-            |]
+    void $ runDb (Identity db) [executeQ|
+      delete from "AccusationBlock" where "level" < ?cutoffLevel and "chain" = ?chainId;
+    |]
 
 -- TODO: This could use a better abstraction here.
 insertAccusationsV9

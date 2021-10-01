@@ -837,16 +837,16 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     keys:
       - name: Accusation_hash
         default: true
-  - entity: BlockTodo
+  - entity: AccusationBlock
     autoKey: null
     constructors:
-      - name: BlockTodo
+      - name: AccusationBlock
         uniques:
-          - name: BlockTodo_hash
+          - name: AccusationBlock_hash
             type: primary
-            fields: [_blockTodo_hash]
+            fields: [_accusationBlock_hash, _accusationBlock_chain]
     keys:
-      - name: BlockTodo_hash
+      - name: AccusationBlock_hash
         default: true
   - embedded: DeletableRow
   - entity: BakerDaemon
