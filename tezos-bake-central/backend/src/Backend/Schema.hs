@@ -346,6 +346,7 @@ data RawCacheEntry = RawCacheEntry
   { _rawCacheEntry_chainId :: !ChainId
   , _rawCacheEntry_key :: !(Json Aeson.Value)
   , _rawCacheEntry_value :: !LBS.ByteString
+  , _rawCacheEntry_addedAt :: !UTCTime
   } deriving (Eq, Generic, Show, Typeable)
 instance HasId RawCacheEntry
 

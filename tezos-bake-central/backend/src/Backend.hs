@@ -457,7 +457,8 @@ backendImpl cfg serve = do
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
-      addFinalizer =<< cacheWorker 90 dataSrc
+      let dbCacheTTL = 60 * 60 -- 1 hour
+      addFinalizer =<< cacheWorker 90 dbCacheTTL dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db

@@ -10,6 +10,7 @@ import Control.Concurrent.STM (TVar, atomically, orElse)
 import Control.Monad.Catch (catch, SomeException(..))
 import Control.Monad.Logger (logDebug, logDebugNS)
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LBS
 import Data.Dependent.Map (DSum (..))
 import qualified Data.Dependent.Map as DMap
 import Data.Either (partitionEithers)
@@ -18,44 +19,37 @@ import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
 import Database.Groundhog.Postgresql (Postgresql(..))
 import Database.PostgreSQL.Simple.SqlQQ (sql)
-import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Backend.DB.PsqlSimple (executeMany)
+import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB.PsqlSimple (executeMany, executeQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Json (..))
-
-import Tezos.Types (ChainId)
 
 import Backend.CachedNodeRPC (CacheLine (..), NodeDataSource (..), NodeQuery (..), RpcResult(..))
 import Backend.Common (workerWithDelay)
 import Backend.STM (MonadSTM (liftSTM), readTVar', writeTVar')
-import Backend.Schema (RawCacheEntry (..))
 import ExtraPrelude
 
 classifyCacheEntry
   :: (MonadSTM m)
-  => ChainId
-  -> UTCTime
+  => UTCTime
   -> DSum NodeQuery (Compose TVar CacheLine)
-  -> m (Maybe (Either RawCacheEntry (DSum NodeQuery (Compose TVar CacheLine))))
-classifyCacheEntry chainId expireTime (q :=> Compose cx) =
+  -> m (Maybe (Either (Json Aeson.Value, LBS.ByteString) (DSum NodeQuery (Compose TVar CacheLine))))
+classifyCacheEntry expireTime (q :=> Compose cx) =
   readTVar' cx <&> \(CacheLine result used dirty) -> if used < expireTime
     then
       case dirty of
         Nothing ->
-          Just $ Left RawCacheEntry
-            { _rawCacheEntry_chainId = chainId
-            , _rawCacheEntry_key = Json (Aeson.toJSON q)
-            , _rawCacheEntry_value = _rpcResult_raw result
-            }
+          Just $ Left (Json (Aeson.toJSON q), _rpcResult_raw result)
         Just _ -> Nothing
     else
       Just $ Right $ q :=> Compose cx
 
-cacheWorker :: NominalDiffTime -> NodeDataSource -> IO (IO ())
-cacheWorker delay dsrc = workerWithDelay "cacheWorker" (pure delay) $ \_ -> do
+cacheWorker :: NominalDiffTime -> NominalDiffTime -> NodeDataSource -> IO (IO ())
+cacheWorker delay dbCacheTTL dsrc = workerWithDelay "cacheWorker" (pure delay) $ \_ -> do
   let maxTTL = delay * 2
   expireTime <- addUTCTime maxTTL <$> getCurrentTime
   compactCache expireTime dsrc
+  trimCache dbCacheTTL dsrc
 
 compactCache :: UTCTime -> NodeDataSource -> IO ()
 compactCache expireTime dsrc = do
@@ -68,23 +62,22 @@ compactCache expireTime dsrc = do
     (writeBackThese, retainThese) <- fmap (partitionEithers . catMaybes) $ for (DMap.toAscList cache) $ \entry ->
       -- If the classification would be retried we just assume this key is still
       -- in active use and should be kept in-memory.
-      liftSTM $ classifyCacheEntry chainId expireTime entry
+      liftSTM $ classifyCacheEntry expireTime entry
         `orElse` pure (Just $ Right entry)
     writeTVar' cacheVar $ DMap.fromAscList retainThese
     pure (writeBackThese, length retainThese)
 
   let db = _nodeDataSource_pool dsrc
   runLoggingEnv (_nodeDataSource_logger dsrc) $ do
+    now <- runDb (Identity db) getTime
     $(logDebug) $ "Flushing cache: " <> tshow (length writeBackThese) <> " aged into database, " <> tshow numRetained <> " kept in-memory"
     runDb (Identity db) $
       void $ executeMany [sql|
-        INSERT INTO "RawCacheEntry" ("chainId", key, value)
-        VALUES (?, ?, ?) ON CONFLICT ("chainId", key) DO NOTHING
+        INSERT INTO "RawCacheEntry" ("chainId", key, value, "addedAt")
+        VALUES (?, ?, ?, ?) ON CONFLICT ("chainId", key) DO NOTHING
         |]
-        [ (chainId, k, v)
-        | entry <- writeBackThese
-        , let k = _rawCacheEntry_key entry
-        , let v = _rawCacheEntry_value entry
+        [ (chainId, k, v, now)
+        | (k, v) <- writeBackThese
         ]
         `catch`
         (\(SomeException e) -> do
@@ -92,3 +85,9 @@ compactCache expireTime dsrc = do
             error "There was a key confilct during cache compaction. Please view the logs\
             \ at namespace \"kiln-debugging\" for more information."
         )
+
+trimCache :: NominalDiffTime -> NodeDataSource -> IO ()
+trimCache dbCacheTTL dsrc = runLoggingEnv (_nodeDataSource_logger dsrc) $ do
+  void $ runDb (Identity (_nodeDataSource_pool dsrc)) [executeQ|
+    DELETE FROM "RawCacheEntry" where EXTRACT (EPOCH FROM now()) - EXTRACT (EPOCH FROM "addedAt") > ?dbCacheTTL
+  |]
