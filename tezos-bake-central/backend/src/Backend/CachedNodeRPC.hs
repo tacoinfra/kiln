@@ -1388,16 +1388,15 @@ tryFetchFromCache chainId q = do
   -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
   -- terrible:
   -- https://www.postgresql.org/message-id/17764.1405993868%40sss.pgh.pa.us
-  resultM :: [(Id RawCacheEntry, RawCacheEntry)] <- nqInDB $ [queryQ|
-    SELECT "id", "chainId", "key", "value"
+  resultM :: [(Id RawCacheEntry, LBS.ByteString)] <- nqInDB $ [queryQ|
+    SELECT "id", "value"
     FROM "RawCacheEntry"
     WHERE "chainId" = ?chainId
       AND "key" = ?qJson
-    |] <&> fmap (\(id_, c, k, v) -> (id_, RawCacheEntry c k v))
+    |] <&> fmap (\(id_, v) -> (id_, v))
   case nonEmpty resultM of
     Nothing -> return Nothing
-    Just ((rid, result) :| _) -> do
-      let raw = _rawCacheEntry_value result
+    Just ((rid, raw) :| _) -> do
       case Aeson.eitherDecode' raw of
         Right v -> return $ Just (RpcResult raw v, rid)
         Left bad -> do
