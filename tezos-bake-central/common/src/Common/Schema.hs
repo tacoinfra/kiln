@@ -379,7 +379,11 @@ data NodeProcessState
   | NodeProcessState_ImportFailed
   | NodeProcessState_ImportTimeout
   | NodeProcessState_GeneratingIdentity
-  deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
+  | NodeProcessState_DownloadingSnapshot
+  | NodeProcessState_DownloadCanceled
+  | NodeProcessState_DownloadComplete
+  | NodeProcessState_DownloadFailed
+  deriving (Eq, Ord, Show, Read, Generic, Typeable)
 
 -- | WARNING: Never remove or modify these cases since they are stored in the DB directly. Adding is ok.
 data ProcessState

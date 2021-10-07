@@ -15,20 +15,25 @@
 module Backend.Snapshot where
 
 import Control.Concurrent
-import Control.Exception.Safe (IOException)
+import Control.Exception.Safe (IOException, try)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
+import Control.Monad.Trans.Resource (MonadUnliftIO, runResourceT)
 import Control.Monad.Logger
+import Data.Conduit.Binary (sinkFileCautious)
 import Data.Int (Int32)
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Time.Clock (NominalDiffTime, UTCTime)
+import Database.Id.Groundhog (fromId)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql(..), (=.), (==.))
 import Rhyolite.Backend.DB (getTime, runDb, project1, MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging
+import Network.HTTP.Client (HttpException, parseRequest)
+import Network.HTTP.Simple (httpSink)
 import Safe
 import qualified Snap.Core as Snap
 import Snap.Util.FileUploads
@@ -38,6 +43,7 @@ import qualified System.Process as Process
 import System.Posix.Signals (signalProcess, sigKILL)
 import Text.Read (readMaybe)
 import Text.Regex.TDFA ((=~))
+import Text.URI (URI, renderStr)
 
 import Tezos.NodeRPC (_cachedHistory_blocks)
 import Tezos.Types
@@ -60,16 +66,12 @@ handleSnapshotUpload
 handleSnapshotUpload appConfig nds lockMVar = do
   liftIO $ createDirectoryIfMissing True uploadTmpLocation
     `catch` (\(e :: IOException) -> runLoggingEnv logger $ $(logWarn) ("Make dir failed: " <> tshow uploadTmpLocation <> "\nError: " <> tshow e))
-  void $ handleFileUploads uploadTmpLocation uploadPolicy partUploadPolicy uploadHandler
+  void $ handleFileUploads uploadTmpLocation defaultUploadPolicy partUploadPolicy uploadHandler
   where
-    inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => Serializable a -> m a
-    inDb = runDb (Identity $ _nodeDataSource_pool nds)
-
     logger = _nodeDataSource_logger nds
-    uploadPolicy = defaultUploadPolicy
     uploadTmpLocation = _appConfig_kilnDataDir appConfig <> "/snapshots_tmp/"
     storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
-    partUploadPolicy _ = allowWithMaximumSize (10*1024*1024*1024) -- 10gb
+    partUploadPolicy _ = allowWithMaximumSize (10 * 1024 * 1024 * 1024) -- 10gb
     withLockRelease m = liftIO $ finally m (tryTakeMVar lockMVar)
 
     takeLock = liftIO $ tryPutMVar lockMVar ()
@@ -89,43 +91,13 @@ handleSnapshotUpload appConfig nds lockMVar = do
           $(logDebug) "Upload successful."
           cleanupDir storeLocation
           let
-            fileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
-            storePath = storeLocation <> fileName
-          (smId, sm) <- inDb $ do
-            now <- getTime
-            let
-              sm = SnapshotMeta
-                { _snapshotMeta_filename = T.pack fileName
-                , _snapshotMeta_storePath = T.pack storePath
-                , _snapshotMeta_uploadTime = now
-                , _snapshotMeta_importError = Nothing
-                , _snapshotMeta_importCompleteTime = Nothing
-                , _snapshotMeta_headBlock = Nothing
-                , _snapshotMeta_headBlockPrefix = Nothing
-                , _snapshotMeta_headBlockLevel = Nothing
-                , _snapshotMeta_headBlockBakeTime = Nothing
-                , _snapshotMeta_control = ProcessControl_Run
-                }
-            deleteAll sm
-            k <- insert sm
-            notify NotifyTag_SnapshotMeta sm
-            pure (k, sm)
+            snapshotFileName = maybe "file" (T.unpack . T.decodeUtf8) $ partFileName p
+            storePath = storeLocation <> snapshotFileName
           liftIO $ do
             renameFile fp storePath
-            forkIO $ withLockRelease $ do
-              let timeoutSeconds = 60*60*10
-              timeout' timeoutSeconds (runLoggingEnv logger $ importSnapshotData appConfig nds sm smId) >>= \case
-                Just _ -> pure ()
-                Nothing -> runLoggingEnv logger $ flip finally (removeFileLogging storePath) $ do
-                  $(logError) "Could not import snapshot: Timeout"
-                  inDb $ do
-                    nodePPid <- project1
-                      ( NodeInternal_idField
-                      , NodeInternal_dataField ~> DeletableRow_dataSelector
-                      ) CondEmpty
-                    for_ nodePPid $ \(nid, pid) -> updateProcessState pid
-                      (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
-                      (ProcessState_Node NodeProcessState_ImportTimeout)
+            forkIO $ withLockRelease $ runLoggingEnv logger $ do
+              (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds
+              importSnapshotData appConfig nds sm smId
 
 cleanupDir :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 cleanupDir dir = do
@@ -142,6 +114,59 @@ cleanupDir dir = do
 -- Jul  6 19:45:44 - shell.snapshots: Setting current head to block BLWxHkBhZfaj
 -- Jul  6 19:45:45 - shell.snapshots: Setting history-mode to full
 -- Jul  6 19:45:46 - shell.snapshots: Successful import from file ./.kiln/snapshots/main.snapshot
+
+handleSnapshotDownload
+  :: forall m. (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m, MonadUnliftIO m)
+  => AppConfig
+  -> NodeDataSource
+  -> URI
+  -> m ()
+handleSnapshotDownload appConfig nds snapshotURI = void $ liftIO $ forkIO $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+  let db = _nodeDataSource_pool nds
+      logger = _nodeDataSource_logger nds
+      dataDir = nodeDataDir appConfig
+  cleanupDir storeLocation
+  nodePPid <- runDb (Identity db) $ project1
+    ( NodeInternal_idField
+    , NodeInternal_dataField ~> DeletableRow_dataSelector
+    ) CondEmpty
+  for_ nodePPid $ \(nid, pid) -> do
+    (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds
+    downloaderThread <- liftIO $ forkIO $ do
+      res <- try $ do
+        request <- parseRequest $ renderStr snapshotURI
+        runResourceT $ httpSink request $ \_ -> sinkFileCautious storePath
+      case res of
+        Left (_ :: HttpException) -> do
+            runLoggingEnv logger $ runDb (Identity db) $
+              updateProcessState pid
+              (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+              (ProcessState_Node NodeProcessState_DownloadFailed)
+        Right _ -> runLoggingEnv logger $ runDb (Identity db) $
+          updateProcessState pid
+            (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+            (ProcessState_Node NodeProcessState_DownloadComplete)
+
+    let
+      cleanUpNode = do
+        runDb (Identity db) $ removeNodeDbImpl (Right ())
+        liftIO $ removeDirectoryRecursive dataDir
+      go = do
+        ps <- fmap headMay $ runDb (Identity db) $ project ProcessData_stateField (AutoKeyField ==. fromId pid)
+        case ps of
+          (Just (ProcessState_Node NodeProcessState_DownloadComplete)) -> do
+            importSnapshotData appConfig nds sm smId
+          (Just (ProcessState_Node NodeProcessState_DownloadCanceled)) -> do
+            liftIO $ killThread downloaderThread
+            cleanUpNode
+          (Just (ProcessState_Node NodeProcessState_DownloadFailed)) -> do
+            cleanUpNode
+          _ -> threadDelay' 1 >> go
+    go
+  where
+    snapshotFileName = "snapshot"
+    storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
+    storePath = storeLocation <> snapshotFileName
 
 data BlockLikeData where
   BlockPrefixHash :: Text -> BlockLikeData
@@ -254,6 +279,32 @@ importSnapshotData appConfig nds sm smId = do
       inDb $ removeNodeDbImpl (Right ())
       liftIO $ removeDirectoryRecursive dataDir
     _ -> pure ()
+
+initSnapshotMeta
+  :: MonadLoggerIO m
+  => FilePath
+  -> FilePath
+  -> NodeDataSource
+  -> m (Key SnapshotMeta BackendSpecific, SnapshotMeta)
+initSnapshotMeta fileName storePath nds = runDb (Identity $ _nodeDataSource_pool nds) $ do
+  now <- getTime
+  let
+    sm = SnapshotMeta
+      { _snapshotMeta_filename = T.pack fileName
+      , _snapshotMeta_storePath = T.pack storePath
+      , _snapshotMeta_uploadTime = now
+      , _snapshotMeta_importError = Nothing
+      , _snapshotMeta_importCompleteTime = Nothing
+      , _snapshotMeta_headBlock = Nothing
+      , _snapshotMeta_headBlockPrefix = Nothing
+      , _snapshotMeta_headBlockLevel = Nothing
+      , _snapshotMeta_headBlockBakeTime = Nothing
+      , _snapshotMeta_control = ProcessControl_Run
+      }
+  deleteAll sm
+  k <- insert sm
+  notify NotifyTag_SnapshotMeta sm
+  pure (k, sm)
 
 updateSnapshotMeta
   :: (PersistBackend m)
