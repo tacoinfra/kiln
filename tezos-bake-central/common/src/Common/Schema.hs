@@ -980,6 +980,8 @@ data SnapshotMeta = SnapshotMeta
   , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
   , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
   , _snapshotMeta_control :: !ProcessControl
+  , _snapshotMeta_mbUri :: !(Maybe URI)
+  , _snapshotMeta_downloadError :: !(Maybe Text)
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId SnapshotMeta
 

@@ -1780,6 +1780,7 @@ nodesTab usingNodeOption =
             title = text "Snapshot download failed."
             desc = do
               el "p" $ text "An error has occured during snapshot download. Check your network connection and provided snapshot URL."
+              el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show error log”."
           renderSplashAlert i title Nothing desc
 
       dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case
@@ -2032,7 +2033,9 @@ nodesTab usingNodeOption =
                     NodeProcessState_ImportTimeout -> Just removeNodeMenu
                     NodeProcessState_GeneratingIdentity -> Just $ startStopNodeMenu *> removeNodeMenu
                     NodeProcessState_DownloadingSnapshot -> Just cancelSnapshotDownloadMenu
-                    NodeProcessState_DownloadFailed -> Just removeNodeMenu -- TODO: add error log here
+                    NodeProcessState_DownloadFailed -> Just $ do
+                      mapM_ showLogMenu (_snapshotMeta_downloadError =<< mSnapshotMeta)
+                      removeNodeMenu
                     NodeProcessState_DownloadCanceled -> Nothing
                     NodeProcessState_DownloadComplete -> Nothing
                   badge :: m ()

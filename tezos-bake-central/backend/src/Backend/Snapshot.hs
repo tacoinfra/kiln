@@ -96,7 +96,7 @@ handleSnapshotUpload appConfig nds lockMVar = do
           liftIO $ do
             renameFile fp storePath
             forkIO $ withLockRelease $ runLoggingEnv logger $ do
-              (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds
+              (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds Nothing
               importSnapshotData appConfig nds sm smId
 
 cleanupDir :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
@@ -131,15 +131,19 @@ handleSnapshotDownload appConfig nds snapshotURI = void $ liftIO $ forkIO $ runL
     , NodeInternal_dataField ~> DeletableRow_dataSelector
     ) CondEmpty
   for_ nodePPid $ \(nid, pid) -> do
-    (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds
+    (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds (Just snapshotURI)
     downloaderThread <- liftIO $ forkIO $ do
       res <- try $ do
         request <- parseRequest $ renderStr snapshotURI
         runResourceT $ httpSink request $ \_ -> sinkFileCautious storePath
       case res of
-        Left (_ :: HttpException) -> do
-            runLoggingEnv logger $ runDb (Identity db) $
-              updateProcessState pid
+        Left (e :: HttpException) -> runLoggingEnv logger $ do
+          let errText = T.pack (show e)
+          $(logError) $ "Snapshot download failed with:" <> errText
+          runDb (Identity db) $ do
+            update [ SnapshotMeta_downloadErrorField =. Just errText ] (AutoKeyField ==. smId)
+            traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
+            updateProcessState pid
               (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
               (ProcessState_Node NodeProcessState_DownloadFailed)
         Right _ -> runLoggingEnv logger $ runDb (Identity db) $
@@ -285,8 +289,9 @@ initSnapshotMeta
   => FilePath
   -> FilePath
   -> NodeDataSource
+  -> Maybe URI
   -> m (Key SnapshotMeta BackendSpecific, SnapshotMeta)
-initSnapshotMeta fileName storePath nds = runDb (Identity $ _nodeDataSource_pool nds) $ do
+initSnapshotMeta fileName storePath nds mbUri = runDb (Identity $ _nodeDataSource_pool nds) $ do
   now <- getTime
   let
     sm = SnapshotMeta
@@ -300,6 +305,8 @@ initSnapshotMeta fileName storePath nds = runDb (Identity $ _nodeDataSource_pool
       , _snapshotMeta_headBlockLevel = Nothing
       , _snapshotMeta_headBlockBakeTime = Nothing
       , _snapshotMeta_control = ProcessControl_Run
+      , _snapshotMeta_mbUri = mbUri
+      , _snapshotMeta_downloadError = Nothing
       }
   deleteAll sm
   k <- insert sm
