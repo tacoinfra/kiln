@@ -1481,6 +1481,11 @@ addNodeModal chain close = ffor (workflow splash) $ \d -> let (c, e) = splitDynP
            showSuccess <- holdDyn False $ leftmost [True <$ showMsg, False <$ hideMsg]
            pure close
 
+data NodeBootstrapMethod
+  = NodeBootstrapMethod_PeerToPeer
+  | NodeBootstrapMethod_SnapshotFile (Maybe File.File)
+  | NodeBootstrapMethod_SnapshotURI (Maybe URI)
+
 startNodeWorkflow :: forall m t js.
   ( MonadAppWidget js t m
   , MonadJSM m
@@ -1493,14 +1498,24 @@ startNodeWorkflow backWF = Workflow $ do
   divClass "ui header" $ text "Start a Kiln Node"
   elClass "h5" "ui header" $ text "Initialize Chain Data From:"
   rec
-    useSnapshot <- holdDyn True (leftmost [True <$ e1, False <$ e2])
-    (e1, mSelectedSnapshot) <- fakeRadioItem useSnapshot $ el "div" $ do
-      el "div" $ text "Snapshot (Recommended)"
+    useSnapshotURI <- holdDyn True (leftmost [True <$ e1, False <$ e2, False <$ e3])
+    useSnapshotFile <- holdDyn False (leftmost [True <$ e2, False <$ e1, False <$ e3])
+    (e1, mSnapshotURI) <- fakeRadioItem useSnapshotURI $ el "div" $ do
+      el "div" $ text "Provide snapshot URL (Recommended)"
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
         el "p" $ text "Make sure that you're using a snapshot from a trusted provider."
-        el "p" $ text "You can download snapshot from one of the providers listed on"
+        el "p" $ text "You can find a link to the snapshot on one of the providers websites listed on"
         el "p" $ hrefLink "https://tezos-kiln.org/" $ text "tezos-kiln.org"
+      uri <- formItem' "" $ uriField "Snapshot URL" ""
+      let mUri = ffor uri $ \case
+            Right uri' -> Just uri'
+            Left _ -> Nothing
+      return mUri
+    (e2, mSelectedSnapshot) <- fakeRadioItem useSnapshotFile $ el "div" $ do
+      el "div" $ text "Provide snapshot file stored locally"
+      divClass "explanation" $ do
+        el "p" $ text "As an alternative you can provide a snapshot file that is stored locally."
       divClass "file-selection" $ do
         rec
           let fileName = headMay <$> _inputElement_files fi
@@ -1510,26 +1525,44 @@ startNodeWorkflow backWF = Workflow $ do
           elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
           fi <- fileInput' $ constDyn ("id" =: "fileId")
         pure fileName
-    (e2, _) <- fakeRadioItem (not <$> useSnapshot) $ divClass "" $ do
-      divClass "" $ text "Peer to Peer Download"
-      divClass "explanation" $ do
-        el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
+    (e3, _) <- fakeRadioItem (do useSnapshotFile' <- useSnapshotFile; useSnapshotURI' <- useSnapshotURI; return $ not $ useSnapshotFile' || useSnapshotURI') $
+      divClass "" $ do
+        divClass "" $ text "Peer to Peer Download"
+        divClass "explanation" $ do
+          el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
 
   let
-    selectedMethod :: Dynamic t (Bool, Maybe File.File)
-    selectedMethod = (,) <$> useSnapshot <*> mSelectedSnapshot
+    selectedMethod :: Dynamic t NodeBootstrapMethod
+    selectedMethod = do
+      useSnapshotFile' <- useSnapshotFile
+      useSnapshotURI' <- useSnapshotURI
+      if useSnapshotFile'
+      then NodeBootstrapMethod_SnapshotFile <$> mSelectedSnapshot
+      else if useSnapshotURI'
+      then NodeBootstrapMethod_SnapshotURI <$> mSnapshotURI
+      else return NodeBootstrapMethod_PeerToPeer
     disabledFlag :: Dynamic t Text
-    disabledFlag = (\m -> if fst m && null (snd m) then "disabled" else "") <$> selectedMethod
+    disabledFlag = do
+      method <- selectedMethod
+      case method of
+        NodeBootstrapMethod_PeerToPeer -> ""
+        NodeBootstrapMethod_SnapshotFile (Just _) -> ""
+        NodeBootstrapMethod_SnapshotURI (Just _) -> ""
+        _ -> "disabled"
   contEv :: Event t () <- uiDynButton (T.unwords . (:["primary"]) <$> disabledFlag) (text "Add Node")
 
   let
-    ev :: Event t (Bool, Maybe File.File)
+    ev :: Event t NodeBootstrapMethod
     ev = tag (current selectedMethod) contEv
-    next = ffor ev $ \(b, s) -> if b
-      then Left s
-      else Right ()
-    launch = filterRight next
-    uploadSnapshotEv = fmapMaybe id $ filterLeft next
+    launch = flip mapMaybe ev $ \case
+      NodeBootstrapMethod_PeerToPeer -> Just ()
+      _ -> Nothing
+    uploadSnapshotEv = flip mapMaybe ev $ \case
+      NodeBootstrapMethod_SnapshotFile f -> f
+      _ -> Nothing
+    downloadSnapshotEv = flip mapMaybe ev $ \case
+      NodeBootstrapMethod_SnapshotURI u -> u
+      _ -> Nothing
   formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
     liftIO $ putStrLn "starting file upload"
     fileToFormValue f
@@ -1540,10 +1573,12 @@ startNodeWorkflow backWF = Workflow $ do
     formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
   for_ mUri $ \uri -> postForms (Uri.render uri) formUploadEv
 
-  launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just NodeProcessState_ImportingSnapshot))
+  launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just (NodeProcessState_ImportingSnapshot, Nothing)))
+  launchedEv3 <- requestingIdentity $ ffor downloadSnapshotEv $ \u ->
+    public (PublicRequest_AddInternalNode $ Just (NodeProcessState_DownloadingSnapshot, Just u))
   launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
 
-  pure ((pure "start-node", leftmost [launchedEv, launchedEv2]), leftmost
+  pure ((pure "start-node", leftmost [launchedEv, launchedEv2, launchedEv3]), leftmost
        [ backWF <$ backEv
        ])
   where
@@ -1739,6 +1774,15 @@ nodesTab usingNodeOption =
                 text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show import log”. Alternatively, removing and starting the Kiln Node again may fix the issue, but is not guaranteed. You may want to verify the snapshot you are using is valid."
           renderSplashAlert i title Nothing desc
 
+        snapshotDownloadFailedAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+          let
+            i = icon "icon-warning big red"
+            title = text "Snapshot download failed."
+            desc = do
+              el "p" $ text "An error has occured during snapshot download. Check your network connection and provided snapshot URL."
+              el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show error log”."
+          renderSplashAlert i title Nothing desc
+
       dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case
         ProcessState_Node NodeProcessState_ImportComplete -> verifySnapshotAlert
         ProcessState_Node NodeProcessState_ImportCanceled -> pure ()
@@ -1746,6 +1790,10 @@ nodesTab usingNodeOption =
         ProcessState_Node NodeProcessState_ImportTimeout -> snapshotImportFailedAlert
         ProcessState_Node NodeProcessState_ImportingSnapshot -> pure ()
         ProcessState_Node NodeProcessState_GeneratingIdentity -> pure ()
+        ProcessState_Node NodeProcessState_DownloadingSnapshot -> pure ()
+        ProcessState_Node NodeProcessState_DownloadFailed -> snapshotDownloadFailedAlert
+        ProcessState_Node NodeProcessState_DownloadCanceled -> pure ()
+        ProcessState_Node NodeProcessState_DownloadComplete -> pure ()
         ProcessState_Initializing -> pure ()
         ProcessState_Failed -> pure ()
         ProcessState_Starting -> pure ()
@@ -1850,6 +1898,12 @@ nodesTab usingNodeOption =
                 (PublicRequest_CancelSnapshotImport <$)
               cancelSnapshotMenu = do
                 tileMenuEntryModal "Cancel Setup" cancelSnapshotModal
+              cancelSnapshotDownloadModal = warningModal "Cancel Snapshot download?"
+                [ "This will stop the snapshot download and remove the Kiln Node. You may create a new Kiln Node at any time." ]
+                "Cancel Download"
+                (PublicRequest_CancelSnapshotDownload <$)
+              cancelSnapshotDownloadMenu = do
+                tileMenuEntryModal "Cancel Download" cancelSnapshotDownloadModal
 
               removeNodeMenu = do
                 let
@@ -1878,6 +1932,10 @@ nodesTab usingNodeOption =
                       NodeProcessState_ImportFailed -> "FAILED"
                       NodeProcessState_ImportTimeout -> "FAILED"
                       NodeProcessState_GeneratingIdentity -> "STARTING"
+                      NodeProcessState_DownloadingSnapshot -> "SETUP"
+                      NodeProcessState_DownloadFailed -> "FAILED"
+                      NodeProcessState_DownloadCanceled -> "SETUP"
+                      NodeProcessState_DownloadComplete -> "SETUP"
                     ProcessState_Starting -> "Starting"
                     ProcessState_Running -> "Running"
                     ProcessState_Failed -> "Failed"
@@ -1917,6 +1975,9 @@ nodesTab usingNodeOption =
                       NodeProcessState_GeneratingIdentity -> divClass "generating-icons" $ do
                         icon "icon-id-badge big"
                         divClass "ui active tiny inline loader blue small" blank
+                      NodeProcessState_DownloadingSnapshot -> divClass "generating-icons" $ do
+                        icon "icon-id-badge big"
+                        divClass "ui active tiny inline loader blue small" blank
                       _ -> blank
                     let
                       subHeader t = divClass "ui sub header" $ text t
@@ -1928,6 +1989,10 @@ nodesTab usingNodeOption =
                       NodeProcessState_ImportFailed -> errorMessage "Snapshot import failed"
                       NodeProcessState_ImportTimeout -> errorMessage "Snapshot import failed"
                       NodeProcessState_GeneratingIdentity -> subHeader "Generating identity"
+                      NodeProcessState_DownloadingSnapshot -> subHeader "Downloading snapshot"
+                      NodeProcessState_DownloadFailed -> errorMessage "Snapshot download failed"
+                      NodeProcessState_DownloadCanceled -> subHeader "Snapshot download canceled"
+                      NodeProcessState_DownloadComplete -> subHeader "Snapshot download complete"
                     divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> "Depending on your hardware, importing a snapshot may take up to a few hours."
                       NodeProcessState_ImportComplete -> "You must verify this snapshot before starting the node."
@@ -1935,6 +2000,10 @@ nodesTab usingNodeOption =
                       NodeProcessState_ImportFailed -> ""
                       NodeProcessState_ImportTimeout -> ""
                       NodeProcessState_GeneratingIdentity -> "Before the node can run it must generate a secure identity to use on the network. This may take several minutes."
+                      NodeProcessState_DownloadingSnapshot -> "Downloading snapshot from the given URL"
+                      NodeProcessState_DownloadFailed -> ""
+                      NodeProcessState_DownloadCanceled -> ""
+                      NodeProcessState_DownloadComplete -> ""
                     when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> do
                       ev <- divClass "buttons" $ uiButtonM "" $ do
                         icon "icon-angle-right"
@@ -1944,7 +2013,12 @@ nodesTab usingNodeOption =
                       text "Taking too Long? "
                       (e, _) <- el' "a" $ text "Cancel import"
                       let ev = domEvent Click e
-                      tellModal $ (ev $>) cancelSnapshotModal
+                      tellModal $ ev $> cancelSnapshotModal
+                    when (nodeState == NodeProcessState_DownloadingSnapshot) $ elClass "p" "explanation" $ do
+                      text "Taking too Long? "
+                      (e, _) <- el' "a" $ text "Cancel download"
+                      let ev = domEvent Click e
+                      tellModal $ ev $> cancelSnapshotDownloadModal
                 ]
                 where
                   menu = case nodeState of
@@ -1958,6 +2032,12 @@ nodesTab usingNodeOption =
                       removeNodeMenu
                     NodeProcessState_ImportTimeout -> Just removeNodeMenu
                     NodeProcessState_GeneratingIdentity -> Just $ startStopNodeMenu *> removeNodeMenu
+                    NodeProcessState_DownloadingSnapshot -> Just cancelSnapshotDownloadMenu
+                    NodeProcessState_DownloadFailed -> Just $ do
+                      mapM_ showLogMenu (_snapshotMeta_downloadError =<< mSnapshotMeta)
+                      removeNodeMenu
+                    NodeProcessState_DownloadCanceled -> Nothing
+                    NodeProcessState_DownloadComplete -> Nothing
                   badge :: m ()
                   badge = tileBadgeImpliedByErrors (Just errors) (Just state)
             dSnapshotMeta <- watchSnapshotMeta

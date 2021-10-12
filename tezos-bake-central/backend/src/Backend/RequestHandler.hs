@@ -19,9 +19,10 @@
 module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
-import Control.Exception.Safe (SomeException, try)
+import Control.Exception.Safe (MonadMask, SomeException, try)
 import Control.Monad.Logger (NoLoggingT(..), MonadLoggerIO, MonadLogger, logError, logInfo, logDebug, logDebugNS, logErrorNS)
 import Control.Monad.Trans.Except
+import Control.Monad.Trans.Resource (MonadUnliftIO)
 import Control.Retry
 import Data.Aeson
 import qualified Data.ByteString.Lazy as LB
@@ -63,8 +64,10 @@ import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
+import Backend.Snapshot (handleSnapshotDownload)
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
+import Backend.Workers.Process (updateProcessState)
 import Backend.Workers.TezosClient (showLedger)
 import Backend.Workers.Node (DataSource, updateDataSource)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
@@ -73,7 +76,7 @@ import Common.Schema
 import ExtraPrelude
 
 requestHandler
-  :: forall m. (MonadBaseNoPureAborts IO m, MonadIO m)
+  :: forall m. (MonadBaseNoPureAborts IO m, MonadIO m, MonadMask m, MonadUnliftIO m)
   => AppConfig
   -> Address
   -> NodeDataSource
@@ -244,42 +247,46 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
-      PublicRequest_AddInternalNode mNodeProcessState -> inDb $ do
-        let ps = maybe ProcessState_Stopped ProcessState_Node mNodeProcessState
-            pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNodeProcessState
-        getInternalNode >>= \case
-          Nothing -> do
-            let processData = ProcessData
-                  { _processData_control = pc
-                  , _processData_state = ps
-                  , _processData_updated = Nothing
-                  , _processData_backend = Nothing
+      PublicRequest_AddInternalNode mNodeProcessState -> do
+        inDb $ do
+          let ps = maybe ProcessState_Stopped (ProcessState_Node . fst) mNodeProcessState
+              pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNodeProcessState
+          getInternalNode >>= \case
+            Nothing -> do
+              let processData = ProcessData
+                    { _processData_control = pc
+                    , _processData_state = ps
+                    , _processData_updated = Nothing
+                    , _processData_backend = Nothing
+                    }
+
+              pdid <- insert' processData
+              nid <- insert' Node
+              insert $ NodeInternal
+                { _nodeInternal_id = nid
+                , _nodeInternal_data = DeletableRow
+                  { _deletableRow_data = pdid
+                  , _deletableRow_deleted = False
                   }
-
-            pdid <- insert' processData
-            nid <- insert' Node
-            insert $ NodeInternal
-              { _nodeInternal_id = nid
-              , _nodeInternal_data = DeletableRow
-                { _deletableRow_data = pdid
-                , _deletableRow_deleted = False
                 }
-              }
-            notify NotifyTag_NodeInternal (nid, Just processData)
-
-          Just (nid, nodeData) -> do
-            processData <- do
-              getId (nodeData ^. deletableRow_data) >>= \case
-                Nothing -> error "NodeInternal ProcessData not found"
-                (Just v) -> pure v
-            when (_deletableRow_deleted nodeData || (ProcessControl_Stop == _processData_control processData)) $ do
-              update
-                [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
-                ]
-                (NodeInternal_idField ==. nid)
-              update [ProcessData_controlField =. pc, ProcessData_stateField =. ps]
-                (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
               notify NotifyTag_NodeInternal (nid, Just processData)
+
+            Just (nid, nodeData) -> do
+              processData <- do
+                getId (nodeData ^. deletableRow_data) >>= \case
+                  Nothing -> error "NodeInternal ProcessData not found"
+                  (Just v) -> pure v
+              when (_deletableRow_deleted nodeData || (ProcessControl_Stop == _processData_control processData)) $ do
+                update
+                  [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
+                  ]
+                  (NodeInternal_idField ==. nid)
+                update [ProcessData_controlField =. pc, ProcessData_stateField =. ps]
+                  (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
+                notify NotifyTag_NodeInternal (nid, Just processData)
+        case mNodeProcessState of
+          Just (NodeProcessState_DownloadingSnapshot, Just u) -> handleSnapshotDownload appConfig nds u
+          _ -> return ()
 
       PublicRequest_AddExternalNode addr alias minPeerConn -> inDb $ do
 
@@ -319,6 +326,15 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
           -- not completed succesfully, so do a force cleanup of the node
           Just ProcessControl_Stop -> removeNodeDbImpl (Right ())
           _ -> update [ SnapshotMeta_controlField =. ProcessControl_Stop ] CondEmpty
+
+      PublicRequest_CancelSnapshotDownload -> inDb $ do
+        getInternalNode >>= \case
+          Nothing -> return ()
+          Just (nid, nodeData) -> do
+            let pdid = nodeData ^. deletableRow_data
+            updateProcessState pdid
+              (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+              (ProcessState_Node NodeProcessState_DownloadCanceled)
 
       PublicRequest_UpdateInternalWorker workerType shouldRun -> inDb $ case workerType of
         WorkerType_Node

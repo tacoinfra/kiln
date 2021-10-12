@@ -605,7 +605,7 @@ manageMenu click menuEl = mdo
 uriField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace)
          => Text -> Text -> m (Dynamic t (Either Text Uri.URI))
 uriField lbl ph = validatedInput validateUri $ def
-  & Txt.setPlaceholder ("e.g. " <> ph)
+  & Txt.setPlaceholder (if ph == "" then "" else "e.g. " <> ph)
   & Txt.setFluid
   & Txt.addLabel (el "label" $ text lbl)
 

@@ -27,6 +27,7 @@ library
     , clientsession
     , colour
     , common
+    , conduit-extra
     , constraints
     , constraints-extras
     , containers
@@ -80,6 +81,7 @@ library
     , reflex
     , reflex-dom-core
     , regex-tdfa
+    , resourcet
     , resource-pool
     , retry
     , rhyolite-backend

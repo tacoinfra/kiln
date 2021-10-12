@@ -35,7 +35,7 @@ data PublicRequest a where
     -> Maybe Int
     -> PublicRequest ()
   PublicRequest_AddInternalNode
-    :: Maybe NodeProcessState
+    :: Maybe (NodeProcessState, Maybe URI)
     -> PublicRequest ()
   PublicRequest_RemoveNode
     :: Either URI ()
@@ -45,6 +45,7 @@ data PublicRequest a where
     -> Bool -- Desired running state
     -> PublicRequest ()
   PublicRequest_CancelSnapshotImport :: PublicRequest ()
+  PublicRequest_CancelSnapshotDownload :: PublicRequest ()
   -- TODO think harder about update versus initial set
   PublicRequest_SetMailServerConfig
     :: MailServerView
