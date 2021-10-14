@@ -177,7 +177,7 @@ backendImpl cfg serve = do
     (maybe (pure Nothing) (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8)) $ _opts_nodeConfigFile cfg)
     (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.nodeConfigFile)
 
-  !(chain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ liftA2 (<|>)
+  !(configChain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ liftA2 (<|>)
     (pure $ _opts_chain cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
@@ -224,20 +224,6 @@ backendImpl cfg serve = do
     (pure $ _opts_rightsHistoryWindow cfg)
     (getConfigFromFile (Just . read . T.unpack) $ configPath Config.rightsHistoryWindow)
 
-  let
-    maybeNamedChain = either Just (const Nothing) chain
-    maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
-    maybeNamedChainOrPaths = fmap Right binaryPaths <|> fmap Left maybeNamedChain
-
-    firstOption :: [IO (Maybe a)] -> IO (Maybe a)
-    firstOption = coerce . fold . (fmap.fmap) (Option . fmap First)
-
-  !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
-    [ pure $ getOption $ _opts_blockscaleApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
-    , pure $ getPublicNodeUri PublicNode_Blockscale =<< maybeNamedChain
-    ]
-
   !(nodes :: Maybe (Map.Map URI (Maybe Text))) <- liftA2 (<|>)
     (pure $ getOption $ _opts_nodes cfg)
     (getConfigFromFile (Just . Config.parseNodesUnsafe) $ configPath Config.nodes)
@@ -267,6 +253,21 @@ backendImpl cfg serve = do
   customChainId <- for nodeConfigFile (computeChainId' binaryPaths) >>= \case
       Nothing -> pure Nothing
       Just e -> either (throwString . T.unpack . T.intercalate ":") (pure . Just . Right) e
+  let
+    chain = fromMaybe configChain customChainId
+
+    maybeNamedChain = either Just (const Nothing) configChain
+    maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
+    maybeNamedChainOrPaths = fmap Right binaryPaths <|> fmap Left maybeNamedChain
+
+    firstOption :: [IO (Maybe a)] -> IO (Maybe a)
+    firstOption = coerce . fold . (fmap.fmap) (Option . fmap First)
+
+  !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
+    [ pure $ getOption $ _opts_blockscaleApiUri cfg
+    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
+    , pure $ getPublicNodeUri PublicNode_Blockscale =<< maybeNamedChain
+    ]
 
   let
     publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
