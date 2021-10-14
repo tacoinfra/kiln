@@ -35,7 +35,7 @@ import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
-import System.Directory (doesDirectoryExist, doesFileExist, removePathForcibly)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removePathForcibly)
 import System.Exit (ExitCode(..))
 import qualified System.FilePath as FilePath
 import System.Process as Proc
@@ -132,7 +132,7 @@ internalNodeWorker appConfig logger db maybePaths = do
         "--net-addr", "0.0.0.0:" <> nodeNetPort
       ]
       ++ nodeExtraArgs
-
+  liftIO $ createDirectoryIfMissing True (nodeDataDir appConfig)
   processWorker
     (\updateState -> withNodeConfig appConfig $ \nodeConfigPath ->
       initNode ! #logger logger ! #config appConfig ! #nodePath nodePath ! #configFile nodeConfigPath ! #db db ! #updateState updateState
