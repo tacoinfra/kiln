@@ -51,7 +51,6 @@ import Reflex.Query.Class (Query (QueryResult, crop))
 import Rhyolite.Schema (Email)
 import Rhyolite.App (PositivePart (..), standardPositivePart)
 import Data.MonoidMap (MonoidMap (..))
-import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common (uriHostPortPath)
@@ -283,7 +282,6 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
   , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
   , _bakeViewSelector_nodeVersions :: !(RangeSelector' (Id Node) (Maybe TezosVersion) a)
-  , _bakeViewSelector_publicVersions :: !(RangeSelector' PublicNode (Maybe TezosVersion) a)
   , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
   , _bakeViewSelector_latestTezosRelease :: !(MaybeSelector (Maybe MajorMinorVersion) a)
   , _bakeViewSelector_parameters :: !(MapSelector ProtocolHash ProtocolIndex a)
@@ -295,8 +293,6 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_periodTesting :: !(MaybeSelector (Maybe PeriodTesting) a)
   , _bakeViewSelector_periodPromotionVote :: !(MaybeSelector (Maybe PeriodPromotionVote) a)
   , _bakeViewSelector_periodAdoption :: !(MaybeSelector (Maybe PeriodAdoption) a)
-  , _bakeViewSelector_publicNodeConfig :: !(RangeSelector PublicNode PublicNodeConfig a)
-  , _bakeViewSelector_publicNodeHeads :: !(RangeSelector' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeViewSelector_upstreamVersion :: !(MaybeSelector UpstreamVersion a)
   , _bakeViewSelector_telegramConfig :: !(MaybeSelector (Maybe TelegramConfig) a)
   , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
@@ -331,7 +327,6 @@ data BakeView a = BakeView
   , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
   , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
   , _bakeView_nodeVersions :: !(RangeView' (Id Node) (Maybe TezosVersion) a)
-  , _bakeView_publicVersions :: !(RangeView' PublicNode (Maybe TezosVersion) a)
   , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
   , _bakeView_latestTezosRelease :: !(MaybeView (Maybe MajorMinorVersion) a)
   , _bakeView_parameters :: !(Common.Vassal.View (MapSelector ProtocolHash ProtocolIndex) a)
@@ -343,8 +338,6 @@ data BakeView a = BakeView
   , _bakeView_periodTesting :: !(MaybeView (Maybe PeriodTesting) a)
   , _bakeView_periodPromotionVote :: !(MaybeView (Maybe PeriodPromotionVote) a)
   , _bakeView_periodAdoption :: !(MaybeView (Maybe PeriodAdoption) a)
-  , _bakeView_publicNodeConfig :: !(RangeView PublicNode PublicNodeConfig a)
-  , _bakeView_publicNodeHeads :: !(RangeView' (Id PublicNodeHead) PublicNodeHead a)
   , _bakeView_upstreamVersion :: !(MaybeView UpstreamVersion a)
   , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
   , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
@@ -446,9 +439,6 @@ cropBakeView vs v = BakeView
   , _bakeView_parameters = cropView (_bakeViewSelector_parameters vs) (_bakeView_parameters v)
   , _bakeView_nodeAddresses = cropView (_bakeViewSelector_nodeAddresses vs) (_bakeView_nodeAddresses v)
   , _bakeView_nodeVersions = cropView (_bakeViewSelector_nodeVersions vs) (_bakeView_nodeVersions v)
-  , _bakeView_publicVersions = cropView (_bakeViewSelector_publicVersions vs) (_bakeView_publicVersions v)
-  , _bakeView_publicNodeConfig = cropView (_bakeViewSelector_publicNodeConfig vs) (_bakeView_publicNodeConfig v)
-  , _bakeView_publicNodeHeads = cropView (_bakeViewSelector_publicNodeHeads vs) (_bakeView_publicNodeHeads v)
   , _bakeView_nodeDetails = cropView (_bakeViewSelector_nodeDetails vs) (_bakeView_nodeDetails v)
   , _bakeView_latestTezosRelease = cropView (_bakeViewSelector_latestTezosRelease vs) (_bakeView_latestTezosRelease v)
   , _bakeView_bakerAddresses = cropView (_bakeViewSelector_bakerAddresses vs) (_bakeView_bakerAddresses v)
@@ -482,8 +472,6 @@ instance Filterable BakeViewSelector where
   mapMaybe f a = BakeViewSelector
     { _bakeViewSelector_config = mapMaybe f $ _bakeViewSelector_config a
     , _bakeViewSelector_parameters = mapMaybe f $ _bakeViewSelector_parameters a
-    , _bakeViewSelector_publicNodeConfig = mapMaybe f $ _bakeViewSelector_publicNodeConfig a
-    , _bakeViewSelector_publicNodeHeads = mapMaybe f $ _bakeViewSelector_publicNodeHeads a
     , _bakeViewSelector_nodeDetails = mapMaybe f $ _bakeViewSelector_nodeDetails a
     , _bakeViewSelector_latestTezosRelease = mapMaybe f $ _bakeViewSelector_latestTezosRelease a
     , _bakeViewSelector_bakerAddresses = mapMaybe f $ _bakeViewSelector_bakerAddresses a
@@ -493,7 +481,6 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_mailServer = mapMaybe f $ _bakeViewSelector_mailServer a
     , _bakeViewSelector_nodeAddresses = mapMaybe f $ _bakeViewSelector_nodeAddresses a
     , _bakeViewSelector_nodeVersions = mapMaybe f $ _bakeViewSelector_nodeVersions a
-    , _bakeViewSelector_publicVersions = mapMaybe f $ _bakeViewSelector_publicVersions a
     , _bakeViewSelector_errors = (fmap.mapMaybe) f $ _bakeViewSelector_errors a
     , _bakeViewSelector_latestHead = mapMaybe f $ _bakeViewSelector_latestHead a
     , _bakeViewSelector_amendment = mapMaybe f $ _bakeViewSelector_amendment a
@@ -520,8 +507,6 @@ instance Filterable BakeView where
   mapMaybe f a = BakeView
     { _bakeView_config = mapMaybe f $ _bakeView_config a
     , _bakeView_parameters = mapMaybe f $ _bakeView_parameters a
-    , _bakeView_publicNodeConfig = mapMaybe f $ _bakeView_publicNodeConfig a
-    , _bakeView_publicNodeHeads = mapMaybe f $ _bakeView_publicNodeHeads a
     , _bakeView_nodeDetails = mapMaybe f $ _bakeView_nodeDetails a
     , _bakeView_latestTezosRelease = mapMaybe f $ _bakeView_latestTezosRelease a
     , _bakeView_bakerAddresses = mapMaybe f $ _bakeView_bakerAddresses a
@@ -531,7 +516,6 @@ instance Filterable BakeView where
     , _bakeView_mailServer = mapMaybe f $ _bakeView_mailServer a
     , _bakeView_nodeAddresses = mapMaybe f $ _bakeView_nodeAddresses a
     , _bakeView_nodeVersions = mapMaybe f $ _bakeView_nodeVersions a
-    , _bakeView_publicVersions = mapMaybe f $ _bakeView_publicVersions a
     , _bakeView_errors = (fmap.mapMaybe) f $ _bakeView_errors a
     , _bakeView_latestHead = mapMaybe f $ _bakeView_latestHead a
     , _bakeView_amendment = mapMaybe f $ _bakeView_amendment a
@@ -563,8 +547,6 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
   u <> v = BakeViewSelector
     { _bakeViewSelector_config = (<>) (_bakeViewSelector_config u) (_bakeViewSelector_config v)
     , _bakeViewSelector_parameters = (<>) (_bakeViewSelector_parameters u) (_bakeViewSelector_parameters v)
-    , _bakeViewSelector_publicNodeConfig = (<>) (_bakeViewSelector_publicNodeConfig u) (_bakeViewSelector_publicNodeConfig v)
-    , _bakeViewSelector_publicNodeHeads = (<>) (_bakeViewSelector_publicNodeHeads u) (_bakeViewSelector_publicNodeHeads v)
     , _bakeViewSelector_nodeDetails = (<>) (_bakeViewSelector_nodeDetails u) (_bakeViewSelector_nodeDetails v)
     , _bakeViewSelector_latestTezosRelease = (<>) (_bakeViewSelector_latestTezosRelease u) (_bakeViewSelector_latestTezosRelease v)
     , _bakeViewSelector_bakerAddresses = (<>) (_bakeViewSelector_bakerAddresses u) (_bakeViewSelector_bakerAddresses v)
@@ -574,7 +556,6 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_mailServer = (<>) (_bakeViewSelector_mailServer u) (_bakeViewSelector_mailServer v)
     , _bakeViewSelector_nodeAddresses = (<>) (_bakeViewSelector_nodeAddresses u) (_bakeViewSelector_nodeAddresses v)
     , _bakeViewSelector_nodeVersions = (<>) (_bakeViewSelector_nodeVersions u) (_bakeViewSelector_nodeVersions v)
-    , _bakeViewSelector_publicVersions = (<>) (_bakeViewSelector_publicVersions u) (_bakeViewSelector_publicVersions v)
     , _bakeViewSelector_errors = (<>) (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
     , _bakeViewSelector_latestHead = (<>) (_bakeViewSelector_latestHead u) (_bakeViewSelector_latestHead v)
     , _bakeViewSelector_amendment = (<>) (_bakeViewSelector_amendment u) (_bakeViewSelector_amendment v)
@@ -601,8 +582,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
   mempty = BakeViewSelector
     { _bakeViewSelector_config = mempty
     , _bakeViewSelector_parameters = mempty
-    , _bakeViewSelector_publicNodeConfig = mempty
-    , _bakeViewSelector_publicNodeHeads = mempty
     , _bakeViewSelector_nodeDetails = mempty
     , _bakeViewSelector_latestTezosRelease = mempty
     , _bakeViewSelector_bakerAddresses = mempty
@@ -612,7 +591,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_mailServer = mempty
     , _bakeViewSelector_nodeAddresses = mempty
     , _bakeViewSelector_nodeVersions = mempty
-    , _bakeViewSelector_publicVersions = mempty
     , _bakeViewSelector_errors = mempty
     , _bakeViewSelector_latestHead = mempty
     , _bakeViewSelector_amendment = mempty
@@ -643,8 +621,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
   mempty = BakeView
     { _bakeView_config = mempty
     , _bakeView_parameters = mempty
-    , _bakeView_publicNodeConfig = mempty
-    , _bakeView_publicNodeHeads = mempty
     , _bakeView_nodeDetails = mempty
     , _bakeView_latestTezosRelease = mempty
     , _bakeView_bakerAddresses = mempty
@@ -656,7 +632,6 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     -- , _bakeView_summaryGraph = mempty
     , _bakeView_nodeAddresses = mempty
     , _bakeView_nodeVersions = mempty
-    , _bakeView_publicVersions = mempty
     , _bakeView_errors = mempty
     , _bakeView_latestHead = mempty
     , _bakeView_amendment = mempty
@@ -683,8 +658,6 @@ instance Semigroup a => Semigroup (BakeView a) where
   u <> v = BakeView
     { _bakeView_config = _bakeView_config u <> _bakeView_config v
     , _bakeView_parameters = _bakeView_parameters u <> _bakeView_parameters v
-    , _bakeView_publicNodeConfig = _bakeView_publicNodeConfig u <> _bakeView_publicNodeConfig v
-    , _bakeView_publicNodeHeads = _bakeView_publicNodeHeads u <> _bakeView_publicNodeHeads v
     , _bakeView_nodeDetails = _bakeView_nodeDetails u <> _bakeView_nodeDetails v
     , _bakeView_latestTezosRelease = _bakeView_latestTezosRelease u <> _bakeView_latestTezosRelease v
     , _bakeView_bakerAddresses = _bakeView_bakerAddresses u <> _bakeView_bakerAddresses v
@@ -696,7 +669,6 @@ instance Semigroup a => Semigroup (BakeView a) where
     -- , _bakeView_graphs = _bakeView_graphs u <> _bakeView_graphs v
     , _bakeView_nodeAddresses = _bakeView_nodeAddresses u <> _bakeView_nodeAddresses v
     , _bakeView_nodeVersions = _bakeView_nodeVersions u <> _bakeView_nodeVersions v
-    , _bakeView_publicVersions = _bakeView_publicVersions u <> _bakeView_publicVersions v
     , _bakeView_errors = _bakeView_errors u <> _bakeView_errors v
     , _bakeView_latestHead = _bakeView_latestHead u <> _bakeView_latestHead v
     , _bakeView_amendment = _bakeView_amendment u <> _bakeView_amendment v

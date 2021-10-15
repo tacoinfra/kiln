@@ -28,7 +28,6 @@ import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 
-import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Backend.CachedNodeRPC
@@ -68,8 +67,6 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
     NotifyTag_NodeInternal :=> args -> runIdentity $ (liftA2 (flip (<>)) alsoEveryBakerSummary) . uncurry handleNodeInternal <$> args
     NotifyTag_NodeDetails :=> args -> runIdentity $ (liftA2 (flip (<>)) alsoEveryBakerSummary) . uncurry handleNodeDetails <$> args
     NotifyTag_Notificatee :=> _eid -> handleNotificatee
-    NotifyTag_PublicNodeConfig :=> args -> runIdentity $ handlePublicNodeConfig . snd <$> args
-    NotifyTag_PublicNodeHead :=> args -> runIdentity $ uncurry handlePublicNodeHead <$> args
     NotifyTag_SnapshotMeta :=> arg -> runIdentity $ handleSnapshotMeta <$> arg
     NotifyTag_TelegramConfig :=> args -> runIdentity $ handleTelegramConfig . snd <$> args
     NotifyTag_TelegramRecipient :=> args -> runIdentity $ uncurry handleTelegramRecipient <$> args
@@ -99,15 +96,8 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     nodeVersionsVS = _bakeViewSelector_nodeVersions aggVS
 
-    publicVersionsVS = _bakeViewSelector_publicVersions aggVS
-
-    publicNodesVS = _bakeViewSelector_publicNodeConfig aggVS
-
-    handleTezosVersion :: Applicative m' => Maybe TezosVersion -> Either PublicNode (Id Node) -> m' (BakeView a)
-    handleTezosVersion tv  = \case
-        Left publicNode -> whenM (viewSelects publicNode publicNodesVS) $
-            pure $ mempty { _bakeView_publicVersions = toRangeView publicVersionsVS [(Bounded publicNode, tv)] }
-        Right nid -> whenM (viewSelects (Bounded nid) nodeAddressesVS) $
+    handleTezosVersion :: Applicative m' => Maybe TezosVersion -> Id Node -> m' (BakeView a)
+    handleTezosVersion tv nid = whenM (viewSelects (Bounded nid) nodeAddressesVS) $
             pure $ mempty { _bakeView_nodeVersions = toRangeView nodeVersionsVS [(Bounded nid, tv)] }
 
     latestHeadVS = _bakeViewSelector_latestHead aggVS
@@ -319,24 +309,6 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       userSupplied <- maybe (pure mempty) k specificLog'
 
       return $ newCount <> newErrors <> fold logNodeSummary <> fold logBakerSummary <> fold bakerAlerts <> userSupplied
-
-    publicNodeConfigVS = _bakeViewSelector_publicNodeConfig aggVS
-
-    handlePublicNodeConfig :: Applicative m' => PublicNodeConfig -> m' (BakeView a)
-    handlePublicNodeConfig pnc =
-      whenM (viewSelects (_publicNodeConfig_source pnc) publicNodeConfigVS) $
-        pure $ mempty { _bakeView_publicNodeConfig = toRangeView1 publicNodeConfigVS (_publicNodeConfig_source pnc) (Just pnc) }
-
-    publicNodeHeadsVS = _bakeViewSelector_publicNodeHeads aggVS
-
-    handlePublicNodeHead :: (Monad m', MonadIO m') => Id PublicNodeHead -> Maybe PublicNodeHead -> m' (BakeView a)
-    handlePublicNodeHead nid pnh = mconcat <$> sequence
-      [ whenM (viewSelects (Bounded nid) publicNodeHeadsVS) $ do
-          pure $ mempty { _bakeView_publicNodeHeads = toRangeView1 publicNodeHeadsVS (Bounded nid) pnh }
-      , whenM (viewSelects () latestHeadVS) $ do
-          latestHead <- liftIO $ atomically $ dataSourceHead nds
-          pure $ mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
-      ]
 
     snapshotMetaVS = _bakeViewSelector_snapshotMeta aggVS
 

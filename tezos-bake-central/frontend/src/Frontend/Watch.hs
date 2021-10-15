@@ -33,7 +33,6 @@ import Rhyolite.Frontend.App (watchViewSelector)
 import Rhyolite.Schema (Email)
 import Safe (minimumMay)
 
-import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.Api
@@ -134,13 +133,6 @@ watchTezosVersion nid = do
     { _bakeViewSelector_nodeVersions = viewRangeAll 1
     }
   return $ ffor theView $ \v' -> MMap.lookup nid $ getRangeView' (_bakeView_nodeVersions v')
-
-watchPublicVersion :: (MonadAppWidget js t m) => Dynamic t PublicNode -> m (Dynamic t (Maybe (Maybe TezosVersion)))
-watchPublicVersion dpn = do
-  theView <- watchViewSelector . pure $ mempty
-    { _bakeViewSelector_publicVersions = viewRangeAll 1
-    }
-  return $ ffor2 theView dpn $ \v' pn -> MMap.lookup pn $ getRangeView' (_bakeView_publicVersions v')
 
 watchBakerAddresses :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerSummary))
 watchBakerAddresses = do
@@ -287,24 +279,6 @@ watchCollectiveNodesStatus alertWindow = do
       of
         Nothing -> Right ()
         Just (Down time) -> Left $ CollectiveNodesFailure_AllNodesDownSince time
-
-watchPublicNodeConfig :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap PublicNode PublicNodeConfig))
-watchPublicNodeConfig =
-  (fmap . fmap) (getRangeView . _bakeView_publicNodeConfig) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
-
-watchPublicNodeConfigValid :: MonadAppWidget js t m => m (Dynamic t (Maybe (MonoidalMap PublicNode PublicNodeConfig)))
-watchPublicNodeConfigValid =
-  (fmap . fmap) (validatingRange getRangeView . _bakeView_publicNodeConfig) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_publicNodeConfig = viewRangeAll 1 }
-
-watchPublicNodeHeads :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap (Id PublicNodeHead) PublicNodeHead))
-watchPublicNodeHeads =
-  (fmap . fmap) (getRangeView' . _bakeView_publicNodeHeads) $
-    watchViewSelector $ pure $ mempty
-      { _bakeViewSelector_publicNodeHeads = viewRangeAll 1 }
 
 watchTelegramConfig :: MonadAppWidget js t m => m (Dynamic t (Maybe (Maybe TelegramConfig)))
 watchTelegramConfig =

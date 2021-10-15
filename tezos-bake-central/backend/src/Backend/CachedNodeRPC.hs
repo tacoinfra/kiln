@@ -288,7 +288,7 @@ instance MonadNodeQuery NodeQueryQueued where
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
 
-  -- Here we examine the internal & external (but not public) nodes before doing the query
+  -- Here we examine the internal & external nodes before doing the query
   -- We keep hold of our candidate nodes right till the end in case we exhaust all of our options
   -- and need to give everything that we tried and what went wrong to the user in a CacheError_NoSuitableNode
   -- error.
