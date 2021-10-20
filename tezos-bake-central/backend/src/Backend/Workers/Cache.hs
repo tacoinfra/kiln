@@ -74,7 +74,9 @@ compactCache expireTime dsrc = do
     runDb (Identity db) $
       void $ executeMany [sql|
         INSERT INTO "RawCacheEntry" ("chainId", key, value, "addedAt")
-        VALUES (?, ?, ?, ?) ON CONFLICT ("chainId", key) DO NOTHING
+        SELECT t."chainId"::bytea, t.key::bytea, convert_to(t.value, 'utf8')::bytea, t."addedAt"::timestamp without time zone
+        FROM (VALUES (?, ?, ?, ?)) AS t ("chainId", key, value, "addedAt")
+        ON CONFLICT ("chainId", key) DO NOTHING
         |]
         [ (chainId, k, v, now)
         | (k, v) <- writeBackThese
