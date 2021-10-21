@@ -148,7 +148,6 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: !BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_ProtocolIndex   :: !ProtocolHash -> NodeQuery ProtocolIndex
   NodeQuery_BakingRights    :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
@@ -729,7 +728,6 @@ priorityChunkSize = 64
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
   NodeQuery_ProtocolConstants ctx -> pure ctx
-  NodeQuery_ProtocolIndex _ctx -> getFittestBranch
   NodeQuery_BakingRights ctx _lvl -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
@@ -939,7 +937,6 @@ validNodes
   -> m [(URI, Either UnsuitableNodeReason VeryBlockLike)]
 validNodes nodes q = case q of
   NodeQuery_ProtocolConstants ctx -> findNodes <$> getLvl ctx
-  NodeQuery_ProtocolIndex _ctx -> pure $ (\(u,_,_) -> (u, Left UnsuitableNodeReason_ProtocolIndex)) <$> nodes -- only OS public node can do this query
   NodeQuery_BakingRights _ctx lvls -> pure $ findNodes $ Just $ Set.findMin lvls
   NodeQuery_EndorsingRights _ctx lvls -> pure $ findNodes $ Just $ Set.findMin lvls
   NodeQuery_Block ctx -> findNodes <$> getLvl ctx
@@ -1000,7 +997,7 @@ nodeQueryDataSourceImpl = nodeQueryImpl myNodeRPC ChainTag_Hash
 
 nodeQueryImpl
   :: forall a chain repr.
-   ( QueryBlock repr, QueryHistory repr, QueryProtocolIndex repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
+   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
      => repr c -> m (RpcResult c))
@@ -1013,7 +1010,6 @@ nodeQueryImpl
   -> IO (Either CacheError (RpcResult a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
-  NodeQuery_ProtocolIndex protoHash -> nodeRPC' $ rProtocolIndex chainId protoHash
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.map Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -1069,16 +1065,6 @@ data OsNodeQuery a = OsNodeQuery
   { _osNodeQuery_route :: Text
   , _osNodeQuery_params :: [(Text, Text)]
   }
-
-class QueryProtocolIndex (repr :: * -> *) where
-  rProtocolIndex :: ChainId -> ProtocolHash -> repr ProtocolIndex
-
-instance QueryProtocolIndex OsNodeQuery where
-  rProtocolIndex = chainApi2 "/protocol-index" $ \protocol ->
-    [("protocol", toBase58Text protocol)]
-
-instance QueryProtocolIndex RpcQuery where
-  rProtocolIndex = error "rProtocolIndex not possible for RpcQuery"
 
 type instance ChainType OsNodeQuery = ChainId
 
@@ -1313,7 +1299,6 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
       UnsuitableNodeReason_MissingBlockInfo -> "Kiln has not yet retrieved the latest block head for this node"
       UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
       UnsuitableNodeReason_BranchNotContained b -> "The block '" <> tshow b <> "' could not be found within the kiln's known history for this node."
-      UnsuitableNodeReason_ProtocolIndex -> "Kiln is looking for the ProtocolIndex, which only the public node can find. If you see this, then it may indicate that the public node is down and the alternative means of building the protocol index from the node aren't working (your node may not have enough history to do this yet)."
 
     prettyLevel = tshow . unRawLevel
 
@@ -1469,19 +1454,15 @@ getProtocolIndex branch protoHash = do
   history <- nqAtomically $ readTVar' historyVar
   case headMay existingEntries of
     Just existing -> pure existing
-    Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
+    Nothing -> nqTry (buildProtocolIndex branch protoHash history) >>= \case
       Right p' -> do
-        insert p'
         pure p'
-      Left _ -> nqTry (buildProtocolIndex branch protoHash history) >>= \case
-        Right p' -> do
-          pure p'
-        Left e -> do
-          -- as a last measure just fetch the protocol constants without building the index
-          p <- fetchProtocolForBlock chainId branch
-          if p ^. protocolIndex_hash == protoHash
-            then pure p
-            else nqThrowError e
+      Left e -> do
+        -- as a last measure just fetch the protocol constants without building the index
+        p <- fetchProtocolForBlock chainId branch
+        if p ^. protocolIndex_hash == protoHash
+          then pure p
+          else nqThrowError e
 
 buildProtocolIndex
   :: forall m
