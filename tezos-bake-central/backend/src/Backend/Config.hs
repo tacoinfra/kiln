@@ -76,7 +76,6 @@ validateTrulyCustom json =
    validationNel (maybe (Left "network unavailable") Right (json ^? key "network" . _Object)) >>=? \(Object -> network) ->
        validationNel (maybe (Left "network.genesis unavailable") Right (network ^? key "genesis" . _Object)) >>=? \(Object -> genesis) ->
           do
-            validationNel $ maybe (Left "data-dir unavailable") Right (json ^? key "data-dir")
             validationNel $ maybe (Left "network.genesis.timestamp unavailable") Right (genesis ^? key "timestamp")
             validationNel $ maybe (Left "network.genesis.block unavailable") Right (genesis ^? key "block")
             validationNel $ maybe (Left "network.genesis.protocol unavailable") Right (genesis ^? key "protocol")
@@ -87,10 +86,10 @@ validateTrulyCustom json =
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
     </> case _appConfig_kilnNodeConfig appConfig of
-          Left json -> fromMaybe (error jsonOrEnvErrMsg) $ getDataDir json <|> _appConfig_tezosNodeEnvVar appConfig
+          Left json -> fromMaybe "tezos-node" $ getDataDir json <|> _appConfig_tezosNodeEnvVar appConfig
           Right ncf -> fromMaybe "tezos-node" (_nodeConfigFile_dataDir ncf) </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
-  where getDataDir json = T.unpack <$> json ^? key "data-dir" . _String
-        jsonOrEnvErrMsg = "Either specify data-dir in JSON config or point to the data directory in the TEZOS_NODE_DIR environment variable]"
+  where
+    getDataDir json = T.unpack <$> json ^? key "data-dir" . _String
 
 tezosClientDataDir :: AppConfig -> FilePath
 tezosClientDataDir appConfig = _appConfig_kilnDataDir appConfig </> "tezos-client"

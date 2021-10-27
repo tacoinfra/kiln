@@ -465,6 +465,7 @@ runClientCommand'
   -> ([Text] -> [Text] -> Either e Text)
   -> ExceptT e m Text
 runClientCommand' nodeRpcURI clientDataDir maybePaths mTimeout args handleError = do
+  liftIO $ createDirectoryIfMissing True clientDataDir
   le <- askLoggerIO
   let procSpec = Process.proc (clientPath maybePaths) (["--endpoint", T.unpack $ render nodeRpcURI, "--base-dir", clientDataDir] ++ args)
       runProc = runLoggingEnv (LoggingEnv le) $ readCreateProcessWithExitCodeWithLogging procSpec ""
