@@ -257,10 +257,9 @@ will be notified if mainnet is updated.
 Kiln produces a notification if a monitored node:
 
 - Is on the wrong network
-- Is not on the fittest branch
+- Is unsynced with the network
 - Falls behind the current head block level
 - Cannot be reached by the Monitoring Software (e.g. is offline)
-- Reports fewer than a specified number of active peer connections
 
 ### Baker Monitoring
 
@@ -270,10 +269,7 @@ Kiln produces a notification if a monitored baker:
 - Is accused of double baking or double endorsing
 - Has been deactivated due to inactivity or will be within one cycle
 
-*Note: To monitor a baker, you must be monitoring a node. Public Nodes
-provide general information about the network, but they do not provide
-full block history or baking and endorsing rights, which are required
-for monitoring a baker.*
+*Note: To monitor a baker, you must be monitoring a node.*
 
 ### Notification Pathways
 
@@ -317,19 +313,13 @@ e.g. `http://host.docker.internal:8732`. `localhost` will also not
 work on Linux if you run the container without `--network host`, but
 you can't use `host.docker.internal` in this case.
 
-Once you’ve added at least one node or a Public Node, the Dashboard
+Once you’ve added at least one node, the Dashboard
 header will show the network status.
 
 *Note: This assumes that you are running at least one Tezos
 node. See [Tezos
 documentation](https://tezos.gitlab.io/introduction/howtoget.html) on
 various ways of running a node*
-
-### Adding public nodes
-
-Click *Add Node* from the left panel and click one of the tiles under
-*Connect to a Public Node*. Clicking again will disable the Public
-Node.
 
 ### Monitoring a baker
 
@@ -338,10 +328,7 @@ Click *Add Baker* from the left panel and input the public key hash
 Monitored Nodes to gather information about that baker from the
 blockchain. This initial query can take up to a few hours.
 
-*Note: To monitor a baker, you must be monitoring a node - public
-nodes are not sufficient. Public Nodes provide information about the
-current head block, but they do not provide full block history of
-baking and endorsing rights.*
+*Note: To monitor a baker, you must be monitoring a node.*
 
 ### Configuring Telegram notifications
 

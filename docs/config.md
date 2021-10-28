@@ -40,10 +40,6 @@ Upstream Git branch to use for checking upgrades. If blank, use contents of
 Name of a network (mainnet, babylonnet, zeronet) or a network ID to monitor. If
 blank, use contents of 'config/network'. If also blank, default to 'mainnet'.
 
-## serve-node-cache BOOL
-
-Serve Node Cache.  Default disabled.
-
 ## tzscan-api-uri URL
 
 Custom tzscan API URL.  Default none.
@@ -51,10 +47,6 @@ Custom tzscan API URL.  Default none.
 ## blockscale-api-uri URL
 
 Custom Blockscale API URL.  Default none.
-
-## obsidian-api-uri URL
-
-Custom Obsidian API URL.  Default none.
 
 ## nodes URIS
 
