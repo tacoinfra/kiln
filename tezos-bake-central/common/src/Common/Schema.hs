@@ -431,6 +431,7 @@ data NodeDetailsData = NodeDetailsData
   , _nodeDetailsData_networkStat :: !NetworkStat
   , _nodeDetailsData_fitness :: !(Maybe Fitness)
   , _nodeDetailsData_updated :: !(Maybe UTCTime)
+  , _nodeDetailsData_synchronisationThreshold :: !Word8
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance HasId NodeDetailsData where
   type IdData NodeDetailsData = Id Node
@@ -448,6 +449,7 @@ mkNodeDetails = NodeDetailsData
   , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
   , _nodeDetailsData_fitness = Nothing
   , _nodeDetailsData_updated = Nothing
+  , _nodeDetailsData_synchronisationThreshold = 4
   }
 
 getNodeHeadBlock :: NodeDetailsData -> Maybe VeryBlockLike
@@ -776,6 +778,15 @@ data ErrorLogNodeInvalidPeerCount = ErrorLogNodeInvalidPeerCount
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeInvalidPeerCount where
   type IdData ErrorLogNodeInvalidPeerCount = Id ErrorLog
+
+data ErrorLogNodeInsufficientPeers = ErrorLogNodeInsufficientPeers
+  { _errorLogNodeInsufficientPeers_log :: !(Id ErrorLog)
+  , _errorLogNodeInsufficientPeers_node :: !(Id Node)
+  , _errorLogNodeInsufficientPeers_synchronisationThreshold :: !Word8
+  , _errorLogNodeInsufficientPeers_actualPeerCount :: !Word64
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNodeInsufficientPeers where
+  type IdData ErrorLogNodeInsufficientPeers = Id ErrorLog
 
 -- | Bakers in the daemon sense, not delegate sense
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
