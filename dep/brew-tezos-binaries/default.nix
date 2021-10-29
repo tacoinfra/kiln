@@ -1,28 +1,27 @@
 { pkgs }:
-# https://github.com/serokell/tezos-packaging/releases/download/v9.0-rc1-1/tezos-accuser-009-PsFLoren-v9.0-rc1-1.${macos_version}.bottle.tar.gz
 with pkgs;
 let
-  outer-version = "v10.2-1";
+  outer-version = "v10.3-1";
   macos_version = "mojave";
     tezos-admin-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "09jfnwvrfzj01xd2r8p9i9lp98kbjp29l41mk7w6l8aqk52xh1rs";
+      sha256 = "0xbyv28p9rrg3dw9plx1m2n5cb0bl3klsfz8xwh1av35814q6m0z";
     };
     tezos-baker-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0w4ppa09frag4nnpyn5d63vjxjgql458x14x44z2l87zi6kwjkz0";
+      sha256 = "0ck26zz0gp1n03nwmsjy3qwsfqm5bmr2pi1i3mw1w8f6nl5gf184";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1gni14w1k21dd43wnmmxbddsrd1dpyl4wc4ya20iswkcwzjcv75j";
+      sha256 = "0h5wgv2k61ra4rbp2nq9da639zfminrgjgr5x4k8hbkii4wls7z8";
     };
     tezos-endorser-010-PtGRANAD = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-010-PtGRANAD-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0h3l3q3h4fdy5kv8nv41sc61cj2f509vbhfavfl5nzv4mzgfpw8c";
+      sha256 = "0lp7inq1hf9imvmdj8r0ryqjsaqmincxccw2bqpmmh6qd9m577sp";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1rh1hnfip7zb3pn6k9144hf61m8fmf5hnv5vg62xmi1iz51n9i4z";
+      sha256 = "01hrd5rf3imavsa8ps2i02v9npq185fsa5kx1v1yjwnxzfpwawkz";
     };
 
 in stdenv.mkDerivation rec {
@@ -48,6 +47,4 @@ in stdenv.mkDerivation rec {
   cp ${tezos-node}/${outer-version}/bin/tezos-node $out/bin/tezos-node
   chmod +x $out/bin/tezos-node
   '';
-
-
-  }
+}
