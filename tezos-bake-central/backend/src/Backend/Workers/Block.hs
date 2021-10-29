@@ -15,20 +15,21 @@
 
 module Backend.Workers.Block where
 
-import Control.Monad.Catch (MonadMask)
-import Control.Monad.Logger (logErrorSH, logDebugSH)
-import Data.ByteString as BS
+import Control.Monad.Catch (MonadMask, throwM)
+import Control.Monad.Logger (logErrorSH)
+import Data.ByteString as BS (ByteString)
 import Data.Either.Combinators (whenRight)
 import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
-import qualified Data.Set as Set (fromList, notMember, singleton)
+import qualified Data.Set as Set (singleton)
 import Data.Time (NominalDiffTime)
 import Database.Groundhog.Core (PersistBackend)
 import Database.Groundhog.Postgresql (Postgresql(..))
 import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, fromOnly, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
+import Safe (headMay)
 
 import Tezos.Common.Binary as TBin
 import Tezos.NodeRPC
@@ -58,31 +59,35 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
         headBlockHash = headBlock ^. hash
         cutoffLevel = headBlockLevel - historyLength
         chainId = _nodeDataSource_chain nds
-    blocksOrErr <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash historyLength
-    (parsedAccusationBlocks :: Set BlockHash) <- fmap (Set.fromList . fmap fromOnly) $ runDb (Identity db) [queryQ|
-        select "hash" from "AccusationBlock" where "level" between ?cutoffLevel and ?headBlockLevel and "chain" = ?chainId
-      |]
-    whenRight blocksOrErr $ \blocks -> for_ blocks $ \blockHash -> do
-      couldBeBlock <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
-      case couldBeBlock of
-        Left (CacheError_RpcError (RpcError_UnexpectedStatus _url 404 _)) ->
-          $(logDebugSH) ("blockWorker" :: Text, "Error (404) in retrieving block from available nodes" :: Text, toBase58Text blockHash)
-        Left (CacheError_NoSuitableNode q reasons) ->
-          $(logDebugSH) ("blockWorker" :: Text, noSuitableNodeLogMessage q reasons)
-        Left CacheError_NotEnoughHistory -> $(logDebugSH) ("blockWorker" :: Text, "Not enough history" :: Text, toBase58Text blockHash)
-        Left e -> $(logErrorSH) $ cacheErrorLogMessage "blockWorker" e
-        Right block -> when (Set.notMember blockHash parsedAccusationBlocks) $ do
-          let blockLevel = block ^. level
-          void $ flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $
-            blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
-          void $ runDb (Identity db) [executeQ|
-            insert into "AccusationBlock" ("hash", "level", "chain")
-            values (?blockHash, ?blockLevel, ?chainId)
-          |]
-
-    void $ runDb (Identity db) [executeQ|
-      delete from "AccusationBlock" where "level" < ?cutoffLevel and "chain" = ?chainId;
+    (mbLargestParsedLvl :: Maybe RawLevel) <- fmap (headMay . fmap fromOnly) $ runDb (Identity db) [queryQ|
+      select "level" from "AccusationBlock" where "chain" = ?chainId order by "level" desc limit 1
     |]
+    let blockQueryLength = min historyLength $ headBlockLevel - fromMaybe 0 mbLargestParsedLvl
+    blocksOrErr <- if blockQueryLength > 0
+      then flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash blockQueryLength
+      else return $ Right mempty
+
+    whenRight blocksOrErr $ \blocks -> do
+      -- Parse blocks from older to newer to have a correct 'mbLargestParsedLvl'
+      for_ (Seq.reverse blocks) $ \blockHash -> do
+        couldBeBlock <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+          block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
+          blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
+          return block
+        case couldBeBlock of
+          -- Finish blocks parsing if error occurs in order to avoid missing some blocks in 'AccusationBlock'.
+          Left e -> do
+            $(logErrorSH) $ cacheErrorLogMessage "blockWorker" e
+            throwM e
+          Right block -> do
+            let blockLevel = block ^. level
+            void $ runDb (Identity db) [executeQ|
+              insert into "AccusationBlock" ("hash", "level", "chain")
+              values (?blockHash, ?blockLevel, ?chainId)
+            |]
+      void $ runDb (Identity db) [executeQ|
+        delete from "AccusationBlock" where "level" < ?cutoffLevel and "chain" = ?chainId;
+      |]
 
 -- TODO: This could use a better abstraction here.
 insertAccusationsV9

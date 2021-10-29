@@ -94,7 +94,7 @@ import Data.Maybe (mapMaybe)
 import Data.Ord (comparing, Down(..))
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
-import qualified Data.Sequence as Seq (filter)
+import qualified Data.Sequence as Seq (filter, (<|))
 import qualified Data.Set as Set
 import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
@@ -859,7 +859,7 @@ nodeQueryDataSourceRaw' q = do
 -- Returns the raw cache value (if found) and an action that will wait on the cache
 -- regardless of whether it was found or required a new request to be queued.
 nodeQueryDataSourceSTM
-  :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
+  :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadLogger n, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
   => (RpcResult a -> b) -> nds -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n b))
 nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
   cache <- readTVar' cacheVar
@@ -1031,7 +1031,7 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
       Just pk -> pure (RpcResult raw pk)
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
-    let blocks = fromMaybe mempty (Map.lookup branch response)
+    let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)
     pure $ RpcResult (Aeson.encode blocks) blocks
   where
     nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO (RpcResult c)
