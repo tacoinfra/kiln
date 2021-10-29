@@ -22,7 +22,6 @@ import Database.Id.Class
 import Rhyolite.Schema (Email)
 import Text.URI (URI)
 
-import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Types
 
 import Common.App (AlertNotificationMethod, MailServerView, WorkerType)
@@ -73,10 +72,6 @@ data PublicRequest a where
     :: PublicRequest ()
   PublicRequest_DismissUpgradeAlert
     :: PublicRequest ()
-  PublicRequest_SetPublicNodeConfig
-    :: PublicNode
-    -> Bool
-    -> PublicRequest ()
   PublicRequest_AddTelegramConfig
     :: Text
     -> PublicRequest ()

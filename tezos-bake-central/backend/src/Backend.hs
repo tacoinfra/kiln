@@ -24,17 +24,14 @@ import Control.Error (hush)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Except (MonadError, runExceptT, throwError)
-import Control.Monad.Logger (NoLoggingT(..), LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn, runStderrLoggingT)
+import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Logger (NoLoggingT(..), LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
 import Data.Dependent.Map (DSum (..))
-import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import Data.Pool (Pool)
-import qualified Data.Random as Random
-import qualified Data.Random.Extras as Random
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -80,9 +77,7 @@ import Text.URI (URI)
 import qualified Text.URI as URI
 
 import Tezos.Common.Chain (identifyChain)
-import Tezos.Common.NodeRPC.Sources (PublicNode (..), getPublicNodeUri)
 import Tezos.History (emptyCache)
-import Tezos.NodeRPC hiding (DataSource)
 import Tezos.Types
 
 import Backend.CachedNodeRPC (NodeDataSource (..))
@@ -105,8 +100,7 @@ import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Cache (cacheWorker)
-import Backend.Workers.Node (DataSource, amendmentProcessWorker, nodeAlertWorker, nodeWorker,
-                             protocolMonitorWorker, publicNodesWorker)
+import Backend.Workers.Node (amendmentProcessWorker, nodeAlertWorker, nodeWorker, protocolMonitorWorker)
 import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker, computeChainId)
 import Backend.Workers.TezosRelease
 import qualified Common.Config as Config
@@ -256,28 +250,11 @@ backendImpl cfg serve = do
   let
     chain = fromMaybe configChain customChainId
 
-    maybeNamedChain = either Just (const Nothing) configChain
+    maybeNamedChain = either Just (const Nothing) chain
     maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
     maybeNamedChainOrPaths = fmap Right binaryPaths <|> fmap Left maybeNamedChain
 
-    firstOption :: [IO (Maybe a)] -> IO (Maybe a)
-    firstOption = coerce . fold . (fmap.fmap) (Option . fmap First)
-
-  !(blockscaleApi :: Maybe (NonEmpty URI)) <- firstOption
-    [ pure $ getOption $ _opts_blockscaleApiUri cfg
-    , getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.blockscaleApiUri
-    , pure $ getPublicNodeUri PublicNode_Blockscale =<< maybeNamedChain
-    ]
-
-  let
-    publicDataSources' :: [(PublicNode, Either NamedChain ChainId, NonEmpty URI)]
-    publicDataSources' = catMaybes
-      [ (,,) <$> pure PublicNode_Blockscale <*> pure chain <*> blockscaleApi
-      ]
-
-  publicDataSources :: [DataSource] <- (traverse . _3) (flip Random.runRVar Random.StdRandom . Random.choice . toList) publicDataSources'
-
-  let !dbSpec = fromMaybe Config.db pgConnStringFile
+    !dbSpec = fromMaybe Config.db pgConnStringFile
 
   httpMgr <- Http.newManager Https.tlsManagerSettings
 
@@ -285,16 +262,7 @@ backendImpl cfg serve = do
     Right chainId -> pure chainId
     Left chainName -> case getNamedChainId chainName of
       Just chainId -> pure chainId
-      -- We're doing some RPC here, which needs logging, but we haven't really
-      -- started yet so where it does log, we log to stderr instead of normally.
-      -- if there's issues, we exit immediately anyhow.
-      Nothing -> case getPublicNodeUri PublicNode_Blockscale chainName of
-        Nothing -> throwString $
-            "Unable to fetch chain ID from foundation node for chain " <> T.unpack (showChain chain)
-        Just uris -> runStderrLoggingT $ runExceptT (runReaderT (nodeRPC rChain) (NodeRPCContext httpMgr (URI.render $ NonEmpty.head uris))) >>= \case
-          Left (e :: RpcError) -> throwString $
-            "Unable to connect to foundation node for chain " <> T.unpack (showChain chain) <> ": " <> show e
-          Right chainId -> pure chainId
+      Nothing -> throwString $" Unable to fetch chain ID chain " <> T.unpack (showChain chain)
 
   withDb dbSpec $ \(coerce -> db) -> withLoggingMinLevel Nothing loggingConfig $ do
     logger <- askLogger
@@ -452,16 +420,15 @@ backendImpl cfg serve = do
 
       let withWs = RhyoliteWs.withWebsocketsConnectionLogging @Snap.Snap (\str e -> runLoggingEnv logger $ $logError $ T.pack $ "Websocket error: " <> str <> " " <> show e)
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs "v3" RhyoliteApp.functorFromWire db
-        (requestHandler appConfig emailFromAddress dataSrc publicDataSources)
+        (requestHandler appConfig emailFromAddress dataSrc)
         (notifyHandler dataSrc)
-        (viewSelectorHandler frontendConfig (preview _Left chain) dataSrc db)
+        (viewSelectorHandler frontendConfig dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
       let dbCacheTTL = 60 * 60 -- 1 hour
       addFinalizer =<< cacheWorker 90 dbCacheTTL dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< publicNodesWorker dataSrc publicDataSources
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< bakerRightsWorker dataSrc rightsHistoryWindow
       addFinalizer =<< bakerWorker appConfig dataSrc

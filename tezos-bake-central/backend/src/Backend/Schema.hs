@@ -99,7 +99,6 @@ import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC (PublicNode (..))
 import Tezos.Types hiding (TestChainStatus)
 
 import Backend.Version (parseVersion)
@@ -123,8 +122,6 @@ data NotifyTag a where
   NotifyTag_NodeInternal :: NotifyTag (Id Node, Maybe ProcessData)
   NotifyTag_NodeDetails :: NotifyTag (Id Node, Maybe NodeDetailsData)
   NotifyTag_Notificatee :: NotifyTag (Id Notificatee)
-  NotifyTag_PublicNodeConfig :: NotifyTag (Id PublicNodeConfig, PublicNodeConfig)
-  NotifyTag_PublicNodeHead :: NotifyTag (Id PublicNodeHead, Maybe PublicNodeHead)
   NotifyTag_SnapshotMeta :: NotifyTag SnapshotMeta
   NotifyTag_TelegramConfig :: NotifyTag (Id TelegramConfig, TelegramConfig)
   NotifyTag_TelegramRecipient :: NotifyTag (Id TelegramRecipient, Maybe TelegramRecipient)
@@ -141,7 +138,7 @@ data NotifyTag a where
   NotifyTag_PeriodAdoption :: NotifyTag (Maybe PeriodAdoption)
   NotifyTag_BakerVote :: NotifyTag (Maybe BakerVote)
   NotifyTag_BakerRegistered :: NotifyTag (PublicKeyHash, Bool)
-  NotifyTag_NodeVersion :: NotifyTag (Either PublicNode (Id Node), Maybe TezosVersion)
+  NotifyTag_NodeVersion :: NotifyTag (Id Node, Maybe TezosVersion)
   NotifyTag_LatestTezosRelease :: NotifyTag (Maybe MajorMinorVersion)
   deriving Typeable
 
@@ -426,9 +423,6 @@ instance FromField SyncState where
 
 instance ToField SyncState where
   toField v = toField (show v)
-
-instance ToField PublicNode where
-  toField = toField . show
 
 deriving instance ToField Tez
 deriving instance FromField Tez
@@ -907,20 +901,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             type: primary
             fields: [_nodeDetails_id]
   - embedded: NodeDetailsData
-  - entity: PublicNodeConfig
-    constructors:
-    - name: PublicNodeConfig
-      uniques:
-        - name: _publicnodeconfig_uniqueness
-          type: constraint
-          fields: [_publicNodeConfig_source]
-  - entity: PublicNodeHead
-    constructors:
-    - name: PublicNodeHead
-      uniques:
-        - name: _publicnodehead_uniqueness
-          type: constraint
-          fields: [_publicNodeHead_source, _publicNodeHead_chain]
   - embedded: BakeEfficiency
   - embedded: NetworkStat
   - entity: Baker
@@ -987,7 +967,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
             default: "True"
   - primitive: RightKind
   - primitive: UpgradeCheckError
-  - primitive: PublicNode
   - primitive: NamedChain
   - entity: ErrorLog
 
@@ -1205,8 +1184,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''Notificatee, 'NotificateeKey)
   , (''PeriodProposal, 'PeriodProposalKey)
   , (''ProcessData, 'ProcessDataKey)
-  , (''PublicNodeConfig, 'PublicNodeConfigKey)
-  , (''PublicNodeHead, 'PublicNodeHeadKey)
   , (''SnapshotMeta, 'SnapshotMetaKey)
   , (''TelegramConfig, 'TelegramConfigKey)
   , (''TelegramRecipient, 'TelegramRecipientKey)
@@ -1420,8 +1397,6 @@ instance ArgDict c NotifyTag where
     , c (Id Node, Maybe ProcessData)
     , c (Id Node, Maybe NodeDetailsData)
     , c (Id Notificatee)
-    , c (Id PublicNodeConfig, PublicNodeConfig)
-    , c (Id PublicNodeHead, Maybe PublicNodeHead)
     , c SnapshotMeta
     , c (Id TelegramConfig, TelegramConfig)
     , c (Id TelegramRecipient, Maybe TelegramRecipient)
@@ -1439,7 +1414,7 @@ instance ArgDict c NotifyTag where
     , c (Maybe PeriodAdoption)
     , c (Maybe BakerVote)
     , c (PublicKeyHash, Bool)
-    , c (Either PublicNode (Id Node), Maybe TezosVersion)
+    , c (Id Node, Maybe TezosVersion)
     , c (Maybe MajorMinorVersion)
     )
   argDict = \case
@@ -1470,8 +1445,6 @@ instance ArgDict c NotifyTag where
     NotifyTag_NodeInternal -> Dict
     NotifyTag_NodeDetails -> Dict
     NotifyTag_Notificatee -> Dict
-    NotifyTag_PublicNodeConfig -> Dict
-    NotifyTag_PublicNodeHead -> Dict
     NotifyTag_SnapshotMeta -> Dict
     NotifyTag_TelegramConfig -> Dict
     NotifyTag_TelegramRecipient -> Dict

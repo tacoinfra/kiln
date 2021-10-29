@@ -68,7 +68,6 @@ import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Common.NodeRPC.Sources
 import Tezos.Common.Chain
 import Tezos.Types
 
@@ -202,9 +201,6 @@ withFrontendContext f = do
       currentTime <- holdDyn t0 everySecondTick
       runReaderT f $ FrontendContext c tz currentTime
 
-isPublicNodeEnabled :: PublicNode -> MonoidalMap PublicNode PublicNodeConfig -> Bool
-isPublicNodeEnabled pn pnc = (_publicNodeConfig_enabled <$> MMap.lookup pn pnc) == Just True
-
 appMain
   :: forall r m t js.
     ( MonadAppWidget js t m
@@ -265,7 +261,6 @@ appSidebar
      )
   => m ()
 appSidebar = do
-    chain <- asks (^. frontendConfig . frontendConfig_chain)
     SemUi.segment
       (def
         & SemUi.classes SemUi.|~ "app-sidebar"
@@ -274,7 +269,7 @@ appSidebar = do
         )
       $ do
           appSideHeader
-          appGutter chain
+          appGutter
           appSideFooter
           displayLatestRelease
   where
@@ -340,8 +335,8 @@ appGutter
      , HasJSContext (Performable (ModalM m))
      , HasModal t m
      )
-  => Either NamedChain ChainId -> m ()
-appGutter chain =
+  => m ()
+appGutter =
   SemUi.segment
     (def
       & SemUi.classes SemUi.|~ "app-gutter"
@@ -349,7 +344,7 @@ appGutter chain =
       )
     $ do
         bakersList
-        nodesList chain
+        nodesList
 
 appSideFooter
   :: (MonadAppWidget js t m
@@ -473,7 +468,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
     _disconnectedTooltip = divClass "disconnected-tooltip" $ do
       el "p" $ divClass "tooltip-title" $ text "Disconnected from the blockchain."
       divClass "tooltip-description" $ do
-        el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain (public nodes do not provide baker data). Data shown is stale."
+        el "p" $ text "Kiln cannot gather data if no monitored nodes are synced with the blockchain. Data shown is stale."
         el "p" ensureHealthyNodes
 
     protocolTooltip mCustomProtocol dmLatestHead = divClass "protocol-tooltip" $ do
@@ -550,16 +545,12 @@ nodesTabOrWelcome
 nodesTabOrWelcome = do
   -- _clientAddresses <- watchClientAddresses
   bakersMaybe <- watchBakerAddressesValid
-  publicNodesMaybe <- watchPublicNodeConfigValid
   nodesMaybe <- watchNodeAddressesValid
   mUsingNodeOption <- (fmap . fmap) _frontendConfig_usingNodeOption <$> watchFrontendConfig
 
   -- doing some straightforward calculations, but inside a Dynamic and a Maybe
-  let haveBakersMaybe =
-        (fmap . fmap) (not . null) bakersMaybe
-      haveNodesMaybe =
-        (liftA2 . liftA2) ((||) . any _publicNodeConfig_enabled . toList) publicNodesMaybe $
-        (fmap . fmap) (not . null) nodesMaybe
+  let haveBakersMaybe = (fmap . fmap) (not . null) bakersMaybe
+      haveNodesMaybe = (fmap . fmap) (not . null) nodesMaybe
 
   haveBakersHaveNodesMaybe <- holdUniqDyn $
     (liftA3 . liftA3) (,,) haveBakersMaybe haveNodesMaybe mUsingNodeOption
@@ -603,9 +594,7 @@ globalAlerts = do
         (ErrorLog { _errorLog_stopped = Nothing }, LogTag_InternalNodeFailed :=> Identity e) -> Just e
         _ -> Nothing
 
-    chain <- asks (^. frontendConfig . frontendConfig_chain)
-
-    pure [fmap (internalNodeFailedAlertBanner chain) <$> internalNodeFailedLog]
+    pure [fmap internalNodeFailedAlertBanner <$> internalNodeFailedLog]
 
   currentVersion <- asks (^. frontendConfig . frontendConfig_appVersion)
   upstreamVersion <- watchUpstreamVersion
@@ -630,8 +619,8 @@ internalNodeFailedAlertBanner
      , MonadJSM (Performable (ModalM m))
      , HasJSContext (Performable (ModalM m))
      )
-  => Either NamedChain ChainId -> ErrorLogInternalNodeFailed -> m ()
-internalNodeFailedAlertBanner chain e = case _errorLogInternalNodeFailed_reason e of
+  => ErrorLogInternalNodeFailed -> m ()
+internalNodeFailedAlertBanner e = case _errorLogInternalNodeFailed_reason e of
   InternalNodeFailureReason_CarthageUpgrade -> renderSplashAlert
     (icon "icon-warning big red")
     (text "Kiln Node is Outdated and Must be Recreated")
@@ -644,7 +633,7 @@ internalNodeFailedAlertBanner chain e = case _errorLogInternalNodeFailed_reason 
 
       resolve <- divClass "buttons" $ uiButtonM "primary" $ text "Remove and Recreate Node"
       deleted <- requestingIdentity $ resolve $> public (PublicRequest_RemoveNode $ Right ())
-      tellModal $ deleted $> cancelableModalWithClasses (addNodeModal chain)
+      tellModal $ deleted $> cancelableModalWithClasses addNodeModal
     )
 
   InternalNodeFailureReason_Unknown _ -> pure () -- TODO: Might be useful...
@@ -684,7 +673,7 @@ welcomeScreen = mdo
             text $ "Welcome to " <> appName <> "."
       divClass "welcome-description" $ do
         el "p" $ text $ appName <> " is a baking and monitoring tool for the Tezos blockchain network."
-        el "p" $ text "Click \"Add Nodes\" to start or monitor a node. Adding public nodes is recommended to provide network context."
+        el "p" $ text "Click \"Add Nodes\" to start or monitor a node. Adding external nodes is recommended to provide network context."
         el "p" $ text "Click \"Add Bakers\" to start or monitor an existing baker."
       pure $ domEvent Click closeEl
 
@@ -1389,8 +1378,8 @@ nodesList ::
   , MonadJSM (Performable (ModalM m))
   , HasJSContext (Performable (ModalM m))
   )
-  => Either NamedChain ChainId -> m ()
-nodesList chain = do
+  => m ()
+nodesList = do
   nodes <- ffor
     watchNodeAddresses
     $ fmap $ fmap $ \ns ->
@@ -1400,10 +1389,7 @@ nodesList chain = do
         (_nodeSummary_alertCount ns)
       , isRight $ _nodeSummary_node ns
       )
-  sidebarList "Node" nodes (addNodeModal chain)
-
-publicNodeAvailable :: PublicNode -> Either NamedChain ChainId -> Bool
-publicNodeAvailable pn chain = foldr (const $ const True) False $ either Just identifyChain chain >>= getPublicNodeUri pn
+  sidebarList "Node" nodes addNodeModal
 
 addNodeModal ::
   ( MonadAppWidget js t m
@@ -1411,8 +1397,8 @@ addNodeModal ::
   , MonadJSM (Performable m)
   , HasJSContext (Performable m)
   )
-  => Either NamedChain ChainId -> Event t () -> m (Dynamic t [Text], Event t ())
-addNodeModal chain close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (c, close <> switch (current e))
+  => Event t () -> m (Dynamic t [Text], Event t ())
+addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (c, close <> switch (current e))
 
   where
     splash = Workflow $ do
@@ -1420,28 +1406,12 @@ addNodeModal chain close = ffor (workflow splash) $ \d -> let (c, e) = splitDynP
       divClass "ui grid stackable divided" $ do
         startNodeEv <- addInternal
         e <- addExternal
-        let anyPublicNodesAvailable = PublicNode_Blockscale `publicNodeAvailable` chain
-        bool noPublic addPublic anyPublicNodesAvailable
         pure ((pure "add-node", e), startNodeWorkflow splash <$ startNodeEv)
 
       where
         section header explanation = do
           elClass "h5" "ui header" $ text header
           divClass "explanation" $ text explanation
-
-        noPublic = do
-            divClass "add-public column" $ section
-                "Cannot connect to a  public node"
-                "If you are seeing this message, you are most likely on a new network.\
-                \ The urls of these public nodes are not yet known. When these become\
-                \ available, Kiln will be updated accordingly."
-
-        addPublic = do
-          divClass "add-public column" $ do
-            section
-              "Connect to a Public Node"
-              "We recommend adding all public nodes to enhance monitoring accuracy."
-            publicNodeOptions chain
 
         addInternal = do
           divClass "add-internal column" $ do
@@ -1648,29 +1618,6 @@ showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
   close1 <- uiButton "primary" "Close"
   pure (pure ["show-error-log"], leftmost [close1, close])
 
-publicNodeOptions :: MonadAppWidget js t m => Either NamedChain ChainId -> m ()
-publicNodeOptions chain = do
-  let
-    isBlockscaleNodeAvailable = PublicNode_Blockscale `publicNodeAvailable` chain
-    describeBlockScaleNode = text "Load-balanced collection of nodes provided by the Tezos Foundation."
-
-  pncDyn <- watchPublicNodeConfig
-  divClass "ui publicnodes" $ when isBlockscaleNodeAvailable $ do
-    let blockscaleNodeActiveDyn = isPublicNodeEnabled PublicNode_Blockscale <$> pncDyn
-        activeClass = bool "" "active" <$> blockscaleNodeActiveDyn
-    (element', ()) <- SemUi.ui' "div"
-        (def & SemUi.elConfigClasses .~ "public-node ui padded divided grid " <> SemUi.Dyn activeClass) $ divClass "row" $ do
-      divClass "four wide column label" $ divClass "ui center aligned icon header" $ do
-        SemUi.ui "i" (def & SemUi.elConfigClasses .~ SemUi.Dyn (bool "" "icon icon-check" <$> blockscaleNodeActiveDyn)) blank
-        dynText $ bool "Add Node" "Added" <$> blockscaleNodeActiveDyn
-      divClass "twelve wide column" $ do
-        divClass "header" $ text $ publicNodeShortName PublicNode_Blockscale
-        divClass "description" describeBlockScaleNode
-
-    let toggled = not . isPublicNodeEnabled PublicNode_Blockscale <$> current pncDyn  <@ domEvent Click element'
-    void $ requestingIdentity $ ffor toggled $ \enabled -> public (PublicRequest_SetPublicNodeConfig PublicNode_Blockscale enabled)
-
-
 thirtySixHoursToInfinity
   ::
   ( MonadReader r m, HasTimer t r
@@ -1728,18 +1675,12 @@ nodesTab usingNodeOption =
   where
     nodeTilesWidget :: Dynamic t (MonoidalMap (Id Node) NodeSummary) -> m ()
     nodeTilesWidget nodesDyn = do
-      publicNodeConfigDyn <- watchPublicNodeConfig
-      rawPublicNodesDyn <- watchPublicNodeHeads
       let
-        publicNodesDyn = zipDynWith (\pnc ->
-          MMap.filter (flip isPublicNodeEnabled pnc . _publicNodeHead_source)
-          ) publicNodeConfigDyn rawPublicNodesDyn
-
         (external, internal) = splitDynPure $
           (filterLeft &&& filterRight) . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
         kilnNodeState = fmap _processData_state . headMay . Map.elems <$> internal
 
-      useBlocker <- holdUniqDyn $ ffor (zipDyn publicNodesDyn nodesDyn) $ \(pn,n) -> MMap.null pn && MMap.null n
+      useBlocker <- holdUniqDyn $ ffor nodesDyn $ \n -> MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
       kilnNodeStateD <- holdUniqDyn kilnNodeState
       -- Node alerts
@@ -2044,31 +1985,6 @@ nodesTab usingNodeOption =
             dyn_ $ ffor2 state dSnapshotMeta $ \case
               (ProcessState_Node s) -> nodeStartTile s
               _ -> const workingTile
-
-          void $ listWithKey (MMap.getMonoidalMap <$> publicNodesDyn) $ \_ vDyn -> do
-            source <- holdUniqDyn (_publicNodeHead_source <$> vDyn)
-            let
-              title = dyn_ $ ffor source $ \n -> text $ publicNodeShortName n
-
-              publicNodeMenu :: m ()
-              publicNodeMenu = do
-                let mkRemoveReq ev = flip PublicRequest_SetPublicNodeConfig False <$> current source <@ ev
-                dyn_ $ ffor source $ \_ -> tileMenuEntryModal "Remove Node" $ removeItemModal "node" mkRemoveReq
-
-            version <- watchPublicVersion source
-
-            standardNodeTile
-              title
-              blank
-              publicNodeMenu
-              (Just . mkVeryBlockLike)
-              Nothing
-              Nothing
-              Nothing
-              Nothing
-              Nothing
-              vDyn
-              version
 
     tileHeader
       :: m () -- ^ Title

@@ -1816,7 +1816,7 @@ h4.dashboard-section-title {
 }
 
 .modal-box.add-node {
-  width: unit(1039 / @emSize, rem);
+  width: unit(670 / @emSize, rem);
 
   .ui.button.primary {
     display: inline-block;

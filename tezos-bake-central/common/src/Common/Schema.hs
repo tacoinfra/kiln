@@ -79,7 +79,6 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Common.NodeRPC.Types (RpcError, AsRpcError(asRpcError))
-import Tezos.Common.NodeRPC.Sources (PublicNode)
 import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Types hiding (TestChainStatus)
 import Tezos.V010.NodeRPC.CrossCompat (FrozenBalanceByCycleSeqCrossCompat)
@@ -110,7 +109,6 @@ data UnsuitableNodeReason
   | UnsuitableNodeReason_MissingSavepoint
   | UnsuitableNodeReason_QueryFailed Text -- TODO This should be CacheError but we've got a cycle that doesn't play ball with TH
   | UnsuitableNodeReason_BranchNotContained BlockHash
-  | UnsuitableNodeReason_ProtocolIndex -- Only the public node can do rProtocolIndex
   deriving (Show, Generic, Typeable)
 makePrisms ''UnsuitableNodeReason
 
@@ -500,22 +498,6 @@ data ProtocolIndex = ProtocolIndex
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
-
-data PublicNodeConfig = PublicNodeConfig
-  { _publicNodeConfig_source :: !PublicNode
-  , _publicNodeConfig_enabled :: !Bool
-  , _publicNodeConfig_updated :: !UTCTime
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId PublicNodeConfig
-
-data PublicNodeHead = PublicNodeHead
-  { _publicNodeHead_source :: !PublicNode
-  , _publicNodeHead_chain :: !NamedChainOrChainId
-  , _publicNodeHead_headBlock :: !VeryBlockLike
-  , _publicNodeHead_updated :: !UTCTime
-  , _publicNodeHead_protocolHash :: !ProtocolHash
-  } deriving (Eq, Ord, Show, Generic, Typeable)
-instance HasId PublicNodeHead
 
 data Accusation = Accusation
   { _accusation_hash :: !OperationHash -- ^ hash of the accusation operation
@@ -1080,8 +1062,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
-  , ''PublicNodeConfig
-  , ''PublicNodeHead
   , ''RightKind
   , ''RightNotificationLimit
   , ''RightNotificationSettings
@@ -1137,8 +1117,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'PeriodVote
   , 'ProcessData
   , 'ProtocolIndex
-  , 'PublicNodeConfig
-  , 'PublicNodeHead
   , 'RightNotificationLimit
   , 'RightNotificationSettings
   , 'SnapshotMeta
@@ -1194,16 +1172,6 @@ instance UniverseSome LogTag where
     <> fmap (\(Some x) -> Some (LogTag_Node x)) universe
     <> fmap (\(Some x) -> Some (LogTag_Baker x)) universe
     <> [Some LogTag_InternalNodeFailed, Some LogTag_BakerNoHeartbeat]
-
-instance BlockLike PublicNodeHead where
-  hash = publicNodeHead_headBlock . hash
-  predecessor = publicNodeHead_headBlock . predecessor
-  fitness = publicNodeHead_headBlock . fitness
-  level = publicNodeHead_headBlock . level
-  timestamp = publicNodeHead_headBlock . timestamp
-
-instance HasProtocolHash PublicNodeHead where
-  protocolHash = publicNodeHead_protocolHash
 
 instance HasProtocolHash ProtocolIndex where
   protocolHash = protocolIndex_hash

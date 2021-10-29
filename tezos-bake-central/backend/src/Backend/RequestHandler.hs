@@ -69,7 +69,6 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Process (updateProcessState)
 import Backend.Workers.TezosClient (showLedger)
-import Backend.Workers.Node (DataSource, updateDataSource)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -80,9 +79,8 @@ requestHandler
   => AppConfig
   -> Address
   -> NodeDataSource
-  -> [DataSource]
   -> RequestHandler (ApiRequest () PublicRequest PrivateRequest) m
-requestHandler appConfig emailFromAddr nds publicNodeSources =
+requestHandler appConfig emailFromAddr nds =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
@@ -488,33 +486,6 @@ requestHandler appConfig emailFromAddr nds publicNodeSources =
         mId <- project1 AutoKeyField (UpstreamVersion_dismissedField ==. UpstreamVersion_dismissedField)
         for_ mId $ \i -> do
           get i >>= traverse_ (notify NotifyTag_UpstreamVersion . (toId i,))
-
-      PublicRequest_SetPublicNodeConfig publicNode enabled -> do
-        inDb $ do
-          cid' :: Maybe (Id PublicNodeConfig) <- fmap toId . listToMaybe <$>
-            project AutoKeyField (PublicNodeConfig_sourceField ==. publicNode)
-          now <- getTime
-          case cid' of
-            Nothing ->
-              let
-                pnc = PublicNodeConfig
-                  { _publicNodeConfig_source = publicNode
-                  , _publicNodeConfig_enabled = enabled
-                  , _publicNodeConfig_updated = now
-                  }
-              in notify NotifyTag_PublicNodeConfig . (,pnc) =<< insert' pnc
-            Just cid -> do
-              updateId cid
-                [ PublicNodeConfig_sourceField =. publicNode
-                , PublicNodeConfig_enabledField =. enabled
-                , PublicNodeConfig_updatedField =. now
-                ]
-              getId cid >>= traverse_ (notify NotifyTag_PublicNodeConfig . (cid,))
-
-        -- When turning something "on" immediately update the data source.
-        when enabled $
-          void $ liftIO $ async $ for_ (filter (\(pn, _, _) -> pn == publicNode) publicNodeSources) $
-            updateDataSource nds
 
       PublicRequest_AddTelegramConfig apiKey -> do
         -- Initialize the config to have NULL bot name and NULL enabled.

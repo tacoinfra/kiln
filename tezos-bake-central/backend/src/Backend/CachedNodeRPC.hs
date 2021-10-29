@@ -75,7 +75,6 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import qualified Data.Aeson as Aeson
 import Data.Aeson (ToJSON, FromJSON)
-import Data.Aeson.Encoding (emptyObject_)
 import Data.Bifunctor (bimap, first)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -109,7 +108,6 @@ import qualified Database.PostgreSQL.Simple.LargeObjects as PG
 import qualified Database.PostgreSQL.Simple as PG
 import Named
 import qualified Network.HTTP.Client as Http
-import qualified Network.HTTP.Types.Method as Http (methodGet)
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
@@ -148,7 +146,6 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: !BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_ProtocolIndex   :: !ProtocolHash -> NodeQuery ProtocolIndex
   NodeQuery_BakingRights    :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
@@ -288,7 +285,7 @@ instance MonadNodeQuery NodeQueryQueued where
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
     return $ return $ NodeQueryQueuedAnswerM $ readTVar' apiResultVar
 
-  -- Here we examine the internal & external (but not public) nodes before doing the query
+  -- Here we examine the internal & external nodes before doing the query
   -- We keep hold of our candidate nodes right till the end in case we exhaust all of our options
   -- and need to give everything that we tried and what went wrong to the user in a CacheError_NoSuitableNode
   -- error.
@@ -729,7 +726,6 @@ priorityChunkSize = 64
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
   NodeQuery_ProtocolConstants ctx -> pure ctx
-  NodeQuery_ProtocolIndex _ctx -> getFittestBranch
   NodeQuery_BakingRights ctx _lvl -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
@@ -939,7 +935,6 @@ validNodes
   -> m [(URI, Either UnsuitableNodeReason VeryBlockLike)]
 validNodes nodes q = case q of
   NodeQuery_ProtocolConstants ctx -> findNodes <$> getLvl ctx
-  NodeQuery_ProtocolIndex _ctx -> pure $ (\(u,_,_) -> (u, Left UnsuitableNodeReason_ProtocolIndex)) <$> nodes -- only OS public node can do this query
   NodeQuery_BakingRights _ctx lvls -> pure $ findNodes $ Just $ Set.findMin lvls
   NodeQuery_EndorsingRights _ctx lvls -> pure $ findNodes $ Just $ Set.findMin lvls
   NodeQuery_Block ctx -> findNodes <$> getLvl ctx
@@ -1000,7 +995,7 @@ nodeQueryDataSourceImpl = nodeQueryImpl myNodeRPC ChainTag_Hash
 
 nodeQueryImpl
   :: forall a chain repr.
-   ( QueryBlock repr, QueryHistory repr, QueryProtocolIndex repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
+   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
      => repr c -> m (RpcResult c))
@@ -1013,7 +1008,6 @@ nodeQueryImpl
   -> IO (Either CacheError (RpcResult a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
-  NodeQuery_ProtocolIndex protoHash -> nodeRPC' $ rProtocolIndex chainId protoHash
   NodeQuery_BakingRights branch targetLevel ->
     nodeRPC' $ rBakingRightsFull (Set.map Left targetLevel) priorityChunkSize chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
@@ -1044,101 +1038,8 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
-nodeQueryOsPubNodeImpl
-  :: forall a.
-     ChainId
-  -> BlockHash
-  -> NodeRPCContext
-  -> LoggingEnv
-  -> NodeQuery a
-  -> IO (Either CacheError (RpcResult a))
-nodeQueryOsPubNodeImpl = nodeQueryImpl osPublicNodeRPC id
-
 keepOriginalInput :: (LBS.ByteString -> Either err a) -> LBS.ByteString -> Either err (RpcResult a)
 keepOriginalInput f str = (RpcResult str) <$> f str
-
-osPublicNodeRPC
-  :: (MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON a)
-  => OsNodeQuery a -> m (RpcResult a)
-osPublicNodeRPC (OsNodeQuery route params) = nodeRPCImpl' (keepOriginalInput Aeson.eitherDecode) emptyObject_ Http.methodGet rpcSelector
-  where
-    rpcSelector = route <> paramsE
-    paramsE = maybe "" (("?" <>) . mconcat . NE.toList . NE.intersperse "&" . fmap (\(k, v) -> k <> "=" <> v)) (nonEmpty params)
-
-data OsNodeQuery a = OsNodeQuery
-  { _osNodeQuery_route :: Text
-  , _osNodeQuery_params :: [(Text, Text)]
-  }
-
-class QueryProtocolIndex (repr :: * -> *) where
-  rProtocolIndex :: ChainId -> ProtocolHash -> repr ProtocolIndex
-
-instance QueryProtocolIndex OsNodeQuery where
-  rProtocolIndex = chainApi2 "/protocol-index" $ \protocol ->
-    [("protocol", toBase58Text protocol)]
-
-instance QueryProtocolIndex RpcQuery where
-  rProtocolIndex = error "rProtocolIndex not possible for RpcQuery"
-
-type instance ChainType OsNodeQuery = ChainId
-
-instance QueryChain OsNodeQuery where
-  rChain = OsNodeQuery "/v3/chain" []
-
-instance QueryBlock OsNodeQuery where
-  type BlockType OsNodeQuery = BlockCrossCompat
-  type BlockHeaderType OsNodeQuery = BlockHeader
-  rHead = chainApi1 "/head"
-  rBlock = chainApi2 "/block-full" $ \h -> [("hash", toBase58Text h)]
-  rBlockHeader = chainApi2 "/block-header" $ \h -> [("hash", toBase58Text h)]
-
-instance QueryHistory OsNodeQuery where
-  rBlocks = error "rBlocks NYI for OsNodeQuery"
-  rBlockPred = error "rBlockPred NYI for OsNodeQuery"
-  rProtoConstants = error "rProtoConstants NYI for OsNodeQuery"
-  rBakingRights = error "rBakingRights NYI, use rBakingRightsFull"
-  rRunOperation = error "rRunOperation for OsNodeQuery"
-
-  rBallots = blockApi1 "/ballots"
-  rContract contractId = case contractId of
-    Implicit pkh -> chainApi2 "/account" $ \block ->
-      [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
-    _ -> error "rContract only support Implicit"
-  rListings = blockApi1 "/listings"
-  rProposals = blockApi1 "/proposals"
-  rCurrentProposal = blockApi1 "/current-proposal"
-  rCurrentQuorum = blockApi1 "/current-quorum"
-  rBallot = chainApi3 "/ballot" $ \block pkh ->
-    [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
-  rProposalVote = chainApi3 "/proposal-vote" $ \block pkh ->
-    [("block", toBase58Text block), ("pkh", toPublicKeyHashText pkh)]
-  rManagerKey contractId = chainApi2 "/public-key" $ \_ ->
-    [("contract-id", toContractIdText contractId)]
-
-  rBakingRightsFull levelSet _ = chainApi2 "/baking-rights" (\branch ->
-    [("branch", toBase58Text branch), ("level", tshow lvl)])
-    where lvl = maybe (error "rBakingRights set empty")
-            (either unRawLevel (error "rBakingRights cycle not handled")) $ headMay $ Set.toList levelSet
-  rEndorsingRights levelSet = chainApi2 "/endorsing-rights" (\branch ->
-    [("branch", toBase58Text branch), ("level", tshow lvl)])
-    where lvl = maybe (error "rEndorsingRights set empty")
-            (either unRawLevel (error "rEndorsingRights cycle not handled")) $ headMay $ Set.toList levelSet
-
-  rDelegateInfo pkh = chainApi2 "/delegate-info" (\branch ->
-    [("branch", toBase58Text branch), ("delegate", toPublicKeyHashText pkh)])
-
-chainApi1 :: Text -> ChainId -> OsNodeQuery a
-chainApi1 path chainId = chainApi2 path (const []) chainId ()
-
-chainApi2 :: Text -> (b -> [(Text, Text)]) -> ChainId -> b -> OsNodeQuery a
-chainApi2 path getParams chainId = chainApi3 path (const getParams) chainId ()
-
-chainApi3 :: Text -> (b -> c  -> [(Text, Text)]) -> ChainId -> b -> c -> OsNodeQuery a
-chainApi3 path getParams chainId b c = OsNodeQuery route (getParams b c)
-  where route = "/v3/" <> toBase58Text chainId <> path
-
-blockApi1 :: Text -> ChainId -> BlockHash -> OsNodeQuery a
-blockApi1 path = chainApi2 path (\block -> [("block", toBase58Text block)])
 
 nodeQueryIx
   :: forall a m.
@@ -1313,7 +1214,6 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
       UnsuitableNodeReason_MissingBlockInfo -> "Kiln has not yet retrieved the latest block head for this node"
       UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
       UnsuitableNodeReason_BranchNotContained b -> "The block '" <> tshow b <> "' could not be found within the kiln's known history for this node."
-      UnsuitableNodeReason_ProtocolIndex -> "Kiln is looking for the ProtocolIndex, which only the public node can find. If you see this, then it may indicate that the public node is down and the alternative means of building the protocol index from the node aren't working (your node may not have enough history to do this yet)."
 
     prettyLevel = tshow . unRawLevel
 
@@ -1469,19 +1369,15 @@ getProtocolIndex branch protoHash = do
   history <- nqAtomically $ readTVar' historyVar
   case headMay existingEntries of
     Just existing -> pure existing
-    Nothing -> nqTry (nodeQueryDataSourceSafe $ NodeQuery_ProtocolIndex protoHash) >>= \case
+    Nothing -> nqTry (buildProtocolIndex branch protoHash history) >>= \case
       Right p' -> do
-        insert p'
         pure p'
-      Left _ -> nqTry (buildProtocolIndex branch protoHash history) >>= \case
-        Right p' -> do
-          pure p'
-        Left e -> do
-          -- as a last measure just fetch the protocol constants without building the index
-          p <- fetchProtocolForBlock chainId branch
-          if p ^. protocolIndex_hash == protoHash
-            then pure p
-            else nqThrowError e
+      Left e -> do
+        -- as a last measure just fetch the protocol constants without building the index
+        p <- fetchProtocolForBlock chainId branch
+        if p ^. protocolIndex_hash == protoHash
+          then pure p
+          else nqThrowError e
 
 buildProtocolIndex
   :: forall m

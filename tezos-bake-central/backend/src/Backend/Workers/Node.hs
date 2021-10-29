@@ -22,7 +22,7 @@ import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
-import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logErrorSH, logInfo, logWarn, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logInfo, logWarn, logWarnSH)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
@@ -34,13 +34,13 @@ import Data.List (dropWhileEnd)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe)
 import Data.Ord (comparing)
 import Data.Pool (Pool)
 import qualified Data.Set as S
 import Data.String.Here.Interpolated (i)
 import Data.These
-import Data.Time (NominalDiffTime, diffUTCTime)
+import Data.Time (NominalDiffTime)
 import qualified Data.Text as T
 import Data.Word
 import Database.Groundhog.Core
@@ -61,7 +61,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import qualified Tezos.LRUHashMap as LRUHashMap
-import Tezos.NodeRPC hiding (DataSource, getBlock)
+import Tezos.NodeRPC hiding (getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
 import qualified Tezos.V005.Types as V005
 import qualified Tezos.V009.Types as V009
@@ -74,7 +74,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError,
                        clearPastVotingPeriodErrors, reportVotingReminderError)
 import Backend.CachedNodeRPC
-import Backend.Common (AppSerializable, threadDelay', timeout', unsupervisedWorkerWithDelay, worker', workerWithDelay)
+import Backend.Common (AppSerializable, threadDelay', unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.IndexQueries
 import Backend.Schema
@@ -91,11 +91,10 @@ import ExtraPrelude
 haveNewHead
   :: (MonadIO m, BlockLike blk)
   => NodeDataSource
-  -> Maybe PublicNode
   -> URI
   -> blk
   -> m ()
-haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
+haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let
     httpMgr = _nodeDataSource_httpMgr nds
     chainId = _nodeDataSource_chain nds
@@ -105,14 +104,14 @@ haveNewHead nds pn nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logge
   let isNewBlock = not $ LRUHashMap.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
   when isNewBlock $ do
     res <- do
-      newStateRsp :: Either (Either PublicNodeError CacheError) BlockCrossCompat <- runExceptT $ do
+      newStateRsp :: Either (Either RpcError CacheError) BlockCrossCompat <- runExceptT $ do
         headBlock <- withExceptT Right $ do
-          flip runReaderT (if pn == Nothing then nds { _nodeDataSource_nodeForQuery = Just nodeAddr } else nds) $ do
+          flip runReaderT nds { _nodeDataSource_nodeForQuery = Just nodeAddr } $ do
             nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
         withExceptT Left $
-          flip runReaderT (AccumHistoryContext historyVar $ PublicNodeContext (NodeRPCContext httpMgr $ Uri.render nodeAddr) pn) $ do
+          flip runReaderT (AccumHistoryContext historyVar $ NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
             accumHistory chainId (const ()) headBlock
-            $(logInfo) [i|${if isNewBlock then "New" else "Known" :: Text} block from ${pn}, URI ${Uri.render nodeAddr}, ${mkVeryBlockLike headBlockInfo}|]
+            $(logInfo) [i|${if isNewBlock then "New" else "Known" :: Text} block from URI ${Uri.render nodeAddr}, ${mkVeryBlockLike headBlockInfo}|]
 
         pure headBlock
 
@@ -180,29 +179,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
 
   atomically $ do
-    writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds Nothing nodeAddr headBlockInfo
-
-publicVersionMonitor :: NodeDataSource -> PublicNode -> Either NamedChain ChainId -> IO ()
-publicVersionMonitor nds pn chainId = do
-    let db = _nodeDataSource_pool nds
-        httpMgr = _nodeDataSource_httpMgr nds
-        safeHead = foldr (const . Just) Nothing
-        muri = either Just identifyChain chainId >>= getPublicNodeUri pn >>= safeHead
-    runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
-        $(logDebug) $ fold
-          [ "With network ("
-          , showChain chainId
-          , ") discovering public node's("
-          , publicNodeShortName pn
-          , ") version at uri"
-          , maybe "<unknown>" Uri.render muri
-          ]
-
-        case muri of
-          Just uri -> do
-            version <- liftIO $ versionWorker httpMgr (T.unpack $ Uri.render uri)
-            notify NotifyTag_NodeVersion (Left pn, version)
-          Nothing -> notify NotifyTag_NodeVersion (Left pn, Nothing)
+    writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds nodeAddr headBlockInfo
 
 
 nodeVersionMonitor :: NodeDataSource -> URI -> Id Node -> IO ()
@@ -216,7 +193,7 @@ nodeVersionMonitor nds nodeAddr nodeId = do
         , Uri.render nodeAddr
         ]
     version <- liftIO $ versionWorker httpMgr (T.unpack $ Uri.render nodeAddr)
-    notify NotifyTag_NodeVersion (Right nodeId, version)
+    notify NotifyTag_NodeVersion (nodeId, version)
 
 versionWorker :: MonadIO m => Http.Manager -> String -> m (Maybe TezosVersion)
 versionWorker httpMgr baseUrl = do
@@ -446,95 +423,6 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => AppSerializable a -> m a
     inDb = runDb (Identity db) . flip runReaderT appConfig
-
-type DataSource = (PublicNode, Either NamedChain ChainId, URI)
-
-publicNodesWorker
-  :: NodeDataSource
-  -> [DataSource]
-  -> IO (IO ())
-publicNodesWorker nds = foldMap workerForSource
-  where
-    workerForSource :: DataSource -> IO (IO ())
-    workerForSource source = worker' "publicNodesWorker" $ do
-      let (pn, chain, _) = source
-      updateDataSource nds source
-
-      secsTillNextBlock :: Either CacheError (Maybe NominalDiffTime) <-
-        runLoggingEnv (_nodeDataSource_logger nds) $ flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
-          mLastBlock <- project1 PublicNodeHead_headBlockField $
-            PublicNodeHead_sourceField ==. pn &&. PublicNodeHead_chainField ==. NamedChainOrChainId chain
-          for mLastBlock $ \lastBlock -> do
-            protoConstants <- getProtocolConstants $ Left $ lastBlock ^. hash
-            now <- getTime
-            let
-              timeBetweenBlocks = calcTimeBetweenBlocks protoConstants
-
-              secsSinceLastBlock = _veryBlockLike_timestamp lastBlock `diffUTCTime` now
-              secsTillNextBlock = case secsSinceLastBlock + timeBetweenBlocks of
-                    -- if the next expected block is in the past, the node is probably quite laggy and we give it a little more delay
-                  x | x <= 0 -> timeBetweenBlocks / 2
-                    | otherwise -> x
-            pure secsTillNextBlock
-
-      publicVersionMonitor nds pn chain
-      _ <- timeout' (fromMaybe 5 $ secsTillNextBlock ^? _Right . _Just) (waitForNewHead nds)
-      threadDelay' 5 -- always give a little extra delay to make it more likely the public node reports the new block
-
-updateDataSource
-  :: forall m. (MonadIO m, MonadBaseNoPureAborts IO m)
-  => NodeDataSource -> DataSource -> m ()
-updateDataSource nds (pn, chain, uri) = do
-  enabled <- publicNodeEnabled
-  when enabled updatePublicNodeInDb
-
-  where
-    db = _nodeDataSource_pool nds
-    chainId = _nodeDataSource_chain nds
-
-    queryPublicNode
-      :: forall a. ReaderT PublicNodeContext (ExceptT PublicNodeError m) a
-      -> m (Either PublicNodeError a)
-    queryPublicNode k = runExceptT $
-      runReaderT k $
-        PublicNodeContext (NodeRPCContext (_nodeDataSource_httpMgr nds) (Uri.render uri)) (Just pn)
-
-    getHeadFromSource :: m (Either PublicNodeError (WithProtocolHash VeryBlockLike))
-    getHeadFromSource = queryPublicNode $ runLoggingEnv (_nodeDataSource_logger nds) $ getCurrentHead chainId
-
-    publicNodeEnabled :: m Bool
-    publicNodeEnabled = fmap (fromMaybe False . listToMaybe) $
-      runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $
-        project PublicNodeConfig_enabledField (PublicNodeConfig_sourceField ==. pn)
-
-    updatePublicNodeInDb :: m ()
-    updatePublicNodeInDb = getHeadFromSource >>= runLoggingEnv (_nodeDataSource_logger nds) . \case
-      Left e -> $(logErrorSH) ("updatePublicNodeInDb"::Text,(pn,chain,Uri.render uri),e)
-      Right b -> do
-        haveNewHead nds (Just pn) uri b
-        runDb (Identity db) $ do
-          let chainField = NamedChainOrChainId chain
-          now <- getTime
-          eid' :: Maybe (Id PublicNodeHead) <-
-            fmap toId . listToMaybe <$> project AutoKeyField (PublicNodeHead_chainField ==. chainField &&. PublicNodeHead_sourceField ==. pn)
-          case eid' of
-            Nothing -> do
-              let
-                pnh = PublicNodeHead
-                  { _publicNodeHead_source = pn
-                  , _publicNodeHead_chain = chainField
-                  , _publicNodeHead_headBlock = b ^. withProtocolHash_value
-                  , _publicNodeHead_protocolHash = b ^. protocolHash
-                  , _publicNodeHead_updated = now
-                  }
-              notify NotifyTag_PublicNodeHead . (, Just pnh) =<< insert' pnh
-            Just eid -> do
-              updateId eid
-                [ PublicNodeHead_headBlockField =. b ^. withProtocolHash_value
-                , PublicNodeHead_protocolHashField =. b ^. protocolHash
-                , PublicNodeHead_updatedField =. now
-                ]
-              notify NotifyTag_PublicNodeHead . (eid,) =<< getId eid
 
 -- Send a 'bad branch' alert if 'is_bootstrapped' response isn't bootstrapped and synced.
 nodeAlertWorker

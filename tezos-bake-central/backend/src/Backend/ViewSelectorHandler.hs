@@ -88,7 +88,6 @@ import Safe (minimumByMay)
 import Text.URI (render, URI)
 
 import Tezos.Types
-import Tezos.Common.NodeRPC.Sources (PublicNode(..), getPublicNodeUri)
 
 import Backend.CachedNodeRPC
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)
@@ -106,11 +105,10 @@ import ExtraPrelude
 viewSelectorHandler
   :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m, Show a)
   => FrontendConfig
-  -> Maybe NamedChain
   -> NodeDataSource
   -> Pool Postgresql
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
   let
     maybeViewHandler
       :: Applicative m'
@@ -134,17 +132,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   nodeAddresses <- whenM (not $ null nodeAddrVS) $ do
     -- TODO: nodeAddrVS is a RangeView.  select individual nodes upon request.
     toRangeView nodeAddrVS <$> getNodeAddresses Nothing
-
-  let pncVS = _bakeViewSelector_publicNodeConfig vs
-  publicNodeConfig <- whenM (not $ null pncVS) $ do
-    xs :: [PublicNodeConfig] <- select CondEmpty
-    pure $ toRangeView pncVS [(_publicNodeConfig_source x, x) | x <- xs]
-
-  let pnhVS = _bakeViewSelector_publicNodeHeads vs
-  publicNodeHeads <- whenM (not $ null pnhVS) $
-    toRangeView pnhVS . fmap (first Bounded) . MMap.toList <$> selectMap' PublicNodeHeadConstructor
-      (PublicNodeHead_chainField ==. (NamedChainOrChainId $ maybe (Right $ _nodeDataSource_chain nds) Left namedChain)
-      )
 
   -- TODO Dan Bornside says this could be more efficient.
   let nodeDetailsVS = _bakeViewSelector_nodeDetails vs
@@ -356,14 +343,6 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
 
   nodeVersions <- toRangeView nodeVersionsVS <$> getNodeVersions mgr internalURI Nothing
 
-  let toChain = either Just identifyChain . getNamedChainOrChainId
-      publicVersionsVS = _bakeViewSelector_publicVersions vs
-      publicUri s c = (s, maybe "" (render . NEL.head) (c >>= getPublicNodeUri s))
-
-  xs :: [(PublicNode, Text)] <- fmap (liftA2 publicUri _publicNodeHead_source (toChain . _publicNodeHead_chain) ) <$> select CondEmpty
-
-  publicVersions <- toRangeView publicVersionsVS <$> getPublicVersions mgr xs
-
   let latestTezosReleaseVS = _bakeViewSelector_latestTezosRelease vs
 
   let projId = _frontendConfig_tezosGitlabProjectId frontendConfig
@@ -373,11 +352,8 @@ viewSelectorHandler frontendConfig namedChain nds db = QueryHandler $ \vs -> run
   return BakeView
     { _bakeView_config = config
     , _bakeView_parameters = parameters
-    , _bakeView_publicNodeConfig = publicNodeConfig
-    , _bakeView_publicNodeHeads = publicNodeHeads
     , _bakeView_nodeAddresses = nodeAddresses
     , _bakeView_nodeVersions = nodeVersions
-    , _bakeView_publicVersions = publicVersions
     , _bakeView_nodeDetails = nodeDetails
     , _bakeView_latestTezosRelease = latestTezosRelease
     , _bakeView_bakerAddresses = bakerAddresses
@@ -800,11 +776,6 @@ getNodeVersions httpMgr internalUri = getNodeAddresses >=> (mapM . mapM) retriev
        Just ns -> case _nodeSummary_node ns of
         Right _internal -> versionWorker httpMgr $ T.unpack $ render internalUri
         Left (_nodeExternalData_address -> extUri) -> versionWorker httpMgr (T.unpack $ render extUri)
-
-getPublicVersions :: MonadIO m => Http.Manager -> [(PublicNode, Text)] -> m [(WithInfinity PublicNode, Maybe TezosVersion)]
-getPublicVersions httpMgr = mapM go
-  where
-    go (p,uri) = (Bounded p,) <$> versionWorker httpMgr (T.unpack uri)
 
 versionWorker :: MonadIO m => Http.Manager -> String -> m (Maybe TezosVersion)
 versionWorker httpMgr baseUrl = do
