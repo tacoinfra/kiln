@@ -11,6 +11,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -229,10 +230,21 @@ updateNetworkStats appConfig httpMgr db nid node before = do
 
     eConnections :: Either RpcError Word64 <- runNodeRPC (nodeRPC rConnections)
     eNetworkStat :: Either RpcError NetworkStat <- runNodeRPC (nodeRPC rNetworkStat)
+    eNodeConfig :: Either RpcError NodeConfig <- runNodeRPC (nodeRPC rConfig)
+
+    let
+      defaultSyncThreshold = 4
+      eSyncThreshold = eNodeConfig
+        <&> \v -> Just v
+          >>= _nodeConfig_shell
+          >>= _shell_chainValidator
+          >>= _chainValidator_synchronisationThreshold
+          & fromMaybe defaultSyncThreshold
 
     let after = before
                 & update' nodeDetailsData_peerCount (Just <$> eConnections)
                 & update' nodeDetailsData_networkStat eNetworkStat
+                & update' nodeDetailsData_synchronisationThreshold  eSyncThreshold
 
     runExceptT $ do
         let inDb = runDb (Identity db)
@@ -252,6 +264,7 @@ updateNetworkStats appConfig httpMgr db nid node before = do
           update
             [ p NodeDetailsData_peerCountSelector =. _nodeDetailsData_peerCount after
             , p NodeDetailsData_networkStatSelector =. _nodeDetailsData_networkStat after
+            , p NodeDetailsData_synchronisationThresholdSelector =. _nodeDetailsData_synchronisationThreshold after
             ]
             (NodeDetails_idField ==. nid)
           project NodeDetails_dataField (NodeDetails_idField ==. nid) >>= traverse_ (notify NotifyTag_NodeDetails . (nid,) . Just)
@@ -439,14 +452,33 @@ nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nd
       runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ nodeRPC $ rIsBootstrapped chainId
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
-      let bad = \bootstrapped chainStatus -> reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus
-          good = clearBadNodeHeadError nodeId
-      case isBootstrapped of
-        Left _ -> return $ bad False SyncState_Unsynced
-        Right (IsBootstrapped bootstrapped chainStatus) -> do
-          case (bootstrapped, chainStatus) of
-            (True, SyncState_Synced) -> return good
-            _ -> return $ bad bootstrapped chainStatus
+      let bad = \bootstrapped chainStatus -> do
+            reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus
+            clearNodeInsufficientPeersError nodeId
+          good = do
+            clearNodeInsufficientPeersError nodeId
+            clearBadNodeHeadError nodeId
+
+      Only isNodeAlive : _ <- runDb (Identity db)
+        [queryQ| select count(el.id) = 0 from "ErrorLogInaccessibleNode" ein
+          join "ErrorLog" el on el.id = ein.log
+          where ein.node = ?nodeId and el.stopped is null|]
+
+      let curPeerCount  = fromMaybe maxBound $ _nodeDetailsData_peerCount nodeDetails
+          syncThreshold = _nodeDetailsData_synchronisationThreshold nodeDetails
+          syncThreshold64 = fromIntegral @Word8 @Word64 syncThreshold
+
+      if curPeerCount < syncThreshold64 && isNodeAlive then do
+        return $ reportNodeInsufficientPeersError nodeId syncThreshold curPeerCount
+      else do
+        case isBootstrapped of
+          Left _ ->
+            return $ bad False SyncState_Unsynced
+          Right (IsBootstrapped bootstrapped chainStatus) ->
+            case (bootstrapped, chainStatus) of
+              (True, SyncState_Synced) -> return good
+              _ -> return $ bad bootstrapped chainStatus
+
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
 safePred :: (Eq a, Enum a, Bounded a) => a -> a
