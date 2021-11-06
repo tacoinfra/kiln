@@ -16,14 +16,14 @@
 module Backend.Workers.Block where
 
 import Control.Monad.Catch (MonadMask, throwM)
-import Control.Monad.Logger (logErrorSH)
+import Control.Monad.Logger (logDebugSH, logErrorSH)
 import Data.ByteString as BS (ByteString)
-import Data.Either.Combinators (whenRight)
+import Data.Either.Combinators (whenLeft, whenRight)
 import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set (singleton)
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Database.Groundhog.Core (PersistBackend)
 import Database.Groundhog.Postgresql (Postgresql(..))
 import Rhyolite.Backend.DB (runDb)
@@ -54,40 +54,79 @@ blockWorker
 blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   headBlockOrErr <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ fmap fst getLatestProtocolConstants
   whenRight headBlockOrErr $ \headBlock -> do
-    let historyLength = 720
+    now <- liftIO getCurrentTime
+    let headBlockTime = headBlock ^. timestamp
+        maxTimeDiff = fromInteger 600 -- 10 minutes, picked somewhat arbitrarily
+        isRecentHeadBlock = now `diffUTCTime` headBlockTime < maxTimeDiff
+
+        historyLength = 720
         headBlockLevel = headBlock ^. level
         headBlockHash = headBlock ^. hash
         cutoffLevel = headBlockLevel - historyLength
-        chainId = _nodeDataSource_chain nds
-    (mbLargestParsedLvl :: Maybe RawLevel) <- fmap (headMay . fmap fromOnly) $ runDb (Identity db) [queryQ|
-      select "level" from "AccusationBlock" where "chain" = ?chainId order by "level" desc limit 1
-    |]
-    let blockQueryLength = min historyLength $ headBlockLevel - fromMaybe 0 mbLargestParsedLvl
-    blocksOrErr <- if blockQueryLength > 0
-      then flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash blockQueryLength
-      else return $ Right mempty
 
-    whenRight blocksOrErr $ \blocks -> do
-      -- Parse blocks from older to newer to have a correct 'mbLargestParsedLvl'
-      for_ (Seq.reverse blocks) $ \blockHash -> do
-        couldBeBlock <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
-          block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
-          blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
-          return block
-        case couldBeBlock of
-          -- Finish blocks parsing if error occurs in order to avoid missing some blocks in 'AccusationBlock'.
-          Left e -> do
-            $(logErrorSH) $ cacheErrorLogMessage "blockWorker" e
-            throwM e
-          Right block -> do
+        chainId = _nodeDataSource_chain nds
+
+    -- we check the timestamp of the head block to avoid unnecessary operations
+    -- the idea is that if a node has a lot of catching up to do then:
+    -- 1. most of the updates of this worker will be thrown away by the time
+    --    the node has finished bootstrapping
+    -- 2. if we were to do that we'd be also slowing down the node as well
+    -- 3. in particularly bad cases (or, apparently, also when starting from
+    --    a fresh snapshot) there are also a lot of missing 'metadata' fields in
+    --    the blocks when the history mode is full/rolling (as they are recollected)
+    -- IOW during normal operations the node should never fall back more than
+    -- 'maxTimeDiff' and if it does we give it time to get back in shape.
+    -- Note that this could also be achieved by checking the @is_bootstrapped@
+    -- node endpoint, but that would be too strict and much more time consuming.
+    when isRecentHeadBlock $ do
+      (mbLargestParsedLvl :: Maybe RawLevel) <- fmap (headMay . fmap fromOnly) $ runDb (Identity db) [queryQ|
+        select "level" from "AccusationBlock" where "chain" = ?chainId order by "level" desc limit 1
+      |]
+      let blockQueryLength = min historyLength $ headBlockLevel - fromMaybe 0 mbLargestParsedLvl
+      blocksOrErr <- if blockQueryLength > 0
+        then flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash blockQueryLength
+        else return $ Right mempty
+
+      whenRight blocksOrErr $ \blocks -> do
+        -- note: we want to clear old entries first because the loop just below
+        -- may be interrupted before finishing
+        void $ runDb (Identity db) [executeQ|
+          delete from "AccusationBlock" where "level" < ?cutoffLevel and "chain" = ?chainId;
+        |]
+
+        -- Parse blocks from oldest to newest, so that we always keep the
+        -- invariance that 'mbLargestParsedLvl' is always older than any block
+        -- that still needs to be handled.
+        -- Note that the loop runs in 'ExceptT' so no computation will follow
+        -- the first one throwing an error/'Left'.
+        loopResult <- flip runReaderT nds $ runExceptT @CacheError $
+          for_ (Seq.reverse blocks) $ \blockHash -> do
+            block <- runNodeQueryT $ do
+              block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
+              blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
+              return block
+
             let blockLevel = block ^. level
             void $ runDb (Identity db) [executeQ|
               insert into "AccusationBlock" ("hash", "level", "chain")
               values (?blockHash, ?blockLevel, ?chainId)
             |]
-      void $ runDb (Identity db) [executeQ|
-        delete from "AccusationBlock" where "level" < ?cutoffLevel and "chain" = ?chainId;
-      |]
+        -- Not all errors are thrown equal...
+        -- AFAIU the ones below are both more common and less disruptive than
+        -- the real unexpected errors, the latter being the only ones that we
+        -- rethrow in the 'LoggingT'/'IO' monad.
+        --
+        -- TODO: if possible we should avoid this special treatment.
+        whenLeft loopResult $ \e -> case e of
+          CacheError_RpcError (RpcError_UnexpectedStatus _ 404 _) ->
+            $(logDebugSH) $ cacheErrorLogMessage "blockWorker" e
+          CacheError_NoSuitableNode _ _ ->
+            $(logDebugSH) $ cacheErrorLogMessage "blockWorker" e
+          CacheError_NotEnoughHistory ->
+            $(logDebugSH) $ cacheErrorLogMessage "blockWorker" e
+          _ -> do
+            $(logErrorSH) $ cacheErrorLogMessage "blockWorker" e
+            throwM e
 
 -- TODO: This could use a better abstraction here.
 insertAccusationsV9
