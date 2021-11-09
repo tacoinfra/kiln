@@ -996,6 +996,7 @@ deriving instance Show (LogTag a)
 data NodeLogTag a where
   NodeLogTag_InaccessibleNode :: NodeLogTag ErrorLogInaccessibleNode
   NodeLogTag_NodeWrongChain :: NodeLogTag ErrorLogNodeWrongChain
+  NodeLogTag_NodeInsufficientPeers :: NodeLogTag ErrorLogNodeInsufficientPeers
   NodeLogTag_NodeInvalidPeerCount :: NodeLogTag ErrorLogNodeInvalidPeerCount
   NodeLogTag_BadNodeHead :: NodeLogTag ErrorLogBadNodeHead
 
@@ -1052,6 +1053,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInsufficientPeers
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
@@ -1161,6 +1163,7 @@ instance UniverseSome NodeLogTag where
   universeSome =
     [ Some NodeLogTag_InaccessibleNode
     , Some NodeLogTag_NodeWrongChain
+    , Some NodeLogTag_NodeInsufficientPeers
     , Some NodeLogTag_NodeInvalidPeerCount
     , Some NodeLogTag_BadNodeHead
     ]
@@ -1210,6 +1213,7 @@ errorLogNames =
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInsufficientPeers
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder

@@ -72,7 +72,8 @@ import qualified Tezos.Unsafe
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
-                       reportNodeInvalidPeerCountError, clearNodeInvalidPeerCountError,
+                       reportNodeInsufficientPeersError, reportNodeInvalidPeerCountError,
+                       clearNodeInsufficientPeersError, clearNodeInvalidPeerCountError,
                        clearPastVotingPeriodErrors, reportVotingReminderError)
 import Backend.CachedNodeRPC
 import Backend.Common (AppSerializable, threadDelay', unsupervisedWorkerWithDelay, worker', workerWithDelay)
@@ -227,7 +228,6 @@ updateNetworkStats
   -> NodeDetailsData
   -> m (Either RpcError ())
 updateNetworkStats appConfig httpMgr db nid node before = do
-
     eConnections :: Either RpcError Word64 <- runNodeRPC (nodeRPC rConnections)
     eNetworkStat :: Either RpcError NetworkStat <- runNodeRPC (nodeRPC rNetworkStat)
     eNodeConfig :: Either RpcError NodeConfig <- runNodeRPC (nodeRPC rConfig)
@@ -460,9 +460,11 @@ nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nd
             clearBadNodeHeadError nodeId
 
       Only isNodeAlive : _ <- runDb (Identity db)
-        [queryQ| select count(el.id) = 0 from "ErrorLogInaccessibleNode" ein
+        [queryQ|
+          select count(el.id) = 0 from "ErrorLogInaccessibleNode" ein
           join "ErrorLog" el on el.id = ein.log
-          where ein.node = ?nodeId and el.stopped is null|]
+          where ein.node = ?nodeId and el.stopped is null
+        |]
 
       let curPeerCount  = fromMaybe maxBound $ _nodeDetailsData_peerCount nodeDetails
           syncThreshold = _nodeDetailsData_synchronisationThreshold nodeDetails

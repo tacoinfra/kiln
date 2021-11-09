@@ -752,6 +752,7 @@ instance HasAlertMetaData (NodeLogTag a) where
   getAlertMetaData = \case
     NodeLogTag_InaccessibleNode -> def
     NodeLogTag_NodeWrongChain -> def
+    NodeLogTag_NodeInsufficientPeers -> def
     NodeLogTag_NodeInvalidPeerCount -> def { _alertMetaData_isUserResolvable = True }
     NodeLogTag_BadNodeHead -> def
 
@@ -972,6 +973,14 @@ liveErrorsWidget = void $ do
               nodeLabel n
               el "div" $ text $
                 "This node has fewer peers than the configured minimum of " <> tshow minPeerCount <> "."
+
+            NodeLogTag_NodeInsufficientPeers -> do
+              let ErrorLogNodeInsufficientPeers _ _ syncThreshold _ = log
+              header "Node has insufficient amount of peers"
+              nodeLabel n
+              el "div" $ text $
+                "This node has fewer peers than the configured synchronization threshold " <> tshow syncThreshold <>
+                  " to determine its status"
 
         LogTag_Baker blt -> case blt of
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError
@@ -1759,6 +1768,7 @@ nodesTab usingNodeOption =
               pure $ ffor unresolvedAlertsForThisNode $ mapMaybe $ \(lTag :=> Identity log) -> withSeverity lTag $ case lTag of
                 NodeLogTag_InaccessibleNode -> Just $ text "Unable to connect."
                 NodeLogTag_NodeWrongChain -> Just $ text "On wrong network."
+                NodeLogTag_NodeInsufficientPeers -> Just $ text "Insufficient peers"
                 NodeLogTag_NodeInvalidPeerCount -> Just $ text "Node has too few peers."
                 NodeLogTag_BadNodeHead -> Just $ text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."

@@ -399,6 +399,87 @@ clearNodeWrongChainError nodeId = when' (nodeNotDeleted nodeId) $ do
     queueAlert Nothing $ Alert Resolved "Resolved: Node on right network" $
       nodeName <> " is on correct network"
 
+nodeInsufficientPeersErrorDelaySeconds :: NominalDiffTime
+nodeInsufficientPeersErrorDelaySeconds = 125
+
+reportNodeInsufficientPeersError
+  :: forall m a.
+    (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
+      MonadBase Serializable m, MonadLogger m,
+      MonadLogger m, SqlDb (PhantomDb m))
+  => Id Node -> Word8 -> Word64 -> m ()
+reportNodeInsufficientPeersError nodeId syncThreshold actualPeerCount =
+  when' (nodeNotDeleted nodeId) $ do
+    chainId <- _appConfig_chainId <$> askAppConfig
+
+    let
+      mkAlertMessage name = name <>
+        " has fewer peers than the configured synchronization threshold of " <>
+        tshow syncThreshold <> " to determine its status"
+      formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
+      mkAlert name = Alert Unresolved "Node has insufficient amount of peers." $ mkAlertMessage name
+
+    let
+      existingLog :: Identifier -> m (Maybe (Id ErrorLog, Id ErrorLogNodeInsufficientPeers))
+      existingLog nodeTable = listToMaybe <$> [queryQ|
+        SELECT el.id, t.log
+          FROM "ErrorLog" el
+          JOIN "ErrorLogNodeInsufficientPeers" t ON t.log = el.id
+          JOIN ?nodeTable n ON n.id = t.node
+        WHERE t.node = ?nodeId
+          AND NOT n."data#deleted"
+          AND el.stopped IS NULL
+          AND el."chainId" = ?chainId
+        ORDER BY el."lastSeen" DESC, el.started DESC
+        LIMIT 1
+    |]
+
+    queryNodeTables existingLog >>= \case
+      Nothing -> (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
+        (logId, _) <- insertErrorLog $ \logId -> ErrorLogNodeInsufficientPeers
+          { _errorLogNodeInsufficientPeers_log  = logId
+          , _errorLogNodeInsufficientPeers_node = nodeId
+          , _errorLogNodeInsufficientPeers_synchronisationThreshold = syncThreshold
+          , _errorLogNodeInsufficientPeers_actualPeerCount = actualPeerCount
+          }
+        queueAlert (Just logId) $ mkAlert nodeName
+      Just (logId, _specificLogId) -> do
+        (g, _l) <- returnUpdateErrorLogBy logId ErrorLogNodeInsufficientPeers_logField
+          [ ErrorLogNodeInsufficientPeers_synchronisationThresholdField =. syncThreshold
+          , ErrorLogNodeInsufficientPeers_actualPeerCountField =. actualPeerCount
+          ]
+        let startedWithDelay = addUTCTime nodeInsufficientPeersErrorDelaySeconds (_errorLog_started g)
+        when (_errorLog_lastSeen g >= startedWithDelay && isNothing (_errorLog_noticeSentAt g)) $
+          (getNodeName nodeId formatExtNodeName >>=) $ traverse_ $ \nodeName -> do
+          queueAlert (Just logId) $ mkAlert nodeName
+
+clearNodeInsufficientPeersError
+  :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadLogger m
+     , SqlDb (PhantomDb m)
+     , MonadBase Serializable m
+     , MonadIO m, MonadReader a m, HasAppConfig a)
+  => Id Node -> m ()
+clearNodeInsufficientPeersError nodeId = do
+  when' (nodeNotDeleted nodeId) $ do
+    chainId <- _appConfig_chainId <$> askAppConfig
+    lids :: [Id ErrorLogNodeInsufficientPeers] <- stripOnly <$> [queryQ|
+      UPDATE "ErrorLog" el SET stopped = NOW()
+        FROM "ErrorLogNodeInsufficientPeers" t
+      WHERE t.log = el.id
+        AND t.node = ?nodeId
+        AND el.stopped IS NULL
+        AND el."chainId" = ?chainId
+      RETURNING t.log
+    |]
+    for_ lids notifyDefault
+    specErrs <- catMaybes <$> for lids getIdBy
+    errs <- catMaybes <$> traverse getId (_errorLogNodeInsufficientPeers_log <$> specErrs)
+    let formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
+    when (any (isJust . _errorLog_noticeSentAt) errs) $
+      (getNodeName nodeId formatExtNodeName >>=) $ traverse_ $ \nodeName -> do
+        queueAlert Nothing $ Alert Resolved "Resolved: Node is now have sufficient amount of peers" $
+          "Resolved: " <> nodeName <> " is now have sufficient amount of peers."
+
 reportNodeInvalidPeerCountError
   :: (Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m, HasAppConfig a, MonadReader a m,
       MonadBase Serializable m,
