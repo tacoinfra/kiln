@@ -85,6 +85,10 @@ tezosBinaryPaths = NonEmpty.fromList
   [ ("PtGRANADsDU8R9daYKAgWnQYAJ64omN1o3KMGVCykShA97vQbvV"
     , $(staticWhich "tezos-baker-010-PtGRANAD")
     , $(staticWhich "tezos-endorser-010-PtGRANAD")
+    ),
+    ("PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
+    , $(staticWhich "tezos-baker-011-PtHangz2")
+    , $(staticWhich "tezos-endorser-011-PtHangz2")
     )
   ]
 
