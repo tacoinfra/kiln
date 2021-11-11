@@ -452,12 +452,12 @@ nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nd
       runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ nodeRPC $ rIsBootstrapped chainId
     action' <- flip runReaderT nds $ runExceptT @CacheError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
-      let bad = \bootstrapped chainStatus -> do
+      let bad = \bootstrapped chainStatus ->
             reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus
-            clearNodeInsufficientPeersError nodeId
-          good = do
-            clearNodeInsufficientPeersError nodeId
-            clearBadNodeHeadError nodeId
+          good = clearBadNodeHeadError nodeId
+
+          sufficientPeers :: ReaderT AppConfig Serializable ()
+          sufficientPeers = clearNodeInsufficientPeersError nodeId
 
       Only isNodeAlive : _ <- runDb (Identity db)
         [queryQ|
@@ -471,8 +471,15 @@ nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nd
           syncThreshold64 = fromIntegral @Word8 @Word64 syncThreshold
 
       if curPeerCount < syncThreshold64 && isNodeAlive then do
+        when (nodeHead ^. level < latestHead ^. level) $ do
+          let
+            (bootstrapped, chainStatus) = case isBootstrapped of
+              Left _ -> (False, SyncState_Unsynced)
+              Right (IsBootstrapped b cs) -> (b, cs)
+          void $ return $ bad bootstrapped chainStatus
         return $ reportNodeInsufficientPeersError nodeId syncThreshold curPeerCount
       else do
+        void $ return sufficientPeers
         case isBootstrapped of
           Left _ ->
             return $ bad False SyncState_Unsynced
