@@ -106,6 +106,7 @@ import Common.AppendIntervalMap (WithInfinity(..))
 import Common.App (SetupState, VoteState)
 import Common.Schema
 import ExtraPrelude
+import Common.Schema (ErrorLogNodeInsufficientPeers(ErrorLogNodeInsufficientPeers))
 
 stripOnly :: Coercible (f (Only a)) (f a) => f (Only a) -> f a
 stripOnly = coerce
@@ -205,6 +206,7 @@ instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
 instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
 instance HasDefaultNotify (Id ErrorLogInternalNodeFailed)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
+instance HasDefaultNotify (Id ErrorLogNodeInsufficientPeers)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogVotingReminder)
@@ -217,6 +219,8 @@ instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
 instance HasNotification NotifyTag ErrorLogNodeInvalidPeerCount where
   notification _ = mkNodeNotify NodeLogTag_NodeInvalidPeerCount
+instance HasNotification NotifyTag ErrorLogNodeInsufficientPeers where
+  notification _ = mkNodeNotify NodeLogTag_NodeInsufficientPeers
 instance HasNotification NotifyTag ErrorLogBadNodeHead where
   notification _ = mkNodeNotify NodeLogTag_BadNodeHead
 instance HasNotification NotifyTag ErrorLogInaccessibleNode where
@@ -1081,6 +1085,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogNodeInvalidPeerCountId
             type: primary
             fields: [_errorLogNodeInvalidPeerCount_log]
+  - entity: ErrorLogNodeInsufficientPeers
+    autoKey: null
+    keys:
+      - name: ErrorLogNodeInsufficientPeersId
+        default: true
+    constructors:
+      - name: ErrorLogNodeInsufficientPeers
+        uniques:
+          - name: ErrorLogNodeInsufficientPeersId
+            type: primary
+            fields: [_errorLogNodeInsufficientPeers_log]
   - entity: ErrorLogNetworkUpdate
     autoKey: null
     keys:
@@ -1247,6 +1262,9 @@ instance DefaultKeyId ErrorLogNodeWrongChain where
 instance DefaultKeyId ErrorLogNodeInvalidPeerCount where
   toIdData _ (ErrorLogNodeInvalidPeerCountIdKey eid) = eid
   fromIdData _ = ErrorLogNodeInvalidPeerCountIdKey
+instance DefaultKeyId ErrorLogNodeInsufficientPeers where
+  toIdData _ (ErrorLogNodeInsufficientPeersIdKey eid) = eid
+  fromIdData _ = ErrorLogNodeInsufficientPeersIdKey
 instance DefaultKeyId ErrorLogNetworkUpdate where
   toIdData _ (ErrorLogNetworkUpdateIdKey eid) = eid
   fromIdData _ = ErrorLogNetworkUpdateIdKey
@@ -1297,6 +1315,7 @@ nodeLogAssume :: NodeLogTag e -> (LogTagConstraints e => x) -> x
 nodeLogAssume = \case
   NodeLogTag_InaccessibleNode -> id
   NodeLogTag_NodeWrongChain -> id
+  NodeLogTag_NodeInsufficientPeers -> id
   NodeLogTag_NodeInvalidPeerCount -> id
   NodeLogTag_BadNodeHead -> id
 
@@ -1345,6 +1364,7 @@ nodeLogDep :: NodeLogTag e -> Related e (SingleConstructor e) Node
 nodeLogDep = \case
   NodeLogTag_InaccessibleNode -> depNodeAlert ErrorLogInaccessibleNode_nodeField
   NodeLogTag_NodeWrongChain -> depNodeAlert ErrorLogNodeWrongChain_nodeField
+  NodeLogTag_NodeInsufficientPeers -> depNodeAlert ErrorLogNodeInsufficientPeers_nodeField
   NodeLogTag_NodeInvalidPeerCount -> depNodeAlert ErrorLogNodeInvalidPeerCount_nodeField
   NodeLogTag_BadNodeHead -> depNodeAlert ErrorLogBadNodeHead_nodeField
   where
@@ -1387,6 +1407,7 @@ instance ArgDict c NotifyTag where
     , c (Id ErrorLogInsufficientFunds)
     , c (Id ErrorLogInternalNodeFailed)
     , c (Id ErrorLogNetworkUpdate)
+    , c (Id ErrorLogNodeInsufficientPeers)
     , c (Id ErrorLogNodeInvalidPeerCount)
     , c (Id ErrorLogNodeWrongChain)
     , c (Id ErrorLogVotingReminder)
@@ -1428,6 +1449,7 @@ instance ArgDict c NotifyTag where
       LogTag_Node t -> case t of
         NodeLogTag_InaccessibleNode -> Dict
         NodeLogTag_NodeWrongChain -> Dict
+        NodeLogTag_NodeInsufficientPeers -> Dict
         NodeLogTag_NodeInvalidPeerCount -> Dict
         NodeLogTag_BadNodeHead -> Dict
       LogTag_Baker t -> case t of

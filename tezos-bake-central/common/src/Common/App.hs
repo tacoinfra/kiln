@@ -377,6 +377,7 @@ nodeIdForNodeErrorLogView :: NodeErrorLogView -> Id Node
 nodeIdForNodeErrorLogView (tag :=> Identity v) = ($ v) $ case tag of
   NodeLogTag_InaccessibleNode -> _errorLogInaccessibleNode_node
   NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_node
+  NodeLogTag_NodeInsufficientPeers -> _errorLogNodeInsufficientPeers_node
   NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_node
   NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_node
 
@@ -413,6 +414,7 @@ errorLogIdForNodeLogTag = \case
   NodeLogTag_InaccessibleNode -> _errorLogInaccessibleNode_log
   NodeLogTag_NodeWrongChain -> _errorLogNodeWrongChain_log
   NodeLogTag_BadNodeHead -> _errorLogBadNodeHead_log
+  NodeLogTag_NodeInsufficientPeers -> _errorLogNodeInsufficientPeers_log
   NodeLogTag_NodeInvalidPeerCount -> _errorLogNodeInvalidPeerCount_log
 
 errorLogIdForErrorLogView :: ErrorLogView -> Id ErrorLog

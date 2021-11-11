@@ -66,6 +66,7 @@ removeNodeDbImpl = \case
         onTag :: Some NodeLogTag -> m [Id ErrorLog]
         onTag (Some tag) = case tag of
           NodeLogTag_InaccessibleNode -> deleteLogs tag ErrorLogInaccessibleNode_nodeField
+          NodeLogTag_NodeInsufficientPeers -> deleteLogs tag ErrorLogNodeInsufficientPeers_nodeField
           NodeLogTag_NodeWrongChain -> deleteLogs tag ErrorLogNodeWrongChain_nodeField
           NodeLogTag_BadNodeHead -> deleteLogs tag ErrorLogBadNodeHead_nodeField
           NodeLogTag_NodeInvalidPeerCount -> deleteLogs tag ErrorLogNodeInvalidPeerCount_nodeField

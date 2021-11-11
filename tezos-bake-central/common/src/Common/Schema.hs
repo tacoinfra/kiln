@@ -431,6 +431,7 @@ data NodeDetailsData = NodeDetailsData
   , _nodeDetailsData_networkStat :: !NetworkStat
   , _nodeDetailsData_fitness :: !(Maybe Fitness)
   , _nodeDetailsData_updated :: !(Maybe UTCTime)
+  , _nodeDetailsData_synchronisationThreshold :: !Word8
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance HasId NodeDetailsData where
   type IdData NodeDetailsData = Id Node
@@ -448,6 +449,7 @@ mkNodeDetails = NodeDetailsData
   , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
   , _nodeDetailsData_fitness = Nothing
   , _nodeDetailsData_updated = Nothing
+  , _nodeDetailsData_synchronisationThreshold = 4
   }
 
 getNodeHeadBlock :: NodeDetailsData -> Maybe VeryBlockLike
@@ -777,6 +779,15 @@ data ErrorLogNodeInvalidPeerCount = ErrorLogNodeInvalidPeerCount
 instance HasId ErrorLogNodeInvalidPeerCount where
   type IdData ErrorLogNodeInvalidPeerCount = Id ErrorLog
 
+data ErrorLogNodeInsufficientPeers = ErrorLogNodeInsufficientPeers
+  { _errorLogNodeInsufficientPeers_log :: !(Id ErrorLog)
+  , _errorLogNodeInsufficientPeers_node :: !(Id Node)
+  , _errorLogNodeInsufficientPeers_synchronisationThreshold :: !Word8
+  , _errorLogNodeInsufficientPeers_actualPeerCount :: !Word64
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNodeInsufficientPeers where
+  type IdData ErrorLogNodeInsufficientPeers = Id ErrorLog
+
 -- | Bakers in the daemon sense, not delegate sense
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
   { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
@@ -985,6 +996,7 @@ deriving instance Show (LogTag a)
 data NodeLogTag a where
   NodeLogTag_InaccessibleNode :: NodeLogTag ErrorLogInaccessibleNode
   NodeLogTag_NodeWrongChain :: NodeLogTag ErrorLogNodeWrongChain
+  NodeLogTag_NodeInsufficientPeers :: NodeLogTag ErrorLogNodeInsufficientPeers
   NodeLogTag_NodeInvalidPeerCount :: NodeLogTag ErrorLogNodeInvalidPeerCount
   NodeLogTag_BadNodeHead :: NodeLogTag ErrorLogBadNodeHead
 
@@ -1041,6 +1053,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInsufficientPeers
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
@@ -1150,6 +1163,7 @@ instance UniverseSome NodeLogTag where
   universeSome =
     [ Some NodeLogTag_InaccessibleNode
     , Some NodeLogTag_NodeWrongChain
+    , Some NodeLogTag_NodeInsufficientPeers
     , Some NodeLogTag_NodeInvalidPeerCount
     , Some NodeLogTag_BadNodeHead
     ]
@@ -1199,6 +1213,7 @@ errorLogNames =
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
+  , ''ErrorLogNodeInsufficientPeers
   , ''ErrorLogNodeInvalidPeerCount
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder

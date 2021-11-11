@@ -76,6 +76,7 @@ preMigrate chainId =
   >=> migrateBakerRightsCycleProgressTable
   >=> removeArchivalNodeFromTables
   >=> migrateRawCacheEntryTable
+  >=> migrateNodeDetailsAddSynchronisationThreshold
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -401,6 +402,19 @@ migrateProcessDataToSplitTable ta = do
               ALTER TABLE "NodeInternal" ADD FOREIGN KEY("data#data") REFERENCES "ProcessData"("id");
             |]
           getTableAnalysis
+    _ -> pure ta
+
+migrateNodeDetailsAddSynchronisationThreshold :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateNodeDetailsAddSynchronisationThreshold ta = do
+  let table = (Nothing, "NodeDetails")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | all ((/= "data#synchronisationThreshold") . colName) $ tableColumns analyzedTable
+      -> do
+        void [traceExecuteQ|
+          ALTER TABLE "NodeDetails" ADD COLUMN "data#synchronisationThreshold" INT8 NOT NULL DEFAULT 4;
+        |]
+        getTableAnalysis
     _ -> pure ta
 
 migrateBakerDaemonInternalTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
