@@ -34,8 +34,8 @@ data PublicRequest a where
     -> Maybe Int
     -> PublicRequest ()
   PublicRequest_AddInternalNode
-    :: Maybe (NodeProcessState, Maybe URI)
-    -> PublicRequest ()
+    :: Maybe (NodeProcessState, SnapshotImportSource)
+    -> PublicRequest (Either AddInternalNodeError ())
   PublicRequest_RemoveNode
     :: Either URI ()
     -> PublicRequest ()

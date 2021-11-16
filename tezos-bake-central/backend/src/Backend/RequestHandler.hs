@@ -64,7 +64,7 @@ import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Schema
-import Backend.Snapshot (handleSnapshotDownload)
+import Backend.Snapshot (handleSnapshotDownload, handleSnapshotFilePathImport, validateSnapshotFilePath)
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Process (updateProcessState)
@@ -245,7 +245,7 @@ requestHandler appConfig emailFromAddr nds =
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
-      PublicRequest_AddInternalNode mNodeProcessState -> do
+      req@(PublicRequest_AddInternalNode mNodeProcessState) -> validateAddInternalNodeRequest req $ do
         inDb $ do
           let ps = maybe ProcessState_Stopped (ProcessState_Node . fst) mNodeProcessState
               pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNodeProcessState
@@ -283,7 +283,10 @@ requestHandler appConfig emailFromAddr nds =
                   (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
                 notify NotifyTag_NodeInternal (nid, Just processData)
         case mNodeProcessState of
-          Just (NodeProcessState_DownloadingSnapshot, Just u) -> handleSnapshotDownload appConfig nds u
+          Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_UriSource u) ->
+            handleSnapshotDownload appConfig nds u
+          Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp) ->
+            handleSnapshotFilePathImport appConfig nds fp
           _ -> return ()
 
       PublicRequest_AddExternalNode addr alias minPeerConn -> inDb $ do
@@ -638,3 +641,15 @@ getTelegramCfgId :: PersistBackend m => m (Maybe (Id TelegramConfig))
 getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   -- Silliness to help type inference:
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
+
+validateAddInternalNodeRequest
+  :: (MonadBaseNoPureAborts IO m, MonadIO m, MonadMask m, MonadUnliftIO m)
+  => PublicRequest (Either AddInternalNodeError ()) -> m () -> m (Either AddInternalNodeError ())
+validateAddInternalNodeRequest req reqHandler =
+  case req of
+    PublicRequest_AddInternalNode (Just (_, SnapshotImportSource_FilePathSource fp)) -> do
+      validationRes <- validateSnapshotFilePath fp
+      case validationRes of
+        Left e -> pure $ Left $ AddInternalNodeError_SnapshotImportError e
+        Right () -> Right <$> reqHandler
+    _ -> Right <$> reqHandler

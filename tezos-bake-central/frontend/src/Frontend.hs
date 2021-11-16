@@ -1,3 +1,4 @@
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DoAndIfThenElse #-}
@@ -1204,7 +1205,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
       elClass "h5" "ui header" $ text "Kiln needs to launch a Tezos node which must be fully synced with the blockchain before baking."
       divClass "explanation" $ text "To bake with Kiln you will also need a Ledger hardware wallet device."
       start <- uiButton "primary" "Start Node"
-      pure ((["launch-node"], never), startNodeWorkflow launchNode <$ start)
+      pure ((["launch-node"], never), startNodeWorkflow launchNode close <$ start)
 
     disclaimer next = Workflow $ do
       elClass "h5" "ui header" $ text "Kiln Baking Disclaimer"
@@ -1407,7 +1408,8 @@ addNodeModal ::
   , HasJSContext (Performable m)
   )
   => Event t () -> m (Dynamic t [Text], Event t ())
-addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d in (c, close <> switch (current e))
+addNodeModal close = ffor (workflow splash) $ \d ->
+  let (c, e) = splitDynPure d in (c, switch (current e))
 
   where
     splash = Workflow $ do
@@ -1415,7 +1417,7 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
       divClass "ui grid stackable divided" $ do
         startNodeEv <- addInternal
         e <- addExternal
-        pure ((pure "add-node", e), startNodeWorkflow splash <$ startNodeEv)
+        pure ((pure "add-node", e), startNodeWorkflow splash close <$ startNodeEv)
 
       where
         section header explanation = do
@@ -1463,6 +1465,7 @@ addNodeModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d 
 data NodeBootstrapMethod
   = NodeBootstrapMethod_PeerToPeer
   | NodeBootstrapMethod_SnapshotFile (Maybe File.File)
+  | NodeBootstrapMethod_SnapshotFilePath (Maybe FilePath)
   | NodeBootstrapMethod_SnapshotURI (Maybe URI)
 
 startNodeWorkflow :: forall m t js.
@@ -1471,15 +1474,32 @@ startNodeWorkflow :: forall m t js.
   , MonadJSM (Performable m)
   , HasJSContext (Performable m)
   )
-  => Workflow t m ([Text], Event t ()) -> Workflow t m ([Text], Event t ())
-startNodeWorkflow backWF = Workflow $ do
+  => Workflow t m ([Text], Event t ()) -> Event t () -> Workflow t m ([Text], Event t ())
+startNodeWorkflow backWF close = Workflow $ do
   backEv <- backButton
   divClass "ui header" $ text "Start a Kiln Node"
   elClass "h5" "ui header" $ text "Initialize Chain Data From:"
   rec
-    useSnapshotURI <- holdDyn True (leftmost [True <$ e1, False <$ e2, False <$ e3])
-    useSnapshotFile <- holdDyn False (leftmost [True <$ e2, False <$ e1, False <$ e3])
-    (e1, mSnapshotURI) <- fakeRadioItem useSnapshotURI $ el "div" $ do
+    let
+      radioItems =
+        [ useSnapshotUriEv
+        , useSnapshotFileEv
+        , useSnapshotPeerToPeerEv
+        , useSnapshotFilePathEv
+        ]
+
+      isRadioItemSelected :: Event t () -> Bool -> m (Dynamic t Bool)
+      isRadioItemSelected option selectedByDefault =
+        holdDyn selectedByDefault $ leftmost $ curOption : otherOptions
+        where
+          curOption    = True <$ option
+          otherOptions = map (\opt -> False <$ opt) radioItems
+
+    useSnapshotURI      <- isRadioItemSelected useSnapshotUriEv True
+    useSnapshotFile     <- isRadioItemSelected useSnapshotFileEv False
+    useSnapshotFilePath <- isRadioItemSelected useSnapshotFilePathEv False
+
+    (useSnapshotUriEv, mSnapshotURI) <- fakeRadioItem useSnapshotURI $ el "div" $ do
       el "div" $ text "Provide snapshot URL (Recommended)"
       divClass "explanation" $ do
         el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
@@ -1491,7 +1511,17 @@ startNodeWorkflow backWF = Workflow $ do
             Right uri' -> Just uri'
             Left _ -> Nothing
       return mUri
-    (e2, mSelectedSnapshot) <- fakeRadioItem useSnapshotFile $ el "div" $ do
+    (useSnapshotFilePathEv, mSnapshotFilePath) <- fakeRadioItem useSnapshotFilePath $ el "div" $ do
+      el "div" $ text "Provide path to snapshot file"
+      divClass "explanation" $ do
+        el "p" $ text "You can provide a path to the snapshot file that is stored locally on the machine that is running Kiln."
+      filePath <- formItem textField
+      let
+        mFilePath = ffor filePath $ \case
+          Right fp -> fp
+          Left _   -> Nothing
+      return mFilePath
+    (useSnapshotFileEv, mSelectedSnapshot) <- fakeRadioItem useSnapshotFile $ el "div" $ do
       el "div" $ text "Provide snapshot file stored locally"
       divClass "explanation" $ do
         el "p" $ text "As an alternative you can provide a snapshot file that is stored locally."
@@ -1504,62 +1534,86 @@ startNodeWorkflow backWF = Workflow $ do
           elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
           fi <- fileInput' $ constDyn ("id" =: "fileId")
         pure fileName
-    (e3, _) <- fakeRadioItem (do useSnapshotFile' <- useSnapshotFile; useSnapshotURI' <- useSnapshotURI; return $ not $ useSnapshotFile' || useSnapshotURI') $
+    let
+      usep2p = do
+        useSnapshotFile' <- useSnapshotFile
+        useSnapshotURI' <- useSnapshotURI
+        useSnapshotFilePath' <- useSnapshotFilePath
+        return $ not $ useSnapshotFile' || useSnapshotURI' || useSnapshotFilePath'
+    (useSnapshotPeerToPeerEv, _) <- fakeRadioItem usep2p $
       divClass "" $ do
         divClass "" $ text "Peer to Peer Download"
         divClass "explanation" $ do
           el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
 
   let
-    selectedMethod :: Dynamic t NodeBootstrapMethod
-    selectedMethod = do
+    selectedMethodDyn :: Dynamic t NodeBootstrapMethod
+    selectedMethodDyn = do
       useSnapshotFile' <- useSnapshotFile
       useSnapshotURI' <- useSnapshotURI
+      useSnapshotFilePath' <- useSnapshotFilePath
       if useSnapshotFile'
       then NodeBootstrapMethod_SnapshotFile <$> mSelectedSnapshot
       else if useSnapshotURI'
       then NodeBootstrapMethod_SnapshotURI <$> mSnapshotURI
+      else if useSnapshotFilePath'
+      then NodeBootstrapMethod_SnapshotFilePath <$> fmap T.unpack <$> mSnapshotFilePath
       else return NodeBootstrapMethod_PeerToPeer
+
     disabledFlag :: Dynamic t Text
     disabledFlag = do
-      method <- selectedMethod
+      method <- selectedMethodDyn
       case method of
         NodeBootstrapMethod_PeerToPeer -> ""
         NodeBootstrapMethod_SnapshotFile (Just _) -> ""
+        NodeBootstrapMethod_SnapshotFilePath (Just _) -> ""
         NodeBootstrapMethod_SnapshotURI (Just _) -> ""
         _ -> "disabled"
-  contEv :: Event t () <- uiDynButton (T.unwords . (:["primary"]) <$> disabledFlag) (text "Add Node")
 
-  let
-    ev :: Event t NodeBootstrapMethod
-    ev = tag (current selectedMethod) contEv
-    launch = flip mapMaybe ev $ \case
-      NodeBootstrapMethod_PeerToPeer -> Just ()
-      _ -> Nothing
-    uploadSnapshotEv = flip mapMaybe ev $ \case
-      NodeBootstrapMethod_SnapshotFile f -> f
-      _ -> Nothing
-    downloadSnapshotEv = flip mapMaybe ev $ \case
-      NodeBootstrapMethod_SnapshotURI u -> u
-      _ -> Nothing
-  formEv <- performEvent $ ffor uploadSnapshotEv $ \f -> do
-    liftIO $ putStrLn "starting file upload"
-    fileToFormValue f
+  rec
+    _ <- runWithReplace blank $ ffor invalidSnapshotFilePath $ \_ ->
+        divClass "ui error message" $ text "File does not exist"
+    addNodeEv <- uiDynButton (T.unwords . (:["primary"]) <$> disabledFlag) (text "Add Node")
 
-  mUri <-
-    getBackendPath (BackendRoute_SnapshotUpload :/ ()) False
-  let
-    formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
-  for_ mUri $ \uri -> postForms (Uri.render uri) formUploadEv
+    let
+      selectedMethodEv :: Event t NodeBootstrapMethod
+      selectedMethodEv = tag (current selectedMethodDyn) addNodeEv
 
-  launchedEv2 <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just (NodeProcessState_ImportingSnapshot, Nothing)))
-  launchedEv3 <- requestingIdentity $ ffor downloadSnapshotEv $ \u ->
-    public (PublicRequest_AddInternalNode $ Just (NodeProcessState_DownloadingSnapshot, Just u))
-  launchedEv <- requestingIdentity $ launch $> public (PublicRequest_AddInternalNode Nothing)
+      startNodePeerToPeerEv = flip mapMaybe selectedMethodEv $ \case
+        NodeBootstrapMethod_PeerToPeer -> Just ()
+        _ -> Nothing
+      uploadSnapshotEv = flip mapMaybe selectedMethodEv $ \case
+        NodeBootstrapMethod_SnapshotFile f -> f
+        _ -> Nothing
+      uploadSnapshotFromPathEv = flip mapMaybe selectedMethodEv $ \case
+        NodeBootstrapMethod_SnapshotFilePath f -> f
+        _ -> Nothing
+      downloadSnapshotEv = flip mapMaybe selectedMethodEv $ \case
+        NodeBootstrapMethod_SnapshotURI u -> u
+        _ -> Nothing
 
-  pure ((pure "start-node", leftmost [launchedEv, launchedEv2, launchedEv3]), leftmost
-       [ backWF <$ backEv
-       ])
+    formEv <- performEvent $ ffor uploadSnapshotEv fileToFormValue
+
+    mUri <- getBackendPath (BackendRoute_SnapshotUpload :/ ()) False
+    let
+      formUploadEv = (: []) . Map.singleton "snapshot-file" <$> formEv
+    for_ mUri $ \uri -> postForms (Uri.render uri) formUploadEv
+
+    uploadSnapshotResEv <- requestingIdentity $ formUploadEv $> public (PublicRequest_AddInternalNode (Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FileSource)))
+    downloadSnapshotResEv <- requestingIdentity $ ffor downloadSnapshotEv $ \u ->
+      public (PublicRequest_AddInternalNode $ Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_UriSource u))
+    (invalidSnapshotFilePath, uploadSnapshotFromPathResEv) <- fmap fanEither $
+      requestingIdentity $ ffor uploadSnapshotFromPathEv $ \fp ->
+      public (PublicRequest_AddInternalNode (Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp)))
+    startNodePeerToPeerResEv <- requestingIdentity $ startNodePeerToPeerEv $> public (PublicRequest_AddInternalNode Nothing)
+
+    let
+      events = map void [startNodePeerToPeerResEv, uploadSnapshotResEv, downloadSnapshotResEv]
+        <> [uploadSnapshotFromPathResEv]
+
+  pure ( (["start-node"], leftmost events <> close)
+       , leftmost [backWF <$ backEv]
+       )
   where
     fileInput' config = do
       let insertType = Map.insert "type" "file"
@@ -1768,7 +1822,7 @@ nodesTab usingNodeOption =
               pure $ ffor unresolvedAlertsForThisNode $ mapMaybe $ \(lTag :=> Identity log) -> withSeverity lTag $ case lTag of
                 NodeLogTag_InaccessibleNode -> Just $ text "Unable to connect."
                 NodeLogTag_NodeWrongChain -> Just $ text "On wrong network."
-                NodeLogTag_NodeInsufficientPeers -> Just $ text "Insufficient peers"
+                NodeLogTag_NodeInsufficientPeers -> Just $ text "Insufficient peers."
                 NodeLogTag_NodeInvalidPeerCount -> Just $ text "Node has too few peers."
                 NodeLogTag_BadNodeHead -> Just $ text $
                   fst (badNodeHeadMessage Const (Const . const "") log) <> "."

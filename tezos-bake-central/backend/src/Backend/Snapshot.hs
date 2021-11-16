@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -39,6 +40,7 @@ import qualified Snap.Core as Snap
 import Snap.Util.FileUploads
 import System.Directory
 import System.Exit (ExitCode(..))
+import System.FilePath.Posix (takeFileName)
 import qualified System.Process as Process
 import System.Posix.Signals (signalProcess, sigKILL)
 import Text.Read (readMaybe)
@@ -97,7 +99,26 @@ handleSnapshotUpload appConfig nds lockMVar = do
             renameFile fp storePath
             forkIO $ withLockRelease $ runLoggingEnv logger $ do
               (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds Nothing
-              importSnapshotData appConfig nds sm smId
+              importSnapshotData appConfig nds sm smId True
+
+validateSnapshotFilePath :: (MonadIO m) => FilePath -> m (Either SnapshotImportError ())
+validateSnapshotFilePath fp = do
+  doesExist <- liftIO $ doesFileExist fp -- TODO #82 add check is the file a snapshot
+  if doesExist then
+    pure $ Right ()
+  else
+    pure $ Left SnapshotImportError_FileNotFound
+
+handleSnapshotFilePathImport
+  :: (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
+  => AppConfig
+  -> NodeDataSource
+  -> FilePath
+  -> m ()
+handleSnapshotFilePathImport appConfig nds fp = do
+  (smId, sm) <- initSnapshotMeta (takeFileName fp) fp nds Nothing
+  void $ liftIO $ forkIO $ runLoggingEnv (_nodeDataSource_logger nds) $
+    importSnapshotData appConfig nds sm smId False
 
 cleanupDir :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 cleanupDir dir = do
@@ -159,7 +180,7 @@ handleSnapshotDownload appConfig nds snapshotURI = void $ liftIO $ forkIO $ runL
         ps <- fmap headMay $ runDb (Identity db) $ project ProcessData_stateField (AutoKeyField ==. fromId pid)
         case ps of
           (Just (ProcessState_Node NodeProcessState_DownloadComplete)) -> do
-            importSnapshotData appConfig nds sm smId
+            importSnapshotData appConfig nds sm smId True
           (Just (ProcessState_Node NodeProcessState_DownloadCanceled)) -> do
             liftIO $ killThread downloaderThread
             cleanUpNode
@@ -183,8 +204,9 @@ importSnapshotData
   -> NodeDataSource
   -> SnapshotMeta
   -> Key SnapshotMeta BackendSpecific
+  -> Bool
   -> m ()
-importSnapshotData appConfig nds sm smId = do
+importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
   let
     logger = _nodeDataSource_logger nds
     nodePath = nixNodePath
@@ -274,7 +296,8 @@ importSnapshotData appConfig nds sm smId = do
     runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec configFile)
     Process.withCreateProcess (procSpec configFile) procMonitor
 
-  removeFileLogging storePath
+  when shouldRemoveSnapshotFile $
+    removeFileLogging storePath
 
   -- Do cleanup after cancel import
   procControl <- inDb $ project SnapshotMeta_controlField (AutoKeyField ==. smId)

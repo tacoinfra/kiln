@@ -960,14 +960,12 @@ data TelegramMessageQueue = TelegramMessageQueue
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
-type SnapshotImportError = Text
-
 data SnapshotMeta = SnapshotMeta
   { _snapshotMeta_filename :: !Text -- user supplied
   , _snapshotMeta_storePath :: !Text -- where stored
   , _snapshotMeta_uploadTime :: !UTCTime
   , _snapshotMeta_importCompleteTime :: !(Maybe UTCTime)
-  , _snapshotMeta_importError :: !(Maybe SnapshotImportError)
+  , _snapshotMeta_importError :: !(Maybe Text)
   , _snapshotMeta_headBlock :: !(Maybe BlockHash)
   , _snapshotMeta_headBlockPrefix :: !(Maybe Text)
   , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
@@ -977,6 +975,20 @@ data SnapshotMeta = SnapshotMeta
   , _snapshotMeta_downloadError :: !(Maybe Text)
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId SnapshotMeta
+
+data SnapshotImportSource
+  = SnapshotImportSource_FileSource
+  | SnapshotImportSource_FilePathSource FilePath
+  | SnapshotImportSource_UriSource URI
+  deriving (Eq, Generic, Ord, Show, Typeable)
+
+data SnapshotImportError
+  = SnapshotImportError_FileNotFound
+  deriving (Eq, Generic, Ord, Show, Typeable)
+
+data AddInternalNodeError
+  = AddInternalNodeError_SnapshotImportError SnapshotImportError
+  deriving (Eq, Generic, Ord, Show, Typeable)
 
 -- Re-ordering these can yield errors
 -- https://ghc.haskell.org/trac/ghc/ticket/8740 (fixed in GHC 8.6)
@@ -1026,6 +1038,7 @@ deriving instance Show (BakerLogTag a)
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
   , ''AccusationBlock
+  , ''AddInternalNodeError
   , ''AlertNotificationMethod
   , ''Amendment
   , ''BakeEfficiency
@@ -1079,6 +1092,8 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''RightNotificationLimit
   , ''RightNotificationSettings
   , ''SmtpProtocol
+  , ''SnapshotImportError
+  , ''SnapshotImportSource
   , ''SnapshotMeta
   , ''TelegramConfig
   , ''TelegramMessageQueue
