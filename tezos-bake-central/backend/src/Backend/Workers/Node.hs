@@ -857,11 +857,16 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
     babyHax "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU" = "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
     babyHax ph = ph
 
+    -- Yet another hardfork happened on hangzhou, so we should follow it as well
+    hangzhouHax :: ProtocolHash -> ProtocolHash
+    hangzhouHax "PtHangzHogokSuiMHemCuowEavgYTP8J5qQ9fQS793MHYFpCY3r" = "PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
+    hangzhouHax ph = ph
+
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
       tp <- if vp == VotingPeriodKind_Promotion
-        then fmap babyHax <$> nodeQueryDataSource (NodeQuery_CurrentProposal (latestHead ^. hash))
+        then fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (NodeQuery_CurrentProposal (latestHead ^. hash))
         else return Nothing
       return (blk ^. blockMetadata . blockMetadata_protocol, tp)
 
