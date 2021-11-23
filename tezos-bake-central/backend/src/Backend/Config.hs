@@ -43,6 +43,7 @@ data AppConfig = AppConfig
   , _appConfig_kilnNodeConfig :: NodeConfigFile
   , _appConfig_chainId :: ChainId
   , _appConfig_kilnNodeCustomArgs :: Maybe Text
+  , _appConfig_kilnBakerCustomArgs :: Maybe Text
   , _appConfig_binaryPaths :: Maybe BinaryPaths
   , _appConfig_tezosNodeEnvVar :: Maybe FilePath
   }

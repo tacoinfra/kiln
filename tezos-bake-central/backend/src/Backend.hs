@@ -209,6 +209,10 @@ backendImpl cfg serve = do
     (pure $ _opts_kilnNodeCustomArgs cfg)
     (getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs)
 
+  !(kilnBakerCustomArgs :: Maybe Text) <- liftA2 (<|>)
+    (pure $ _opts_kilnBakerCustomArgs cfg)
+    (getConfigFromFile Just $ configPath Config.kilnBakerCustomArgs)
+
   !(binaryPaths :: Maybe BinaryPaths) <- liftA2 (<|>)
     (pure $ (Aeson.decodeStrict' . T.encodeUtf8) =<< _opts_binaryPaths cfg)
     (getJSONConfigFromFile $ configPath Config.binaryPaths)
@@ -356,6 +360,7 @@ backendImpl cfg serve = do
 
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
+        , _appConfig_kilnBakerCustomArgs = kilnBakerCustomArgs
         , _appConfig_binaryPaths = binaryPaths
         , _appConfig_tezosNodeEnvVar = tezosNodeEnvVar
         }
@@ -518,6 +523,7 @@ data Opts = Opts
   , _opts_kilnNodeRpcPort :: !(Maybe Port)
   , _opts_kilnNodeNetPort :: !(Maybe Port)
   , _opts_kilnNodeCustomArgs :: !(Maybe Text)
+  , _opts_kilnBakerCustomArgs :: !(Maybe Text)
   , _opts_kilnDataDir :: !(Maybe FilePath)
   , _opts_binaryPaths :: !(Maybe Text)
   , _opts_ledgerCheckDelaySeconds :: !(Maybe NominalDiffTime)
@@ -542,6 +548,7 @@ instance Semigroup Opts where
     , _opts_kilnNodeRpcPort = rightBiased (<|>) _opts_kilnNodeRpcPort
     , _opts_kilnNodeNetPort = rightBiased (<|>) _opts_kilnNodeNetPort
     , _opts_kilnNodeCustomArgs = rightBiased (<|>) _opts_kilnNodeCustomArgs
+    , _opts_kilnBakerCustomArgs = rightBiased (<|>) _opts_kilnBakerCustomArgs
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     , _opts_ledgerCheckDelaySeconds = rightBiased (<|>) _opts_ledgerCheckDelaySeconds
@@ -568,6 +575,7 @@ instance Monoid Opts where
       , _opts_kilnNodeRpcPort = Nothing
       , _opts_kilnNodeNetPort = Nothing
       , _opts_kilnNodeCustomArgs = Nothing
+      , _opts_kilnBakerCustomArgs = Nothing
       , _opts_kilnDataDir = Nothing
       , _opts_binaryPaths = Nothing
       , _opts_ledgerCheckDelaySeconds = Nothing
@@ -619,6 +627,9 @@ optsArgDescr =
 
   , mkReqArg Config.kilnNodeCustomArgs "ARGS" (set opts_kilnNodeCustomArgs . Just)
       "Custom arguments for the Kiln Node."
+
+  , mkReqArg Config.kilnBakerCustomArgs "ARGS" (set opts_kilnBakerCustomArgs . Just)
+      "Custom arguments for the Kiln Baker."
 
   , mkReqArg Config.binaryPaths "BINPATHS" (set opts_binaryPaths . Just)
       "Custom paths to tezos binaries."

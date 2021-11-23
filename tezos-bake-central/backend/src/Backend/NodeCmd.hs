@@ -274,7 +274,8 @@ bakerDaemonProcess appConfig logger db maybePaths = do
     bakerArgs = [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig
                 , "--base-dir", tezosClientDataDir appConfig
                 , "run", "with", "local", "node", nodeDataDir appConfig
-                , alias]
+                , alias
+                ] <> maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
     endorserArgs = [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
                    , "--base-dir", tezosClientDataDir appConfig
                    , "run"
