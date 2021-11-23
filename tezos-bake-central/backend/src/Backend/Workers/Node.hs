@@ -470,23 +470,23 @@ nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nd
           syncThreshold = _nodeDetailsData_synchronisationThreshold nodeDetails
           syncThreshold64 = fromIntegral @Word8 @Word64 syncThreshold
 
-      if curPeerCount < syncThreshold64 && isNodeAlive then do
+      if curPeerCount < syncThreshold64 && isNodeAlive then return $ do
         when (nodeHead ^. level < latestHead ^. level) $ do
           let
             (bootstrapped, chainStatus) = case isBootstrapped of
               Left _ -> (False, SyncState_Unsynced)
               Right (IsBootstrapped b cs) -> (b, cs)
-          void $ return $ bad bootstrapped chainStatus
-        return $ reportNodeInsufficientPeersError nodeId syncThreshold curPeerCount
-      else do
-        void $ return sufficientPeers
+          void $ bad bootstrapped chainStatus
+        reportNodeInsufficientPeersError nodeId syncThreshold curPeerCount
+      else return $ do
+        sufficientPeers
         case isBootstrapped of
           Left _ ->
-            return $ bad False SyncState_Unsynced
+            bad False SyncState_Unsynced
           Right (IsBootstrapped bootstrapped chainStatus) ->
             case (bootstrapped, chainStatus) of
-              (True, SyncState_Synced) -> return good
-              _ -> return $ bad bootstrapped chainStatus
+              (True, SyncState_Synced) -> good
+              _ -> bad bootstrapped chainStatus
 
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
