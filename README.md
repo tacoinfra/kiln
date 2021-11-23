@@ -330,6 +330,19 @@ blockchain. This initial query can take up to a few hours.
 
 *Note: To monitor a baker, you must be monitoring a node.*
 
+### Configuring a baker
+
+In case you want to run the baker with some additional arguments, e.g.
+you want to run a baker with a vote to end the liquidity baking subsidy,
+you should use `--kiln-baker-custom-args` option.
+
+To specify the liquidity baking escape vote you should create a file
+`vote.json` with the following contents:
+```
+{ "liquidity_baking_escape_vote": true/false }
+```
+And run Kiln with `--kiln-baker-custom-args="--votefile vote.json"` option.
+
 ### Configuring Telegram notifications
 
 Click *Settings* from the left panel then click *Connect Telegram* and
