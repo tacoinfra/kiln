@@ -165,6 +165,9 @@ defaultKilnDataDir = "./.kiln"
 kilnNodeCustomArgs :: FilePath
 kilnNodeCustomArgs = "kiln-node-custom-args"
 
+kilnBakerCustomArgs :: FilePath
+kilnBakerCustomArgs = "kiln-baker-custom-args"
+
 binaryPaths :: FilePath
 binaryPaths = "binary-paths"
 

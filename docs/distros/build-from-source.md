@@ -78,6 +78,8 @@ For the most complete list of options while starting Kiln, run `./backend --help
     *   Example: `--bakers tz3RDC3Jdn4j15J7bBHZd29EUee9gVB1CxD9@FirstBaker,tz3NExpXn9aPNZPorRE4SdjJ2RGrfbJgMAaV@SecondBaker,tz3UoffC7FG7zfpmvmjUmUeAaHvzdcUvAj6r`
 * `--kiln-node-rpc-port=PORT` - Configures the RPC port of the Kiln Node. Default is `8733`
 * `--kiln-node-net-port=PORT` - Configures the Net port of the Kiln Node. Default is `9733`
+* `--kiln-node-custom-args="<arguments>"`
+* `--kiln-baker-custom-args="<arguments>"`
 
 ### Updating from an older source build
 
