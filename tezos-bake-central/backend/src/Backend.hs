@@ -20,7 +20,6 @@ module Backend where
 
 import Control.Concurrent.MVar (MVar, newEmptyMVar)
 import Control.Concurrent.STM (atomically, newTQueueIO, newTVarIO, readTQueue)
-import Control.Error (hush)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
@@ -251,8 +250,6 @@ backendImpl cfg serve = do
     chain = fromMaybe configChain customChainId
 
     maybeNamedChain = either Just (const Nothing) chain
-    maybeNamedChainOrPaths :: Maybe (Either NamedChain BinaryPaths)
-    maybeNamedChainOrPaths = fmap Right binaryPaths <|> fmap Left maybeNamedChain
 
     !dbSpec = fromMaybe Config.db pgConnStringFile
 
@@ -442,11 +439,10 @@ backendImpl cfg serve = do
       when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< upgradeCheckWorker namedChain tezosReleaseTag networkGitLabProjectId (60 * 60) logger httpMgr db appConfig
 
-      for_ maybeNamedChainOrPaths $ \(hush -> v) -> do
-        addFinalizer =<< internalNodeWorker appConfig logger db v
-        addFinalizer =<< protocolMonitorWorker dataSrc db
-        addFinalizer =<< bakerDaemonProcess appConfig logger db v
-        addFinalizer =<< tezosClientWorker 1.3 ledgerCheckDelay logger dataSrc appConfig db v
+      addFinalizer =<< internalNodeWorker appConfig logger db binaryPaths
+      addFinalizer =<< protocolMonitorWorker dataSrc db
+      addFinalizer =<< bakerDaemonProcess appConfig logger db binaryPaths
+      addFinalizer =<< tezosClientWorker 1.3 ledgerCheckDelay logger dataSrc appConfig db binaryPaths
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case

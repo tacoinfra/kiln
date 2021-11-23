@@ -865,7 +865,16 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
     getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
-      tp <- if vp == VotingPeriodKind_Promotion
+          currentProtocol = blk ^. blockMetadata . blockMetadata_protocol
+      remainingBlocksInVotingPeriod <- case blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_remaining of
+        Just remaining -> return remaining
+        Nothing -> do
+          let votingPeriodPosition = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
+          protoConstants <- runNodeQueryT $ getProtocolConstants $ Right currentProtocol
+          return $ protoConstants ^. protoInfo_blocksPerVotingPeriod - votingPeriodPosition - 1
+      -- This will trigger daemons for the upcoming protocol to start, so we start them
+      -- on the last voting period 100 blocks prior to the protocol upgrade.
+      tp <- if vp == VotingPeriodKind_Adoption && remainingBlocksInVotingPeriod < 100
         then fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (NodeQuery_CurrentProposal (latestHead ^. hash))
         else return Nothing
       return (blk ^. blockMetadata . blockMetadata_protocol, tp)
