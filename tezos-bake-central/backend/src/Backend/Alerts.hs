@@ -776,7 +776,7 @@ reportMissedBake bakeTime f right pkh lvl = when' (bakerNotDeleted pkh) $ do
             JOIN "ErrorLog" el
               ON el.id = elbm.log
               AND el.stopped IS NULL
-              AND el.chainId = ?chainId
+              AND el."chainId" = ?chainId
             WHERE NOT b."data#deleted"
               AND b."publicKeyHash" = ?pkh
               AND el.started > NOW() AT TIME ZONE 'UTC' - ?mins * INTERVAL '1 minute'
