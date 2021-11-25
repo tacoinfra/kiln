@@ -101,11 +101,17 @@ handleSnapshotUpload appConfig nds lockMVar = do
               (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds Nothing
               importSnapshotData appConfig nds sm smId True
 
-validateSnapshotFilePath :: (MonadIO m) => FilePath -> m (Either SnapshotImportError ())
-validateSnapshotFilePath fp = do
-  doesExist <- liftIO $ doesFileExist fp -- TODO #82 add check is the file a snapshot
-  if doesExist then
-    pure $ Right ()
+validateSnapshotFilePath :: (MonadIO m) => AppConfig -> FilePath -> m (Either SnapshotImportError ())
+validateSnapshotFilePath appConfig fp = do
+  doesExist <- liftIO $ doesFileExist fp
+  if doesExist then do
+    let
+      nodePath = maybe nixNodePath _binaryPaths_nodePath $ _appConfig_binaryPaths appConfig
+      args = ["snapshot", "info", fp]
+    (exitCode, _, _) <- liftIO $ Process.readProcessWithExitCode nodePath args ""
+    pure $ case exitCode of
+      ExitSuccess   -> Right ()
+      ExitFailure _ -> Left SnapshotImportError_InvalidSnapshot
   else
     pure $ Left SnapshotImportError_FileNotFound
 
@@ -209,7 +215,7 @@ importSnapshotData
 importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
   let
     logger = _nodeDataSource_logger nds
-    nodePath = nixNodePath
+    nodePath = maybe nixNodePath _binaryPaths_nodePath $ _appConfig_binaryPaths appConfig
     dataDir = nodeDataDir appConfig
     storePath = T.unpack $ _snapshotMeta_storePath sm
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => Serializable a -> m a

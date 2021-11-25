@@ -1571,8 +1571,11 @@ startNodeWorkflow backWF close = Workflow $ do
         _ -> "disabled"
 
   rec
-    _ <- runWithReplace blank $ ffor invalidSnapshotFilePath $ \_ ->
+    _ <- runWithReplace blank $ ffor invalidSnapshotFilePath $ \case
+      AddInternalNodeError_SnapshotImportError SnapshotImportError_FileNotFound ->
         divClass "ui error message" $ text "File does not exist"
+      AddInternalNodeError_SnapshotImportError SnapshotImportError_InvalidSnapshot ->
+        divClass "ui error message" $ text "Invalid snapshot file"
     addNodeEv <- uiDynButton (T.unwords . (:["primary"]) <$> disabledFlag) (text "Add Node")
 
     let

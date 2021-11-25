@@ -984,6 +984,7 @@ data SnapshotImportSource
 
 data SnapshotImportError
   = SnapshotImportError_FileNotFound
+  | SnapshotImportError_InvalidSnapshot
   deriving (Eq, Generic, Ord, Show, Typeable)
 
 data AddInternalNodeError

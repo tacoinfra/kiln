@@ -245,7 +245,7 @@ requestHandler appConfig emailFromAddr nds =
       PublicRequest_SetHWM sk bl -> inDb $ do
         update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
 
-      req@(PublicRequest_AddInternalNode mNodeProcessState) -> validateAddInternalNodeRequest req $ do
+      req@(PublicRequest_AddInternalNode mNodeProcessState) -> validateAddInternalNodeRequest req appConfig $ do
         inDb $ do
           let ps = maybe ProcessState_Stopped (ProcessState_Node . fst) mNodeProcessState
               pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNodeProcessState
@@ -644,11 +644,14 @@ getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
 
 validateAddInternalNodeRequest
   :: (MonadBaseNoPureAborts IO m, MonadIO m, MonadMask m, MonadUnliftIO m)
-  => PublicRequest (Either AddInternalNodeError ()) -> m () -> m (Either AddInternalNodeError ())
-validateAddInternalNodeRequest req reqHandler =
+  => PublicRequest (Either AddInternalNodeError ())
+  -> AppConfig
+  -> m ()
+  -> m (Either AddInternalNodeError ())
+validateAddInternalNodeRequest req appConfig reqHandler =
   case req of
     PublicRequest_AddInternalNode (Just (_, SnapshotImportSource_FilePathSource fp)) -> do
-      validationRes <- validateSnapshotFilePath fp
+      validationRes <- validateSnapshotFilePath appConfig fp
       case validationRes of
         Left e -> pure $ Left $ AddInternalNodeError_SnapshotImportError e
         Right () -> Right <$> reqHandler
