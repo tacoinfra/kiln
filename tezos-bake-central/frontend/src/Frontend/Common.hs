@@ -623,6 +623,11 @@ aliasField ph = validatedInput (Validator.optional Validator.validateText) $ def
   & Txt.setFluid
   & Txt.addLabel (el "label" $ text "Alias")
 
+textField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace)
+           => m (Dynamic t (Either Text (Maybe Text)))
+textField = validatedInput (Validator.optional Validator.validateText) $ def
+  & Txt.setFluid
+
 minConnectionsField :: (DomBuilder t m, PostBuild t m, DomBuilderSpace m ~ GhcjsDomSpace, Num a, Ord a, Read a, Show a)
                     => m (Dynamic t (Either Text (Maybe a)))
 minConnectionsField = validatedInput (Validator.optional $ Validator.validateNumeric mempty (Just 0, Nothing) Nothing) $ def
