@@ -23,7 +23,7 @@ import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
 import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
-import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugNS, logDebugSH, logError, logInfo, logWarn, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logInfo, logWarn)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
@@ -41,7 +41,7 @@ import Data.Pool (Pool)
 import qualified Data.Set as S
 import Data.String.Here.Interpolated (i)
 import Data.These
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.Text as T
 import Data.Word
 import Database.Groundhog.Core
@@ -118,8 +118,9 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
         pure headBlock
 
       case newStateRsp of
+        e@(Left (Left (RpcError_RestrictedEndpoint _))) -> pure e
         Left (Left e) -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left (Left e)
-        Left (Right e) -> $(logWarn) (cacheErrorLogMessage "Handle new node head" e) $> Left (Right e)
+        Left (Right e) -> logCacheError "Handle new node head" e $> Left (Right e)
         Right headBlock -> pure $ Right headBlock
     for_ res $ \headBlock ->
       when (Just (headBlock ^. fitness) > oldHead ^? _Just . fitness) $ do
@@ -402,6 +403,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
                 Left (RpcError_UnexpectedStatus _url 404 _) -> pure (Just 0, mCurrentCycle)
                 Right (CheckpointV009 checkpoint) -> pure (Just $ V009._checkpoint_savePoint checkpoint, mCurrentCycle)
                 Right (CheckpointV010 checkpoint) -> pure (Just $ V010._checkpoint_savepoint checkpoint, mCurrentCycle)
+                Left (RpcError_RestrictedEndpoint _) -> pure (Nothing, Nothing)
                 Left err -> (Nothing, Nothing) <$ $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr} ${err}|]
 
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
@@ -420,6 +422,20 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
           nodeVersionMonitor nds nodeAddr nodeId
         liftIO (nodeQuery rChain) >>= inDb . \case
+          Left (RpcError_RestrictedEndpoint _) -> do
+            let p = (NodeDetails_dataField ~>)
+                nwStat = NetworkStat 0 0 0 0
+            update
+              [ p NodeDetailsData_headLevelSelector =. (Nothing :: Maybe RawLevel)
+              , p NodeDetailsData_headBlockHashSelector =. (Nothing :: Maybe BlockHash)
+              , p NodeDetailsData_headBlockPredSelector =. (Nothing :: Maybe BlockHash)
+              , p NodeDetailsData_headBlockBakedAtSelector =. (Nothing :: Maybe UTCTime)
+              , p NodeDetailsData_savePointSelector =. (Nothing :: Maybe RawLevel)
+              , p NodeDetailsData_savePointUpdatedSelector =. (Nothing :: Maybe Cycle)
+              , p NodeDetailsData_peerCountSelector =. (Nothing :: Maybe Word64)
+              , p NodeDetailsData_networkStatSelector =. nwStat
+              , p NodeDetailsData_fitnessSelector =. (Nothing :: Maybe Fitness)
+              ] (NodeDetails_idField ==. nodeId)
           Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
           Right actualChainId
             | actualChainId == chainId -> do
@@ -450,43 +466,38 @@ nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nd
   ifor_ nodes $ \nodeId (Node, node, nodeDetails) -> whenJust (nodeDetails ^. nodeDetailsData_headBlockHash) $ \nodeHeadHash -> do
     isBootstrapped :: Either RpcError IsBootstrapped <-
       runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ nodeRPC $ rIsBootstrapped chainId
-    action' <- flip runReaderT nds $ runExceptT @CacheError $ do
+    action' :: Either CacheError (ReaderT AppConfig Serializable ()) <- flip runReaderT nds $ runExceptT @CacheError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
-      let bad = \bootstrapped chainStatus ->
-            reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus
-          good = clearBadNodeHeadError nodeId
+      case isBootstrapped of
+        Left _ -> pure $ when (nodeHead ^. level < latestHead ^. level) $
+          reportBadNodeHeadError nodeId latestHead nodeHead False SyncState_Unsynced
+        Right (IsBootstrapped bootstrapped chainStatus) -> do
+            let bad  = reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus
+                good = clearBadNodeHeadError nodeId
 
-          sufficientPeers :: ReaderT AppConfig Serializable ()
-          sufficientPeers = clearNodeInsufficientPeersError nodeId
+                sufficientPeers :: ReaderT AppConfig Serializable ()
+                sufficientPeers = clearNodeInsufficientPeersError nodeId
 
-      Only isNodeAlive : _ <- runDb (Identity db)
-        [queryQ|
-          select count(el.id) = 0 from "ErrorLogInaccessibleNode" ein
-          join "ErrorLog" el on el.id = ein.log
-          where ein.node = ?nodeId and el.stopped is null
-        |]
+            Only isNodeAlive : _ <- runDb (Identity db)
+              [queryQ|
+                select count(el.id) = 0 from "ErrorLogInaccessibleNode" ein
+                join "ErrorLog" el on el.id = ein.log
+                where ein.node = ?nodeId and el.stopped is null
+              |]
 
-      let curPeerCount  = fromMaybe maxBound $ _nodeDetailsData_peerCount nodeDetails
-          syncThreshold = _nodeDetailsData_synchronisationThreshold nodeDetails
-          syncThreshold64 = fromIntegral @Word8 @Word64 syncThreshold
+            let curPeerCount  = fromMaybe maxBound $ _nodeDetailsData_peerCount nodeDetails
+                syncThreshold = _nodeDetailsData_synchronisationThreshold nodeDetails
+                syncThreshold64 = fromIntegral @Word8 @Word64 syncThreshold
 
-      if curPeerCount < syncThreshold64 && isNodeAlive then return $ do
-        when (nodeHead ^. level < latestHead ^. level) $ do
-          let
-            (bootstrapped, chainStatus) = case isBootstrapped of
-              Left _ -> (False, SyncState_Unsynced)
-              Right (IsBootstrapped b cs) -> (b, cs)
-          void $ bad bootstrapped chainStatus
-        reportNodeInsufficientPeersError nodeId syncThreshold curPeerCount
-      else return $ do
-        sufficientPeers
-        case isBootstrapped of
-          Left _ ->
-            bad False SyncState_Unsynced
-          Right (IsBootstrapped bootstrapped chainStatus) ->
-            case (bootstrapped, chainStatus) of
-              (True, SyncState_Synced) -> good
-              _ -> bad bootstrapped chainStatus
+            if curPeerCount < syncThreshold64 && isNodeAlive then return $ do
+              when (nodeHead ^. level < latestHead ^. level) $
+                void bad
+              reportNodeInsufficientPeersError nodeId syncThreshold curPeerCount
+            else return $ do
+              sufficientPeers
+              case (bootstrapped, chainStatus) of
+                (True, SyncState_Synced) -> good
+                _ -> bad
 
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 
@@ -718,8 +729,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       where
 
         logThenThrow e' = do
-            let logMessage = cacheErrorLogMessage "amendmentProcessWorker" e'
-            logDebugNS "kiln-debugging" logMessage
+            logCacheError "amendmentProcessWorker" e'
             error $ case e' of
               CacheError_RpcError (RpcError_NonJSON url e'' _bytes) -> mconcat
                                   ["Node Query failed for 'amendmentProcessWorker' Reason at url ("
@@ -729,7 +739,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                                   , e''
                                   , ". The response can be in found in the logs in namespace kiln-debugging."
                                   ]
-              _ -> T.unpack logMessage
+              _ -> T.unpack $ "Node Query failed for 'amendmentProcessWorker' Reason: " <> prettyCacheError e'
 
     catchUnsuitableNode :: (Monad m, MonadLogger m, MonadThrow m) => ExceptT CacheError (ReaderT NodeDataSource m) a -> m (Maybe a)
     catchUnsuitableNode action = do
@@ -847,7 +857,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
     getProtocol = getProtocol' >>= \case
       Right p -> return p
       Left e -> do
-        $(logWarnSH) (cacheErrorLogMessage "protocolMonitorWorker: fetch protocol" e)
+        logCacheError "protocolMonitorWorker: fetch protocol" e
         threadDelay' 1
         getProtocol
 

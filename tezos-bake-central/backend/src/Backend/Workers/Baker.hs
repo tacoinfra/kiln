@@ -221,7 +221,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
 
   case res of
     Right _ -> pure ()
-    Left err -> $(logErrorSH) (cacheErrorLogMessage "bakerRightsWorker" err)
+    Left err -> logCacheError "bakerRightsWorker" err
 
   $(logDebug) $ "BAKERRIGHTSWORKER STEP" <> tshow res
 
@@ -263,7 +263,7 @@ bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewHead nds) $ ru
 
   case res of
     Right () -> $(logDebug) "bakerWorker DONE"
-    Left (err :: CacheError) -> $(logErrorSH) (cacheErrorLogMessage "bakerWorker" err)
+    Left (err :: CacheError) -> logCacheError "bakerWorker" err
 
 
 -- separating the monad that can do RPC(mPrepare) from the one that can do

@@ -1185,12 +1185,12 @@ calculateBakerStats pkhs = do
 
 -}
 
--- | Logs the cache error as a Error to the monadlogger context
-cacheErrorLogMessage
-  :: Text -- A user friendly description of what was doing the call
-  -> CacheError
-  -> Text
-cacheErrorLogMessage callerDesc err = (("Node Query failed for '" <> callerDesc <> "' Reason: ") <>) $ prettyCacheError err
+-- | Logs the cache error if it's not caused by an endpoint restriction.
+{-# INLINE logCacheError #-}
+logCacheError :: MonadLogger m => Text -> CacheError -> m ()
+logCacheError _ (CacheError_RpcError (RpcError_RestrictedEndpoint _)) = pure ()
+logCacheError desc err = $(logDebug) $
+  "Node Query failed for '" <> desc <> "' Reason: " <> prettyCacheError err
 
 prettyCacheError :: CacheError -> Text
 prettyCacheError = \case
@@ -1201,6 +1201,7 @@ prettyCacheError = \case
     RpcError_UnexpectedStatus _url _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
     RpcError_HttpException _url e -> "RPC Exception (The Node is unreachable) " <> tshow e
     RpcError_NonJSON _url e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
+    RpcError_RestrictedEndpoint url -> "Node endpoint " <> url <> " is restricted."
   CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
   CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
   CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p

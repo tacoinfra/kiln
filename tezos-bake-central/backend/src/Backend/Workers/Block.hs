@@ -16,7 +16,6 @@
 module Backend.Workers.Block where
 
 import Control.Monad.Catch (MonadMask, throwM)
-import Control.Monad.Logger (logDebugSH, logErrorSH)
 import Data.ByteString as BS (ByteString)
 import Data.Either.Combinators (whenLeft, whenRight)
 import Data.Maybe (fromMaybe)
@@ -118,14 +117,15 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
         --
         -- TODO: if possible we should avoid this special treatment.
         whenLeft loopResult $ \e -> case e of
+          CacheError_RpcError (RpcError_RestrictedEndpoint _) -> pure ()
           CacheError_RpcError (RpcError_UnexpectedStatus _ 404 _) ->
-            $(logDebugSH) $ cacheErrorLogMessage "blockWorker" e
+            logCacheError "blockWorker" e
           CacheError_NoSuitableNode _ _ ->
-            $(logDebugSH) $ cacheErrorLogMessage "blockWorker" e
+            logCacheError "blockWorker" e
           CacheError_NotEnoughHistory ->
-            $(logDebugSH) $ cacheErrorLogMessage "blockWorker" e
+            logCacheError "blockWorker" e
           _ -> do
-            $(logErrorSH) $ cacheErrorLogMessage "blockWorker" e
+            logCacheError "blockWorker" e
             throwM e
 
 -- TODO: This could use a better abstraction here.
