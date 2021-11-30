@@ -644,13 +644,13 @@ checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource
 
       [queryQ|
           SELECT br."right", MIN(br.level)
-          FROM "BakerRightsCycleProgress" brcp
+          FROM "BakerRightsProgress" brp
           JOIN "BakerRight" br
-            ON br.branch = brcp.id
+            ON br.branch = brp.id
             AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
-          WHERE brcp."chainId" = ?chainId
-            AND brcp."publicKeyHash" = ?pkh
-          GROUP BY brcp."publicKeyHash", br."right"
+          WHERE brp."chainId" = ?chainId
+            AND brp."publicKeyHash" = ?pkh
+          GROUP BY brp."publicKeyHash", br."right"
         |]
 
     pure (bakerInt, (rightsMay >>= headMay))
