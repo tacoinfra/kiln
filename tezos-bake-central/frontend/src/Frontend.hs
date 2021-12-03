@@ -1576,6 +1576,11 @@ startNodeWorkflow backWF close = Workflow $ do
         divClass "ui error message" $ text "File does not exist"
       AddInternalNodeError_SnapshotImportError SnapshotImportError_InvalidSnapshot ->
         divClass "ui error message" $ text "Invalid snapshot file"
+      AddInternalNodeError_SnapshotImportError SnapshotImportError_PermissionDenied ->
+        divClass "ui error message" $ do
+          el "p" $ text "Permission denied"
+          el "p" $ text "If you run Kiln on macOS, try to move the snapshot file from Desktop/Downloads/Documents to another folder"
+
     addNodeEv <- uiDynButton (T.unwords . (:["primary"]) <$> disabledFlag) (text "Add Node")
 
     let
