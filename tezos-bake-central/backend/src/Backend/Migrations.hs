@@ -103,6 +103,7 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "BlockTodo")
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "PublicNodeConfig")
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "PublicNodeHead")
+  >=> dropTableIfExists False (QualifiedIdentifier Nothing "RawCacheEntry")
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do

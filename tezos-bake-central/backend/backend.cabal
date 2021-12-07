@@ -147,7 +147,6 @@ library
     Backend.Workers.Accusation
     Backend.Workers.Baker
     Backend.Workers.Block
-    Backend.Workers.Cache
     Backend.Workers.Node
     Backend.Workers.Process
     Backend.Workers.TezosClient
