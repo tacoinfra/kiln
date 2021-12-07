@@ -23,7 +23,7 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 
 import Backend.Common
-import Backend.CachedNodeRPC
+import Backend.NodeRPC
 
 import Backend.Schema
 import Common.Schema

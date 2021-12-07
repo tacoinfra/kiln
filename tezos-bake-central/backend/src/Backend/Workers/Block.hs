@@ -37,10 +37,10 @@ import qualified Tezos.V010.Types as V010
 import qualified Tezos.V005.Types as V005
 import Tezos.Signature.Verify as Sig
 
-import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.IndexQueries (getLatestProtocolConstants)
+import Backend.NodeRPC
 import Common.Schema
 import ExtraPrelude
 

@@ -79,13 +79,13 @@ import Tezos.Common.Chain (identifyChain)
 import Tezos.History (emptyCache)
 import Tezos.Types
 
-import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common (worker', workerWithDelay)
 import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
                       , _nodeConfigFile_network, validateNodeConfigFile)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NodeCmd (bakerDaemonProcess, handleExportLogs, internalNodeWorker)
+import Backend.NodeRPC (NodeDataSource (..))
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema

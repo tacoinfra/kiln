@@ -123,7 +123,7 @@ library
     Paths_backend
     Backend.Alerts
     Backend.Alerts.Common
-    Backend.CachedNodeRPC
+    Backend.NodeRPC
     Backend.Common
     Backend.Common.Baker
     Backend.Common.Node

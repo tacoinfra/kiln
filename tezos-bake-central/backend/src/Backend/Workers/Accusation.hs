@@ -22,10 +22,10 @@ import Rhyolite.Backend.DB.PsqlSimple (queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 
 import Backend.Alerts (reportAccusation)
-import Backend.CachedNodeRPC
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
 import Backend.IndexQueries (levelToCycle)
+import Backend.NodeRPC
 import Common.Schema
 import ExtraPrelude
 

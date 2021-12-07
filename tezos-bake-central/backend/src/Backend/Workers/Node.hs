@@ -75,10 +75,10 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        reportNodeInsufficientPeersError, reportNodeInvalidPeerCountError,
                        clearNodeInsufficientPeersError, clearNodeInvalidPeerCountError,
                        clearPastVotingPeriodErrors, reportVotingReminderError)
-import Backend.CachedNodeRPC
 import Backend.Common (AppSerializable, threadDelay', unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.IndexQueries
+import Backend.NodeRPC
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.ViewSelectorHandler (getProposals)

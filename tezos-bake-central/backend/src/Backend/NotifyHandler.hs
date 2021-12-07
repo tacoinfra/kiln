@@ -30,7 +30,7 @@ import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 
 import Tezos.Types
 
-import Backend.CachedNodeRPC
+import Backend.NodeRPC
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses, getBakerAlert)
 import Common.App (BakeView (..), BakeViewSelector (..), Deletable,

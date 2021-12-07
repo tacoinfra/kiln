@@ -19,7 +19,7 @@ import Database.Groundhog.Postgresql (PersistBackend)
 import Tezos.Types
 import qualified Tezos.Unsafe
 
-import Backend.CachedNodeRPC
+import Backend.NodeRPC
   ( MonadNodeQuery (asksNodeDataSource, nqAtomically, nqThrowError)
   , NodeDataSource(..)
   , NodeQueryT

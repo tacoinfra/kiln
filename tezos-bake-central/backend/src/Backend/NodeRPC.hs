@@ -28,7 +28,7 @@
 {-# OPTIONS_GHC -Wall -Werror -fno-warn-orphans #-}
 
 -- TODO: move this to ~lib?
-module Backend.CachedNodeRPC where
+module Backend.NodeRPC where
 
 import Prelude hiding (cycle)
 import Control.Arrow (left)
