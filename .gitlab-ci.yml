@@ -46,6 +46,7 @@ build-kiln:
 xrefcheck:
   stage: extras
   rules: *if_merge_request
+  allow_failure: true
   script:
     - nix run -f ./dep/xrefcheck -c xrefcheck
   retry:

@@ -2114,7 +2114,7 @@ nodesTab usingNodeOption =
       b <- maybeDyn $ getBlock <$> node
 
       divClass "soft-heading" $
-        withPlaceholder' "Connecting..." $ withMaybeDyn b display (unRawLevel . view level)
+        withPlaceholder' "<unavailable>" $ withMaybeDyn b display (unRawLevel . view level)
       text "#"
       withPlaceholder $ withMaybeDyn b blockHashLink (view hash)
 
@@ -2141,8 +2141,8 @@ nodesTab usingNodeOption =
         for_ (liftA2 (,) connected' getNetworkStats') $ \(connected, getNetworkStats) -> do
           let
             stat = getNetworkStats <$> node
-            showSpeed c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then fromIntegral >>> humanBytes >>> (<> "/s") else const "-"
-            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' -> if c' then unTezosWord64 >>> fromIntegral >>> humanBytes else const "-"
+            showSpeed c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' n' -> if c' && n' > 0 then n' & fromIntegral & humanBytes & (<> "/s") else "-"
+            showTotal c n = dynText <=< holdUniqDyn $ ffor2 c n $ \c' n' -> if c' && n' > 0 then n' & unTezosWord64 & fromIntegral & humanBytes else "-"
 
           divClass "stats" $ do
             divClass "column heading" $ do
