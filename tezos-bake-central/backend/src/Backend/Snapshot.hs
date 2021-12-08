@@ -101,18 +101,32 @@ handleSnapshotUpload appConfig nds lockMVar = do
               (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds Nothing
               importSnapshotData appConfig nds sm smId True
 
-validateSnapshotFilePath :: (MonadIO m) => AppConfig -> FilePath -> m (Either SnapshotImportError ())
+validateSnapshotFilePath
+  :: (MonadIO m, MonadLogger m)
+  => AppConfig
+  -> FilePath
+  -> m (Either SnapshotImportError ())
 validateSnapshotFilePath appConfig fp = do
+  $(logInfo) $ "validateSnapshotFilePath: path = " <> T.pack fp
   doesExist <- liftIO $ doesFileExist fp
   if doesExist then do
-    let
-      nodePath = maybe nixNodePath _binaryPaths_nodePath $ _appConfig_binaryPaths appConfig
-      args = ["snapshot", "info", fp]
-    (exitCode, _, _) <- liftIO $ Process.readProcessWithExitCode nodePath args ""
-    pure $ case exitCode of
-      ExitSuccess   -> Right ()
-      ExitFailure _ -> Left SnapshotImportError_InvalidSnapshot
-  else
+    doesHavePermissions <- fmap readable $ liftIO $ getPermissions fp
+    if doesHavePermissions then do
+      let
+        nodePath = maybe nixNodePath _binaryPaths_nodePath $ _appConfig_binaryPaths appConfig
+        args = ["snapshot", "info", fp]
+      (exitCode, _, stderr) <- liftIO $ Process.readProcessWithExitCode nodePath args ""
+      case exitCode of
+        ExitSuccess   -> do
+          $(logInfo) "validateSnapshotFilePath: snapshot file is valid"
+          pure $ Right ()
+        ExitFailure _ -> do
+          $(logInfo) $ "validateSnapshotFilePath: invalid snapshot file, stderr = " <> T.pack stderr
+          pure $ Left SnapshotImportError_InvalidSnapshot
+    else
+      pure $ Left SnapshotImportError_PermissionDenied
+  else do
+    $(logInfo) "validateSnapshotFilePath: file not found"
     pure $ Left SnapshotImportError_FileNotFound
 
 handleSnapshotFilePathImport

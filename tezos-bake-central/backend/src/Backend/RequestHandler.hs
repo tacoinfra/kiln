@@ -643,7 +643,7 @@ getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
 
 validateAddInternalNodeRequest
-  :: (MonadBaseNoPureAborts IO m, MonadIO m, MonadMask m, MonadUnliftIO m)
+  :: (MonadBaseNoPureAborts IO m, MonadIO m, MonadMask m, MonadUnliftIO m, MonadLogger m)
   => PublicRequest (Either AddInternalNodeError ())
   -> AppConfig
   -> m ()
