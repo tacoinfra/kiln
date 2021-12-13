@@ -130,7 +130,7 @@ journalctl -u kiln --since "5 days ago" --until "1 hour ago" | grep endorser
 ```
 
 Consult journalctl
-[documentation](https://manpages.ubuntu.com/manpages/cosmic/man1/journalctl.1.html)
+[documentation](https://manpages.ubuntu.com/manpages/jammy/en/man1/journalctl.1.html)
 or
 [tutorial](https://www.digitalocean.com/community/tutorials/how-to-use-journalctl-to-view-and-manipulate-systemd-logs)
 for more ways to browse and filter the logs.
