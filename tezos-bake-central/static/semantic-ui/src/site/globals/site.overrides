@@ -1825,7 +1825,7 @@ h4.dashboard-section-title {
 }
 
 .modal-box.start-node {
-  width: unit(560 / @emSize, rem);
+  width: 940px;
   .back-button {
     ._link-like();
     margin-bottom: @15px;
@@ -1835,8 +1835,12 @@ h4.dashboard-section-title {
     }
   }
 
+  .ui.header {
+    margin-bottom: 10px;
+  }
+
   .ui.button.primary {
-    margin-top: unit(40 / @emSize, rem);
+    margin-top: 10px;
     /* TODO make this padding standard for all primary buttons? */
     padding-left: unit(50 / @emSize, rem);
     padding-right: unit(50 / @emSize, rem);
