@@ -28,7 +28,7 @@
 {-# OPTIONS_GHC -Wall -Werror -fno-warn-orphans #-}
 
 -- TODO: move this to ~lib?
-module Backend.CachedNodeRPC where
+module Backend.NodeRPC where
 
 import Prelude hiding (cycle)
 import Control.Arrow (left)
@@ -48,7 +48,7 @@ import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
 import Control.Exception.Safe (toException)
-import Control.Lens (re)
+import Control.Lens (re, (<>~))
 import Control.Lens (review)
 import Control.Lens.TH (makeLenses)
 import Control.Monad (ap)
@@ -86,7 +86,6 @@ import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
 import qualified Data.LCA.Online.Polymorphic as LCA
 import Data.List (genericTake, sortOn)
-import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -127,9 +126,7 @@ import Tezos.Unsafe (unsafeAssumptionRightsContextLevel)
 
 import Backend.Common (timeout')
 import Backend.Schema
-import Backend.STM (HasTimestamp, MonadSTM (liftSTM), atomicallyWith, atomicallyWithTime,
-                    newTVar', readTVar', retry', writeTVar')
-import qualified Backend.STM as Stm
+import Backend.STM (MonadSTM (liftSTM), atomicallyWith, newTVar', readTVar', retry', writeTVar')
 import Common (unixEpoch)
 import Common.Schema
 import ExtraPrelude
@@ -185,23 +182,26 @@ data CachedBlockInfo = CachedBlockInfo
   deriving (Eq, Ord, Show, Typeable)
 
 type CachedHistory' = CachedHistory ()
-type DirtyBit = Maybe (Id RawCacheEntry)
-
-data CacheLine a where
-  CacheLine :: (ToJSON a, FromJSON a) =>
-    { _cacheLine_result :: !(RpcResult a)
-    , _cacheLine_used :: !UTCTime
-    , _cacheLine_dirty :: !DirtyBit -- is this entry already in the database?
-    } -> CacheLine a
 
 data RpcResult a = RpcResult
   { _rpcResult_raw :: !LBS.ByteString
   , _rpcResult_value :: !a
   } deriving (Functor)
 
+-- | Cache that is used within @NodeQueryT@.
+-- It stores occured errors and successful responses
+data NodeQueryTCache = NodeQueryTCache
+  { _nodeQueryTCache_errors :: DMap NodeQuery (Const (Map BlockHash CacheError))
+  , _nodeQueryTCache_responses :: DMap NodeQuery RpcResult
+  }
+
+emptyNodeQueryTCache :: NodeQueryTCache
+emptyNodeQueryTCache = NodeQueryTCache DMap.empty DMap.empty
+
+makeLenses 'NodeQueryTCache
+
 data NodeDataSource = NodeDataSource
   { _nodeDataSource_history :: !(TVar CachedHistory')
-  , _nodeDataSource_cache :: !(TVar (DMap NodeQuery (Compose TVar CacheLine)))
   , _nodeDataSource_chain :: !ChainId
   , _nodeDataSource_httpMgr :: !Http.Manager
   , _nodeDataSource_pool :: !(Pool Postgresql)
@@ -228,10 +228,6 @@ class MonadLogger m => MonadNodeQuery m where
   nqAtomically :: STM a -> m a
   default nqAtomically :: MonadIO m => STM a -> m a
   nqAtomically action = liftIO $ atomically action
-  default nqAtomicallyWithTime :: MonadIO m => ReaderT UTCTime STM a -> m a
-  nqAtomicallyWithTime :: ReaderT UTCTime STM a -> m a
-  nqAtomicallyWithTime action = liftIO $ atomicallyWithTime action
-  answerImmediate :: ReaderT UTCTime STM (Maybe (Either CacheError a)) -> STM (m (AnswerM m a))
   withFinishWith :: NodeDataSource -> (forall r. (Either CacheError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
   nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
 
@@ -276,7 +272,6 @@ instance MonadNodeQuery NodeQueryQueued where
     db <- asksNodeDataSource _nodeDataSource_pool
     logger <- asksNodeDataSource _nodeDataSource_logger
     NodeQueryQueued $ lift @(ExceptT CacheError) $ runLoggingEnv logger $ runDb (Identity db) action
-  answerImmediate = return . return . NodeQueryQueuedAnswerM
   withFinishWith nds cb = do
     -- A separate TVar for keeping the actual API result (outside the cache structure)
     apiResultVar :: TVar (Maybe (Either CacheError a)) <- newTVar' Nothing
@@ -345,7 +340,6 @@ instance MonadNodeQuery NodeQueryImmediate where
   nqThrowError = NodeQueryImmediate . nqThrowError
   nqCatchError action handler = NodeQueryImmediate $ nqCatchError (unNodeQueryImmediate action) (unNodeQueryImmediate . handler)
   nqInDB action = NodeQueryImmediate $ nqInDB action
-  answerImmediate getResult = return $ fmap NodeQueryImmediateAnswerM $ (nqLiftEither =<<) $ nqAtomicallyWithTime (getResult >>= maybe retry' return)
   withFinishWith _ cb = (fmap NodeQueryImmediateAnswerM . nqLiftEither =<<) <$> cb return
   nodeRPCOrBust h q = NodeQueryImmediate $ nodeRPCOrBust h q
 
@@ -355,20 +349,21 @@ data NodeQueryTResult a where
 
 deriving instance Functor NodeQueryTResult
 
-newtype NodeQueryT m a = NodeQueryT { unNodeQueryT :: DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (NodeQueryTResult a) }
+newtype NodeQueryT m a = NodeQueryT { unNodeQueryT :: NodeQueryTCache -> m (NodeQueryTResult a) }
 
 instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, PostgresRaw m) => MonadNodeQuery (NodeQueryT m) where
   newtype AnswerM (NodeQueryT m) a = NodeQueryTAnswerM { unNodeQueryTAnswerM :: a }
   asksNodeDataSource = lift . views nodeDataSource
   nqThrowError e = lift $ throwError $ e ^. re asCacheError
-  nqCatchError action handler = NodeQueryT $ \bad -> catching asCacheError (unNodeQueryT action bad) (flip unNodeQueryT bad . handler)
+  nqCatchError action handler = NodeQueryT $ \cache -> catching asCacheError (unNodeQueryT action cache) (flip unNodeQueryT cache . handler)
   nqInDB = id
-  answerImmediate getResult = return $ fmap NodeQueryTAnswerM $ (nqLiftEither =<<) $ nqAtomicallyWithTime (getResult >>= maybe retry' return)
   withFinishWith _ cb = (fmap NodeQueryTAnswerM . nqLiftEither =<<) <$> cb return
-  nodeRPCOrBust h q = NodeQueryT $ \bad ->
-    case DMap.lookup q bad >>= pure . getConst >>= Map.lookup h of
-      Just e -> throwError $ e ^. re asCacheError
-      Nothing -> pure $ NodeQueryTResult_Query h q
+  nodeRPCOrBust h q = NodeQueryT $ \cache ->
+    case DMap.lookup q (cache ^. nodeQueryTCache_responses) of
+      Nothing -> case DMap.lookup q (cache ^. nodeQueryTCache_errors) >>= pure . getConst >>= Map.lookup h of
+        Just e -> throwError $ e ^. re asCacheError
+        Nothing -> pure $ NodeQueryTResult_Query h q
+      Just res -> pure $ NodeQueryTResult_Done res
 
 instance (MonadIO m, MonadNodeQuery (NodeQueryT m)) => MonadLogger (NodeQueryT m) where
   monadLoggerLog a b c d = do
@@ -377,8 +372,8 @@ instance (MonadIO m, MonadNodeQuery (NodeQueryT m)) => MonadLogger (NodeQueryT m
 
 instance Monad m => Monad (NodeQueryT m) where
   return = NodeQueryT . const . return . NodeQueryTResult_Done
-  (NodeQueryT x) >>= f = NodeQueryT $ \bad -> x bad >>= \case
-    NodeQueryTResult_Done v -> unNodeQueryT (f v) bad
+  (NodeQueryT x) >>= f = NodeQueryT $ \cache -> x cache >>= \case
+    NodeQueryTResult_Done v -> unNodeQueryT (f v) cache
     NodeQueryTResult_Query h q -> pure $ NodeQueryTResult_Query h q
 
 instance Monad m => Applicative (NodeQueryT m) where
@@ -539,12 +534,12 @@ runNodeQueryT
     , Show e
     )
   => NodeQueryT (ExceptT e (ReaderT NodeDataSource Serializable)) a -> ExceptT e m a
-runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
+runNodeQueryT f = ExceptT @e $ go 0 emptyNodeQueryTCache
   where
-    go :: Int -> DMap NodeQuery (Const (Map BlockHash CacheError)) -> m (Either e a)
-    go n bad = do
+    go :: Int -> NodeQueryTCache -> m (Either e a)
+    go n cache = do
       $(logDebug) [i|RPC monad attempt number ${n} starting: ${prettyCallStack callStack}|]
-      tryNodeQueryTWithDb bad f >>= \case
+      tryNodeQueryTWithDb cache f >>= \case
         Left e -> do
           $(logDebug) [i|RPC monad attempt number ${n}: failed: ${tshow e}: ${prettyCallStack callStack}|]
           return $ Left e
@@ -554,9 +549,9 @@ runNodeQueryT f = ExceptT @e $ go 0 DMap.empty
         Right (NodeQueryTResult_Query h q) -> do
           $(logDebug) [i|RPC monad attempt number ${n}: retrying for query: ${tshow q}|]
           -- just get it into cache
-          runExceptT (nodeQueryDataSource q) >>= \case
-            Right _ -> go (n + 1) bad
-            Left e -> go (n + 1) (bad <> DMap.singleton q (Const $ Map.singleton h e))
+          runExceptT (nodeQueryDataSource' q) >>= \case
+            Right res -> go (n + 1) $ cache & nodeQueryTCache_responses <>~ DMap.singleton q res
+            Left e -> go (n + 1) $ cache & nodeQueryTCache_errors <>~ DMap.singleton q (Const $ Map.singleton h e)
 
 tryNodeQueryTWithDb
   :: forall a s e m.
@@ -565,12 +560,12 @@ tryNodeQueryTWithDb
     , MonadLogger m
     , MonadLoggerIO m
     )
-  => DMap NodeQuery (Const (Map BlockHash CacheError)) -> NodeQueryT (ExceptT e (ReaderT NodeDataSource Serializable)) a -> m (Either e (NodeQueryTResult a))
-tryNodeQueryTWithDb bad f = do
+  => NodeQueryTCache -> NodeQueryT (ExceptT e (ReaderT NodeDataSource Serializable)) a -> m (Either e (NodeQueryTResult a))
+tryNodeQueryTWithDb cache f = do
   nds <- view nodeDataSource
   let db = _nodeDataSource_pool nds
       bail = unsafeMkSerializable $ ReaderT $ \conn -> liftIO $ PG.rollback conn *> PG.begin conn
-  runDb (Identity db) $ runReaderT (runExceptT (unNodeQueryT f bad)) nds >>= \case
+  runDb (Identity db) $ runReaderT (runExceptT (unNodeQueryT f cache)) nds >>= \case
     e@(Left _) -> e <$ bail
     v@(Right (NodeQueryTResult_Done _)) -> return v
     q@(Right (NodeQueryTResult_Query _ _)) -> q <$ bail
@@ -578,7 +573,7 @@ tryNodeQueryTWithDb bad f = do
 
 tryNodeQueryT :: Functor m => NodeQueryT m a -> m (Maybe a)
 tryNodeQueryT f = do
-  unNodeQueryT f DMap.empty <&> \case
+  unNodeQueryT f emptyNodeQueryTCache <&> \case
     NodeQueryTResult_Done a -> Just a
     NodeQueryTResult_Query{} -> Nothing
 
@@ -760,10 +755,20 @@ nodeQueryDataSource
     , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m a
-nodeQueryDataSource q = do
+nodeQueryDataSource q = fmap _rpcResult_value $ nodeQueryDataSource' q
+
+nodeQueryDataSource'
+  :: forall a s e m.
+    ( MonadIO m
+    , MonadReader s m, HasNodeDataSource s
+    , MonadError e m, AsCacheError e
+    , FromJSON a, ToJSON a
+    )
+  => NodeQuery a -> m (RpcResult a)
+nodeQueryDataSource' q = do
   view (nodeDataSource . nodeDataSource_logger) >>=
     flip runLoggingEnv ($(logDebug) [i|nodeQueryDataSource: ${tshow q}|])
-  NodeQueryQueuedAnswerM getResult <- runNodeQueryQueued $ nodeQueryDataSourceRaw q
+  NodeQueryQueuedAnswerM getResult <- runNodeQueryQueued $ nodeQueryDataSourceRaw' q
   now <- liftIO getCurrentTime
   timeout' timeoutSeconds (atomically $ maybe retry pure =<< runReaderT getResult now) >>= \case
     Nothing -> throwError $ CacheError_Timeout timeoutSeconds ^. re asCacheError
@@ -812,7 +817,7 @@ nodeQueryDataSourceRaw q = do
   $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q}|]
   dsrc <- asksNodeDataSource id
   qBranch <- getContext q
-  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM _rpcResult_value dsrc qBranch q
+  join $ nqAtomically $ nodeQueryDataSourceSTM _rpcResult_value dsrc qBranch q
 
 -- | Query cached data immediately, in this thread.  Only meant to be used in the implementation
 --   of recursive queries, lest the dreaded deadlock heisenbunny return.
@@ -853,76 +858,37 @@ nodeQueryDataSourceRaw' q = do
   $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q}|]
   dsrc <- asksNodeDataSource id
   qBranch <- getContext q
-  view _2 <=< nqAtomically $ nodeQueryDataSourceSTM id dsrc qBranch q
+  join $ nqAtomically $ nodeQueryDataSourceSTM id dsrc qBranch q
 
--- | Core primitive for running a 'NodeQuery' against the cache / worker queue.
--- Returns the raw cache value (if found) and an action that will wait on the cache
--- regardless of whether it was found or required a new request to be queued.
+-- | Core primitive for running a 'NodeQuery' against the worker queue.
+-- Returns an action that will wait for a new request to be finished.
 nodeQueryDataSourceSTM
   :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadLogger n, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
-  => (RpcResult a -> b) -> nds -> BlockHash -> NodeQuery a -> m (Maybe (Compose TVar CacheLine a), n (AnswerM n b))
+  => (RpcResult a -> b) -> nds -> BlockHash -> NodeQuery a -> m (n (AnswerM n b))
 nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
-  cache <- readTVar' cacheVar
-  liftSTM $ case DMap.lookup q cache of
-    -- Cache Hit: Return an STM that reads the cache and updates the "access" timestamp
-    Just avar -> fmap (Just avar,) $ answerImmediate $ Just . Right <$> unpackCacheResult avar
-
-    -- Cache Miss: Queue the IO action to collect data and return an STM that reads the result.
-    Nothing -> fmap (Nothing,) $ withFinishWith @n dsrc $ \finishWith -> do
-      let
-        -- Updates the cache key if the result is useful and communicates the result upstream.
-        -- XXX Can't actually use this type signature since 'r' is not in scope...
-        -- writeResult :: Either CacheError (a, DirtyBit) -> m r
-        writeResult a' = nqAtomicallyWithTime $ do
-          case a' of
-            Right (res, dirty) -> populateKey q res dirty
-            Left _ -> pure ()
-          lift $ finishWith $ fmap (projectRpcResult . fst) a'
-
-      return $
-        -- Try very hard to write *something* into the result TVar in case of exception.
-        -- The catch handles synchronous/recoverable errors, and its result passes through,
-        -- which is necessary in the immediate case and harmless in the worker queue case.
-        -- The withException handles asynchronous/unrecoverable errors.  In the case of a
-        -- worker queue, the calling thread can still recover because it's a different
-        -- thread.  The result is thrown away meaning in the immediate case the caller
-        -- cannot recover, but this is fine because that's what is supposed to happen for
-        -- such an error.
-        (writeResult =<< makeRequestAndCache)
-          `catch` \e ->
-            nqAtomically (finishWith $ Left $ CacheError_SomeException e)
-          `withException` \x ->
-            nqAtomically (finishWith $ Left $ CacheError_SomeException x)
+  liftSTM $ withFinishWith @n dsrc $ \finishWith -> do
+    let
+      -- Communicates the result upstream.
+      -- XXX Can't actually use this type signature since 'r' is not in scope...
+      -- writeResult :: Either CacheError (RpcResult a) -> m r
+      writeResult a' = nqAtomically $ finishWith $ fmap projectRpcResult a'
+    return $
+      -- Try very hard to write *something* into the result TVar in case of exception.
+      -- The catch handles synchronous/recoverable errors, and its result passes through,
+      -- which is necessary in the immediate case and harmless in the worker queue case.
+      -- The withException handles asynchronous/unrecoverable errors.  In the case of a
+      -- worker queue, the calling thread can still recover because it's a different
+      -- thread.  The result is thrown away meaning in the immediate case the caller
+      -- cannot recover, but this is fine because that's what is supposed to happen for
+      -- such an error.
+      (writeResult =<< nqTry (nodeRPCOrBust qBranch q))
+        `catch` \e ->
+          nqAtomically (finishWith $ Left $ CacheError_SomeException e)
+        `withException` \x ->
+          nqAtomically (finishWith $ Left $ CacheError_SomeException x)
 
   where
     dsrc = nds ^. nodeDataSource
-    cacheVar = _nodeDataSource_cache dsrc
-    chainId = _nodeDataSource_chain dsrc
-
-    populateKey q_ (RpcResult raw a) dirty = do
-      cache <- readTVar' cacheVar
-      case DMap.lookup q_ cache of
-        Just _ -> pure ()
-        Nothing -> do
-          now <- asks (^. Stm.timestamp)
-          var <- newTVar' $ CacheLine (RpcResult raw a) now dirty
-          writeTVar' cacheVar $ DMap.insert q_ (Compose var) cache
-
-    makeRequestAndCache :: n (Either CacheError (RpcResult a, DirtyBit))
-    makeRequestAndCache = nqTry $
-      tryFetchFromCache chainId q >>= \case
-        Just x -> pure $ fmap Just x :: n (RpcResult a, DirtyBit)
-        Nothing -> (,Nothing) <$> nodeRPCOrBust qBranch q :: n (RpcResult a, DirtyBit)
-
-    unpackCacheResult
-      :: forall r mm. (MonadSTM mm, MonadReader r mm, HasTimestamp r)
-      => Compose TVar CacheLine a -> mm b
-    unpackCacheResult (Compose var) = do
-      result <- readTVar' var
-      now <- asks (^. Stm.timestamp)
-      when (_cacheLine_used result < now) $
-        writeTVar' var $ result{_cacheLine_used = now}
-      pure $ projectRpcResult $ _cacheLine_result result
 
 unliftEither :: MonadError e m => m a -> m (Either e a)
 unliftEither action = (Right <$> action) `catchError` (pure . Left)
@@ -1279,30 +1245,6 @@ calculateBakeEfficiency branch len baker = do
       ]
 
 -}
-tryFetchFromCache
-  :: forall m a. (MonadNodeQuery m, FromJSON a, ToJSON (NodeQuery a))
-  => ChainId -> NodeQuery a -> m (Maybe (RpcResult a, Id RawCacheEntry))
-tryFetchFromCache chainId q = do
-  let
-    qJson = Json $ Aeson.toJSON q
-  -- although this is within the grasp of groundhog, this table is very hot,
-  -- and the "IS NOT DISTINCT FROM" queries it generates are cataclysmically
-  -- terrible:
-  -- https://www.postgresql.org/message-id/17764.1405993868%40sss.pgh.pa.us
-  resultM :: [(Id RawCacheEntry, LBS.ByteString)] <- nqInDB $ [queryQ|
-    SELECT "id", "value"
-    FROM "RawCacheEntry"
-    WHERE "chainId" = ?chainId
-      AND "key" = ?qJson
-    |] <&> fmap (\(id_, v) -> (id_, v))
-  case nonEmpty resultM of
-    Nothing -> return Nothing
-    Just ((rid, raw) :| _) -> do
-      case Aeson.eitherDecode' raw of
-        Right v -> return $ Just (RpcResult raw v, rid)
-        Left bad -> do
-          $(logWarnSH) $ "tryFetchFromCache failed to decode: " <> bad
-          return Nothing
 
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]

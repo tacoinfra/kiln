@@ -51,10 +51,10 @@ import Tezos.NodeRPC (_cachedHistory_blocks)
 import Tezos.Types
 import qualified Tezos.LRUHashMap as LRUHashMap
 
-import Backend.CachedNodeRPC
 import Backend.Common
 import Backend.Config
 import Backend.NodeCmd
+import Backend.NodeRPC
 import Backend.Schema
 import Backend.Workers.Process
 import Common.Schema

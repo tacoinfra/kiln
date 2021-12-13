@@ -49,8 +49,8 @@ import qualified Data.Text.Encoding as T
 
 import Tezos.Types (ProtocolHash)
 
-import Backend.CachedNodeRPC
 import Backend.Config (AppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir, BinaryPaths(..))
+import Backend.NodeRPC
 import Backend.Schema
 import Backend.Workers.Process
 import Common.Route (ExportLog(..))

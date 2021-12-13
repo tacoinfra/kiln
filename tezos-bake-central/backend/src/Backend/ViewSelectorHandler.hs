@@ -89,8 +89,8 @@ import Text.URI (render, URI)
 
 import Tezos.Types
 
-import Backend.CachedNodeRPC
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)
+import Backend.NodeRPC
 import Backend.Schema
 import Backend.Workers.TezosRelease (getLatestTezosRelease)
 import Common.Alerts(AlertsFilter(..))

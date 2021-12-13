@@ -343,14 +343,6 @@ data CacheEndorsingRights = CacheEndorsingRights
   }
   deriving (Eq, Show, Typeable)
 
-data RawCacheEntry = RawCacheEntry
-  { _rawCacheEntry_chainId :: !ChainId
-  , _rawCacheEntry_key :: !(Json Aeson.Value)
-  , _rawCacheEntry_value :: !LBS.ByteString
-  , _rawCacheEntry_addedAt :: !UTCTime
-  } deriving (Eq, Generic, Show, Typeable)
-instance HasId RawCacheEntry
-
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
@@ -1141,15 +1133,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogInternalNodeFailedId
             type: primary
             fields: [_errorLogInternalNodeFailed_log]
-  - entity: RawCacheEntry
-    constructors:
-     - name: RawCacheEntry
-       uniques:
-        - name: _rawCacheEntry_uniqueness
-          type: constraint
-          fields:
-           - _rawCacheEntry_chainId
-           - _rawCacheEntry_key
   - entity: TelegramConfig
     constructors:
     - name: TelegramConfig
@@ -1193,7 +1176,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
   , (''BakerRightsProgress, 'BakerRightsProgressKey)
   , (''BakerRight, 'BakerRightKey)
   , (''ErrorLog, 'ErrorLogKey)
-  , (''RawCacheEntry, 'RawCacheEntryKey)
   , (''MailServerConfig, 'MailServerConfigKey)
   , (''Node, 'NodeKey)
   , (''Notificatee, 'NotificateeKey)

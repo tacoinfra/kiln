@@ -79,13 +79,13 @@ import Tezos.Common.Chain (identifyChain)
 import Tezos.History (emptyCache)
 import Tezos.Types
 
-import Backend.CachedNodeRPC (NodeDataSource (..))
 import Backend.Common (worker', workerWithDelay)
 import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
                       , _nodeConfigFile_network, validateNodeConfigFile)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
 import Backend.NodeCmd (bakerDaemonProcess, handleExportLogs, internalNodeWorker)
+import Backend.NodeRPC (NodeDataSource (..))
 import Backend.NotifyHandler (notifyHandler)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
@@ -98,7 +98,6 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
-import Backend.Workers.Cache (cacheWorker)
 import Backend.Workers.Node (amendmentProcessWorker, nodeAlertWorker, nodeWorker, protocolMonitorWorker)
 import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker, computeChainId)
 import Backend.Workers.TezosRelease
@@ -368,12 +367,10 @@ backendImpl cfg serve = do
 
     dataSrc <- liftIO $ do
       hist <- newTVarIO $ emptyCache cacheCapacity
-      cache <- newTVarIO mempty
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
       return NodeDataSource
         { _nodeDataSource_history = hist
-        , _nodeDataSource_cache = cache
         , _nodeDataSource_chain = chainId
         , _nodeDataSource_httpMgr = httpMgr
         , _nodeDataSource_pool = db
@@ -428,8 +425,6 @@ backendImpl cfg serve = do
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
-      let dbCacheTTL = 60 * 60 -- 1 hour
-      addFinalizer =<< cacheWorker 90 dbCacheTTL dataSrc
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< bakerRightsWorker dataSrc rightsHistoryWindow

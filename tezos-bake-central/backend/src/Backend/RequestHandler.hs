@@ -58,11 +58,11 @@ import Text.Printf
 import Text.URI (render)
 import Tezos.Types (Tez, PublicKeyHash, LedgerIdentifier, toPublicKeyHashText)
 
-import Backend.CachedNodeRPC (NodeDataSource (..))
+import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Common
 import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
-import Backend.Alerts (resolveAlert, resolveAlerts)
+import Backend.NodeRPC (NodeDataSource (..))
 import Backend.Schema
 import Backend.Snapshot (handleSnapshotDownload, handleSnapshotFilePathImport, validateSnapshotFilePath)
 import qualified Backend.Telegram as Telegram

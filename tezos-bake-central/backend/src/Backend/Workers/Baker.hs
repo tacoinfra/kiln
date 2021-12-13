@@ -57,10 +57,10 @@ import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 
 import Backend.Config (AppConfig (..), HasAppConfig)
 import Backend.Alerts
-import Backend.CachedNodeRPC
 import Backend.Common (worker', AppSerializable)
 import Backend.Config (AppConfig (..))
 import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle, getLatestProtocolConstants)
+import Backend.NodeRPC
 import Backend.Schema
 import Backend.STM (atomicallyWith)
 import Backend.Alerts (clearMissedBake, reportMissedBake)
