@@ -651,7 +651,7 @@ reportBadNodeHeadError
      , SqlDb (PhantomDb m)
      , MonadBase Serializable m
      , BlockLike latestHead, BlockLike nodeHead, MonadLogger m)
-  => Id Node -> latestHead -> nodeHead -> Bool -> SyncState -> m ()
+  => Id Node -> Maybe latestHead -> nodeHead -> Bool -> SyncState -> m ()
 reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus = when' (nodeNotDeleted nodeId) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   let existingLog :: Identifier -> m (Maybe (Id ErrorLog, Id ErrorLogBadNodeHead))
@@ -675,7 +675,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus = whe
         , _errorLogBadNodeHead_bootstrapped = bootstrapped
         , _errorLogBadNodeHead_chainStatus = chainStatus
         , _errorLogBadNodeHead_nodeHead = Json $ mkVeryBlockLike nodeHead
-        , _errorLogBadNodeHead_latestHead = Json $ mkVeryBlockLike latestHead
+        , _errorLogBadNodeHead_latestHead = Json . mkVeryBlockLike <$> latestHead
         }
 
     Just (logId, _specificLogId) -> do
@@ -683,7 +683,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus = whe
         [ ErrorLogBadNodeHead_bootstrappedField =. bootstrapped
         , ErrorLogBadNodeHead_chainStatusField =. chainStatus
         , ErrorLogBadNodeHead_nodeHeadField =. Json (mkVeryBlockLike nodeHead)
-        , ErrorLogBadNodeHead_latestHeadField =. Json (mkVeryBlockLike latestHead)
+        , ErrorLogBadNodeHead_latestHeadField =. Json . mkVeryBlockLike <$> latestHead
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
         let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l

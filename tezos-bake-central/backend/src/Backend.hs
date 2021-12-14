@@ -97,7 +97,7 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
-import Backend.Workers.Node (amendmentProcessWorker, nodeAlertWorker, nodeWorker, protocolMonitorWorker)
+import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
 import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker, computeChainId)
 import Backend.Workers.TezosRelease
 import qualified Common.Config as Config
@@ -421,7 +421,6 @@ backendImpl cfg serve = do
       addFinalizer wsFinalizer
 
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< bakerRightsWorker dataSrc rightsHistoryWindow
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db

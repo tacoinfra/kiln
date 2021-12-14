@@ -18,7 +18,7 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, writeTQueue, writeTVar, retry)
+import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
 import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
@@ -45,7 +45,7 @@ import Data.Time (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import qualified Data.Text as T
 import Data.Word
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql(..), in_, isFieldNothing, (&&.), (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql(..), in_, (&&.), (=.), (==.))
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
@@ -57,6 +57,7 @@ import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (In(..), sql, returning, queryQ)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (runLoggingEnv)
+import Safe (headMay)
 import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -410,6 +411,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
             updateCheckpoint block mSavePointAndProto
 
           nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
+          nodeAlertMonitor nds appConfig db nodeAddr nodeId block
 
           nodeVersionMonitor nds nodeAddr nodeId
         liftIO (nodeQuery rChain) >>= inDb . \case
@@ -445,50 +447,54 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
     inDb = runDb (Identity db) . flip runReaderT appConfig
 
 -- Send a 'bad branch' alert if 'is_bootstrapped' response isn't bootstrapped and synced.
-nodeAlertWorker
-  :: NodeDataSource
+nodeAlertMonitor
+  :: BlockLike blk
+  => NodeDataSource
   -> AppConfig
   -> Pool Postgresql
-  -> IO (IO ())
-nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+  -> URI
+  -> Id Node
+  -> blk
+  -> IO ()
+nodeAlertMonitor nds appConfig db nodeAddr nodeId nodeHead = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let httpMgr = nds ^. nodeDataSource_httpMgr
       chainId = nds ^. nodeDataSource_chain
-  nodes <- getNodes db (Not (isFieldNothing (NodeDetails_dataField ~> NodeDetailsData_headBlockHashSelector)))
-  ifor_ nodes $ \nodeId (Node, node, nodeDetails) -> whenJust (nodeDetails ^. nodeDetailsData_headBlockHash) $ \nodeHeadHash -> do
+  mbNode <- headMay . toList <$> getNodes db (NodeDetails_idField ==. nodeId)
+  latestHead <- liftIO $ readTVarIO $ nds ^. nodeDataSource_latestHead
+  for_ mbNode $ \(Node, _, nodeDetails) -> do
     isBootstrapped :: Either RpcError IsBootstrapped <-
-      runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ nodeRPC $ rIsBootstrapped chainId
+      runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ nodeRPC $ rIsBootstrapped chainId
     action' :: Either KilnRpcError (ReaderT AppConfig Serializable ()) <- flip runReaderT nds $ runExceptT @KilnRpcError $ do
-      nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
       case isBootstrapped of
-        Left _ -> pure $ when (nodeHead ^. level < latestHead ^. level) $
+        Left _ -> pure $ when (Just (nodeHead ^. level) < fmap (^. level) latestHead) $
           reportBadNodeHeadError nodeId latestHead nodeHead False SyncState_Unsynced
         Right (IsBootstrapped bootstrapped chainStatus) -> do
-            let bad  = reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus
-                good = clearBadNodeHeadError nodeId
+          let bad  = reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus
+              good = clearBadNodeHeadError nodeId
 
-                sufficientPeers :: ReaderT AppConfig Serializable ()
-                sufficientPeers = clearNodeInsufficientPeersError nodeId
+              sufficientPeers :: ReaderT AppConfig Serializable ()
+              sufficientPeers = clearNodeInsufficientPeersError nodeId
 
-            Only isNodeAlive : _ <- runDb (Identity db)
-              [queryQ|
-                select count(el.id) = 0 from "ErrorLogInaccessibleNode" ein
-                join "ErrorLog" el on el.id = ein.log
-                where ein.node = ?nodeId and el.stopped is null
-              |]
+          Only isNodeAlive : _ <- runDb (Identity db)
+            [queryQ|
+              select count(el.id) = 0 from "ErrorLogInaccessibleNode" ein
+              join "ErrorLog" el on el.id = ein.log
+              where ein.node = ?nodeId and el.stopped is null
+            |]
 
-            let curPeerCount  = fromMaybe maxBound $ _nodeDetailsData_peerCount nodeDetails
-                syncThreshold = _nodeDetailsData_synchronisationThreshold nodeDetails
-                syncThreshold64 = fromIntegral @Word8 @Word64 syncThreshold
+          let curPeerCount  = fromMaybe maxBound $ _nodeDetailsData_peerCount nodeDetails
+              syncThreshold = _nodeDetailsData_synchronisationThreshold nodeDetails
+              syncThreshold64 = fromIntegral @Word8 @Word64 syncThreshold
 
-            if curPeerCount < syncThreshold64 && isNodeAlive then return $ do
-              when (nodeHead ^. level < latestHead ^. level) $
-                void bad
-              reportNodeInsufficientPeersError nodeId syncThreshold curPeerCount
-            else return $ do
-              sufficientPeers
-              case (bootstrapped, chainStatus) of
-                (True, SyncState_Synced) -> good
-                _ -> bad
+          if curPeerCount < syncThreshold64 && isNodeAlive then return $ do
+            when (Just (nodeHead ^. level) < fmap (^. level) latestHead || not bootstrapped) $
+              void bad
+            reportNodeInsufficientPeersError nodeId syncThreshold curPeerCount
+          else return $ do
+            sufficientPeers
+            case (bootstrapped, chainStatus) of
+              (True, SyncState_Synced) -> good
+              _ -> bad
 
     for_ action' $ \action -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ runReaderT action appConfig
 

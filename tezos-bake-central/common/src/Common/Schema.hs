@@ -836,7 +836,7 @@ data ErrorLogBadNodeHead = ErrorLogBadNodeHead
   , _errorLogBadNodeHead_bootstrapped :: !Bool
   , _errorLogBadNodeHead_chainStatus :: !SyncState
   , _errorLogBadNodeHead_nodeHead :: !(Json VeryBlockLike)
-  , _errorLogBadNodeHead_latestHead :: !(Json VeryBlockLike)
+  , _errorLogBadNodeHead_latestHead :: !(Maybe (Json VeryBlockLike))
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBadNodeHead where
   type IdData ErrorLogBadNodeHead = Id ErrorLog
