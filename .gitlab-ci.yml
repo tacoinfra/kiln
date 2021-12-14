@@ -41,7 +41,7 @@ build-kiln:
   stage: build
   rules: *if_merge_request
   script:
-    - nix-build -A exe --no-out-link
+    - nix-build -A exe --argstr closure-compiler-setting "BUNDLE" --no-out-link
 
 xrefcheck:
   stage: extras
