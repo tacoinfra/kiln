@@ -303,7 +303,7 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
                         ((either (const Nothing) Just) . fromBase58 . fromString)
                       mLevel = extractFromSnapshotInfo infoStdout levelRegex (fmap fromIntegral . readMaybe @Int32)
                     whenJust mBlkHash $ \blkHash -> void $ do
-                      mBlk <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ do
+                      mBlk <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ do
                         nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
                       inDb $ do
                         updateSnapshotMeta mBlkHash mLevel (mBlk ^? _Right . timestamp) smId

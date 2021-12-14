@@ -107,32 +107,31 @@ data UnsuitableNodeReason
   = UnsuitableNodeReason_QueryBeforeSavepoint RawLevel RawLevel
   | UnsuitableNodeReason_MissingBlockInfo
   | UnsuitableNodeReason_MissingSavepoint
-  | UnsuitableNodeReason_QueryFailed Text -- TODO This should be CacheError but we've got a cycle that doesn't play ball with TH
-  | UnsuitableNodeReason_BranchNotContained BlockHash
+  | UnsuitableNodeReason_QueryFailed Text -- TODO This should be KilnRpcError but we've got a cycle that doesn't play ball with TH
   deriving (Show, Generic, Typeable)
 makePrisms ''UnsuitableNodeReason
 
 
-data CacheError
-  = CacheError_RpcError !RpcError
-  | CacheError_NoSuitableNode Text [(URI,UnsuitableNodeReason)]
-  | CacheError_NotEnoughHistory
-  | CacheError_Timeout !NominalDiffTime
-  | CacheError_SomeException !SomeException
-  | CacheError_UnrevealedPublicKey !ContractId
-  | CacheError_UnknownProtocol !ProtocolHash
+data KilnRpcError
+  = KilnRpcError_RpcError !RpcError
+  | KilnRpcError_NoSuitableNode Text [(URI,UnsuitableNodeReason)]
+  | KilnRpcError_NoKnownHeads
+  | KilnRpcError_Timeout !NominalDiffTime
+  | KilnRpcError_SomeException !SomeException
+  | KilnRpcError_UnrevealedPublicKey !ContractId
+  | KilnRpcError_UnknownProtocol !ProtocolHash
   deriving (Show, Generic, Typeable)
-instance Exception CacheError
-makePrisms ''CacheError
+instance Exception KilnRpcError
+makePrisms ''KilnRpcError
 
-class AsCacheError e where
-  asCacheError :: Prism' e CacheError
+class AsKilnRpcError e where
+  asKilnRpcError :: Prism' e KilnRpcError
 
-instance AsRpcError CacheError where
-  asRpcError = _CacheError_RpcError
+instance AsRpcError KilnRpcError where
+  asRpcError = _KilnRpcError_RpcError
 
-instance AsCacheError CacheError where
-  asCacheError = id
+instance AsKilnRpcError KilnRpcError where
+  asKilnRpcError = id
 
 instance Aeson.ToJSON Uri.URI where
   toJSON = Aeson.toJSON . Uri.render

@@ -79,7 +79,7 @@ bakerRightsWorker
   -> Int
   -> m (IO ())
 bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ do
+  res :: Either KilnRpcError () <- flip runReaderT nds $ runExceptT $ do
     (latestBranchInfo, protocolConstants) <- runNodeQueryT getLatestProtocolConstants
 
     $(logDebug) "Update baker cycle."
@@ -93,7 +93,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
 
     --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
-    needProgress :: MonoidalMap PublicKeyHash (Max BakerRightsProgress) <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
+    needProgress :: MonoidalMap PublicKeyHash (Max BakerRightsProgress) <- lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ do
       bakerPKHs :: [PublicKeyHash] <- project Baker_publicKeyHashField (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       let
         inBakerPKHs = In bakerPKHs
@@ -180,7 +180,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
               }) (filter ((== pkh) ._endorsingRights_delegate) endorsers)
 
         $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel $ Set.findMax lvls))
-        lift @(ExceptT CacheError) $ runDb (Identity db) $ for_ pkhs $ \pkh -> do
+        lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ for_ pkhs $ \pkh -> do
           let
             newProgress = bakerRightCycleInfo pkh
           progress' :: [(Id BakerRightsProgress, BakerRightsProgress)] <- Map.toList <$> selectMap BakerRightsProgressConstructor
@@ -218,7 +218,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
 
   case res of
     Right _ -> pure ()
-    Left err -> logCacheError "bakerRightsWorker" err
+    Left err -> logKilnRpcError "bakerRightsWorker" err
 
   $(logDebug) $ "BAKERRIGHTSWORKER STEP" <> tshow res
 
@@ -251,16 +251,16 @@ bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewHead nds) $ ru
         Right commit -> do
           $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
           pure $ Just commit
-        Left (err :: CacheError) -> do
+        Left (err :: KilnRpcError) -> do
           $(logErrorSH) ("bakerWorker failed to process baker: " <> tshow baker, err)
           pure Nothing
 
     -- beware of the jellyfish
-    lift @(ExceptT CacheError) $ runDb (Identity db) $ runReaderT (sequence_ $ fmapMaybe id wantedActions) appConfig
+    lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ runReaderT (sequence_ $ fmapMaybe id wantedActions) appConfig
 
   case res of
     Right () -> $(logDebug) "bakerWorker DONE"
-    Left (err :: CacheError) -> logCacheError "bakerWorker" err
+    Left (err :: KilnRpcError) -> logKilnRpcError "bakerWorker" err
 
 
 -- separating the monad that can do RPC(mPrepare) from the one that can do
@@ -275,7 +275,7 @@ getWantedAction
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare
   , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare, MonadLoggerIO mPrepare
   )
-  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (AppSerializable ())
+  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT KilnRpcError mPrepare (AppSerializable ())
 getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   let
     headHash = headBlock ^. hash

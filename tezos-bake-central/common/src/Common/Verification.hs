@@ -24,12 +24,12 @@ data ForkStatus
   = ForkStatus_TooNew
   | ForkStatus_TooOld
   | ForkStatus_Forked
-  | ForkStatus_BadNode CacheError
+  | ForkStatus_BadNode KilnRpcError
   deriving (Show)
 makePrisms ''ForkStatus
 
-instance AsCacheError ForkStatus where
-  asCacheError = _ForkStatus_BadNode
+instance AsKilnRpcError ForkStatus where
+  asKilnRpcError = _ForkStatus_BadNode
 
 class AsForkStatus e where
   asForkStatus :: Prism' e ForkStatus

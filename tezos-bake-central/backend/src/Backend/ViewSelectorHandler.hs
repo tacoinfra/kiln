@@ -700,15 +700,15 @@ getBakerAddresses nds bid = do
   -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
   latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
-  maxProgress_rightsInfo :: Either CacheError (Maybe RawLevel) <- case latestHead' of
-    Nothing -> pure $ Left CacheError_NotEnoughHistory
+  maxProgress_rightsInfo :: Either KilnRpcError (Maybe RawLevel) <- case latestHead' of
+    Nothing -> pure $ Left KilnRpcError_NoKnownHeads
     Just latestHeadInfo -> flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
       let protocol = latestHeadInfo ^. protocolHash
       mbProtoInfo :: Maybe ProtoInfo <- fmap (fmap (view protocolIndex_constants) . headMay) $ select
         ( ProtocolIndex_hashField ==. protocol &&.
           ProtocolIndex_chainIdField ==. chainId)
       case mbProtoInfo of
-        Nothing -> throwError $ CacheError_UnknownProtocol protocol
+        Nothing -> throwError $ KilnRpcError_UnknownProtocol protocol
         Just protoInfo -> do
           let blocksPerCycle = protoInfo ^. protoInfo_blocksPerCycle
           pure $ latestHeadInfo ^. level + (blocksPerCycle - latestHeadInfo ^. branchInfo_cyclePosition) - 1

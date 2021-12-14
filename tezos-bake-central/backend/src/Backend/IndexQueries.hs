@@ -40,7 +40,7 @@ getLatestProtocolConstants
 getLatestProtocolConstants = do
   latestHeadVar <- asksNodeDataSource _nodeDataSource_latestHead
   mbBranchInfo <- nqAtomically $ readTVar' latestHeadVar
-  flip (maybe (nqThrowError CacheError_NotEnoughHistory)) mbBranchInfo $ \branchInfo ->
+  flip (maybe (nqThrowError KilnRpcError_NoKnownHeads)) mbBranchInfo $ \branchInfo ->
     (branchInfo,) . _protocolIndex_constants <$> getProtocolIndex (branchInfo ^. hash) (branchInfo ^. protocolHash)
 
 

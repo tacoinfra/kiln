@@ -106,11 +106,11 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
   when (blockTimeDiff < maxTimeDiff) $ do
     oldHead <- liftIO $ atomically (dataSourceHead nds)
     when (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness) $ do
-      newStateRsp :: Either CacheError BlockCrossCompat <- runExceptT $ do
+      newStateRsp :: Either KilnRpcError BlockCrossCompat <- runExceptT $ do
           flip runReaderT nds { _nodeDataSource_nodeForQuery = Just nodeAddr } $ do
             nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
       case newStateRsp of
-        Left e -> logCacheError "Handle new node head" e
+        Left e -> logKilnRpcError "Handle new node head" e
         Right headBlock -> do
         updatedLevel <- liftIO $ atomically $ do
           let latestHeadTVar = _nodeDataSource_latestHead nds
@@ -457,7 +457,7 @@ nodeAlertWorker nds appConfig db = worker' "nodeAlertWorker" $ waitForNewHead nd
   ifor_ nodes $ \nodeId (Node, node, nodeDetails) -> whenJust (nodeDetails ^. nodeDetailsData_headBlockHash) $ \nodeHeadHash -> do
     isBootstrapped :: Either RpcError IsBootstrapped <-
       runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render (nodeData_address appConfig node)) $ nodeRPC $ rIsBootstrapped chainId
-    action' :: Either CacheError (ReaderT AppConfig Serializable ()) <- flip runReaderT nds $ runExceptT @CacheError $ do
+    action' :: Either KilnRpcError (ReaderT AppConfig Serializable ()) <- flip runReaderT nds $ runExceptT @KilnRpcError $ do
       nodeHead <- nodeQueryDataSource (NodeQuery_BlockHeader nodeHeadHash)
       case isBootstrapped of
         Left _ -> pure $ when (nodeHead ^. level < latestHead ^. level) $
@@ -679,10 +679,10 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       -- Ignore the update if the block cannot be obtained from current set of nodes
       -- Calc the blockLevel at the start of the current voting period, move
       -- back by periodDiff voting periods, and move to the end of that period
-      mEndBlock <- flip runReaderT nds . runExceptT @CacheError $ getBlockLevelAncestor (latestBlock ^. level - endBlockLevel) (latestBlock ^. hash)
+      mEndBlock <- flip runReaderT nds . runExceptT @KilnRpcError $ getBlockLevelAncestor (latestBlock ^. level - endBlockLevel) (latestBlock ^. hash)
       for_ mEndBlock $ \endBlock -> do
         (startBlockTimestamp, periodEndBlockPred) <- do
-          startBlock <- flip runReaderT nds . runExceptT @CacheError $
+          startBlock <- flip runReaderT nds . runExceptT @KilnRpcError $
             fmap toBlockHeader $ getBlockLevelAncestor (latestBlock ^. level - startBlockLevel) (latestBlock ^. hash)
           let startBlockTimestamp = case startBlock of
                 Right block -> block ^. timestamp
@@ -692,7 +692,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         updateTo startBlockLevel startBlockTimestamp periodEndBlockPred endBlock p
     EQ -> do
       let startBlockLevel = latestBlock ^. level - currentVotingPosition
-      startBlock <- flip runReaderT nds . runExceptT @CacheError $
+      startBlock <- flip runReaderT nds . runExceptT @KilnRpcError $
         fmap toBlockHeader $ getBlockLevelAncestor currentVotingPosition (latestBlock ^. hash)
       let startBlockTimestamp = case startBlock of
             Right block -> block ^. timestamp
@@ -718,14 +718,14 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
     getBlockLevelAncestor lvl hash' = nodeQueryDataSource $ NodeQuery_BlockPred hash' lvl
 
-    throwing :: (Monad m, MonadLogger m) => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
-    throwing = (>>= either logThenThrow pure) . flip runReaderT nds . runExceptT @CacheError
+    throwing :: (Monad m, MonadLogger m) => ExceptT KilnRpcError (ReaderT NodeDataSource m) a -> m a
+    throwing = (>>= either logThenThrow pure) . flip runReaderT nds . runExceptT @KilnRpcError
       where
 
         logThenThrow e' = do
-            logCacheError "amendmentProcessWorker" e'
+            logKilnRpcError "amendmentProcessWorker" e'
             error $ case e' of
-              CacheError_RpcError (RpcError_NonJSON url e'' _bytes) -> mconcat
+              KilnRpcError_RpcError (RpcError_NonJSON url e'' _bytes) -> mconcat
                                   ["Node Query failed for 'amendmentProcessWorker' Reason at url ("
                                   , T.unpack url
                                   , "): "
@@ -733,17 +733,17 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                                   , e''
                                   , ". The response can be in found in the logs in namespace kiln-debugging."
                                   ]
-              _ -> T.unpack $ "Node Query failed for 'amendmentProcessWorker' Reason: " <> prettyCacheError e'
+              _ -> T.unpack $ "Node Query failed for 'amendmentProcessWorker' Reason: " <> prettyKilnRpcError e'
 
-    catchUnsuitableNode :: (Monad m, MonadLogger m, MonadThrow m) => ExceptT CacheError (ReaderT NodeDataSource m) a -> m (Maybe a)
+    catchUnsuitableNode :: (Monad m, MonadLogger m, MonadThrow m) => ExceptT KilnRpcError (ReaderT NodeDataSource m) a -> m (Maybe a)
     catchUnsuitableNode action = do
-      res <- flip runReaderT nds $ runExceptT @CacheError action
+      res <- flip runReaderT nds $ runExceptT @KilnRpcError action
       case res of
         Right r -> pure $ Just r
-        Left (CacheError_NoSuitableNode _ _) -> pure Nothing
+        Left (KilnRpcError_NoSuitableNode _ _) -> pure Nothing
         Left e -> throwM e
 
-    runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
+    runMaybe :: Functor m => ExceptT KilnRpcError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
 
     wipe p = do
@@ -844,7 +844,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
     getProtocol = getProtocol' >>= \case
       Right p -> return p
       Left e -> do
-        logCacheError "protocolMonitorWorker: fetch protocol" e
+        logKilnRpcError "protocolMonitorWorker: fetch protocol" e
         threadDelay' 1
         getProtocol
 
@@ -859,7 +859,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
     hangzhouHax "PtHangzHogokSuiMHemCuowEavgYTP8J5qQ9fQS793MHYFpCY3r" = "PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
     hangzhouHax ph = ph
 
-    getProtocol' = flip runReaderT nds $ runExceptT @CacheError $ do
+    getProtocol' = flip runReaderT nds $ runExceptT @KilnRpcError $ do
       blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
           currentProtocol = blk ^. blockMetadata . blockMetadata_protocol
@@ -945,7 +945,7 @@ waitTillEndOfCycle
      )
   => NodeDataSource -> blk -> m ()
 waitTillEndOfCycle nds blk = do
-  lastLevel :: Either CacheError RawLevel <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
+  lastLevel :: Either KilnRpcError RawLevel <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
     c <- levelToCycle (blk ^. hash, blk ^. level) (blk ^. level)
     lastLevelInCycle (blk ^. hash) c
   for_ lastLevel $ \lvl -> do

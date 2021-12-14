@@ -538,7 +538,7 @@ checkIfRegistered logger db nds pkh = do
     notify NotifyTag_BakerRegistered (pkh, isReg)
   pure isReg
   where
-    runMaybe :: Functor m => ExceptT CacheError (ReaderT NodeDataSource m) a -> m (Maybe a)
+    runMaybe :: Functor m => ExceptT KilnRpcError (ReaderT NodeDataSource m) a -> m (Maybe a)
     runMaybe = fmap (either (const Nothing) Just) . flip runReaderT nds . runExceptT
 
 -- If node isn't synced, this command will block while it waits for the node to
@@ -634,7 +634,7 @@ submitBallot appConfig maybePaths proposal ballot = do
 -- Logic mostly copied from viewselector' next rights code
 checkKilnBakerAndNextRights :: (BlockLike blk) => AppConfig -> NodeDataSource -> blk -> LoggingT IO (Maybe PublicKeyHash, Maybe (RightKind, RawLevel))
 checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
-  v <- flip runReaderT nds $ runExceptT @CacheError $ tryNodeQueryT $ do
+  v <- flip runReaderT nds $ runExceptT @KilnRpcError $ tryNodeQueryT $ do
     bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
       (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
 

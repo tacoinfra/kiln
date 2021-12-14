@@ -178,7 +178,7 @@ data RpcResult a = RpcResult
 -- | Cache that is used within @NodeQueryT@.
 -- It stores occured errors and successful responses
 data NodeQueryTCache = NodeQueryTCache
-  { _nodeQueryTCache_errors :: DMap NodeQuery (Const (Map BlockHash CacheError))
+  { _nodeQueryTCache_errors :: DMap NodeQuery (Const (Map BlockHash KilnRpcError))
   , _nodeQueryTCache_responses :: DMap NodeQuery RpcResult
   }
 
@@ -208,32 +208,32 @@ instance HasNodeDataSource NodeDataSource where
 class MonadLogger m => MonadNodeQuery m where
   data AnswerM m :: * -> *
   asksNodeDataSource :: (NodeDataSource -> a) -> m a
-  nqThrowError :: CacheError -> m a
-  nqCatchError :: m a -> (CacheError -> m a) -> m a
+  nqThrowError :: KilnRpcError -> m a
+  nqCatchError :: m a -> (KilnRpcError -> m a) -> m a
   nqInDB :: (forall n. (MonadLogger n, PostgresRaw n) => n a) -> m a
   nqAtomically :: STM a -> m a
   default nqAtomically :: MonadIO m => STM a -> m a
   nqAtomically action = liftIO $ atomically action
-  withFinishWith :: NodeDataSource -> (forall r. (Either CacheError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
+  withFinishWith :: NodeDataSource -> (forall r. (Either KilnRpcError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
   nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
 
-nqLiftEither :: (MonadNodeQuery m) => Either CacheError a -> m a
+nqLiftEither :: (MonadNodeQuery m) => Either KilnRpcError a -> m a
 nqLiftEither = \case
   Left e -> nqThrowError e
   Right v -> pure v
 
-nqTry :: (MonadNodeQuery m) => m a -> m (Either CacheError a)
+nqTry :: (MonadNodeQuery m) => m a -> m (Either KilnRpcError a)
 nqTry action = (Right <$> action) `nqCatchError` (pure . Left)
 
-newtype NodeQueryQueued a = NodeQueryQueued { unNodeQueryQueued :: ExceptT CacheError (ReaderT NodeDataSource IO) a }
+newtype NodeQueryQueued a = NodeQueryQueued { unNodeQueryQueued :: ExceptT KilnRpcError (ReaderT NodeDataSource IO) a }
 
-runNodeQueryQueued :: (MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, MonadIO m) => NodeQueryQueued a -> m a
+runNodeQueryQueued :: (MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, MonadIO m) => NodeQueryQueued a -> m a
 runNodeQueryQueued action = do
   nds <- view nodeDataSource
-  (liftEither =<<) $ fmap (left (review asCacheError)) $ liftIO $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
+  (liftEither =<<) $ fmap (left (review asKilnRpcError)) $ liftIO $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
 
 deriving newtype instance Functor NodeQueryQueued
 deriving newtype instance Applicative NodeQueryQueued
@@ -250,17 +250,17 @@ instance MonadLogger NodeQueryQueued where
     runLoggingEnv logger $ monadLoggerLog a b c d
 
 instance MonadNodeQuery NodeQueryQueued where
-  data AnswerM NodeQueryQueued a = NodeQueryQueuedAnswerM { unNodeQueryQueuedAnswerM :: ReaderT UTCTime STM (Maybe (Either CacheError a)) }
+  data AnswerM NodeQueryQueued a = NodeQueryQueuedAnswerM { unNodeQueryQueuedAnswerM :: ReaderT UTCTime STM (Maybe (Either KilnRpcError a)) }
   asksNodeDataSource = NodeQueryQueued . asks
   nqThrowError = NodeQueryQueued . throwError
   nqCatchError action handler = NodeQueryQueued $ catchError (unNodeQueryQueued action) (unNodeQueryQueued . handler)
   nqInDB action = do
     db <- asksNodeDataSource _nodeDataSource_pool
     logger <- asksNodeDataSource _nodeDataSource_logger
-    NodeQueryQueued $ lift @(ExceptT CacheError) $ runLoggingEnv logger $ runDb (Identity db) action
+    NodeQueryQueued $ lift @(ExceptT KilnRpcError) $ runLoggingEnv logger $ runDb (Identity db) action
   withFinishWith nds cb = do
     -- A separate TVar for keeping the actual API result (outside the cache structure)
-    apiResultVar :: TVar (Maybe (Either CacheError a)) <- newTVar' Nothing
+    apiResultVar :: TVar (Maybe (Either KilnRpcError a)) <- newTVar' Nothing
     action <- cb $ writeTVar' apiResultVar . Just
     let ioQueue = _nodeDataSource_ioQueue nds
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
@@ -268,7 +268,7 @@ instance MonadNodeQuery NodeQueryQueued where
 
   -- Here we examine the internal & external nodes before doing the query
   -- We keep hold of our candidate nodes right till the end in case we exhaust all of our options
-  -- and need to give everything that we tried and what went wrong to the user in a CacheError_NoSuitableNode
+  -- and need to give everything that we tried and what went wrong to the user in a KilnRpcError_NoSuitableNode
   -- error.
   nodeRPCOrBust qBranch q = do
     $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: Branch ${qBranch}: ${tshow q}|]
@@ -282,7 +282,7 @@ instance MonadNodeQuery NodeQueryQueued where
         pure $ map (view _1) nodes
 
     result <- case mNodesToTry of
-      [] -> pure $ Left $ CacheError_NoSuitableNode (tshow q) []
+      [] -> pure $ Left $ KilnRpcError_NoSuitableNode (tshow q) []
       nodesToTry -> do
         res <- foldM `flip` Left [] `flip` nodesToTry $ \case
             answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
@@ -292,7 +292,7 @@ instance MonadNodeQuery NodeQueryQueued where
               pure $ first ((:es).(anyNode,)) r
         case res of
           Right r -> pure $ Right r
-          Left failedNodes -> pure $ Left $ CacheError_NoSuitableNode (tshow q) $
+          Left failedNodes -> pure $ Left $ KilnRpcError_NoSuitableNode (tshow q) $
             fmap (second (UnsuitableNodeReason_QueryFailed . tshow)) failedNodes
 
     nqLiftEither result
@@ -329,17 +329,17 @@ deriving instance Functor NodeQueryTResult
 
 newtype NodeQueryT m a = NodeQueryT { unNodeQueryT :: NodeQueryTCache -> m (NodeQueryTResult a) }
 
-instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, PostgresRaw m) => MonadNodeQuery (NodeQueryT m) where
+instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m) => MonadNodeQuery (NodeQueryT m) where
   newtype AnswerM (NodeQueryT m) a = NodeQueryTAnswerM { unNodeQueryTAnswerM :: a }
   asksNodeDataSource = lift . views nodeDataSource
-  nqThrowError e = lift $ throwError $ e ^. re asCacheError
-  nqCatchError action handler = NodeQueryT $ \cache -> catching asCacheError (unNodeQueryT action cache) (flip unNodeQueryT cache . handler)
+  nqThrowError e = lift $ throwError $ e ^. re asKilnRpcError
+  nqCatchError action handler = NodeQueryT $ \cache -> catching asKilnRpcError (unNodeQueryT action cache) (flip unNodeQueryT cache . handler)
   nqInDB = id
   withFinishWith _ cb = (fmap NodeQueryTAnswerM . nqLiftEither =<<) <$> cb return
   nodeRPCOrBust h q = NodeQueryT $ \cache ->
     case DMap.lookup q (cache ^. nodeQueryTCache_responses) of
       Nothing -> case DMap.lookup q (cache ^. nodeQueryTCache_errors) >>= pure . getConst >>= Map.lookup h of
-        Just e -> throwError $ e ^. re asCacheError
+        Just e -> throwError $ e ^. re asKilnRpcError
         Nothing -> pure $ NodeQueryTResult_Query h q
       Just res -> pure $ NodeQueryTResult_Done res
 
@@ -601,14 +601,14 @@ getContext = \case
     getLatestBranch = do
       latestHeadVar <- asksNodeDataSource _nodeDataSource_latestHead
       mbLatestHead <- nqAtomically $ readTVar' latestHeadVar
-      maybe (nqThrowError CacheError_NotEnoughHistory) (pure . view hash) mbLatestHead
+      maybe (nqThrowError KilnRpcError_NoKnownHeads) (pure . view hash) mbLatestHead
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
+    , MonadError e m, AsKilnRpcError e
     , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m a
@@ -618,7 +618,7 @@ nodeQueryDataSource'
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
+    , MonadError e m, AsKilnRpcError e
     , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m (RpcResult a)
@@ -628,8 +628,8 @@ nodeQueryDataSource' q = do
   NodeQueryQueuedAnswerM getResult <- runNodeQueryQueued $ nodeQueryDataSourceRaw' q
   now <- liftIO getCurrentTime
   timeout' timeoutSeconds (atomically $ maybe retry pure =<< runReaderT getResult now) >>= \case
-    Nothing -> throwError $ CacheError_Timeout timeoutSeconds ^. re asCacheError
-    Just (Left e) -> throwError $ e ^. re asCacheError
+    Nothing -> throwError $ KilnRpcError_Timeout timeoutSeconds ^. re asKilnRpcError
+    Just (Left e) -> throwError $ e ^. re asKilnRpcError
     Just (Right x) -> pure x
   where
     -- Base timeout
@@ -654,7 +654,7 @@ nodeQueryDataSourceImmediate
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
+    , MonadError e m, AsKilnRpcError e
     , ToJSON (NodeQuery a)
     , FromJSON a, ToJSON a
     )
@@ -682,7 +682,7 @@ nodeQueryDataSourceImmediate'
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
+    , MonadError e m, AsKilnRpcError e
     , ToJSON (NodeQuery a)
     , FromJSON a, ToJSON a
     )
@@ -727,7 +727,7 @@ nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
     let
       -- Communicates the result upstream.
       -- XXX Can't actually use this type signature since 'r' is not in scope...
-      -- writeResult :: Either CacheError (RpcResult a) -> m r
+      -- writeResult :: Either KilnRpcError (RpcResult a) -> m r
       writeResult a' = nqAtomically $ finishWith $ fmap projectRpcResult a'
     return $
       -- Try very hard to write *something* into the result TVar in case of exception.
@@ -740,9 +740,9 @@ nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
       -- such an error.
       (writeResult =<< nqTry (nodeRPCOrBust qBranch q))
         `catch` \e ->
-          nqAtomically (finishWith $ Left $ CacheError_SomeException e)
+          nqAtomically (finishWith $ Left $ KilnRpcError_SomeException e)
         `withException` \x ->
-          nqAtomically (finishWith $ Left $ CacheError_SomeException x)
+          nqAtomically (finishWith $ Left $ KilnRpcError_SomeException x)
 
   where
     dsrc = nds ^. nodeDataSource
@@ -757,7 +757,7 @@ nodeQueryDataSourceImpl
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError (RpcResult a))
+  -> IO (Either KilnRpcError (RpcResult a))
 nodeQueryDataSourceImpl = nodeQueryImpl myNodeRPC ChainTag_Hash
   where
     myNodeRPC (RpcQuery decoder body method resources) =
@@ -775,7 +775,7 @@ nodeQueryImpl
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError (RpcResult a))
+  -> IO (Either KilnRpcError (RpcResult a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
   NodeQuery_BakingRights branch targetLevel ->
@@ -798,14 +798,14 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_PublicKey contractId -> do
     (RpcResult raw managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKeyCrossCompat_key managerkeyResp of
-      Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
+      Nothing -> throwError $ KilnRpcError_UnrevealedPublicKey contractId
       Just pk -> pure (RpcResult raw pk)
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)
     pure $ RpcResult (Aeson.encode blocks) blocks
   where
-    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO (RpcResult c)
+    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT KilnRpcError IO (RpcResult c)
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
@@ -931,7 +931,7 @@ nodeQueryIxBakingRights1 ctx lvl prio = do
     makeBlanks = V.generate priorityChunkSize $ \i' ->
       throw $ NoRightsException ctx lvl $ prio + fromIntegral i'
 
-  maybe (nqThrowError $ CacheError_SomeException $ toException $ NoRightsException ctx lvl prio) pure $ chunked V.!? fromIntegral (prio `mod` priorityChunkSize)
+  maybe (nqThrowError $ KilnRpcError_SomeException $ toException $ NoRightsException ctx lvl prio) pure $ chunked V.!? fromIntegral (prio `mod` priorityChunkSize)
 
 {-
 calculateBakerStats ::
@@ -957,25 +957,25 @@ calculateBakerStats pkhs = do
 -}
 
 -- | Logs the cache error if it's not caused by an endpoint restriction.
-{-# INLINE logCacheError #-}
-logCacheError :: MonadLogger m => Text -> CacheError -> m ()
-logCacheError _ (CacheError_RpcError (RpcError_RestrictedEndpoint _)) = pure ()
-logCacheError desc err = $(logDebug) $
-  "Node Query failed for '" <> desc <> "' Reason: " <> prettyCacheError err
+{-# INLINE logKilnRpcError #-}
+logKilnRpcError :: MonadLogger m => Text -> KilnRpcError -> m ()
+logKilnRpcError _ (KilnRpcError_RpcError (RpcError_RestrictedEndpoint _)) = pure ()
+logKilnRpcError desc err = $(logDebug) $
+  "Node Query failed for '" <> desc <> "' Reason: " <> prettyKilnRpcError err
 
-prettyCacheError :: CacheError -> Text
-prettyCacheError = \case
-  CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
-  CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
-  CacheError_Timeout t -> "Timed out after " <> tshow t
-  CacheError_RpcError rpcErr -> case rpcErr of
+prettyKilnRpcError :: KilnRpcError -> Text
+prettyKilnRpcError = \case
+  KilnRpcError_NoKnownHeads -> "No known blocks in kiln's internal memory. This should resolve a few seconds after a first bootstrapped node is added."
+  KilnRpcError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
+  KilnRpcError_Timeout t -> "Timed out after " <> tshow t
+  KilnRpcError_RpcError rpcErr -> case rpcErr of
     RpcError_UnexpectedStatus _url _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
     RpcError_HttpException _url e -> "RPC Exception (The Node is unreachable) " <> tshow e
     RpcError_NonJSON _url e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
     RpcError_RestrictedEndpoint url -> "Node endpoint " <> url <> " is restricted."
-  CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
-  CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
-  CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
+  KilnRpcError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
+  KilnRpcError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
+  KilnRpcError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
 
 noSuitableNodeLogMessage :: Text -> [(URI, UnsuitableNodeReason)] -> Text
 noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <> q <> "`. Nodes are [" <> (T.intercalate "," . fmap prettyUnsuitableReason $ reasons) <> "]"
@@ -985,7 +985,6 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
       UnsuitableNodeReason_QueryBeforeSavepoint savepointLevel queryLevel -> "The level required to fulfill this query is " <> prettyLevel queryLevel <> " but the node savepoint is at " <> prettyLevel savepointLevel
       UnsuitableNodeReason_MissingBlockInfo -> "Kiln has not yet retrieved the latest block head for this node"
       UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
-      UnsuitableNodeReason_BranchNotContained b -> "The block '" <> tshow b <> "' could not be found within the kiln's known history for this node."
 
     prettyLevel = tshow . unRawLevel
 
@@ -993,7 +992,7 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
 calculateBakeEfficiency ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
-  , MonadError CacheError m
+  , MonadError KilnRpcError m
   , BlockLike b
   )
   => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
@@ -1078,7 +1077,7 @@ getProtocolConstants ct = do
     Nothing -> do
       hash' <- case ct of
         Right _ -> askNodeDataSource >>= nqAtomically . dataSourceHead
-          >>= maybe (nqThrowError CacheError_NotEnoughHistory) (pure . view hash)
+          >>= maybe (nqThrowError KilnRpcError_NoKnownHeads) (pure . view hash)
         Left hash' -> pure hash'
       getProtocolIndex hash' protoHash
 
@@ -1116,7 +1115,7 @@ buildProtocolIndex branch protoHash = do
     ! #branch branch
 
   case NE.nonEmpty $ sortOn (Down . (^. _2 . level)) $ Map.toList protocolFirstBlocksHistory of
-    Nothing -> nqThrowError CacheError_NotEnoughHistory
+    Nothing -> nqThrowError KilnRpcError_NoKnownHeads
     Just orderedFirstBlocksWithProto -> do
       -- To increase likelihood that a node knows the answer, we will use the *last* block
       -- in a protocol to get it's constants (the most recent block possible). To do this we
@@ -1167,7 +1166,7 @@ buildProtocolIndex branch protoHash = do
           insert protoIndex
           notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash)
 
-      maybe (nqThrowError CacheError_NotEnoughHistory) pure $
+      maybe (nqThrowError KilnRpcError_NoKnownHeads) pure $
         find ((protoHash ==) . view protocolHash) protoIndexes
 
 -- | For each found protocol in the blockchain history we return
@@ -1219,7 +1218,7 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) = do
                 True -> pure (lastBlockInPreviousVotingPeriod, firstBlockInVotingPeriod)
                 False -> do
                   $(logDebug) [i|Entering binary search for ${currentProtocol}|]
-                  maybe (nqThrowError $ CacheError_UnknownProtocol currentProtocol) pure =<<
+                  maybe (nqThrowError $ KilnRpcError_UnknownProtocol currentProtocol) pure =<<
                       binarySearch firstBlockInVotingPeriod currentBlock
 
               let protocolFirstBlocksHistory' = Map.insert currentProtocol firstBlockInProtocol protocolFirstBlocksHistory
