@@ -18,12 +18,12 @@
 module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
+import Control.Concurrent.STM (atomically, readTVar, writeTQueue, writeTVar, retry)
 import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
-import Control.Monad.Except (ExceptT, runExceptT, unless, withExceptT)
-import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logInfo, logWarn)
+import Control.Monad.Except (ExceptT, runExceptT, unless)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logInfo)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
@@ -41,7 +41,7 @@ import Data.Pool (Pool)
 import qualified Data.Set as S
 import Data.String.Here.Interpolated (i)
 import Data.These
-import Data.Time (NominalDiffTime, UTCTime)
+import Data.Time (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import qualified Data.Text as T
 import Data.Word
 import Database.Groundhog.Core
@@ -61,13 +61,11 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import qualified Tezos.LRUHashMap as LRUHashMap
 import Tezos.NodeRPC hiding (getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
 import qualified Tezos.V005.Types as V005
 import qualified Tezos.V009.Types as V009
 import qualified Tezos.V010.Types as V010
-import qualified Tezos.Types as Tezos
 import qualified Tezos.Unsafe
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
@@ -97,39 +95,32 @@ haveNewHead
   -> blk
   -> m ()
 haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger nds) $ do
-  let
-    httpMgr = _nodeDataSource_httpMgr nds
-    chainId = _nodeDataSource_chain nds
-    historyVar = _nodeDataSource_history nds
   $(logInfo) [i|Node reported new head: ${headBlockInfo ^. hash}, level ${headBlockInfo ^. level}|]
-  (oldHead, history) <- liftIO $ atomically $ liftA2 (,) (dataSourceHead nds) (readTVar historyVar)
-  let isNewBlock = not $ LRUHashMap.member (headBlockInfo ^. hash) (_cachedHistory_blocks history)
-  when isNewBlock $ do
-    res <- do
-      newStateRsp :: Either (Either RpcError CacheError) BlockCrossCompat <- runExceptT $ do
-        headBlock <- withExceptT Right $ do
+  -- We'd like to avoid handling blocks when node is bootstrapping since the data from the current
+  -- head will be ovewritten nearly instantly by the next bootstrapped block.
+  -- In order to achieve that we're going to handle only blocks that are recent, specifically
+  -- their timestamps aren't later than 'maxTimeDiff' from the current time.
+  now <- liftIO getCurrentTime
+  let maxTimeDiff = 600 -- 10 minutes
+      blockTimeDiff = diffUTCTime now (headBlockInfo ^. timestamp)
+  when (blockTimeDiff < maxTimeDiff) $ do
+    oldHead <- liftIO $ atomically (dataSourceHead nds)
+    when (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness) $ do
+      newStateRsp :: Either CacheError BlockCrossCompat <- runExceptT $ do
           flip runReaderT nds { _nodeDataSource_nodeForQuery = Just nodeAddr } $ do
             nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
-        withExceptT Left $
-          flip runReaderT (AccumHistoryContext historyVar $ NodeRPCContext httpMgr $ Uri.render nodeAddr) $ do
-            accumHistory chainId (const ()) headBlock
-            $(logInfo) [i|${if isNewBlock then "New" else "Known" :: Text} block from URI ${Uri.render nodeAddr}, ${mkVeryBlockLike headBlockInfo}|]
-
-        pure headBlock
-
       case newStateRsp of
-        e@(Left (Left (RpcError_RestrictedEndpoint _))) -> pure e
-        Left (Left e) -> $(logWarn) [i|Failed to handle new node head: ${e}|] $> Left (Left e)
-        Left (Right e) -> logCacheError "Handle new node head" e $> Left (Right e)
-        Right headBlock -> pure $ Right headBlock
-    for_ res $ \headBlock ->
-      when (Just (headBlock ^. fitness) > oldHead ^? _Just . fitness) $ do
+        Left e -> logCacheError "Handle new node head" e
+        Right headBlock -> do
         updatedLevel <- liftIO $ atomically $ do
           let latestHeadTVar = _nodeDataSource_latestHead nds
           latestHead <- readTVar latestHeadTVar
           if Just (headBlock ^. fitness) > latestHead ^? _Just . fitness
             then do
-              writeTVar latestHeadTVar $ Just $ mkVeryBlockLike headBlock
+              let levelInfo = headBlock ^. blockMetadata . blockMetadata_levelInfo
+                  newHead = BranchInfo (WithProtocolHash (mkVeryBlockLike headBlock) (headBlock ^. protocolHash))
+                    (levelInfo ^. levelInfo_cycle) (levelInfo ^. levelInfo_cyclePosition)
+              writeTVar latestHeadTVar $ Just newHead
               pure $ Just $ headBlock ^. level
             else
               pure Nothing
@@ -554,11 +545,9 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
   (latestBlock, protoInfo) <- throwing $ runNodeQueryT $ liftA2 (,)
     (nodeQueryDataSourceSafe $ NodeQuery_Block (latestHead ^. hash))
     (getProtocolConstants $ Left $ latestHead ^. hash)
-  history <- liftIO $ readTVarIO $ _nodeDataSource_history nds
   let
     blocksPerVotingPeriod = _protoInfo_blocksPerVotingPeriod protoInfo
     chainId = _nodeDataSource_chain nds
-    minLevel = cachedHistoryMinLevel history
 
     -- The RPCs under /votes/ return the information for the *next block*, not the current block.
     -- So we might have a voting_period_position of blocks_per_voting_period-1 in a given block
@@ -684,30 +673,35 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
   for_ [minBound..maxBound] $ \p -> case compare p currentPeriodKind of
     LT -> do
       let periodDiff = fromIntegral $ fromEnum currentPeriodKind - fromEnum p
-          startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
+          startBlockLevel = latestBlock ^. level - currentVotingPosition - periodDiff * blocksPerVotingPeriod
           endBlockLevel = startBlockLevel + blocksPerVotingPeriod - 1
 
       -- Ignore the update if the block cannot be obtained from current set of nodes
-      mEndBlock <- flip runReaderT nds . runExceptT @CacheError $ getBlock $ fromMaybe (error "amendmentProcessWorker: can't get end block") $
-        -- Calc the blockLevel at the start of the current voting period, move
-        -- back by periodDiff voting periods, and move to the end of that period
-        levelAncestor history endBlockLevel (latestBlock ^. hash)
+      -- Calc the blockLevel at the start of the current voting period, move
+      -- back by periodDiff voting periods, and move to the end of that period
+      mEndBlock <- flip runReaderT nds . runExceptT @CacheError $ getBlockLevelAncestor (latestBlock ^. level - endBlockLevel) (latestBlock ^. hash)
       for_ mEndBlock $ \endBlock -> do
-        (periodStartBlock, periodEndBlockPred) <- throwing $ do
-          startBlock <- getBlockHeader $ fromMaybe (error "amendmentProcessWorker: can't get start block") $
-            levelAncestor history startBlockLevel (latestBlock ^. hash)
-          predBlock <- getBlockHeader $ endBlock ^. predecessor
-          pure (startBlock, predBlock)
-        updateTo periodStartBlock periodEndBlockPred endBlock p
+        (startBlockTimestamp, periodEndBlockPred) <- do
+          startBlock <- flip runReaderT nds . runExceptT @CacheError $
+            fmap toBlockHeader $ getBlockLevelAncestor (latestBlock ^. level - startBlockLevel) (latestBlock ^. hash)
+          let startBlockTimestamp = case startBlock of
+                Right block -> block ^. timestamp
+                Left _ -> unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
+          predBlock <- throwing $ getBlockHeader $ endBlock ^. predecessor
+          pure (startBlockTimestamp, predBlock)
+        updateTo startBlockLevel startBlockTimestamp periodEndBlockPred endBlock p
     EQ -> do
-      let startBlockLevel = max minLevel $ latestBlock ^. level - currentVotingPosition
-      startBlock <- throwing $ getBlockHeader $ fromMaybe (error "amendmentProcessWorker: can't get start block for current period") $
-        levelAncestor history startBlockLevel (latestBlock ^. hash)
+      let startBlockLevel = latestBlock ^. level - currentVotingPosition
+      startBlock <- flip runReaderT nds . runExceptT @CacheError $
+        fmap toBlockHeader $ getBlockLevelAncestor currentVotingPosition (latestBlock ^. hash)
+      let startBlockTimestamp = case startBlock of
+            Right block -> block ^. timestamp
+            Left _ -> unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlockHeader $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
         else pure (toBlockHeader latestBlock)
-      updateTo startBlock predOrLatest latestBlock p
+      updateTo startBlockLevel startBlockTimestamp predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p
       notify NotifyTag_Amendment (p, Nothing)
@@ -721,8 +715,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
   where
     toBlockHeader = blockCrossCata V010.toBlockHeader V005.toBlockHeader
 
-    getBlock hash' = nodeQueryDataSource $ NodeQuery_Block hash'
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
+    getBlockLevelAncestor lvl hash' = nodeQueryDataSource $ NodeQuery_BlockPred hash' lvl
 
     throwing :: (Monad m, MonadLogger m) => ExceptT CacheError (ReaderT NodeDataSource m) a -> m a
     throwing = (>>= either logThenThrow pure) . flip runReaderT nds . runExceptT @CacheError
@@ -761,7 +755,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Promotion -> deleteAll' @PeriodPromotionVote Proxy
         VotingPeriodKind_Adoption -> deleteAll' @PeriodAdoption Proxy
 
-    updateTo startBlock predBlk blk p = do
+    updateTo startLevel startTimestamp predBlk blk p = do
       let position' = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
           votingPeriod = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_index
           chainId = _nodeDataSource_chain nds
@@ -769,8 +763,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
             { _amendment_period = p
             , _amendment_chainId = chainId
             , _amendment_votingPeriod = votingPeriod
-            , _amendment_start = startBlock ^. timestamp
-            , _amendment_startLevel = startBlock ^. level
+            , _amendment_start = startTimestamp
+            , _amendment_startLevel = startLevel
             , _amendment_position = position'
             }
       runDb (Identity db) $ do
@@ -802,16 +796,9 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Cooldown -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
-            let (status, testChainId, startBlockHash) = case blk ^. blockMetadata . blockMetadata_testChainStatus of
-                  Tezos.TestChainStatus_NotRunning -> (TestChainStatus_NotRunning, Nothing, Nothing)
-                  Tezos.TestChainStatus_Forking {} -> (TestChainStatus_Forking, Nothing, Nothing)
-                  Tezos.TestChainStatus_Running
-                    { Tezos._testChainStatusRunning_chainId = c
-                    , Tezos._testChainStatusRunning_genesis = b
-                    } -> (TestChainStatus_Running, Just c, Just b)
-            tcStartBlock <- fmap join $ traverse (liftIO . atomically . lookupBlock nds) startBlockHash
+            -- Test chains are no longer used since Florence
+            let (status, testChainId :: Maybe ChainId, startingLevel :: Maybe RawLevel) = (TestChainStatus_NotRunning, Nothing, Nothing)
             runDb (Identity db) $ do
-              let startingLevel = (^. level) <$> tcStartBlock
               ts <- [queryQ|
                 INSERT INTO "PeriodTesting" (proposal, "testChainId", "startingLevel", status)
                 (SELECT p.id, ?testChainId, ?startingLevel, ?status FROM "PeriodProposal" p WHERE p.hash = ?proposal)
@@ -959,7 +946,7 @@ waitTillEndOfCycle
   => NodeDataSource -> blk -> m ()
 waitTillEndOfCycle nds blk = do
   lastLevel :: Either CacheError RawLevel <- flip runReaderT nds $ runExceptT $ runNodeQueryT $ do
-    c <- levelToCycle $ blk ^. level
+    c <- levelToCycle (blk ^. hash, blk ^. level) (blk ^. level)
     lastLevelInCycle (blk ^. hash) c
   for_ lastLevel $ \lvl -> do
     liftIO $ atomically $ do

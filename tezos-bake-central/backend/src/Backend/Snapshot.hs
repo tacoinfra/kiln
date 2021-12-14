@@ -47,9 +47,7 @@ import Text.Read (readMaybe)
 import Text.Regex.TDFA ((=~))
 import Text.URI (URI, renderStr)
 
-import Tezos.NodeRPC (_cachedHistory_blocks)
 import Tezos.Types
-import qualified Tezos.LRUHashMap as LRUHashMap
 
 import Backend.Common
 import Backend.Config
@@ -373,12 +371,6 @@ updateSnapshotMeta mbBlockHash mbLevel mbTimestamp smId = do
     ]
     (AutoKeyField ==. smId)
   traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
-
--- | Find the block with the given hash prefix
-completeBlockHash :: Text -> CachedHistory' -> Maybe BlockHash
-completeBlockHash prefix' history =
-  find (T.isPrefixOf prefix' . toBase58Text) $
-    LRUHashMap.keys $ _cachedHistory_blocks history
 
 removeFileLogging :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 removeFileLogging f = liftIO (removeFile f) `catch` \(e :: IOException) -> $(logError) $ "Failed to remove file: " <> T.pack f <> ": " <> tshow e

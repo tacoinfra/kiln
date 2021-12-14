@@ -48,7 +48,7 @@ accusationWorker delay nds appConfig = runLoggingEnv (_nodeDataSource_logger nds
       |]
 
       for_ alertData $ \(aHash, aBlockHash, aIsBake, aBaker, aOccurredLevel, aLevel) -> do
-        (aOccurredCycle, aCycle) <- liftA2 (,) (levelToCycle aOccurredLevel) (levelToCycle aLevel)
+        (aOccurredCycle, aCycle) <- liftA2 (,) (levelToCycle (aBlockHash, aLevel) aOccurredLevel) (levelToCycle (aBlockHash, aLevel) aLevel)
         flip runReaderT appConfig $ reportAccusation
           aHash
           aBlockHash

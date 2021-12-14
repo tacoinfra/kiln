@@ -76,7 +76,6 @@ import Text.URI (URI)
 import qualified Text.URI as URI
 
 import Tezos.Common.Chain (identifyChain)
-import Tezos.History (emptyCache)
 import Tezos.Types
 
 import Backend.Common (worker', workerWithDelay)
@@ -347,8 +346,6 @@ backendImpl cfg serve = do
         Left namedChain -> pure $ showNamedChain namedChain
         Right chainId' -> fmap showNamedChain $ identifyChain chainId'
 
-      cacheCapacity = 100000
-
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
@@ -366,12 +363,10 @@ backendImpl cfg serve = do
 
 
     dataSrc <- liftIO $ do
-      hist <- newTVarIO $ emptyCache cacheCapacity
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
       return NodeDataSource
-        { _nodeDataSource_history = hist
-        , _nodeDataSource_chain = chainId
+        { _nodeDataSource_chain = chainId
         , _nodeDataSource_httpMgr = httpMgr
         , _nodeDataSource_pool = db
         , _nodeDataSource_latestHead = latestHead
