@@ -77,6 +77,7 @@ preMigrate chainId =
   >=> removeArchivalNodeFromTables
   >=> migrateRawCacheEntryTable
   >=> migrateNodeDetailsAddSynchronisationThreshold
+  >=> migratePeriodTestingTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -746,6 +747,22 @@ migrateRawCacheEntryTable ta = do
           [traceExecuteQ|
             ALTER TABLE "RawCacheEntry"
             ADD COLUMN "addedAt" timestamp NOT NULL DEFAULT now();
+          |]
+        pure ta
+    _ -> pure ta
+
+migratePeriodTestingTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migratePeriodTestingTable ta = do
+  let table = (Nothing, "PeriodTesting")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "status") . colName) $ tableColumns analyzedTable
+      -> do
+        void
+          [traceExecuteQ|
+            ALTER TABLE "PeriodTesting"
+            DROP COLUMN "status",
+            DROP COLUMN "startingLevel",
+            DROP COLUMN "testChainId";
           |]
         pure ta
     _ -> pure ta

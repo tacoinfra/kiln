@@ -548,9 +548,6 @@ instance Aeson.FromJSON TestChainStatus
 
 data PeriodTesting = PeriodTesting
   { _periodTesting_proposal :: !(Id PeriodProposal)
-  , _periodTesting_testChainId :: !(Maybe ChainId)
-  , _periodTesting_startingLevel :: !(Maybe RawLevel)
-  , _periodTesting_status :: !TestChainStatus
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodPromotionVote = PeriodPromotionVote

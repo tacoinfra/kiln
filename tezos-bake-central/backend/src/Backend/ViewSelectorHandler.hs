@@ -239,19 +239,15 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
       }
 
   periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$> do
-    results <- [queryQ|
-      SELECT t.proposal, t."testChainId", t."startingLevel", t.status
+    results <- fromOnly <<$>> [queryQ|
+      SELECT t.proposal
       FROM "PeriodTesting" t
       JOIN "PeriodProposal" p ON p.id = t.proposal
       WHERE p."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(p,t,l,s) -> PeriodTesting
-      { _periodTesting_proposal = p
-      , _periodTesting_testChainId = t
-      , _periodTesting_startingLevel = l
-      , _periodTesting_status = s
-      }
+    pure $ listToMaybe $ results <&> \p -> PeriodTesting
+      { _periodTesting_proposal = p }
 
   periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$> do
     results <- [queryQ|

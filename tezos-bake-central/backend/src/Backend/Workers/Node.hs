@@ -802,20 +802,14 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Cooldown -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
-            -- Test chains are no longer used since Florence
-            let (status, testChainId :: Maybe ChainId, startingLevel :: Maybe RawLevel) = (TestChainStatus_NotRunning, Nothing, Nothing)
             runDb (Identity db) $ do
-              ts <- [queryQ|
-                INSERT INTO "PeriodTesting" (proposal, "testChainId", "startingLevel", status)
-                (SELECT p.id, ?testChainId, ?startingLevel, ?status FROM "PeriodProposal" p WHERE p.hash = ?proposal)
-                RETURNING proposal, "testChainId", "startingLevel", status
+              ts <- (fmap . fmap) fromOnly [queryQ|
+                INSERT INTO "PeriodTesting"
+                (SELECT p.id FROM "PeriodProposal" p WHERE p.hash = ?proposal)
+                RETURNING proposal
               |]
-              for_ ts $ \(ph,t,l,s) -> notify NotifyTag_PeriodTesting $ Just PeriodTesting
-                { _periodTesting_proposal = ph
-                , _periodTesting_testChainId = t
-                , _periodTesting_startingLevel = l
-                , _periodTesting_status = s
-                }
+              for_ ts $ \ph -> notify NotifyTag_PeriodTesting $ Just PeriodTesting
+                { _periodTesting_proposal = ph }
         VotingPeriodKind_Promotion -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
         VotingPeriodKind_Adoption -> handleVotingPeriod predBlk PeriodAdoption NotifyTag_PeriodAdoption
 
