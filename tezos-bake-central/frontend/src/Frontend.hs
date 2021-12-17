@@ -1479,6 +1479,7 @@ startNodeWorkflow backWF close = Workflow $ do
   backEv <- backButton
   divClass "ui header" $ text "Start a Kiln Node"
   elClass "h5" "ui header" $ text "Initialize Chain Data From:"
+  divClass "ui two column centered grid divided" $ do
   rec
     let
       radioItems =
@@ -1499,52 +1500,60 @@ startNodeWorkflow backWF close = Workflow $ do
     useSnapshotFile     <- isRadioItemSelected useSnapshotFileEv False
     useSnapshotFilePath <- isRadioItemSelected useSnapshotFilePathEv False
 
-    (useSnapshotUriEv, mSnapshotURI) <- fakeRadioItem useSnapshotURI $ el "div" $ do
-      el "div" $ text "Provide snapshot URL (Recommended)"
-      divClass "explanation" $ do
-        el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
-        el "p" $ text "Make sure that you're using a snapshot from a trusted provider."
-        el "p" $ text "You can find a link to the snapshot on one of the providers websites listed on"
-        el "p" $ hrefLink "https://tezos-kiln.org/" $ text "tezos-kiln.org"
-      uri <- formItem' "" $ uriField "Snapshot URL" ""
-      let mUri = ffor uri $ \case
-            Right uri' -> Just uri'
-            Left _ -> Nothing
-      return mUri
-    (useSnapshotFilePathEv, mSnapshotFilePath) <- fakeRadioItem useSnapshotFilePath $ el "div" $ do
-      el "div" $ text "Provide path to snapshot file"
-      divClass "explanation" $ do
-        el "p" $ text "You can provide a path to the snapshot file that is stored locally on the machine that is running Kiln."
-      filePath <- formItem textField
-      let
-        mFilePath = ffor filePath $ \case
-          Right fp -> fp
-          Left _   -> Nothing
-      return mFilePath
-    (useSnapshotFileEv, mSelectedSnapshot) <- fakeRadioItem useSnapshotFile $ el "div" $ do
-      el "div" $ text "Provide snapshot file stored locally"
-      divClass "explanation" $ do
-        el "p" $ text "As an alternative you can provide a snapshot file that is stored locally."
-      divClass "file-selection" $ do
-        rec
-          let fileName = headMay <$> _inputElement_files fi
-          dyn_ $ ffor fileName $ mapM $ \file -> do
-            name <- liftJSM $ File.getName file
-            divClass "file-name" $ text name
-          elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
-          fi <- fileInput' $ constDyn ("id" =: "fileId")
-        pure fileName
-    let
-      usep2p = do
-        useSnapshotFile' <- useSnapshotFile
-        useSnapshotURI' <- useSnapshotURI
-        useSnapshotFilePath' <- useSnapshotFilePath
-        return $ not $ useSnapshotFile' || useSnapshotURI' || useSnapshotFilePath'
-    (useSnapshotPeerToPeerEv, _) <- fakeRadioItem usep2p $
-      divClass "" $ do
-        divClass "" $ text "Peer to Peer Download"
+    ((useSnapshotUriEv, mSnapshotURI), (useSnapshotFileEv, mSelectedSnapshot)) <- divClass "column" $ do
+      (useSnapshotUriEv', mSnapshotURI') <- fakeRadioItem useSnapshotURI $ el "div" $ do
+        el "div" $ text "Provide snapshot URL (Recommended)"
         divClass "explanation" $ do
-          el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
+          el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
+          el "p" $ text "Make sure that you're using a snapshot from a trusted provider."
+          el "p" $ text "You can find a link to the snapshot on one of the providers websites listed on"
+          el "p" $ hrefLink "https://tezos-kiln.org/" $ text "tezos-kiln.org"
+        uri <- formItem' "" $ uriField "Snapshot URL" ""
+        let mUri = ffor uri $ \case
+              Right uri' -> Just uri'
+              Left _ -> Nothing
+        return mUri
+
+      (useSnapshotFileEv', mSelectedSnapshot') <- fakeRadioItem useSnapshotFile $ el "div" $ do
+          el "div" $ text "Provide snapshot file stored locally"
+          divClass "explanation" $ do
+            el "p" $ text "As an alternative you can provide a snapshot file that is stored locally."
+          divClass "file-selection" $ do
+            rec
+              let fileName = headMay <$> _inputElement_files fi
+              dyn_ $ ffor fileName $ mapM $ \file -> do
+                name <- liftJSM $ File.getName file
+                divClass "file-name" $ text name
+              elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
+              fi <- fileInput' $ constDyn ("id" =: "fileId")
+            pure fileName
+      pure ((useSnapshotUriEv', mSnapshotURI'), (useSnapshotFileEv', mSelectedSnapshot'))
+
+    ((useSnapshotFilePathEv, mSnapshotFilePath), useSnapshotPeerToPeerEv)
+      <- divClass "column" $ do
+        (useSnapshotFilePathEv', mSnapshotFilePath') <- fakeRadioItem useSnapshotFilePath $ el "div" $ do
+          el "div" $ text "Provide path to snapshot file"
+          divClass "explanation" $ do
+            el "p" $ text "You can provide a path to the snapshot file that is stored locally on the machine that is running Kiln."
+          filePath <- formItem textField
+          let
+            mFilePath = ffor filePath $ \case
+              Right fp -> fp
+              Left _   -> Nothing
+          return mFilePath
+        let
+          usep2p = do
+            useSnapshotFile' <- useSnapshotFile
+            useSnapshotURI' <- useSnapshotURI
+            useSnapshotFilePath' <- useSnapshotFilePath
+            return $ not $ useSnapshotFile' || useSnapshotURI' || useSnapshotFilePath'
+        (useSnapshotPeerToPeerEv', _) <- fakeRadioItem usep2p $
+          divClass "" $ do
+            divClass "" $ text "Peer to Peer Download"
+            divClass "explanation" $ do
+              el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
+              el "p" $ text "Note that it may take a long time."
+        pure ((useSnapshotFilePathEv', mSnapshotFilePath'), useSnapshotPeerToPeerEv')
 
   let
     selectedMethodDyn :: Dynamic t NodeBootstrapMethod
@@ -1571,17 +1580,20 @@ startNodeWorkflow backWF close = Workflow $ do
         _ -> "disabled"
 
   rec
-    _ <- runWithReplace blank $ ffor invalidSnapshotFilePath $ \case
-      AddInternalNodeError_SnapshotImportError SnapshotImportError_FileNotFound ->
-        divClass "ui error message" $ text "File does not exist"
-      AddInternalNodeError_SnapshotImportError SnapshotImportError_InvalidSnapshot ->
-        divClass "ui error message" $ text "Invalid snapshot file"
-      AddInternalNodeError_SnapshotImportError SnapshotImportError_PermissionDenied ->
-        divClass "ui error message" $ do
-          el "p" $ text "Permission denied"
-          el "p" $ text "If you run Kiln on macOS, try to move the snapshot file from Desktop/Downloads/Documents to another folder"
+    _ <- divClass "row" $ do
+      runWithReplace blank $ ffor invalidSnapshotFilePath $ \case
+        AddInternalNodeError_SnapshotImportError SnapshotImportError_FileNotFound ->
+          divClass "ui error message" $ text "File does not exist"
+        AddInternalNodeError_SnapshotImportError SnapshotImportError_InvalidSnapshot ->
+          divClass "ui error message" $ text "Invalid snapshot file"
+        AddInternalNodeError_SnapshotImportError SnapshotImportError_PermissionDenied ->
+          divClass "ui error message" $ do
+            el "p" $ text "Permission denied"
+            el "p" $ text "If you run Kiln on macOS, try to move the snapshot file from Desktop/Downloads/Documents to another folder"
 
-    addNodeEv <- uiDynButton (T.unwords . (:["primary"]) <$> disabledFlag) (text "Add Node")
+
+    addNodeEv <- divClass "row" $
+      uiDynButton (T.unwords . (:["primary"]) <$> disabledFlag) (text "Add Node")
 
     let
       selectedMethodEv :: Event t NodeBootstrapMethod
