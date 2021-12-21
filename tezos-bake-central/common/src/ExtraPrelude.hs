@@ -89,6 +89,7 @@ module ExtraPrelude
   , (>=>)
   , (>>>)
   , ($>)
+  , (<<$>>)
 
   , safeSucc
   , tshow
@@ -146,3 +147,6 @@ whenM x true = if x then true else pure mempty
 
 when' :: (Monad m, Monoid b) => m Bool -> m b -> m b
 when' x true = x >>= \v -> if v then true else pure mempty
+
+(<<$>>) :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
+(<<$>>) = fmap . fmap

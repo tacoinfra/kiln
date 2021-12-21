@@ -53,14 +53,15 @@ badNodeHeadMessage text blockHashLink l =
   case (_errorLogBadNodeHead_bootstrapped l, _errorLogBadNodeHead_chainStatus l) of
     (False, _) ->
       ( behindHeader
-      , sequenceA_
+      , sequenceA_ $
         [ text "The node's head is "
         , blockHashLink $ nodeHead ^. hash
         , text $ " at level " <> tshow (unRawLevel $ nodeHead ^. level)
-        , text " the latest know head is "
+        ] <> maybe [] (\(Json latestHead) ->
+        [ text " the latest know head is "
         , blockHashLink $ latestHead ^. hash
         , text $ " at level " <> tshow (unRawLevel $ latestHead ^. level)
-        ]
+        ]) mbLatestHead
       )
     (True, SyncState_Stuck) ->
       ( stuckHeader
@@ -76,7 +77,7 @@ badNodeHeadMessage text blockHashLink l =
 
   where
     Json nodeHead = _errorLogBadNodeHead_nodeHead l
-    Json latestHead = _errorLogBadNodeHead_latestHead l
+    mbLatestHead = _errorLogBadNodeHead_latestHead l
 
     branchHeader = "Node is on a branch"
     behindHeader = "Node is behind"

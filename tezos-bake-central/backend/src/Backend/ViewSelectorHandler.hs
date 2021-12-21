@@ -83,13 +83,11 @@ import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
-import Safe (maximumMay)
-import Safe (minimumByMay)
+import Safe (minimumByMay, headMay)
 import Text.URI (render, URI)
 
 import Tezos.Types
 
-import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, lastLevelInCycle)
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.Workers.TezosRelease (getLatestTezosRelease)
@@ -241,19 +239,15 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
       }
 
   periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$> do
-    results <- [queryQ|
-      SELECT t.proposal, t."testChainId", t."startingLevel", t.status
+    results <- fromOnly <<$>> [queryQ|
+      SELECT t.proposal
       FROM "PeriodTesting" t
       JOIN "PeriodProposal" p ON p.id = t.proposal
       WHERE p."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(p,t,l,s) -> PeriodTesting
-      { _periodTesting_proposal = p
-      , _periodTesting_testChainId = t
-      , _periodTesting_startingLevel = l
-      , _periodTesting_status = s
-      }
+    pure $ listToMaybe $ results <&> \p -> PeriodTesting
+      { _periodTesting_proposal = p }
 
   periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$> do
     results <- [queryQ|
@@ -702,21 +696,21 @@ getBakerAddresses nds bid = do
   -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
   latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
-  maxProgress_rightsInfo :: Either CacheError (Maybe (Maybe RawLevel, [RightsCycleInfo])) <- case latestHead' of
-    Nothing -> pure $ Left CacheError_NotEnoughHistory
-    Just latestHead -> flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
-      rightsInfo <- cycleStartHashes latestHead
-      -- WARNING: We're looking up information in the future which might be wrong. We assume the following
-      -- protocol constants won't ever change, even with a new protocol:
-      --    $PRESERVED_CYCLES
-      --    $BLOCKS_PER_CYCLE
-      headProtoInfo <- getProtocolConstants $ Left $ latestHead ^. hash
-      maxProgress <- for (maximumMay $ _rightsCycleInfo_cycle <$> rightsInfo) $ \highestRightsCycle ->
-        lastLevelInCycle (latestHead ^. hash) $ highestRightsCycle + headProtoInfo ^. protoInfo_preservedCycles + 1
-      pure (maxProgress, rightsInfo)
+  maxProgress_rightsInfo :: Either KilnRpcError (Maybe RawLevel) <- case latestHead' of
+    Nothing -> pure $ Left KilnRpcError_NoKnownHeads
+    Just latestHeadInfo -> flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
+      let protocol = latestHeadInfo ^. protocolHash
+      mbProtoInfo :: Maybe ProtoInfo <- fmap (fmap (view protocolIndex_constants) . headMay) $ select
+        ( ProtocolIndex_hashField ==. protocol &&.
+          ProtocolIndex_chainIdField ==. chainId)
+      case mbProtoInfo of
+        Nothing -> throwError $ KilnRpcError_UnknownProtocol protocol
+        Just protoInfo -> do
+          let blocksPerCycle = protoInfo ^. protoInfo_blocksPerCycle
+          pure $ latestHeadInfo ^. level + (blocksPerCycle - latestHeadInfo ^. branchInfo_cyclePosition) - 1
 
   let
-    maxProgress = maxProgress_rightsInfo ^? _Right . _Just . _1 . _Just
+    maxProgress = maxProgress_rightsInfo ^? _Right . _Just
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
     bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $

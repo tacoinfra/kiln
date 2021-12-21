@@ -76,7 +76,6 @@ import Text.URI (URI)
 import qualified Text.URI as URI
 
 import Tezos.Common.Chain (identifyChain)
-import Tezos.History (emptyCache)
 import Tezos.Types
 
 import Backend.Common (worker', workerWithDelay)
@@ -98,7 +97,7 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
-import Backend.Workers.Node (amendmentProcessWorker, nodeAlertWorker, nodeWorker, protocolMonitorWorker)
+import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
 import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker, computeChainId)
 import Backend.Workers.TezosRelease
 import qualified Common.Config as Config
@@ -347,8 +346,6 @@ backendImpl cfg serve = do
         Left namedChain -> pure $ showNamedChain namedChain
         Right chainId' -> fmap showNamedChain $ identifyChain chainId'
 
-      cacheCapacity = 100000
-
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
@@ -366,12 +363,10 @@ backendImpl cfg serve = do
 
 
     dataSrc <- liftIO $ do
-      hist <- newTVarIO $ emptyCache cacheCapacity
       latestHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
       return NodeDataSource
-        { _nodeDataSource_history = hist
-        , _nodeDataSource_chain = chainId
+        { _nodeDataSource_chain = chainId
         , _nodeDataSource_httpMgr = httpMgr
         , _nodeDataSource_pool = db
         , _nodeDataSource_latestHead = latestHead
@@ -426,7 +421,6 @@ backendImpl cfg serve = do
       addFinalizer wsFinalizer
 
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< nodeAlertWorker dataSrc appConfig db
       addFinalizer =<< bakerRightsWorker dataSrc rightsHistoryWindow
       addFinalizer =<< bakerWorker appConfig dataSrc
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db

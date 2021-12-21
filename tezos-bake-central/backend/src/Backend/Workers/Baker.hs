@@ -59,7 +59,7 @@ import Backend.Config (AppConfig (..), HasAppConfig)
 import Backend.Alerts
 import Backend.Common (worker', AppSerializable)
 import Backend.Config (AppConfig (..))
-import Backend.IndexQueries (RightsCycleInfo(..), cycleStartHashes, levelToCycle, getLatestProtocolConstants)
+import Backend.IndexQueries (levelToCycle, getLatestProtocolConstants)
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.STM (atomicallyWith)
@@ -79,24 +79,21 @@ bakerRightsWorker
   -> Int
   -> m (IO ())
 bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  res :: Either CacheError () <- flip runReaderT nds $ runExceptT $ do
-    (headBlock, protocolConstants) <- runNodeQueryT $ do
-      (branchInfo, protocolConstants) <- getLatestProtocolConstants
-      headBlock <- nodeQueryDataSource (NodeQuery_Block $ branchInfo ^. hash)
-      return (headBlock, protocolConstants)
+  res :: Either KilnRpcError () <- flip runReaderT nds $ runExceptT $ do
+    (latestBranchInfo, protocolConstants) <- runNodeQueryT getLatestProtocolConstants
 
     $(logDebug) "Update baker cycle."
     let
       db = _nodeDataSource_pool nds
       chainId = _nodeDataSource_chain nds
-      headHash :: BlockHash = headBlock ^. hash
-      headLevel = headBlock ^. level
-      endOfCycle = headLevel - headBlock ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cyclePosition +
+      headHash :: BlockHash = latestBranchInfo ^. hash
+      headLevel = latestBranchInfo ^. level
+      endOfCycle = headLevel - latestBranchInfo ^. branchInfo_cyclePosition +
         protocolConstants ^. protoInfo_blocksPerCycle - 1
 
     --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
-    needProgress :: MonoidalMap PublicKeyHash (Max BakerRightsProgress) <- lift @(ExceptT CacheError) $ runDb (Identity db) $ do
+    needProgress :: MonoidalMap PublicKeyHash (Max BakerRightsProgress) <- lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ do
       bakerPKHs :: [PublicKeyHash] <- project Baker_publicKeyHashField (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       let
         inBakerPKHs = In bakerPKHs
@@ -183,7 +180,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
               }) (filter ((== pkh) ._endorsingRights_delegate) endorsers)
 
         $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel $ Set.findMax lvls))
-        lift @(ExceptT CacheError) $ runDb (Identity db) $ for_ pkhs $ \pkh -> do
+        lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ for_ pkhs $ \pkh -> do
           let
             newProgress = bakerRightCycleInfo pkh
           progress' :: [(Id BakerRightsProgress, BakerRightsProgress)] <- Map.toList <$> selectMap BakerRightsProgressConstructor
@@ -221,7 +218,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
 
   case res of
     Right _ -> pure ()
-    Left err -> logCacheError "bakerRightsWorker" err
+    Left err -> logKilnRpcError "bakerRightsWorker" err
 
   $(logDebug) $ "BAKERRIGHTSWORKER STEP" <> tshow res
 
@@ -236,7 +233,7 @@ bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewHead nds) $ ru
   res <- flip runReaderT nds $ runExceptT $ do
     (bakerInt, protoInfo, headCycle, headBlock, currentState :: [(Baker, Maybe BakerDetails)]) <- runNodeQueryT $ do
       (headBlock, protoInfo) <- getLatestProtocolConstants
-      headCycle <- levelToCycle $ headBlock ^. level
+      headCycle <- levelToCycle (headBlock ^. hash, headBlock ^. level) (headBlock ^. level)
       bakers :: Map PublicKeyHash Baker <- Map.fromList <$> project (Baker_publicKeyHashField, BakerConstructor) (Baker_dataField ~> DeletableRow_deletedSelector ==. False)
       bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
           (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
@@ -254,16 +251,16 @@ bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewHead nds) $ ru
         Right commit -> do
           $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
           pure $ Just commit
-        Left (err :: CacheError) -> do
+        Left (err :: KilnRpcError) -> do
           $(logErrorSH) ("bakerWorker failed to process baker: " <> tshow baker, err)
           pure Nothing
 
     -- beware of the jellyfish
-    lift @(ExceptT CacheError) $ runDb (Identity db) $ runReaderT (sequence_ $ fmapMaybe id wantedActions) appConfig
+    lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ runReaderT (sequence_ $ fmapMaybe id wantedActions) appConfig
 
   case res of
     Right () -> $(logDebug) "bakerWorker DONE"
-    Left (err :: CacheError) -> logCacheError "bakerWorker" err
+    Left (err :: KilnRpcError) -> logKilnRpcError "bakerWorker" err
 
 
 -- separating the monad that can do RPC(mPrepare) from the one that can do
@@ -278,7 +275,7 @@ getWantedAction
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare
   , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare, MonadLoggerIO mPrepare
   )
-  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT CacheError mPrepare (AppSerializable ())
+  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT KilnRpcError mPrepare (AppSerializable ())
 getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   let
     headHash = headBlock ^. hash
@@ -291,22 +288,13 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     -- if so, examine the block to see if they exercized those rights
     -- if not, report an error; if so, clear an error.
     detailsBranch :: BlockHash = maybe headPred (view hash . _bakerDetails_branch) details
-  -- we're only interested in the "good" branch, so we discard the part only on the baker's current branch
-  -- enumerateBranches reutrns a maybe if it coulnd't find enough history
-  -- to reasonably answer the question; so we'll just short curcuit and
-  -- behave as if we have never run before.
-  -- we don't actually need to know the hashes; headHash is sufficient, but we do need to know the levels.
-  headBranch :: [(RawLevel, BlockHash)] <- atomicallyWith
-    $ zip [headLvl, pred headLvl .. 1]
-    . fst
-    . fromMaybe ([headHash], [])
-    <$> enumerateBranches headHash detailsBranch
-  $(logDebugSH) ("getWantedAction" :: Text, baker, headHash, headLvl, headBranch)
-  bakingEndorsingAlerts :: [AppSerializable ()] <- for headBranch $ \(lvl, thisHash) -> do
+  detailsBlock <- nodeQueryDataSource $ NodeQuery_Block detailsBranch
+  bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl .. detailsBlock ^. level] $ \lvl -> do
+    thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
+    predBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl + 1)
     bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
     bakingAlerts :: [AppSerializable ()]
                  <- whenM (any (\br -> ((== 0) . _bakingRights_priority) br && ((== _baker_publicKeyHash baker) . _bakingRights_delegate) br) bakingRights) $ do
-      thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
       let action =
             bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake ((thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker)
               (headBlock ^. fitness)
@@ -319,8 +307,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
     endorsingAlerts :: [AppSerializable ()]
                     <- whenM (elem (_baker_publicKeyHash baker) $ _endorsingRights_delegate <$> endorsers) $ do
-      thisBlock <- nodeQueryDataSource $ NodeQuery_Block thisHash
-      predBlock <- nodeQueryDataSource $ NodeQuery_Block (thisBlock ^. predecessor)
+
       let
         endorserDelegates = blockCrossCata
           (^..V010.block_operations . traverse . traverse . V010.operation_contents . traverse . V010._OperationContents_EndorsementWithSlot . V010.operationContentsEndorsementWithSlot_metadata . V010.endorsementMetadata_delegate)

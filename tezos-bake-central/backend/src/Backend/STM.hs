@@ -25,6 +25,9 @@ class Monad m => MonadSTM m where
 instance MonadSTM STM where
   liftSTM = id
 
+instance MonadSTM IO where
+  liftSTM = atomically
+
 instance MonadSTM m => MonadSTM (ReaderT r m)
 instance MonadSTM m => MonadSTM (ExceptT e m)
 instance MonadSTM m => MonadSTM (MaybeT m)

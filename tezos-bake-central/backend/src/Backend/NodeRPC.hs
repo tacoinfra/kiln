@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -38,12 +37,10 @@ import Control.Concurrent.STM (
     TVar,
     atomically,
     readTVar,
-    readTVarIO,
     retry,
     writeTQueue,
   )
 
-import Control.Error (note)
 import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
@@ -75,22 +72,20 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import qualified Data.Aeson as Aeson
 import Data.Aeson (ToJSON, FromJSON)
-import Data.Bifunctor (bimap, first)
+import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
-import Data.Either (partitionEithers)
+import Data.Either (rights)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
-import qualified Data.LCA.Online.Polymorphic as LCA
-import Data.List (genericTake, sortOn)
+import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (mapMaybe)
-import Data.Ord (comparing, Down(..))
+import Data.Ord (Down(..))
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq (filter, (<|))
@@ -115,19 +110,15 @@ import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Schema (Json (..), LargeObjectId (..))
 import Safe (headMay)
-import Safe.Foldable (maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import qualified Tezos.LRUHashMap as LRUHashMap
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
-import Tezos.Unsafe (unsafeAssumptionRightsContextLevel)
 
 import Backend.Common (timeout')
 import Backend.Schema
-import Backend.STM (MonadSTM (liftSTM), atomicallyWith, newTVar', readTVar', retry', writeTVar')
-import Common (unixEpoch)
+import Backend.STM (MonadSTM (liftSTM), newTVar', readTVar', writeTVar')
 import Common.Schema
 import ExtraPrelude
 
@@ -154,6 +145,7 @@ data NodeQuery a where
   NodeQuery_CurrentProposal :: BlockHash -> NodeQuery (Maybe ProtocolHash)
   NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
   NodeQuery_Block           :: BlockHash -> NodeQuery BlockCrossCompat
+  NodeQuery_BlockPred       :: BlockHash -> RawLevel -> NodeQuery BlockCrossCompat
   NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeader
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
@@ -178,11 +170,6 @@ toCacheDelegateInfo di = CacheDelegateInfo
   , _cacheDelegateInfo_gracePeriod = _delegateInfoCrossCompat_gracePeriod di
   }
 
-data CachedBlockInfo = CachedBlockInfo
-  deriving (Eq, Ord, Show, Typeable)
-
-type CachedHistory' = CachedHistory ()
-
 data RpcResult a = RpcResult
   { _rpcResult_raw :: !LBS.ByteString
   , _rpcResult_value :: !a
@@ -191,7 +178,7 @@ data RpcResult a = RpcResult
 -- | Cache that is used within @NodeQueryT@.
 -- It stores occured errors and successful responses
 data NodeQueryTCache = NodeQueryTCache
-  { _nodeQueryTCache_errors :: DMap NodeQuery (Const (Map BlockHash CacheError))
+  { _nodeQueryTCache_errors :: DMap NodeQuery (Const (Map BlockHash KilnRpcError))
   , _nodeQueryTCache_responses :: DMap NodeQuery RpcResult
   }
 
@@ -201,11 +188,10 @@ emptyNodeQueryTCache = NodeQueryTCache DMap.empty DMap.empty
 makeLenses 'NodeQueryTCache
 
 data NodeDataSource = NodeDataSource
-  { _nodeDataSource_history :: !(TVar CachedHistory')
-  , _nodeDataSource_chain :: !ChainId
+  { _nodeDataSource_chain :: !ChainId
   , _nodeDataSource_httpMgr :: !Http.Manager
   , _nodeDataSource_pool :: !(Pool Postgresql)
-  , _nodeDataSource_latestHead :: !(TVar (Maybe VeryBlockLike))
+  , _nodeDataSource_latestHead :: !(TVar (Maybe BranchInfo))
   , _nodeDataSource_logger :: !LoggingEnv
   , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
   , _nodeDataSource_kilnNodeUri :: !URI
@@ -222,32 +208,32 @@ instance HasNodeDataSource NodeDataSource where
 class MonadLogger m => MonadNodeQuery m where
   data AnswerM m :: * -> *
   asksNodeDataSource :: (NodeDataSource -> a) -> m a
-  nqThrowError :: CacheError -> m a
-  nqCatchError :: m a -> (CacheError -> m a) -> m a
+  nqThrowError :: KilnRpcError -> m a
+  nqCatchError :: m a -> (KilnRpcError -> m a) -> m a
   nqInDB :: (forall n. (MonadLogger n, PostgresRaw n) => n a) -> m a
   nqAtomically :: STM a -> m a
   default nqAtomically :: MonadIO m => STM a -> m a
   nqAtomically action = liftIO $ atomically action
-  withFinishWith :: NodeDataSource -> (forall r. (Either CacheError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
+  withFinishWith :: NodeDataSource -> (forall r. (Either KilnRpcError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
   nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
 
-nqLiftEither :: (MonadNodeQuery m) => Either CacheError a -> m a
+nqLiftEither :: (MonadNodeQuery m) => Either KilnRpcError a -> m a
 nqLiftEither = \case
   Left e -> nqThrowError e
   Right v -> pure v
 
-nqTry :: (MonadNodeQuery m) => m a -> m (Either CacheError a)
+nqTry :: (MonadNodeQuery m) => m a -> m (Either KilnRpcError a)
 nqTry action = (Right <$> action) `nqCatchError` (pure . Left)
 
-newtype NodeQueryQueued a = NodeQueryQueued { unNodeQueryQueued :: ExceptT CacheError (ReaderT NodeDataSource IO) a }
+newtype NodeQueryQueued a = NodeQueryQueued { unNodeQueryQueued :: ExceptT KilnRpcError (ReaderT NodeDataSource IO) a }
 
-runNodeQueryQueued :: (MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, MonadIO m) => NodeQueryQueued a -> m a
+runNodeQueryQueued :: (MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, MonadIO m) => NodeQueryQueued a -> m a
 runNodeQueryQueued action = do
   nds <- view nodeDataSource
-  (liftEither =<<) $ fmap (left (review asCacheError)) $ liftIO $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
+  (liftEither =<<) $ fmap (left (review asKilnRpcError)) $ liftIO $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
 
 deriving newtype instance Functor NodeQueryQueued
 deriving newtype instance Applicative NodeQueryQueued
@@ -264,17 +250,17 @@ instance MonadLogger NodeQueryQueued where
     runLoggingEnv logger $ monadLoggerLog a b c d
 
 instance MonadNodeQuery NodeQueryQueued where
-  data AnswerM NodeQueryQueued a = NodeQueryQueuedAnswerM { unNodeQueryQueuedAnswerM :: ReaderT UTCTime STM (Maybe (Either CacheError a)) }
+  data AnswerM NodeQueryQueued a = NodeQueryQueuedAnswerM { unNodeQueryQueuedAnswerM :: ReaderT UTCTime STM (Maybe (Either KilnRpcError a)) }
   asksNodeDataSource = NodeQueryQueued . asks
   nqThrowError = NodeQueryQueued . throwError
   nqCatchError action handler = NodeQueryQueued $ catchError (unNodeQueryQueued action) (unNodeQueryQueued . handler)
   nqInDB action = do
     db <- asksNodeDataSource _nodeDataSource_pool
     logger <- asksNodeDataSource _nodeDataSource_logger
-    NodeQueryQueued $ lift @(ExceptT CacheError) $ runLoggingEnv logger $ runDb (Identity db) action
+    NodeQueryQueued $ lift @(ExceptT KilnRpcError) $ runLoggingEnv logger $ runDb (Identity db) action
   withFinishWith nds cb = do
     -- A separate TVar for keeping the actual API result (outside the cache structure)
-    apiResultVar :: TVar (Maybe (Either CacheError a)) <- newTVar' Nothing
+    apiResultVar :: TVar (Maybe (Either KilnRpcError a)) <- newTVar' Nothing
     action <- cb $ writeTVar' apiResultVar . Just
     let ioQueue = _nodeDataSource_ioQueue nds
     liftSTM $ writeTQueue ioQueue $ void $ flip runReaderT nds $ runExceptT $ unNodeQueryQueued action
@@ -282,29 +268,21 @@ instance MonadNodeQuery NodeQueryQueued where
 
   -- Here we examine the internal & external nodes before doing the query
   -- We keep hold of our candidate nodes right till the end in case we exhaust all of our options
-  -- and need to give everything that we tried and what went wrong to the user in a CacheError_NoSuitableNode
+  -- and need to give everything that we tried and what went wrong to the user in a KilnRpcError_NoSuitableNode
   -- error.
   nodeRPCOrBust qBranch q = do
     $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: Branch ${qBranch}: ${tshow q}|]
     dsrc <- askNodeDataSource
-    (mNodesToTry, badCandidates) <- case _nodeDataSource_nodeForQuery dsrc of
+    mNodesToTry <- case _nodeDataSource_nodeForQuery dsrc of
       -- If we have the nodeForQuery override set, just push it through assuming that the overrider is responsible for
       -- making sure that it's good and don't load any other candidates.
-      Just n -> pure ([n], [])
+      Just n -> pure [n]
       Nothing -> do
         nodes <- nqInDB $ getActiveNodeDetails $ _nodeDataSource_kilnNodeUri dsrc
-        NodeQueryQueued $ atomicallyWith $ do
-          nodes' <- validNodes nodes q
-          let (badCandidates', okCandidates) = partitionEithers $ (\(u,e) -> bimap (u,) (u,) e) <$> nodes'
-          -- pickNodes will filter out any nodes where our query branch isn't on that node
-          (okNodes, branchedNodes) <- pickNodes qBranch okCandidates
-          -- So we want to combine the nodes ignored because of pickNodes and those ignored by validNodes
-          pure (okNodes, badCandidates' <> branchedNodes)
-
-    let
+        pure $ map (view _1) nodes
 
     result <- case mNodesToTry of
-      [] -> pure $ Left $ CacheError_NoSuitableNode (tshow q) badCandidates
+      [] -> pure $ Left $ KilnRpcError_NoSuitableNode (tshow q) []
       nodesToTry -> do
         res <- foldM `flip` Left [] `flip` nodesToTry $ \case
             answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
@@ -314,8 +292,8 @@ instance MonadNodeQuery NodeQueryQueued where
               pure $ first ((:es).(anyNode,)) r
         case res of
           Right r -> pure $ Right r
-          Left failedNodes -> pure $ Left $ CacheError_NoSuitableNode (tshow q) $
-            badCandidates <> fmap (second (UnsuitableNodeReason_QueryFailed . tshow)) failedNodes
+          Left failedNodes -> pure $ Left $ KilnRpcError_NoSuitableNode (tshow q) $
+            fmap (second (UnsuitableNodeReason_QueryFailed . tshow)) failedNodes
 
     nqLiftEither result
 
@@ -351,17 +329,17 @@ deriving instance Functor NodeQueryTResult
 
 newtype NodeQueryT m a = NodeQueryT { unNodeQueryT :: NodeQueryTCache -> m (NodeQueryTResult a) }
 
-instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, PostgresRaw m) => MonadNodeQuery (NodeQueryT m) where
+instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m) => MonadNodeQuery (NodeQueryT m) where
   newtype AnswerM (NodeQueryT m) a = NodeQueryTAnswerM { unNodeQueryTAnswerM :: a }
   asksNodeDataSource = lift . views nodeDataSource
-  nqThrowError e = lift $ throwError $ e ^. re asCacheError
-  nqCatchError action handler = NodeQueryT $ \cache -> catching asCacheError (unNodeQueryT action cache) (flip unNodeQueryT cache . handler)
+  nqThrowError e = lift $ throwError $ e ^. re asKilnRpcError
+  nqCatchError action handler = NodeQueryT $ \cache -> catching asKilnRpcError (unNodeQueryT action cache) (flip unNodeQueryT cache . handler)
   nqInDB = id
   withFinishWith _ cb = (fmap NodeQueryTAnswerM . nqLiftEither =<<) <$> cb return
   nodeRPCOrBust h q = NodeQueryT $ \cache ->
     case DMap.lookup q (cache ^. nodeQueryTCache_responses) of
       Nothing -> case DMap.lookup q (cache ^. nodeQueryTCache_errors) >>= pure . getConst >>= Map.lookup h of
-        Just e -> throwError $ e ^. re asCacheError
+        Just e -> throwError $ e ^. re asKilnRpcError
         Nothing -> pure $ NodeQueryTResult_Query h q
       Just res -> pure $ NodeQueryTResult_Done res
 
@@ -577,143 +555,23 @@ tryNodeQueryT f = do
     NodeQueryTResult_Done a -> Just a
     NodeQueryTResult_Query{} -> Nothing
 
--- | Helper to get the current minimal level in @CachedHistory'@.
--- Returns '1' in case the cache is empty.
-cachedHistoryMinLevel :: CachedHistory' -> RawLevel
-cachedHistoryMinLevel = fromMaybe 1 . getMinLevel
-
--- get lca between two blocks
-branchPoint
-  :: forall r m. (HasNodeDataSource r, MonadSTM m, MonadReader r m)
-  => BlockHash -> BlockHash -> m (Maybe VeryBlockLike)
-branchPoint x y =
-  fmap (branchPointPure x y) $ readTVar' =<< asks (^. nodeDataSource . nodeDataSource_history)
-
-branchPointPure :: BlockHash -> BlockHash -> CachedHistory' -> Maybe VeryBlockLike
-branchPointPure x y history =
-  let
-    xPath = LRUHashMap.lookup x $ _cachedHistory_blocks history
-    yPath = LRUHashMap.lookup y $ _cachedHistory_blocks history
-  in liftA2 LCA.lca xPath yPath >>= \v -> case LCA.view v of
-      LCA.Root -> Nothing
-      LCA.Node blockHash () path -> Just $ histToBlockLike (cachedHistoryMinLevel history) blockHash path
-
-
--- | enumerate the block hashes between lca(x, y) and (x,y), respectively, from newest to oldest
-enumerateBranches
-  :: ( MonadSTM m
-     , MonadReader a m, HasNodeDataSource a
-     )
-  => BlockHash -> BlockHash -> m (Maybe ([BlockHash], [BlockHash]))
-enumerateBranches x y = do
-  dsrc <- asks (^. nodeDataSource)
-  history <- readTVar' $ _nodeDataSource_history dsrc
-  pure $ do
-    xPath <- LRUHashMap.lookup x $ _cachedHistory_blocks history
-    yPath <- LRUHashMap.lookup y $ _cachedHistory_blocks history
-    let pathPrefix long = fmap fst $ take (LCA.length long - LCA.length (LCA.lca xPath yPath)) $ LCA.toList long
-    pure (pathPrefix xPath, pathPrefix yPath)
-
-
-lookupBlock
-  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> BlockHash -> m (Maybe VeryBlockLike)
-lookupBlock nds x = do
-  let dsrc = nds ^. nodeDataSource
-  history <- readTVar' $ _nodeDataSource_history dsrc
-  let xPath = LRUHashMap.lookup x $ _cachedHistory_blocks history
-  pure $ xPath >>= \v -> case LCA.view v of
-    LCA.Root -> Nothing
-    LCA.Node blockHash () path -> Just $ histToBlockLike (cachedHistoryMinLevel history) blockHash path
-
-{-
-
-withNDSLogging :: (MonadReader r m, HasNodeDataSource r) => LoggingT m a -> m a
-withNDSLogging x = flip runLoggingEnv x . _nodeDataSource_logger =<< asks (^. nodeDataSource)
-
--}
-
-fittestHead
-  :: (HasNodeDataSource nds, MonadReader nds m, MonadSTM m)
-  => m (Maybe (WithProtocolHash VeryBlockLike))
-fittestHead = do
-  hist <- asks (^. nodeDataSource . nodeDataSource_history)
-  branch <- fittestBranchInHistory <$> readTVar' hist
-  return $ branch ^? _Just . branchInfo_block
-
--- | Blocks until a new head is seen or the time between blocks has elapsed.
-waitForNewHeadWithTimeout :: (HasNodeDataSource nds) => nds -> IO ()
-waitForNewHeadWithTimeout nds = do
-  -- First wait at most 'defaultTimeLimit' to get the fittest head.
-  headBlock' <- timeout' defaultTimeLimit $ atomically $ maybe retry' pure =<< runReaderT fittestHead nds
-  case headBlock' of
-    Nothing -> pure () -- We've already waited for a while so return immediately.
-    Just headBlock -> do
-      params' <- runLoggingEnv (nds ^. nodeDataSource . nodeDataSource_logger) $ flip runReaderT (nds ^. nodeDataSource) $ runExceptT @CacheError $ runNodeQueryT $
-        getProtocolConstants $ Right $ headBlock ^. protocolHash
-      let timeLimit = either (const defaultTimeLimit) calcTimeBetweenBlocks params'
-      void $ timeout' timeLimit $ waitForNewHead nds
-  where
-    defaultTimeLimit = 60
-
 -- | Blocks until a new head is seen.
 --
 -- Returns most recently seen head.
 waitForNewHead :: (HasNodeDataSource nds) => nds -> IO VeryBlockLike
 waitForNewHead nds = do
-  history <- readTVarIO $ nds ^. nodeDataSource . nodeDataSource_history
-  oldHead <- readTVarIO $ nds ^. nodeDataSource . nodeDataSource_latestHead
+  oldHead <- view hash <<$>> dataSourceHead nds
 
   atomically $ do
-    newHead <- maybe retry pure =<< readTVar (nds ^. nodeDataSource . nodeDataSource_latestHead)
-    when (oldHead == Just newHead || newHead ^. level <= cachedHistoryMinLevel history) retry
-    pure newHead
+    newHeadInfo <- maybe retry pure =<< readTVar (nds ^. nodeDataSource . nodeDataSource_latestHead)
+    when (oldHead == Just (newHeadInfo ^. hash)) retry
+    pure $ newHeadInfo ^.  branchInfo_block . withProtocolHash_value
 
--- turn the result of an LCA.view on the block history into a VeryBlockLike
-histToBlockLike :: RawLevel -> BlockHash -> LCA.Path BlockHash () -> VeryBlockLike
-histToBlockLike minLevel h path = VeryBlockLike h p mempty blkLevel unixEpoch
-  where
-    blkLevel = minLevel + fromIntegral (length path)
-    p = maybe h (\(pp, _, _) -> pp) $ LCA.uncons path
-
-fittestBranchInHistory :: CachedHistory a -> Maybe BranchInfo
-fittestBranchInHistory hist =
-  maximumByMay (comparing $ view fitness) (Map.elems $ _cachedHistory_branches hist)
-
--- | extracts the fittest known branch from cache
+-- | extracts the latest known head
 dataSourceHead
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> m (Maybe BranchInfo)
-dataSourceHead nds =
-  fittestBranchInHistory <$> readTVar' (nds ^. nodeDataSource . nodeDataSource_history)
-
-{-
--- | extracts the fittest known node from cache
-dataSourceNode
-  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> m (Maybe NodeRPCContext)
-dataSourceNode nds = do
-  let dsrc = nds ^. nodeDataSource
-  nodes <- readTVar' $ _nodeDataSource_nodes dsrc
-  pure $ fmap (NodeRPCContext (_nodeDataSource_httpMgr dsrc) . Uri.render . fst) $
-    maximumByMay (compare `on` snd) $ mapMaybe sequence $ Map.toList nodes
--}
-
-levelAncestor :: CachedHistory' -> RawLevel -> BlockHash -> Maybe BlockHash
-levelAncestor hist lvl ctx = fmap (view _1) $ LCA.uncons =<< LCA.keep (fromIntegral $ lvl - minLevel + 1) <$> branch
-  where
-    minLevel = cachedHistoryMinLevel hist
-    branch = LRUHashMap.lookup ctx $ _cachedHistory_blocks hist
-
--- | We want the first block in the cycle that sits PRESERVED_CYCLES before the
--- requested level, that is on the correct branch.
-rightsContext :: ProtoInfo -> CachedHistory' -> BlockHash -> RawLevel -> (RawLevel, Maybe BlockHash)
-rightsContext params hist ctx lvl = (ctxLvl, levelAncestor hist ctxLvl ctx)
-  where ctxLvl = unsafeAssumptionRightsContextLevel params lvl
-
--- | Round the second argument to the next lower multiple of the first
-floorBy :: Integral a => a -> a -> a
-floorBy k n = n - n `mod` k
+dataSourceHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestHead)
 
 priorityChunkSize :: Num a => a
 priorityChunkSize = 64
@@ -724,6 +582,7 @@ getContext = \case
   NodeQuery_BakingRights ctx _lvl -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
+  NodeQuery_BlockPred ctx _offset -> pure ctx
   NodeQuery_BlockHeader ctx -> pure ctx
   NodeQuery_Account ctx _contractId -> pure ctx
   NodeQuery_Ballots ctx -> pure ctx
@@ -734,24 +593,22 @@ getContext = \case
   NodeQuery_CurrentProposal ctx -> pure ctx
   NodeQuery_CurrentQuorum ctx -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
-  NodeQuery_PublicKey _ -> getFittestBranch
+  NodeQuery_PublicKey _ -> getLatestBranch
   NodeQuery_Blocks ctx _ -> pure ctx
 
   where
-    getFittestBranch :: m BlockHash
-    getFittestBranch = do
-      histVar <- asksNodeDataSource _nodeDataSource_history
-      hist <- nqAtomically $ readTVar' histVar
-      let branches = _cachedHistory_branches hist
-          mHash = view (branchInfo_block . hash) <$> maximumByMay (comparing $ view (branchInfo_block . fitness)) (Map.elems branches)
-      maybe (nqThrowError CacheError_NotEnoughHistory) pure mHash
+    getLatestBranch :: m BlockHash
+    getLatestBranch = do
+      latestHeadVar <- asksNodeDataSource _nodeDataSource_latestHead
+      mbLatestHead <- nqAtomically $ readTVar' latestHeadVar
+      maybe (nqThrowError KilnRpcError_NoKnownHeads) (pure . view hash) mbLatestHead
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
+    , MonadError e m, AsKilnRpcError e
     , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m a
@@ -761,7 +618,7 @@ nodeQueryDataSource'
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
+    , MonadError e m, AsKilnRpcError e
     , FromJSON a, ToJSON a
     )
   => NodeQuery a -> m (RpcResult a)
@@ -771,8 +628,8 @@ nodeQueryDataSource' q = do
   NodeQueryQueuedAnswerM getResult <- runNodeQueryQueued $ nodeQueryDataSourceRaw' q
   now <- liftIO getCurrentTime
   timeout' timeoutSeconds (atomically $ maybe retry pure =<< runReaderT getResult now) >>= \case
-    Nothing -> throwError $ CacheError_Timeout timeoutSeconds ^. re asCacheError
-    Just (Left e) -> throwError $ e ^. re asCacheError
+    Nothing -> throwError $ KilnRpcError_Timeout timeoutSeconds ^. re asKilnRpcError
+    Just (Left e) -> throwError $ e ^. re asKilnRpcError
     Just (Right x) -> pure x
   where
     -- Base timeout
@@ -797,7 +654,7 @@ nodeQueryDataSourceImmediate
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
+    , MonadError e m, AsKilnRpcError e
     , ToJSON (NodeQuery a)
     , FromJSON a, ToJSON a
     )
@@ -825,7 +682,7 @@ nodeQueryDataSourceImmediate'
   :: forall a s e m.
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
-    , MonadError e m, AsCacheError e
+    , MonadError e m, AsKilnRpcError e
     , ToJSON (NodeQuery a)
     , FromJSON a, ToJSON a
     )
@@ -870,7 +727,7 @@ nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
     let
       -- Communicates the result upstream.
       -- XXX Can't actually use this type signature since 'r' is not in scope...
-      -- writeResult :: Either CacheError (RpcResult a) -> m r
+      -- writeResult :: Either KilnRpcError (RpcResult a) -> m r
       writeResult a' = nqAtomically $ finishWith $ fmap projectRpcResult a'
     return $
       -- Try very hard to write *something* into the result TVar in case of exception.
@@ -883,68 +740,15 @@ nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
       -- such an error.
       (writeResult =<< nqTry (nodeRPCOrBust qBranch q))
         `catch` \e ->
-          nqAtomically (finishWith $ Left $ CacheError_SomeException e)
+          nqAtomically (finishWith $ Left $ KilnRpcError_SomeException e)
         `withException` \x ->
-          nqAtomically (finishWith $ Left $ CacheError_SomeException x)
+          nqAtomically (finishWith $ Left $ KilnRpcError_SomeException x)
 
   where
     dsrc = nds ^. nodeDataSource
 
 unliftEither :: MonadError e m => m a -> m (Either e a)
 unliftEither action = (Right <$> action) `catchError` (pure . Left)
-
--- Check the level of the query and determine the nodes which could service the queries
-validNodes
-  :: forall r m a . (HasNodeDataSource r, MonadSTM m, MonadReader r m)
-  => [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
-  -> NodeQuery a
-  -> m [(URI, Either UnsuitableNodeReason VeryBlockLike)]
-validNodes nodes q = case q of
-  NodeQuery_ProtocolConstants ctx -> findNodes <$> getLvl ctx
-  NodeQuery_BakingRights _ctx lvls -> pure $ findNodes $ Just $ Set.findMin lvls
-  NodeQuery_EndorsingRights _ctx lvls -> pure $ findNodes $ Just $ Set.findMin lvls
-  NodeQuery_Block ctx -> findNodes <$> getLvl ctx
-  NodeQuery_BlockHeader _ctx -> pure $ findNodes Nothing
-  NodeQuery_Account ctx _contractId -> findNodes <$> getLvl ctx
-  NodeQuery_Ballots ctx -> findNodes <$> getLvl ctx
-  NodeQuery_Ballot ctx _pkh -> findNodes <$> getLvl ctx
-  NodeQuery_ProposalVote ctx _pkh -> findNodes <$> getLvl ctx
-  NodeQuery_Listings ctx -> findNodes <$> getLvl ctx
-  NodeQuery_Proposals ctx -> findNodes <$> getLvl ctx
-  NodeQuery_CurrentProposal ctx -> findNodes <$> getLvl ctx
-  NodeQuery_CurrentQuorum ctx -> findNodes <$> getLvl ctx
-  NodeQuery_DelegateInfo _ctx lvl _pkh -> pure $ findNodes $ Just lvl
-  NodeQuery_PublicKey _ -> pure $ findNodes Nothing
-  NodeQuery_Blocks ctx _ -> findNodes <$> getLvl ctx
-  where
-    getLvl :: BlockHash -> m (Maybe RawLevel)
-    getLvl ctx = do
-      dsrc <- asks (^. nodeDataSource)
-      fmap (view level) <$> lookupBlock dsrc ctx
-
-    findNodes :: Maybe RawLevel -> [(URI, Either UnsuitableNodeReason VeryBlockLike)]
-    findNodes mLvl = do
-      case mLvl of
-        Nothing ->
-          (\(nUri, mBlk, _) -> (nUri, note UnsuitableNodeReason_MissingBlockInfo mBlk)) <$> nodes
-        Just _ -> (\(nUri, mBlk, _) -> (nUri, suitableNodeBlock mBlk)) <$> nodes
-          where
-            suitableNodeBlock mBlk = note UnsuitableNodeReason_MissingBlockInfo mBlk
-
--- Sort candidate nodes into suitable and unsuitable buckets based on whether the supplied branch
--- is contained within the node.
-pickNodes
-  :: (HasNodeDataSource r, MonadSTM m, MonadReader r m)
-  => BlockHash -> [(URI, VeryBlockLike)] -> m ([URI],[(URI, UnsuitableNodeReason)])
-pickNodes branch =
-  fmap partitionEithers
-  . traverse (\(nodeUri, nodeHead) ->
-    bool
-      (Right (nodeUri, UnsuitableNodeReason_BranchNotContained branch))
-      (Left (nodeUri))
-      <$> containsBranch nodeHead)
-  where
-    containsBranch nodeHead = (Just branch ==) . (^? _Just . hash) <$> branchPoint (nodeHead ^. hash) branch
 
 nodeQueryDataSourceImpl
   :: forall a.
@@ -953,7 +757,7 @@ nodeQueryDataSourceImpl
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError (RpcResult a))
+  -> IO (Either KilnRpcError (RpcResult a))
 nodeQueryDataSourceImpl = nodeQueryImpl myNodeRPC ChainTag_Hash
   where
     myNodeRPC (RpcQuery decoder body method resources) =
@@ -971,7 +775,7 @@ nodeQueryImpl
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
-  -> IO (Either CacheError (RpcResult a))
+  -> IO (Either KilnRpcError (RpcResult a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
   NodeQuery_BakingRights branch targetLevel ->
@@ -988,19 +792,20 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_CurrentProposal branch -> nodeRPC' $ rCurrentProposal chainId branch
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock (toChain chainId) branch
+  NodeQuery_BlockPred branch offset -> nodeRPC' $ rBlockPred offset chainId branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     (RpcResult raw managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKeyCrossCompat_key managerkeyResp of
-      Nothing -> throwError $ CacheError_UnrevealedPublicKey contractId
+      Nothing -> throwError $ KilnRpcError_UnrevealedPublicKey contractId
       Just pk -> pure (RpcResult raw pk)
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)
     pure $ RpcResult (Aeson.encode blocks) blocks
   where
-    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT CacheError IO (RpcResult c)
+    nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT KilnRpcError IO (RpcResult c)
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
     {-# INLINE nodeRPC' #-}
 
@@ -1126,7 +931,7 @@ nodeQueryIxBakingRights1 ctx lvl prio = do
     makeBlanks = V.generate priorityChunkSize $ \i' ->
       throw $ NoRightsException ctx lvl $ prio + fromIntegral i'
 
-  maybe (nqThrowError $ CacheError_SomeException $ toException $ NoRightsException ctx lvl prio) pure $ chunked V.!? fromIntegral (prio `mod` priorityChunkSize)
+  maybe (nqThrowError $ KilnRpcError_SomeException $ toException $ NoRightsException ctx lvl prio) pure $ chunked V.!? fromIntegral (prio `mod` priorityChunkSize)
 
 {-
 calculateBakerStats ::
@@ -1152,25 +957,25 @@ calculateBakerStats pkhs = do
 -}
 
 -- | Logs the cache error if it's not caused by an endpoint restriction.
-{-# INLINE logCacheError #-}
-logCacheError :: MonadLogger m => Text -> CacheError -> m ()
-logCacheError _ (CacheError_RpcError (RpcError_RestrictedEndpoint _)) = pure ()
-logCacheError desc err = $(logDebug) $
-  "Node Query failed for '" <> desc <> "' Reason: " <> prettyCacheError err
+{-# INLINE logKilnRpcError #-}
+logKilnRpcError :: MonadLogger m => Text -> KilnRpcError -> m ()
+logKilnRpcError _ (KilnRpcError_RpcError (RpcError_RestrictedEndpoint _)) = pure ()
+logKilnRpcError desc err = $(logDebug) $
+  "Node Query failed for '" <> desc <> "' Reason: " <> prettyKilnRpcError err
 
-prettyCacheError :: CacheError -> Text
-prettyCacheError = \case
-  CacheError_NotEnoughHistory -> "Not enough history in kiln's internal memory cache for query. This should resolve a few seconds after startup."
-  CacheError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
-  CacheError_Timeout t -> "Timed out after " <> tshow t
-  CacheError_RpcError rpcErr -> case rpcErr of
+prettyKilnRpcError :: KilnRpcError -> Text
+prettyKilnRpcError = \case
+  KilnRpcError_NoKnownHeads -> "No known blocks in kiln's internal memory. This should resolve a few seconds after a first bootstrapped node is added."
+  KilnRpcError_NoSuitableNode q reasons -> noSuitableNodeLogMessage q reasons
+  KilnRpcError_Timeout t -> "Timed out after " <> tshow t
+  KilnRpcError_RpcError rpcErr -> case rpcErr of
     RpcError_UnexpectedStatus _url _ statusLine -> "RPC Unexpected Status (Indicates that the node is unhealthy): " <> T.decodeUtf8 statusLine
     RpcError_HttpException _url e -> "RPC Exception (The Node is unreachable) " <> tshow e
     RpcError_NonJSON _url e bytes -> "The RPC returned a response that kiln did not understand. JSON Parse Error: " <> T.pack e <> " Response: " <> T.decodeUtf8 (LBS.toStrict bytes)
     RpcError_RestrictedEndpoint url -> "Node endpoint " <> url <> " is restricted."
-  CacheError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
-  CacheError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
-  CacheError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
+  KilnRpcError_SomeException e -> "Kiln Exception (this indicates a kiln bug): " <> tshow e
+  KilnRpcError_UnrevealedPublicKey contractId -> "Unrevealed Public Key: " <> tshow contractId
+  KilnRpcError_UnknownProtocol p -> "Node does not know protocol: " <> tshow p
 
 noSuitableNodeLogMessage :: Text -> [(URI, UnsuitableNodeReason)] -> Text
 noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <> q <> "`. Nodes are [" <> (T.intercalate "," . fmap prettyUnsuitableReason $ reasons) <> "]"
@@ -1180,37 +985,14 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
       UnsuitableNodeReason_QueryBeforeSavepoint savepointLevel queryLevel -> "The level required to fulfill this query is " <> prettyLevel queryLevel <> " but the node savepoint is at " <> prettyLevel savepointLevel
       UnsuitableNodeReason_MissingBlockInfo -> "Kiln has not yet retrieved the latest block head for this node"
       UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
-      UnsuitableNodeReason_BranchNotContained b -> "The block '" <> tshow b <> "' could not be found within the kiln's known history for this node."
 
     prettyLevel = tshow . unRawLevel
-
--- produce (up to) n ancestor hashes (including the block itself)
-ancestors ::
-  ( MonadIO m
-  , MonadReader s m , HasNodeDataSource s
-  , MonadError CacheError m
-  )
-  => RawLevel -> BlockHash -> m [BlockHash]
-ancestors (RawLevel n) branch = do
-  hist <- liftIO . readTVarIO =<< asks (_nodeDataSource_history . view nodeDataSource)
-  case LRUHashMap.lookup branch (_cachedHistory_blocks hist) of
-    Just branchPath -> return $ fmap fst $ genericTake n $ LCA.toList branchPath
-    Nothing -> throwError $ RpcError_UnexpectedStatus "View note in commments in source code(module Backend.CachedNodeRPC)" 404 "NO BRANCH" ^. re asRpcError
-
-{-
-
-*** COMMENT ABOUT ANCESTORS ***
-
-This function is not used by any other functions making nodeRPC calls.
-It seems like this function was used by Obsidian's own node's nodeRPC.
-
--}
 
 {-
 calculateBakeEfficiency ::
   ( MonadIO m
   , MonadReader s m , HasNodeDataSource s
-  , MonadError CacheError m
+  , MonadError KilnRpcError m
   , BlockLike b
   )
   => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
@@ -1295,24 +1077,23 @@ getProtocolConstants ct = do
     Nothing -> do
       hash' <- case ct of
         Right _ -> askNodeDataSource >>= nqAtomically . dataSourceHead
-          >>= maybe (nqThrowError CacheError_NotEnoughHistory) (pure . view (branchInfo_block . hash))
+          >>= maybe (nqThrowError KilnRpcError_NoKnownHeads) (pure . view hash)
         Left hash' -> pure hash'
       getProtocolIndex hash' protoHash
 
--- TODO: Pass history in
+
 getProtocolIndex
   :: forall m
    . (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
   => BlockHash -> ProtocolHash -> NodeQueryT m ProtocolIndex
 getProtocolIndex branch protoHash = do
-  (chainId, historyVar) <- asksNodeDataSource (_nodeDataSource_chain &&& _nodeDataSource_history)
+  chainId <- asksNodeDataSource _nodeDataSource_chain
   existingEntries :: [ProtocolIndex] <- select $
     ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
 
-  history <- nqAtomically $ readTVar' historyVar
   case headMay existingEntries of
     Just existing -> pure existing
-    Nothing -> nqTry (buildProtocolIndex branch protoHash history) >>= \case
+    Nothing -> nqTry (buildProtocolIndex branch protoHash) >>= \case
       Right p' -> do
         pure p'
       Left e -> do
@@ -1325,39 +1106,39 @@ getProtocolIndex branch protoHash = do
 buildProtocolIndex
   :: forall m
    . (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
-  => BlockHash -> ProtocolHash -> CachedHistory' -> NodeQueryT m ProtocolIndex
-buildProtocolIndex branch protoHash history = do
+  => BlockHash -> ProtocolHash -> NodeQueryT m ProtocolIndex
+buildProtocolIndex branch protoHash = do
   chainId <- asksNodeDataSource _nodeDataSource_chain
   -- Search until we have the history up to the desired protocol.
-  protocolHistory <- buildProtocolHistoryUntil
+  (protocolFirstBlocksHistory, protocolLastBlocksHistory) <- buildProtocolHistoryUntil
     ! #predicate (\blk -> blk ^. protocolHash == protoHash)
     ! #branch branch
-    ! #history history
 
-  case NE.nonEmpty $ sortOn (Down . (^. level)) $ toList protocolHistory of
-    Nothing -> nqThrowError CacheError_NotEnoughHistory
-    Just orderedFirstBlocks -> do
+  case NE.nonEmpty $ sortOn (Down . (^. _2 . level)) $ Map.toList protocolFirstBlocksHistory of
+    Nothing -> nqThrowError KilnRpcError_NoKnownHeads
+    Just orderedFirstBlocksWithProto -> do
       -- To increase likelihood that a node knows the answer, we will use the *last* block
       -- in a protocol to get it's constants (the most recent block possible). To do this we
       -- pair up the protocols with the block immediately *prior* to the first block in the
       -- next protocol. For the most recent protocol, we will use 'branch' as the query block.
-      let
-        initOrderedLastBlockHashes = flip map (NE.init orderedFirstBlocks) $ \blk ->
-          levelAncestor history (blk ^. level - 1) branch
-        protocolQueryBlockMap = NE.zip orderedFirstBlocks (Just branch NE.:| initOrderedLastBlockHashes)
+      branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
+      let initOrderedLastBlocks = flip NE.map orderedFirstBlocksWithProto $ \(proto, _) ->
+            -- The only protocol for which we know the first but don't know the last block is the current protocol.
+            -- For it we use current @branch@ as the last block
+            fromMaybe branchBlock $ Map.lookup proto protocolLastBlocksHistory
+          protocolQueryBlockMap = NE.zip (NE.map snd orderedFirstBlocksWithProto) initOrderedLastBlocks
 
-      protoIndexes :: [ProtocolIndex] <- fmap (mapMaybe (^? _Right) . toList) $
-        for protocolQueryBlockMap $ \(firstBlock, queryBlockHash') -> nqTry $ do
+      protoIndexes :: [ProtocolIndex] <- fmap (rights . toList) $
+        for protocolQueryBlockMap $ \(firstBlock, queryBlock') -> nqTry $ do
           -- Before using the query block instead of 'firstBlock', make sure it's protocol really is
           -- the same. If not, fall back to 'firstBlock'.
           -- While this situation shouldn't happen, it's possible for protocols to be introduced
           -- apart from the amendment process. In this case we may actually skip one
           -- in the scan which would cause this logic to pair the wrong constants with a
           -- protocol hash--and that's just too scary to think about.
-          queryBlock' <- for queryBlockHash' $ nodeQueryDataSourceSafe . NodeQuery_Block
           let
             actualQueryBlockHash = case queryBlock' of
-              Just queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
+              queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
               _ -> firstBlock ^. hash
           constants <- nodeQueryDataSourceSafe' $ NodeQuery_ProtocolConstants actualQueryBlockHash
           pure ProtocolIndex
@@ -1385,69 +1166,69 @@ buildProtocolIndex branch protoHash history = do
           insert protoIndex
           notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash)
 
-      maybe (nqThrowError CacheError_NotEnoughHistory) pure $
+      maybe (nqThrowError KilnRpcError_NoKnownHeads) pure $
         find ((protoHash ==) . view protocolHash) protoIndexes
 
+-- | For each found protocol in the blockchain history we return
+-- its first and last blocks.
 buildProtocolHistoryUntil
   :: forall m
    . (MonadNodeQuery (NodeQueryT m), MonadMask m)
   => "predicate" :! (BlockCrossCompat -> Bool)
   -> "branch" :! BlockHash
-  -> "history" :! CachedHistory'
-  -> NodeQueryT m (Map ProtocolHash BlockCrossCompat)
+  -> NodeQueryT m (Map ProtocolHash BlockCrossCompat, Map ProtocolHash BlockCrossCompat)
   -- Turns this into table, ProtocolHash
-buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
+buildProtocolHistoryUntil (Arg predicate) (Arg branch) = do
   branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
   go ! #currentBlock branchBlock
      ! #currentProtocol (branchBlock ^. protocolHash)
-     ! #protocolHistory mempty
+     ! #protocolFirstBlocksHistory mempty
+     ! #protocolLastBlocksHistory mempty
   where
-    minLevel = cachedHistoryMinLevel history
-    levelsBefore blk lvls = maybe (nqThrowError CacheError_NotEnoughHistory) pure $
-      if blk ^. level - lvls < 0
-      then Nothing
-      else
-        levelAncestor history (max (blk ^. level - lvls) minLevel) (blk ^. hash)
+    levelsBefore :: BlockCrossCompat -> RawLevel -> NodeQueryT m BlockCrossCompat
+    levelsBefore blk lvls = nodeQueryDataSourceSafe $ NodeQuery_BlockPred (blk ^. hash) lvls
 
     votingPeriodPosition = blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
 
     go :: "currentBlock" :! BlockCrossCompat
        -> "currentProtocol" :! ProtocolHash
-       -> "protocolHistory" :! Map ProtocolHash BlockCrossCompat
-       -> NodeQueryT m (Map ProtocolHash BlockCrossCompat)
-    go (Arg currentBlock) (Arg currentProtocol) (Arg protocolHistory) =
-      case currentBlock ^. level == minLevel of
+       -> "protocolFirstBlocksHistory" :! Map ProtocolHash BlockCrossCompat
+       -> "protocolLastBlocksHistory" :! Map ProtocolHash BlockCrossCompat
+       -> NodeQueryT m (Map ProtocolHash BlockCrossCompat, Map ProtocolHash BlockCrossCompat)
+    go (Arg currentBlock) (Arg currentProtocol) (Arg protocolFirstBlocksHistory) (Arg protocolLastBlocksHistory) =
+      case currentBlock ^. level == 1 of
         True -> do
           $(logDebug) [i|Got to the root searching for protocol: ${currentProtocol}|]
           -- If 'currentBlock' is at the minimum level, we call it the beginning of 'currentProtocol'.
-          pure $ Map.insert currentProtocol currentBlock protocolHistory
+          pure (Map.insert currentProtocol currentBlock protocolFirstBlocksHistory, protocolLastBlocksHistory)
         False -> do
-          lastBlockHashInPreviousVotingPeriod <- levelsBefore currentBlock (currentBlock ^. votingPeriodPosition + 1)
-          lastBlockInPreviousVotingPeriod <- nodeQueryDataSourceSafe $ NodeQuery_Block lastBlockHashInPreviousVotingPeriod -- HEADER ONLY?
+          lastBlockInPreviousVotingPeriod <- levelsBefore currentBlock (currentBlock ^. votingPeriodPosition + 1)
           case currentProtocol == lastBlockInPreviousVotingPeriod ^. protocolHash of
             True -> do
               $(logDebug) [i|Found another voting period with the same protocol ${currentProtocol} - ${lastBlockInPreviousVotingPeriod ^. hash}|]
               go ! #currentBlock lastBlockInPreviousVotingPeriod
                  ! #currentProtocol currentProtocol
-                 ! #protocolHistory protocolHistory
+                 ! #protocolFirstBlocksHistory protocolFirstBlocksHistory
+                 ! #protocolLastBlocksHistory protocolLastBlocksHistory
             False -> do
               $(logDebug) [i|Found a transition for ${currentProtocol} at ${lastBlockInPreviousVotingPeriod ^. hash}|]
-              firstBlockHashInVotingPeriod <- levelsBefore currentBlock (currentBlock ^. votingPeriodPosition)
-              firstBlockInVotingPeriod <- nodeQueryDataSourceSafe $ NodeQuery_Block firstBlockHashInVotingPeriod
+              firstBlockInVotingPeriod <- levelsBefore currentBlock (currentBlock ^. votingPeriodPosition)
 
               (lastBlockInPreviousProtocol, firstBlockInProtocol) <- case currentProtocol == firstBlockInVotingPeriod ^. protocolHash of
                 True -> pure (lastBlockInPreviousVotingPeriod, firstBlockInVotingPeriod)
                 False -> do
                   $(logDebug) [i|Entering binary search for ${currentProtocol}|]
-                  maybe (nqThrowError $ CacheError_UnknownProtocol currentProtocol) pure =<<
+                  maybe (nqThrowError $ KilnRpcError_UnknownProtocol currentProtocol) pure =<<
                       binarySearch firstBlockInVotingPeriod currentBlock
 
-              let protocolHistory' = Map.insert currentProtocol firstBlockInProtocol protocolHistory
+              let protocolFirstBlocksHistory' = Map.insert currentProtocol firstBlockInProtocol protocolFirstBlocksHistory
+                  protocolLastBlocksHistory' = Map.insert (lastBlockInPreviousProtocol ^. protocolHash) lastBlockInPreviousProtocol protocolLastBlocksHistory
               case predicate firstBlockInProtocol of
-                True -> pure protocolHistory' -- We finished searching.
+                True -> pure (protocolFirstBlocksHistory', protocolLastBlocksHistory') -- We finished searching.
                 False -> go ! #currentBlock lastBlockInPreviousProtocol
                             ! #currentProtocol (lastBlockInPreviousProtocol ^. protocolHash)
-                            ! #protocolHistory protocolHistory'
+                            ! #protocolFirstBlocksHistory protocolFirstBlocksHistory'
+                            ! #protocolLastBlocksHistory protocolLastBlocksHistory'
 
     binarySearch :: BlockCrossCompat -> BlockCrossCompat -> NodeQueryT m (Maybe (BlockCrossCompat, BlockCrossCompat))
     binarySearch low high = do
@@ -1461,9 +1242,7 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) (Arg history) = do
           pure $ if low ^. protocolHash == high ^. protocolHash then Nothing else Just (low, high)
       | otherwise = do
         let halfwayLevel = high ^. level - ((high ^. level - low ^. level) `div` 2)
-        halfway <- nodeQueryDataSourceSafe . NodeQuery_Block <=<
-          maybe (nqThrowError CacheError_NotEnoughHistory) pure $
-            levelAncestor history halfwayLevel branch
+        halfway <- nodeQueryDataSourceSafe $ NodeQuery_BlockPred branch halfwayLevel
         case halfway of
           x | x ^. protocolHash == low ^. protocolHash -> binarySearch halfway high
             | x ^. protocolHash == high ^. protocolHash -> binarySearch low halfway

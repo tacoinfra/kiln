@@ -51,7 +51,7 @@ blockWorker
   -> Pool Postgresql
   -> IO (IO ())
 blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  headBlockOrErr <- flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ fmap fst getLatestProtocolConstants
+  headBlockOrErr <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ fmap fst getLatestProtocolConstants
   whenRight headBlockOrErr $ \headBlock -> do
     now <- liftIO getCurrentTime
     let headBlockTime = headBlock ^. timestamp
@@ -83,7 +83,7 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
       |]
       let blockQueryLength = min historyLength $ headBlockLevel - fromMaybe 0 mbLargestParsedLvl
       blocksOrErr <- if blockQueryLength > 0
-        then flip runReaderT nds $ runExceptT @CacheError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash blockQueryLength
+        then flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash blockQueryLength
         else return $ Right mempty
 
       whenRight blocksOrErr $ \blocks -> do
@@ -98,7 +98,7 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
         -- that still needs to be handled.
         -- Note that the loop runs in 'ExceptT' so no computation will follow
         -- the first one throwing an error/'Left'.
-        loopResult <- flip runReaderT nds $ runExceptT @CacheError $
+        loopResult <- flip runReaderT nds $ runExceptT @KilnRpcError $
           for_ (Seq.reverse blocks) $ \blockHash -> do
             block <- runNodeQueryT $ do
               block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
@@ -117,20 +117,20 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
         --
         -- TODO: if possible we should avoid this special treatment.
         whenLeft loopResult $ \e -> case e of
-          CacheError_RpcError (RpcError_RestrictedEndpoint _) -> pure ()
-          CacheError_RpcError (RpcError_UnexpectedStatus _ 404 _) ->
-            logCacheError "blockWorker" e
-          CacheError_NoSuitableNode _ _ ->
-            logCacheError "blockWorker" e
-          CacheError_NotEnoughHistory ->
-            logCacheError "blockWorker" e
+          KilnRpcError_RpcError (RpcError_RestrictedEndpoint _) -> pure ()
+          KilnRpcError_RpcError (RpcError_UnexpectedStatus _ 404 _) ->
+            logKilnRpcError "blockWorker" e
+          KilnRpcError_NoSuitableNode _ _ ->
+            logKilnRpcError "blockWorker" e
+          KilnRpcError_NoKnownHeads ->
+            logKilnRpcError "blockWorker" e
           _ -> do
-            logCacheError "blockWorker" e
+            logKilnRpcError "blockWorker" e
             throwM e
 
 -- TODO: This could use a better abstraction here.
 insertAccusationsV9
-  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e
+  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
      , PostgresRaw m, MonadMask m, PersistBackend m
      )
   => BlockHash -> ChainId -> V010.Block -> NodeQueryT m ()
@@ -159,7 +159,7 @@ insertAccusationsV9 blockHash chainId block = do
       _ -> return ()
 
 insertAccusationsV5
-  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e
+  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
      , PostgresRaw m, MonadMask m, PersistBackend m
      )
   => BlockHash -> ChainId -> V005.Block -> NodeQueryT m ()
@@ -188,7 +188,7 @@ insertAccusationsV5 blockHash chainId block = do
       _ -> return ()
 
 insertDoubleBakingEvidence
-  :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, PostgresRaw m, MonadMask m, PersistBackend m)
+  :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
   => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Priority -> NodeQueryT m ()
 insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority = do
   baker <- fmap _bakingRights_delegate $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedPriority
@@ -210,7 +210,7 @@ insertDoubleEndorsementEvidence blockHash chainId opHash blockLevel accusedLevel
     |]
 
 loadPossibles
-  :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsCacheError e, PostgresRaw m, MonadMask m, PersistBackend m)
+  :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
   => BlockHash -> RawLevel -> NodeQueryT m (Seq.Seq PublicKeyHash, Seq.Seq PublicKey)
 loadPossibles blockHash accusedLevel = do
   possibles <- (fmap.fmap) _endorsingRights_delegate $ nodeQueryIx $ NodeQueryIx_EndorsingRights blockHash (Set.singleton accusedLevel)
