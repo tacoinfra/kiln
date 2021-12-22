@@ -46,7 +46,10 @@ removeNodeDbImpl = \case
           ]
           CondEmpty
         let pid = _deletableRow_data nodeData
-        update [ProcessData_controlField =. ProcessControl_Stop] (AutoKeyField ==. fromId pid)
+        update
+          [ ProcessData_controlField =. ProcessControl_Stop
+          , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+          ] (AutoKeyField ==. fromId pid)
         clearErrors nid
         notify NotifyTag_NodeInternal (nid, Nothing)
   where

@@ -880,7 +880,10 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead 
   let
     inDb :: Serializable a -> LoggingT IO a
     inDb = runDb (Identity db)
-    setControl c ps = update [ProcessData_controlField =. c] (AutoKeyField `in_` map fromId ps)
+    setControl c ps = update
+      [ ProcessData_controlField =. c
+      , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+      ] (AutoKeyField `in_` map fromId ps)
 
   $(logDebugSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, altProto)
   let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector

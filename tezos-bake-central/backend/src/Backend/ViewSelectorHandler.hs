@@ -817,17 +817,18 @@ getNodeAddresses nid = do
       , _nodeExternalData_minPeerConnections = mpc
       }))
   int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
-      SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend
+      SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend, p."errorLog"
         FROM "NodeInternal" n
         JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . fmap (\(nid', control, state, updated, backend) -> (Bounded nid',
+    <&> Map.fromList . fmap (\(nid', control, state, updated, backend, errorLog) -> (Bounded nid',
       ProcessData
       { _processData_control = control
       , _processData_state = state
       , _processData_updated = updated
       , _processData_backend = backend
+      , _processData_errorLog = errorLog
       }))
   let qCount :: [Utf8]
       qCount = flip map universe $ \(Some nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of

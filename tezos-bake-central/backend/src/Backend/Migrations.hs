@@ -84,6 +84,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "BakerDaemonInternal") "data#data#insufficientFunds"
   >=> migrateProcessDataTable
   >=> migrateProcessDataTable2
+  >=> migrateProcessDataTableAddErrorLog
   >=> migrateUpstreamVersionTable
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTesting") (ColumnExists "votingPeriod") False
   >=> dropTableIf (QualifiedIdentifier Nothing "PeriodTestingVote") (ColumnExists "periodVote#votingPeriod") False
@@ -489,6 +490,19 @@ migrateProcessDataTable2 ta = do
       void [traceExecuteQ|
           UPDATE "ProcessData" SET "state" = 'ProcessState_Stopped' WHERE "state" = 'ProcessState_GeneratingIdentity';
         |]
+      getTableAnalysis
+    _ -> pure ta
+
+
+migrateProcessDataTableAddErrorLog :: (Migrate m) => TableAnalysis m -> m (TableAnalysis m)
+migrateProcessDataTableAddErrorLog ta = do
+  let table = (Nothing, "ProcessData")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | all ((/= "errorLog") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "ProcessData" ADD COLUMN "errorLog" VARCHAR NULL;
+      |]
       getTableAnalysis
     _ -> pure ta
 

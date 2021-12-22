@@ -1878,6 +1878,7 @@ nodesTab usingNodeOption =
 
           void $ listWithKey internal $ \nodeId nodeData -> do
             errors <- errorMessages nodeId
+            processData <- holdUniqDyn nodeData
             state <- holdUniqDyn $ _processData_state <$> nodeData
 
             bakerRunning <- fmap ((== Just True) . fmap (_bakerInternalData_running . snd))
@@ -1988,6 +1989,24 @@ nodesTab usingNodeOption =
                   ((,) <$> nodeData <*> nodeDetails)
                   version
 
+              failedNodeTile :: ProcessData -> m ()
+              failedNodeTile pd = nodeTileWithSections
+                [ tileHeader title subtitle menu badge Nothing (pure Nothing)
+                , divClass "internal-node-tile-body" $ do
+                    divClass "ui row" $ case _processData_state pd of
+                      ProcessState_Failed -> divClass "ui sub header" $ text "Internal node failed"
+                      _ -> blank
+                ]
+                where
+                  menu = case _processData_state pd of
+                    ProcessState_Failed -> Just $ do
+                      traverse_ showLogMenu (_processData_errorLog pd)
+                      removeNodeMenu
+                    _ -> Nothing
+
+                  badge :: m ()
+                  badge = tileBadgeImpliedByErrors (Just errors) (Just state)
+
               nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
               nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections
                 [ tileHeader title subtitle menu badge Nothing (pure Nothing)
@@ -2066,9 +2085,11 @@ nodesTab usingNodeOption =
                   badge :: m ()
                   badge = tileBadgeImpliedByErrors (Just errors) (Just state)
             dSnapshotMeta <- watchSnapshotMeta
-            dyn_ $ ffor2 state dSnapshotMeta $ \case
-              (ProcessState_Node s) -> nodeStartTile s
-              _ -> const workingTile
+            dyn_ $ ffor2 processData dSnapshotMeta $ \pd meta ->
+              case _processData_state pd of
+                ProcessState_Node s -> nodeStartTile s meta
+                ProcessState_Failed -> failedNodeTile pd
+                _ -> workingTile
 
     tileHeader
       :: m () -- ^ Title

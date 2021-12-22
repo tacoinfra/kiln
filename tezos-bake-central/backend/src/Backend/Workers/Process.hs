@@ -12,6 +12,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -22,7 +23,7 @@ module Backend.Workers.Process where
 import Control.Concurrent.Async (withAsync)
 import Control.Exception.Safe (tryJust, throwIO)
 import Control.Monad.Catch (Handler (..), bracket, catches)
-import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
@@ -36,6 +37,7 @@ import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Safe (headMay)
 import System.Posix.Signals (signalProcess, sigKILL)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
 import qualified System.Process as Proc
@@ -74,9 +76,7 @@ import Orphans.Instances ()
 
 processWorker
   :: (MonadIO m)
-  => (    (ProcessState -> IO ())
-       -> IO a
-     )
+  => ((ProcessState -> IO ()) -> IO a)
   -> "logger" :! LoggingEnv
   -> "db" :! Pool Postgresql
   -> "config" :! AppConfig
@@ -122,10 +122,13 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
     waitUntilShouldRun = do
       canRun <- runLoggingEnv logger $ runDb (Identity db) $ do
         isStopped <- all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
+        -- We don't restart process with non-empty error log. It means that this process just failed with error.
+        -- We guarantee this condition by the fact that in all other cases we clean the log.
+        hasEmptyErrorLog <- fmap (isNothing . head) $ project ProcessData_errorLogField $ AutoKeyField ==. fromId pid
         otherProcessRunning <- case pidToRunAfter of
           Nothing -> pure True
           Just pid1 -> all (== ProcessState_Running) <$> project state_ (AutoKeyField ==. fromId pid1)
-        pure $ not isStopped && otherProcessRunning
+        pure $ not isStopped && otherProcessRunning && hasEmptyErrorLog
       unless canRun $ threadDelay' 1 *> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
@@ -163,9 +166,29 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
     procMonitor _stdin hStdout hStderr ph = do
       withHandleCopyWith (logInfoNS namespace) hStdout $ do
         -- logInfoNS for stderr is intentional, the node prints the usual messages also on stderr
-        withHandleCopyWith (logInfoNS namespace) hStderr $ do
+        withHandleCopyWith (\line -> logInfoNS namespace line *> updateErrorLog line) hStderr $ do
           runLoggingEnv logger $ go Nothing
       where
+        updateErrorLog :: Text -> LoggingT IO ()
+        -- TODO #87 use in-memory buffer and don't write to DB every time
+        -- because it can lead to performance issues.
+        --
+        -- Also it probably worth to try write to file.
+        updateErrorLog line = inDb $ do
+          mbErrorLog <- fmap (_processData_errorLog <=< headMay) $ select $ AutoKeyField ==. fromId pid
+          case mbErrorLog of
+            Just errorLog -> do
+              let
+                errorLogLines = T.lines errorLog
+                errorLog' = T.unlines $ if length errorLogLines >= 30 then
+                  tail errorLogLines <> [line]
+                else
+                  errorLogLines <> [line]
+              update [ProcessData_errorLogField =. Just errorLog'] $
+                AutoKeyField ==. fromId pid
+            Nothing -> update [ProcessData_errorLogField =. Just line] $
+              AutoKeyField ==. fromId pid
+
         withHandleCopyWith perLine h' f = case h' of
           Nothing -> f
           Just h -> withAsync forEachHandleLine $ const f

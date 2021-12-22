@@ -72,7 +72,8 @@ startBaking pkh = do
         ]
   update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
         , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] $ CondEmpty
-  update [ProcessData_controlField =. ProcessControl_Run] $ AutoKeyField `in_` processes
+  update [ ProcessData_controlField =. ProcessControl_Run
+         , ProcessData_errorLogField =. (Nothing :: Maybe Text)] $ AutoKeyField `in_` processes
 
 tezosClientWorker
   :: NominalDiffTime
