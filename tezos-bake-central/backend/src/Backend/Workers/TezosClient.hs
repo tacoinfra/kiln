@@ -503,7 +503,7 @@ computeChainId :: (MonadLoggerIO m) => Port -> FilePath -> Maybe BinaryPaths -> 
 computeChainId port kilnDataDir maybePaths json = do
     e <- runExceptT $ ExceptT (pure eCommand) >>= \command -> runClientCommand' (kilnNodeRpcURI' port) kilnDataDir maybePaths noTimeout command $ \_warnings errors -> if
       | "Wrong value for command line option --protocol" : _ <- errors -> Left "Wrong Protocol"
-      | otherwise -> Left "Something else happened."
+      | otherwise -> Left $ "'tezos-client compute chain id' failed with the following error: " <> unwords (map T.unpack errors)
     pure $ first T.pack e >>= first tshow . fromBase58 . TE.encodeUtf8
   where
     note key' = maybe (Left $ printf "key %s not available" key') (Right . T.unpack)
