@@ -113,10 +113,15 @@ instance ToJSON WorkerType
 
 data BakerInternalData = BakerInternalData
   { _bakerInternalData_secretKey :: SecretKey
-  , _bakerInternalData_running :: Bool
+  , _bakerInternalData_processData :: ProcessData
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerInternalData
 instance ToJSON BakerInternalData
+
+isBakerRunning :: BakerInternalData -> Bool
+isBakerRunning = (==) ProcessControl_Run
+  . _processData_control
+  . _bakerInternalData_processData
 
 data BakerNextRight
   = BakerNextRight_GatheringData

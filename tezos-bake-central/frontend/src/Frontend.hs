@@ -1113,7 +1113,7 @@ bakerStatus = \case
     CollectiveNodesFailure_AllNodesDownSince _ -> MonitoredStatus_Unhealthy
   Right bakerSummary
     | _bakerSummary_alertCount bakerSummary > 0 -> MonitoredStatus_Unhealthy
-    | Right bid <- _bakerSummary_baker bakerSummary, not (_bakerInternalData_running bid) -> MonitoredStatus_Stopped
+    | Right bid <- _bakerSummary_baker bakerSummary, not (isBakerRunning bid) -> MonitoredStatus_Stopped
     | _bakerSummary_nextRight bakerSummary == BakerNextRight_GatheringData -> MonitoredStatus_Unknown
     | otherwise -> MonitoredStatus_Healthy
 
@@ -1186,7 +1186,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
         Just bid -> do
           kilnLogo
           let spacing = " "
-          dynText $ ffor (_bakerInternalData_running . snd <$> bid) $ (spacing <>) . \case
+          dynText $ ffor (isBakerRunning . snd <$> bid) $ (spacing <>) . \case
             True -> "A Kiln baker is running."
             False -> "A Kiln baker is configured, but is stopped."
           pure never
@@ -1690,13 +1690,13 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
   response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
   pure (pure ["confirmation"], leftmost [() <$ response, close])
 
-showImportLogModal ::
+showErrorLogModal ::
   ( MonadReader r m
   , MonadAppWidget js t m
   )
-  => Text -> Event t () -> m (Event t ())
-showImportLogModal errorLog = cancelableModalWithClasses $ \close -> do
-  divClass "ui header" $ text "Snapshot import log"
+  => Text -> Text -> Event t () -> m (Event t ())
+showErrorLogModal title errorLog = cancelableModalWithClasses $ \close -> do
+  divClass "ui header" $ text title
   divClass "log-message" $ el "pre" $ text errorLog
   close1 <- uiButton "primary" "Close"
   pure (pure ["show-error-log"], leftmost [close1, close])
@@ -1881,7 +1881,7 @@ nodesTab usingNodeOption =
             processData <- holdUniqDyn nodeData
             state <- holdUniqDyn $ _processData_state <$> nodeData
 
-            bakerRunning <- fmap ((== Just True) . fmap (_bakerInternalData_running . snd))
+            bakerRunning <- fmap ((== Just True) . fmap (isBakerRunning . snd))
               <$> watchInternalBaker
             let
               preface = "This node is run by Kiln. "
@@ -1909,7 +1909,7 @@ nodesTab usingNodeOption =
                 tileMenuEntryModal "Verify and start node" (verifySnapshotModal sm)
 
               showLogMenu errorLog = do
-                tileMenuEntryModal "Show Error Log" $ showImportLogModal errorLog
+                tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Snapshot import log" errorLog
 
               exportLogsMenu = do
                 isExportAvailable <- asks (^. frontendConfig . frontendConfig_logExportAvailable)
@@ -2000,7 +2000,8 @@ nodesTab usingNodeOption =
                 where
                   menu = case _processData_state pd of
                     ProcessState_Failed -> Just $ do
-                      traverse_ showLogMenu (_processData_errorLog pd)
+                      for_ (_processData_errorLog pd) $ \errLog ->
+                        tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln node error log" errLog
                       removeNodeMenu
                     _ -> Nothing
 
@@ -2337,19 +2338,33 @@ bakersTab =
               subtitleUniq <- holdUniqDyn subtitle
               details <- watchBakerDetails pkh
 
-              tile
-                (dynText titleUniq)
-                pkh
-                subtitleUniq
-                (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
-                -- if you have both a bake and endorse for the same level, you
-                -- must *first* bake the block at that level, then you may
-                -- immediately endorse that block.  the times are the same,
-                -- baking happens first.
-                (Just errorMessages)
-                vDyn
-                details
-                dCollectiveNodesStatus
+              let
+                standardBakerTile =
+                  tile
+                    (dynText titleUniq)
+                    pkh
+                    subtitleUniq
+                    (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
+                    -- if you have both a bake and endorse for the same level, you
+                    -- must *first* bake the block at that level, then you may
+                    -- immediately endorse that block.  the times are the same,
+                    -- baking happens first.
+                    (Just errorMessages)
+                    vDyn
+                    details
+                    dCollectiveNodesStatus
+
+              isInternal <- holdUniqDyn $ isRight . _bakerSummary_baker <$> vDyn
+              dyn_ $ ffor isInternal $ \case
+                False -> standardBakerTile
+                True -> do
+                  bid <- watchInternalBaker
+                  dyn_ $ ffor bid $ \bid' -> case bid'
+                    <&> snd
+                    <&> _bakerInternalData_processData of
+                    Just pd | _processData_state pd == ProcessState_Failed ->
+                      failedBakerTile (dynText titleUniq) pd (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
+                    _ -> standardBakerTile
 
               pure details
           blank
@@ -2420,6 +2435,34 @@ bakersTab =
                 text " "
                 dynText $ _bakerErrorDescriptions_fix <$> dsc
             )
+
+    failedBakerTile
+      :: m () -- ^ Title
+      -> ProcessData
+      -> (Event t () -> Event t (PublicRequest ())) -- ^ Construct an API request with an 'Event' to remove this baker.
+      -> m ()
+    failedBakerTile title pd mkRemoveReq = do
+      divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
+        tileMenu $ do
+          let
+            showLogMenu errorLog = do
+                tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln baker error log" errorLog
+
+            removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
+            removeInternalBakerModal = warningModal "Remove Baker?"
+              ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]
+              "Remove Baker"
+
+          traverse_ showLogMenu (_processData_errorLog pd)
+          removeEntry removeInternalBakerModal
+
+        divClass "title" $ do
+          icon "tiny circle red"
+          title
+          blank
+          divClass "internal-subtitle" $ do
+            kilnLogo
+            divClass "ui sub header" $ text "Failed"
 
     tile
       :: m () -- ^ Title
@@ -2528,7 +2571,7 @@ bakersTab =
               dyn_ $ ffor latestHead $ \case
                 Nothing -> pure () -- no head to set high water mark
                 Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (view level <$> bl) sk pkh
-              if _bakerInternalData_running bid
+              if isBakerRunning bid
               then do
                 let stopModal = warningModal "Stop Baker?"
                       ["This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time."]

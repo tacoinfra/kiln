@@ -666,9 +666,10 @@ getBakerAddresses nds bid = do
       qFull
       (toPrimitivePersistValue pg bid :)
       buildRs
-  int :: Map.Map PublicKeyHash (Bool, SecretKey, (Int, Bool)) <- [queryQ|
-      SELECT b."data#data#publicKeyHash", p."control",
+  int :: Map.Map PublicKeyHash (ProcessData, SecretKey, (Int, Bool)) <- [queryQ|
+      SELECT b."data#data#publicKeyHash",
         la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
+        p."control", p."state", p."errorLog",
         ( SELECT COUNT(el.id)
           FROM "ErrorLog" el
           JOIN "ErrorLogBakerMissed" elbm
@@ -689,13 +690,20 @@ getBakerAddresses nds bid = do
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, control, li, sc, dp, missedAlertCount, insufficientFundsAlert) ->
+    |] <&> Map.fromList . fmap (\(pkh, li, sc, dp, control, state, errorLog, missedAlertCount, insufficientFundsAlert) ->
       let sk = SecretKey
             { _secretKey_ledgerIdentifier = li
             , _secretKey_signingCurve = sc
             , _secretKey_derivationPath = dp
             }
-      in (pkh, (control == ProcessControl_Run, sk, (missedAlertCount, insufficientFundsAlert))))
+          pd = ProcessData
+            { _processData_control = control
+            , _processData_state = state
+            , _processData_updated = Nothing
+            , _processData_backend = Nothing
+            , _processData_errorLog = errorLog
+            }
+      in (pkh, (pd, sk, (missedAlertCount, insufficientFundsAlert))))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
