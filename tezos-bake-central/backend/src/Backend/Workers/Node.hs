@@ -562,9 +562,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     votingPeriod = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_index
     currentVotingPosition = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
     isLastBlockOfPeriod blk = blocksPerVotingPeriod == succ (blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position)
-    -- The period of the *current* block, not the next one
-    currentPeriodKind = (if isLastBlockOfPeriod latestBlock then safePred else id)
-      $ latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
+    -- The period of the *current* block
+    currentPeriodKind = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
     periodFraction = fromIntegral currentVotingPosition / fromIntegral blocksPerVotingPeriod :: Double
 
     singleVotePeriod pkh periodKindOffset mkVotingState = do
