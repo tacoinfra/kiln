@@ -31,12 +31,12 @@ and using [Pyrometer](https://gitlab.com/tezos-kiln/pyrometer) for monitoring.
     - Click `Install` button
 
     **From the command line:** assuming .deb file
-    (e.g. `kiln_0.11.0_amd64.deb`) is downloaded to `~/Downloads` folder
+    (e.g. `kiln_0.11.1_amd64.deb`) is downloaded to `~/Downloads` folder
     - Open terminal
     - Run
 
 ```
-sudo dpkg -i ~/Downloads/kiln_0.11.0_amd64.deb
+sudo dpkg -i ~/Downloads/kiln_0.11.1_amd64.deb
 ```
 
 - Go to Kiln web user interface: open <http://localhost:8000> in a web browser
