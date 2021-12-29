@@ -667,7 +667,7 @@ getBakerAddresses nds bid = do
       (toPrimitivePersistValue pg bid :)
       buildRs
   int :: Map.Map PublicKeyHash (Bool, SecretKey, (Int, Bool)) <- [queryQ|
-      SELECT b."data#data#publicKeyHash", b."data#data#insufficientFunds", p."control",
+      SELECT b."data#data#publicKeyHash", p."control",
         la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
         ( SELECT COUNT(el.id)
           FROM "ErrorLog" el
@@ -676,18 +676,26 @@ getBakerAddresses nds bid = do
           WHERE el.stopped IS NULL
             AND elbm."baker#publicKeyHash" = b."data#data#publicKeyHash"
             AND el."chainId" = ?chainId
+        ),
+        EXISTS ( SELECT 1
+          FROM "ErrorLog" el
+          JOIN "ErrorLogInsufficientFunds" elif
+            ON elif.log = el.id
+          WHERE el.stopped IS NULL
+            AND elif."baker#publicKeyHash" = b."data#data#publicKeyHash"
+            AND el."chainId" = ?chainId
         )
       FROM "BakerDaemonInternal" b
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, insufficientFunds, control, li, sc, dp, alertCount) ->
+    |] <&> Map.fromList . fmap (\(pkh, control, li, sc, dp, missedAlertCount, insufficientFundsAlert) ->
       let sk = SecretKey
             { _secretKey_ledgerIdentifier = li
             , _secretKey_signingCurve = sc
             , _secretKey_derivationPath = dp
             }
-      in (pkh, (control == ProcessControl_Run, sk, (alertCount, insufficientFunds))))
+      in (pkh, (control == ProcessControl_Run, sk, (missedAlertCount, insufficientFundsAlert))))
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"

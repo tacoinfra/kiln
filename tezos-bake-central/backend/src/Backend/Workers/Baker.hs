@@ -377,14 +377,6 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
         insufficientFundAlerts :: AppSerializable ()
         insufficientFundAlerts = bool clearInsufficientFunds reportInsufficientFunds isInsufficientFunds baker
 
-        -- updateBakerDataInternal :: mCommit ()
-        updateBakerDataInternal = update
-          [BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~>
-           BakerDaemonInternalData_insufficientFundsSelector =. isInsufficientFunds]
-          CondEmpty
-
-      pure $ [deactivationAlerts, updateDetails] ++ if isInternal
-        then [insufficientFundAlerts, updateBakerDataInternal]
-        else []
+      pure $ [deactivationAlerts, updateDetails] ++ [insufficientFundAlerts | isInternal]
 
   return $ sequence_ $ selfDelegateActions ++ bakingEndorsingAlerts
