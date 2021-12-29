@@ -81,6 +81,7 @@ preMigrate chainId =
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "BakerDaemonInternal") "data#data#insufficientFunds"
   >=> migrateProcessDataTable
   >=> migrateProcessDataTable2
   >=> migrateUpstreamVersionTable

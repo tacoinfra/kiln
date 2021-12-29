@@ -245,7 +245,6 @@ bakerDaemonProcess appConfig logger db maybePaths = do
         let bdid = BakerDaemonInternalData
               { _bakerDaemonInternalData_alias = "ledger_kiln"
               , _bakerDaemonInternalData_publicKeyHash = Nothing
-              , _bakerDaemonInternalData_insufficientFunds = False
               , _bakerDaemonInternalData_protocol = psdd
               , _bakerDaemonInternalData_bakerProcessData = bpid
               , _bakerDaemonInternalData_endorserProcessData = epid
