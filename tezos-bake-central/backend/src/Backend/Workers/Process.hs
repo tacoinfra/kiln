@@ -21,6 +21,7 @@
 module Backend.Workers.Process where
 
 import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.STM (TBQueue, atomically, flushTBQueue, isFullTBQueue, newTBQueueIO, readTBQueue, writeTBQueue)
 import Control.Exception.Safe (tryJust, throwIO)
 import Control.Monad.Catch (Handler (..), bracket, catches)
 import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
@@ -37,7 +38,6 @@ import Rhyolite.Backend.DB (runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Safe (headMay)
 import System.Posix.Signals (signalProcess, sigKILL)
 import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
 import qualified System.Process as Proc
@@ -164,30 +164,22 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
           (AutoKeyField ==. fromId pid)
 
     procMonitor _stdin hStdout hStderr ph = do
+      let errorLogBufferSize = 30
+      -- Buffer containing the last few lines of stderr.
+      -- Needed to correctly display the error message in case of a process fail.
+      errorLogBuffer <- newTBQueueIO @Text errorLogBufferSize
+
       withHandleCopyWith (logInfoNS namespace) hStdout $ do
         -- logInfoNS for stderr is intentional, the node prints the usual messages also on stderr
-        withHandleCopyWith (\line -> logInfoNS namespace line *> updateErrorLog line) hStderr $ do
-          runLoggingEnv logger $ go Nothing
+        withHandleCopyWith (\line -> logInfoNS namespace line *> writeBuffer line errorLogBuffer) hStderr $ do
+          runLoggingEnv logger $ go Nothing errorLogBuffer
       where
-        updateErrorLog :: Text -> LoggingT IO ()
-        -- TODO #87 use in-memory buffer and don't write to DB every time
-        -- because it can lead to performance issues.
-        --
-        -- Also it probably worth to try write to file.
-        updateErrorLog line = inDb $ do
-          mbErrorLog <- fmap (_processData_errorLog <=< headMay) $ select $ AutoKeyField ==. fromId pid
-          case mbErrorLog of
-            Just errorLog -> do
-              let
-                errorLogLines = T.lines errorLog
-                errorLog' = T.unlines $ if length errorLogLines >= 30 then
-                  tail errorLogLines <> [line]
-                else
-                  errorLogLines <> [line]
-              update [ProcessData_errorLogField =. Just errorLog'] $
-                AutoKeyField ==. fromId pid
-            Nothing -> update [ProcessData_errorLogField =. Just line] $
-              AutoKeyField ==. fromId pid
+        writeBuffer :: Text -> TBQueue Text -> LoggingT IO ()
+        writeBuffer line buffer = liftIO $ atomically $ do
+          isFull <- isFullTBQueue buffer
+          when isFull $
+            void $ readTBQueue buffer
+          writeTBQueue buffer line
 
         withHandleCopyWith perLine h' f = case h' of
           Nothing -> f
@@ -200,8 +192,12 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
                     Right ln -> perLine (T.pack ln) *> loop
 
         {-# INLINE go #-}
-        go :: forall m1. (MonadLoggerIO m1, MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => Maybe Int -> m1 ()
-        go mCount = do
+        go
+          :: forall m1. (MonadLoggerIO m1, MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1)
+          => Maybe Int
+          -> TBQueue Text
+          -> m1 ()
+        go mCount buffer = do
           let getPC = \case
                 [] -> ProcessControl_Stop
                 (c:_) -> c
@@ -217,7 +213,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
               liftIO $ when stop $ if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
                 then terminateProcess ph
                 else Proc.getPid ph >>= traverse_ (signalProcess sigKILL)
-              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)
+              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing) buffer
             Just _ -> case procControl of
               ProcessControl_Stop -> do
                 inDb $ updateState ProcessState_Stopped
@@ -228,7 +224,11 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
                   update [control_ =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
                 $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
               ProcessControl_Run -> do
-                inDb $ updateState ProcessState_Failed
+                inDb $ do
+                  updateState ProcessState_Failed
+                  errorLog <- liftIO $ atomically $ flushTBQueue buffer
+                  update [ProcessData_errorLogField =. Just (T.unlines errorLog)] $
+                    AutoKeyField ==. fromId pid
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
 
 updateProcessState
