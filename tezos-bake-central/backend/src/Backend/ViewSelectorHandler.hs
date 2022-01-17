@@ -704,6 +704,25 @@ getBakerAddresses nds bid = do
             , _processData_errorLog = errorLog
             }
       in (pkh, (pd, sk, (missedAlertCount, insufficientFundsAlert))))
+
+  endorserProcessData <- [queryQ|
+    SELECT
+    p."control", p."state", p."errorLog"
+    FROM "BakerDaemonInternal" b
+    JOIN "ProcessData" p ON p.id = b."data#data#endorserProcessData"
+    WHERE NOT b."data#deleted"
+  |] <&> fmap (\(control, state, errorLog) ->
+    ProcessData
+      { _processData_control = control
+      , _processData_state = state
+      , _processData_updated = Nothing
+      , _processData_backend = Nothing
+      , _processData_errorLog = errorLog
+      }
+    ) <&> \case
+      [] -> error "No endorser process data for baker process data. Most likely invalid state or bug."
+      (endorserPd : _) -> endorserPd
+
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
@@ -729,7 +748,7 @@ getBakerAddresses nds bid = do
     maxProgress = maxProgress_rightsInfo ^? _Right . _Just
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
-    bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
+    bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b endorserProcessData), c)) int) $
       fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
 
   nextBakeRightsL <- case latestHead' ^? _Just . level of

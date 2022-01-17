@@ -2361,11 +2361,13 @@ bakersTab =
                 False -> standardBakerTile
                 True -> do
                   bid <- watchInternalBaker
+                  -- show 'failedBakerTile' if either baker or endorser has failed process state
                   dyn_ $ ffor bid $ \bid' -> case bid'
                     <&> snd
-                    <&> _bakerInternalData_processData of
-                    Just pd | _processData_state pd == ProcessState_Failed ->
-                      failedBakerTile (dynText titleUniq) pd (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
+                    <&> (\b -> [_bakerInternalData_processData b, _bakerInternalData_endorserProcessData b]) of
+                    Just pds@[bakerPd, endorserPd]
+                      | any ((== ProcessState_Failed) . _processData_state) pds ->
+                      failedBakerTile (dynText titleUniq) bakerPd endorserPd (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
                     _ -> standardBakerTile
 
               pure details
@@ -2440,10 +2442,11 @@ bakersTab =
 
     failedBakerTile
       :: m () -- ^ Title
-      -> ProcessData
+      -> ProcessData -- ^ Baker process data
+      -> ProcessData -- ^ Endorser process data
       -> (Event t () -> Event t (PublicRequest ())) -- ^ Construct an API request with an 'Event' to remove this baker.
       -> m ()
-    failedBakerTile title pd mkRemoveReq = do
+    failedBakerTile title bakerProcessData endorserProcessData mkRemoveReq = do
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
           let
@@ -2457,7 +2460,13 @@ bakersTab =
               ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]
               "Remove Baker"
 
-          traverse_ showLogMenu (_processData_errorLog pd)
+          let
+            mbAnyErrLog = case map _processData_errorLog [bakerProcessData, endorserProcessData] of
+              [Just bakerErrLog, _] -> Just bakerErrLog
+              [_, Just endorserErrLog] -> Just endorserErrLog
+              _ -> Nothing
+
+          traverse_ showLogMenu mbAnyErrLog
           removeEntry removeInternalBakerModal
 
         divClass "title" $ do
