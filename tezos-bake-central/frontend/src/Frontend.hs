@@ -2000,6 +2000,8 @@ nodesTab usingNodeOption =
                 where
                   menu = case _processData_state pd of
                     ProcessState_Failed -> Just $ do
+                      restart <- tileMenuEntry "Restart Node"
+                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ restart
                       for_ (_processData_errorLog pd) $ \errLog ->
                         tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln node error log" errLog
                       removeNodeMenu
@@ -2446,6 +2448,8 @@ bakersTab =
         tileMenu $ do
           let
             showLogMenu errorLog = do
+                restart <- tileMenuEntry "Restart Baker"
+                void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ restart
                 tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln baker error log" errorLog
 
             removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
