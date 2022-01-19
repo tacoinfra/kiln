@@ -1807,6 +1807,15 @@ nodesTab usingNodeOption =
               el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show error log”."
           renderSplashAlert i title Nothing desc
 
+        internalNodeFailedAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+          let
+            i = icon "icon-warning big red"
+            title = text "Internal node failed."
+            desc = do
+              el "p" $ text "Kiln node failed during work. Check Kiln command-line arguments that affect it."
+              el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show error log”."
+          renderSplashAlert i title Nothing desc
+
       dyn_ $ ffor kilnNodeStateD $ traverse_ $ \case
         ProcessState_Node NodeProcessState_ImportComplete -> verifySnapshotAlert
         ProcessState_Node NodeProcessState_ImportCanceled -> pure ()
@@ -1819,7 +1828,7 @@ nodesTab usingNodeOption =
         ProcessState_Node NodeProcessState_DownloadCanceled -> pure ()
         ProcessState_Node NodeProcessState_DownloadComplete -> pure ()
         ProcessState_Initializing -> pure ()
-        ProcessState_Failed -> pure ()
+        ProcessState_Failed -> internalNodeFailedAlert
         ProcessState_Starting -> pure ()
         ProcessState_Stopped -> pure ()
         ProcessState_Running -> pure ()
@@ -2289,6 +2298,22 @@ bakersTab =
               Right () -> \cond -> BakersBanner_Gathering <$ guard cond
           dyn_ $ ffor bakersBanner mkBakersBanner
 
+          -- Show alert banner if baker/endorser process is failed.
+          -- We don't unify it with other baker alerts to not make logic too polymorphic.
+          dyn_ $ ffor tilesDyn $ \bakerSummaryMap ->
+            for_ bakerSummaryMap $ \bakerSummary -> case _bakerSummary_baker bakerSummary of
+              Left _ -> pure ()
+              Right bid ->
+                let
+                  pds = [ _bakerInternalData_processData bid
+                        , _bakerInternalData_endorserProcessData bid
+                        ]
+                in
+                  case map _processData_state pds of
+                    [ProcessState_Failed, _] -> mkFailedBakerBanner "Baker"
+                    [_, ProcessState_Failed] -> mkFailedBakerBanner "Endorser"
+                    _ -> pure ()
+
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
               notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . fmap NEL.toList <$> dEbb
           _ <- listWithKey notifications $ \(Down k) _ -> splashAlert tilesDyn k
@@ -2394,6 +2419,17 @@ bakersTab =
                el "strong" $ text "Fix:"
                text " "
                ensureHealthyNodes)
+
+    mkFailedBakerBanner :: Text -> m ()
+    mkFailedBakerBanner daemonName =
+      SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
+        let
+          i = icon "icon-warning big red"
+          title = text $ "Kiln " <> daemonName <> " failed."
+          desc = do
+            el "p" $ text $ "Kiln " <> daemonName <> " failed during work. Check 'kiln-baker-custom-args' Kiln argument."
+            el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Baker tile and select “Show error log”."
+        renderSplashAlert i title Nothing desc
 
     splashAlert :: Dynamic t (MonoidalMap PublicKeyHash BakerSummary) -> BakerAlert -> m ()
     splashAlert tilesDyn = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") . \case
