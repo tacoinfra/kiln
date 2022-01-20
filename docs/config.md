@@ -81,6 +81,10 @@ The data directory used by the kiln node and tezos-client. Defaults to
 
 Custom arguments for the Kiln Node.
 
+## kiln-baker-custom-args ARGS
+
+Custom arguments for the Kiln baker daemon.
+
 ## ledger-check-delay SECONDS
 
 The time between connectivity checks to the ledger. By default these checks are off so you'll need to set it if you want the check.
