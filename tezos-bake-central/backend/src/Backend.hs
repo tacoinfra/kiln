@@ -335,6 +335,9 @@ backendImpl cfg serve = do
               }
             }
 
+      -- Clean error log for all processes to restart them automatically after restarting Kiln
+      update [ ProcessData_errorLogField =. (Nothing :: Maybe Text)] CondEmpty
+
     resetLedgerQueue logger db
 
     tezosNodeEnvVar <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
