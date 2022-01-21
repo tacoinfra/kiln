@@ -140,11 +140,11 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
 
         claim = do
           now <- liftIO getCurrentTime
-          let nowMinus5min = addUTCTime (-60 * 5) now
+          let nowMinus30Sec = addUTCTime (-30) now
           pd <- runDb (Identity db) $ do
             update [state_ =. state, updated_ =. Just now, backend_ =. Just lockId]
               ((AutoKeyField ==. fromId pid)
-               &&. (backend_ ==. (Nothing :: Maybe Int) ||. updated_ <. Just nowMinus5min))
+               &&. (backend_ ==. (Nothing :: Maybe Int) ||. updated_ <. Just nowMinus30Sec))
             project backend_ (AutoKeyField ==. fromId pid)
           case pd of
             [] -> error "ProcessData not found in DB"
