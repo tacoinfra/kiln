@@ -202,8 +202,9 @@ handleSnapshotDownload appConfig nds snapshotURI = void $ liftIO $ forkIO $ runL
           (Just (ProcessState_Node NodeProcessState_DownloadCanceled)) -> do
             liftIO $ killThread downloaderThread
             cleanUpNode
-          (Just (ProcessState_Node NodeProcessState_DownloadFailed)) -> do
-            cleanUpNode
+          (Just (ProcessState_Node NodeProcessState_DownloadFailed)) -> liftIO $ do
+            snapshotExists <- doesFileExist storePath
+            when snapshotExists $ removeFile storePath
           _ -> threadDelay' 1 >> go
     go
   where
