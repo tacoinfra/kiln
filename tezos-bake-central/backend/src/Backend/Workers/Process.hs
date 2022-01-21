@@ -12,6 +12,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -20,9 +21,10 @@
 module Backend.Workers.Process where
 
 import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.STM (TBQueue, atomically, flushTBQueue, isFullTBQueue, newTBQueueIO, readTBQueue, writeTBQueue)
 import Control.Exception.Safe (tryJust, throwIO)
 import Control.Monad.Catch (Handler (..), bracket, catches)
-import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Pool (Pool)
@@ -74,9 +76,7 @@ import Orphans.Instances ()
 
 processWorker
   :: (MonadIO m)
-  => (    (ProcessState -> IO ())
-       -> IO a
-     )
+  => ((ProcessState -> IO ()) -> IO a)
   -> "logger" :! LoggingEnv
   -> "db" :! Pool Postgresql
   -> "config" :! AppConfig
@@ -122,10 +122,13 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
     waitUntilShouldRun = do
       canRun <- runLoggingEnv logger $ runDb (Identity db) $ do
         isStopped <- all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
+        -- We don't restart process with non-empty error log. It means that this process just failed with error.
+        -- We guarantee this condition by the fact that in all other cases we clean the log.
+        hasEmptyErrorLog <- fmap (isNothing . head) $ project ProcessData_errorLogField $ AutoKeyField ==. fromId pid
         otherProcessRunning <- case pidToRunAfter of
           Nothing -> pure True
           Just pid1 -> all (== ProcessState_Running) <$> project state_ (AutoKeyField ==. fromId pid1)
-        pure $ not isStopped && otherProcessRunning
+        pure $ not isStopped && otherProcessRunning && hasEmptyErrorLog
       unless canRun $ threadDelay' 1 *> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
@@ -137,11 +140,11 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
 
         claim = do
           now <- liftIO getCurrentTime
-          let nowMinus5min = addUTCTime (-60 * 5) now
+          let nowMinus30Sec = addUTCTime (-30) now
           pd <- runDb (Identity db) $ do
             update [state_ =. state, updated_ =. Just now, backend_ =. Just lockId]
               ((AutoKeyField ==. fromId pid)
-               &&. (backend_ ==. (Nothing :: Maybe Int) ||. updated_ <. Just nowMinus5min))
+               &&. (backend_ ==. (Nothing :: Maybe Int) ||. updated_ <. Just nowMinus30Sec))
             project backend_ (AutoKeyField ==. fromId pid)
           case pd of
             [] -> error "ProcessData not found in DB"
@@ -161,11 +164,23 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
           (AutoKeyField ==. fromId pid)
 
     procMonitor _stdin hStdout hStderr ph = do
+      let errorLogBufferSize = 30
+      -- Buffer containing the last few lines of stderr.
+      -- Needed to correctly display the error message in case of a process fail.
+      errorLogBuffer <- newTBQueueIO @Text errorLogBufferSize
+
       withHandleCopyWith (logInfoNS namespace) hStdout $ do
         -- logInfoNS for stderr is intentional, the node prints the usual messages also on stderr
-        withHandleCopyWith (logInfoNS namespace) hStderr $ do
-          runLoggingEnv logger $ go Nothing
+        withHandleCopyWith (\line -> logInfoNS namespace line *> writeBuffer line errorLogBuffer) hStderr $ do
+          runLoggingEnv logger $ go Nothing errorLogBuffer
       where
+        writeBuffer :: Text -> TBQueue Text -> LoggingT IO ()
+        writeBuffer line buffer = liftIO $ atomically $ do
+          isFull <- isFullTBQueue buffer
+          when isFull $
+            void $ readTBQueue buffer
+          writeTBQueue buffer line
+
         withHandleCopyWith perLine h' f = case h' of
           Nothing -> f
           Just h -> withAsync forEachHandleLine $ const f
@@ -177,8 +192,12 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
                     Right ln -> perLine (T.pack ln) *> loop
 
         {-# INLINE go #-}
-        go :: forall m1. (MonadLoggerIO m1, MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1) => Maybe Int -> m1 ()
-        go mCount = do
+        go
+          :: forall m1. (MonadLoggerIO m1, MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1)
+          => Maybe Int
+          -> TBQueue Text
+          -> m1 ()
+        go mCount buffer = do
           let getPC = \case
                 [] -> ProcessControl_Stop
                 (c:_) -> c
@@ -194,7 +213,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
               liftIO $ when stop $ if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
                 then terminateProcess ph
                 else Proc.getPid ph >>= traverse_ (signalProcess sigKILL)
-              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing)
+              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing) buffer
             Just _ -> case procControl of
               ProcessControl_Stop -> do
                 inDb $ updateState ProcessState_Stopped
@@ -205,7 +224,11 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
                   update [control_ =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
                 $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
               ProcessControl_Run -> do
-                inDb $ updateState ProcessState_Failed
+                inDb $ do
+                  updateState ProcessState_Failed
+                  errorLog <- liftIO $ atomically $ flushTBQueue buffer
+                  update [ProcessData_errorLogField =. Just (T.unlines errorLog)] $
+                    AutoKeyField ==. fromId pid
                 $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
 
 updateProcessState

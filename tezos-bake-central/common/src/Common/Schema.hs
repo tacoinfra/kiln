@@ -407,6 +407,7 @@ data ProcessData = ProcessData
   , _processData_state :: !ProcessState -- the state the process is actually in.
   , _processData_updated :: !(Maybe UTCTime) -- the time the process' state was last set.
   , _processData_backend :: !(Maybe Int) -- a "unique" process id
+  , _processData_errorLog :: !(Maybe Text) -- error message provided by binary. it shouldn't be 'Nothing' only when state == 'ProcessState_Failed'
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId ProcessData

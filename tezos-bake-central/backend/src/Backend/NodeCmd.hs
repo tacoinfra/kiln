@@ -103,6 +103,7 @@ internalNodeWorker appConfig logger db maybePaths = do
               , _processData_state = ProcessState_Stopped
               , _processData_updated = Nothing
               , _processData_backend = Nothing
+              , _processData_errorLog = Nothing
               }
 
         pid <- insert' processData
@@ -231,6 +232,7 @@ bakerDaemonProcess appConfig logger db maybePaths = do
               , _processData_state = ProcessState_Stopped
               , _processData_updated = Nothing
               , _processData_backend = Nothing
+              , _processData_errorLog = Nothing
               }
 
         bpid <- insert' processData

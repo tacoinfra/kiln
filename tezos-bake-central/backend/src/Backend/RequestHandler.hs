@@ -256,6 +256,7 @@ requestHandler appConfig emailFromAddr nds =
                     , _processData_state = ps
                     , _processData_updated = Nothing
                     , _processData_backend = Nothing
+                    , _processData_errorLog = Nothing
                     }
 
               pdid <- insert' processData
@@ -279,8 +280,11 @@ requestHandler appConfig emailFromAddr nds =
                   [ NodeInternal_dataField ~> DeletableRow_deletedSelector =. False
                   ]
                   (NodeInternal_idField ==. nid)
-                update [ProcessData_controlField =. pc, ProcessData_stateField =. ps]
-                  (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
+                update
+                  [ ProcessData_controlField =. pc
+                  , ProcessData_stateField =. ps
+                  , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+                  ] (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
                 notify NotifyTag_NodeInternal (nid, Just processData)
         case mNodeProcessState of
           Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_UriSource u) ->
@@ -355,13 +359,18 @@ requestHandler appConfig emailFromAddr nds =
               >>= traverse_ (\bdid -> do
                 let bPid = _bakerDaemonInternalData_bakerProcessData bdid
                     ePid = _bakerDaemonInternalData_endorserProcessData bdid
-                update [ProcessData_controlField =. c]
-                  (AutoKeyField `in_` map fromId [bPid, ePid]))
+                update
+                  [ ProcessData_controlField =. c
+                  , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+                  ] (AutoKeyField `in_` map fromId [bPid, ePid]))
 
           updateNode = do
             (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
               let pid = _deletableRow_data nodeData
-              update [ProcessData_controlField =. c] (AutoKeyField ==. fromId pid)
+              update
+                [ ProcessData_controlField =. c
+                , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+                ] (AutoKeyField ==. fromId pid)
               processData <- getId $ _deletableRow_data nodeData
               notify NotifyTag_NodeInternal (nid, processData)
 
@@ -390,7 +399,10 @@ requestHandler appConfig emailFromAddr nds =
             let bdid = _deletableRow_data $ _bakerDaemonInternal_data bdi
                 bakerProcess = fromId $ _bakerDaemonInternalData_bakerProcessData bdid
                 endorserProcess = fromId $ _bakerDaemonInternalData_endorserProcessData bdid
-            update [ProcessData_controlField =. ProcessControl_Stop] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
+            update
+              [ ProcessData_controlField =. ProcessControl_Stop
+              , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+              ] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
           update
             [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
             (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)

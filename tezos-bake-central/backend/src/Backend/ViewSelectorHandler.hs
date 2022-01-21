@@ -666,9 +666,10 @@ getBakerAddresses nds bid = do
       qFull
       (toPrimitivePersistValue pg bid :)
       buildRs
-  int :: Map.Map PublicKeyHash (Bool, SecretKey, (Int, Bool)) <- [queryQ|
-      SELECT b."data#data#publicKeyHash", p."control",
+  int :: Map.Map PublicKeyHash (ProcessData, SecretKey, (Int, Bool)) <- [queryQ|
+      SELECT b."data#data#publicKeyHash",
         la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
+        p."control", p."state", p."errorLog",
         ( SELECT COUNT(el.id)
           FROM "ErrorLog" el
           JOIN "ErrorLogBakerMissed" elbm
@@ -689,13 +690,39 @@ getBakerAddresses nds bid = do
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, control, li, sc, dp, missedAlertCount, insufficientFundsAlert) ->
+    |] <&> Map.fromList . fmap (\(pkh, li, sc, dp, control, state, errorLog, missedAlertCount, insufficientFundsAlert) ->
       let sk = SecretKey
             { _secretKey_ledgerIdentifier = li
             , _secretKey_signingCurve = sc
             , _secretKey_derivationPath = dp
             }
-      in (pkh, (control == ProcessControl_Run, sk, (missedAlertCount, insufficientFundsAlert))))
+          pd = ProcessData
+            { _processData_control = control
+            , _processData_state = state
+            , _processData_updated = Nothing
+            , _processData_backend = Nothing
+            , _processData_errorLog = errorLog
+            }
+      in (pkh, (pd, sk, (missedAlertCount, insufficientFundsAlert))))
+
+  endorserProcessData <- [queryQ|
+    SELECT
+    p."control", p."state", p."errorLog"
+    FROM "BakerDaemonInternal" b
+    JOIN "ProcessData" p ON p.id = b."data#data#endorserProcessData"
+    WHERE NOT b."data#deleted"
+  |] <&> fmap (\(control, state, errorLog) ->
+    ProcessData
+      { _processData_control = control
+      , _processData_state = state
+      , _processData_updated = Nothing
+      , _processData_backend = Nothing
+      , _processData_errorLog = errorLog
+      }
+    ) <&> \case
+      [] -> error "No endorser process data for baker process data. Most likely invalid state or bug."
+      (endorserPd : _) -> endorserPd
+
   -- TODO: this is rather inelegant: we need something like this; to give you
   -- your next rights we need to know what level we're at now.  there's not an
   -- elegant way to do that today, from the postgres level.  a "current level"
@@ -721,7 +748,7 @@ getBakerAddresses nds bid = do
     maxProgress = maxProgress_rightsInfo ^? _Right . _Just
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
-    bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) int) $
+    bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b endorserProcessData), c)) int) $
       fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
 
   nextBakeRightsL <- case latestHead' ^? _Just . level of
@@ -817,17 +844,18 @@ getNodeAddresses nid = do
       , _nodeExternalData_minPeerConnections = mpc
       }))
   int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
-      SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend
+      SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend, p."errorLog"
         FROM "NodeInternal" n
         JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . fmap (\(nid', control, state, updated, backend) -> (Bounded nid',
+    <&> Map.fromList . fmap (\(nid', control, state, updated, backend, errorLog) -> (Bounded nid',
       ProcessData
       { _processData_control = control
       , _processData_state = state
       , _processData_updated = updated
       , _processData_backend = backend
+      , _processData_errorLog = errorLog
       }))
   let qCount :: [Utf8]
       qCount = flip map universe $ \(Some nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of

@@ -1858,6 +1858,7 @@ h4.dashboard-section-title {
 
   .log-message {
     overflow: auto;
+    max-height: 400px;
   }
 
   .ui.button.primary {
