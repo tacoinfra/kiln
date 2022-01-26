@@ -227,14 +227,9 @@ backendImpl cfg serve = do
     (pure $ getOption $ _opts_bakers cfg)
     (getConfigFromFile (Just . Config.parseBakersUnsafe) $ configPath Config.bakers)
 
-  !(ledgerCheckDelay :: Maybe NominalDiffTime) <- liftA2 (<|>)
+  !(ledgerCheckDelay :: NominalDiffTime) <- fmap (fromMaybe Config.defaultLedgerCheckDelay) $ liftA2 (<|>)
     (pure $ _opts_ledgerCheckDelaySeconds cfg)
     (getConfigFromFile (Just . Config.parseSecondsUnsafe) $ configPath Config.ledgerCheckDelay)
-
-
-  -- Force the check delay so that an error is thrown early
-  -- Exceptions in non-strict languages are terrabad
-  for_ ledgerCheckDelay (`seq` pure ())
 
   let computeChainId' bins json =
         runNoLoggingT
@@ -394,7 +389,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_appVersion = version
           , Config._frontendConfig_usingNodeOption = join $ (Config.UsingCustomNode <$> nodeConfigFile) <$ customChainId
           , Config._frontendConfig_logExportAvailable = logExportAvailable
-          , Config._frontendConfig_ledgerConnectedChecks = isJust ledgerCheckDelay
+          , Config._frontendConfig_ledgerConnectedChecks = True
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
           , Config._frontendConfig_tezosRelease = tezosReleaseTag
           }

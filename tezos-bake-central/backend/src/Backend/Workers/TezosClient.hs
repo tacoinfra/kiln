@@ -77,14 +77,14 @@ startBaking pkh = do
 
 tezosClientWorker
   :: NominalDiffTime
-  -> Maybe NominalDiffTime
+  -> NominalDiffTime
   -> LoggingEnv
   -> NodeDataSource
   -> AppConfig
   -> Pool Postgresql
   -> Maybe BinaryPaths
   -> IO (IO ())
-tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = runLoggingEnv logger $ do
+tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = runLoggingEnv logger $ do
   workerWithDelay "tezosClientWorker" (pure delay) $ const $ runLoggingEnv logger $ do
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
 
@@ -241,10 +241,9 @@ tezosClientWorker delay !mLedgerCheckDelay logger nds appConfig db maybePaths = 
           -- If we want to immediately do the connectivity check
           then updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
           -- Otherwise, we might want to do the connectivity check because some time has passed
-          else case (mLedgerCheckDelay, _connectedLedger_updated cl) of
-            (Nothing, _) -> pure ()
+          else case (ledgerCheckDelay, _connectedLedger_updated cl) of
             (_,Nothing) -> updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
-            (Just ledgerBackgroundUpdateInterval, Just upd) ->
+            (ledgerBackgroundUpdateInterval, Just upd) ->
               when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
                 doSensibleLedgerCheck (isJust $ _connectedLedger_ledgerIdentifier cl)
 

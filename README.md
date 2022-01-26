@@ -163,33 +163,6 @@ If ledger is not listed in the output:
 - Try different USB port
 - Try different USB cable
 
-### Adding Ledger indicator to the UI
-
-To add a ledger indicator to your UI to check connectivity every 60
-seconds do the following:
-
-On Ubuntu:
-
-```
-sudo su -
-cd /var/lib/kiln/exe-dir/
-mkdir -p config
-echo 60 > config/ledger-check-delay
-systemctl restart kiln
-```
-
-On MacOS
-
-```
-cd ~/Library/Kiln
-mkdir -p config
-echo 60 > config/ledger-check-delay
-launchctl stop tezos.kiln
-launchctl start tezos.kiln
-```
-
-Indicator should now appear in the top bar of your UI.
-
 ## System Requirements
 
 System requirements are dependent on whether you plan on running a
