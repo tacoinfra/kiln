@@ -53,7 +53,7 @@ import Rhyolite.Backend.EmailWorker (queueEmail)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Email)
 import Safe
-import System.Directory (removeDirectoryRecursive)
+import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import Text.Printf
 import Text.URI (render)
 import Tezos.Types (Tez, PublicKeyHash, LedgerIdentifier, toPublicKeyHashText)
@@ -291,6 +291,8 @@ requestHandler appConfig emailFromAddr nds =
             handleSnapshotDownload appConfig nds u
           Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp) ->
             handleSnapshotFilePathImport appConfig nds fp
+          Nothing ->
+            liftIO $ createDirectoryIfMissing True (nodeDataDir appConfig)
           _ -> return ()
 
       PublicRequest_AddExternalNode addr alias minPeerConn -> inDb $ do
