@@ -289,7 +289,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     -- if not, report an error; if so, clear an error.
     detailsBranch :: BlockHash = maybe headPred (view hash . _bakerDetails_branch) details
   detailsBlock <- nodeQueryDataSource $ NodeQuery_Block detailsBranch
-  bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl .. detailsBlock ^. level] $ \lvl -> do
+  bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl, headLvl - 1 .. detailsBlock ^. level] $ \lvl -> do
     thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
     predBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl + 1)
     bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
