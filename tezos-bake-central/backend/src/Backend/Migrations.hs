@@ -78,6 +78,7 @@ preMigrate chainId =
   >=> migrateRawCacheEntryTable
   >=> migrateNodeDetailsAddSynchronisationThreshold
   >=> migratePeriodTestingTable
+  >=> migrateErrorLogBakerLedgerDisconnected
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -780,4 +781,19 @@ migratePeriodTestingTable ta = do
             DROP COLUMN "testChainId";
           |]
         pure ta
+    _ -> pure ta
+
+migrateErrorLogBakerLedgerDisconnected :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateErrorLogBakerLedgerDisconnected ta = do
+  let table = (Nothing, "ErrorLogBakerLedgerDisconnected")
+  analyzeTable ta table >>= \case
+    Just analyzedTable
+      | not . any ((== "isWrongApp") . colName) $ tableColumns analyzedTable
+      -> do
+          void [traceExecuteQ|
+              ALTER TABLE "ErrorLogBakerLedgerDisconnected" ADD COLUMN "isWrongApp" BOOLEAN NULL;
+              UPDATE "ErrorLogBakerLedgerDisconnected" SET "isWrongApp" = false;
+              ALTER TABLE "ErrorLogBakerLedgerDisconnected" ALTER COLUMN "isWrongApp" SET NOT NULL;
+            |]
+          getTableAnalysis
     _ -> pure ta

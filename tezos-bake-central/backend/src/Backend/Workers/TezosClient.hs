@@ -282,16 +282,19 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths = do
   getConnectedLedger appConfig maybePaths >>= \case
     Left err -> do
       $(logError) (tshow err)
-      reportLedgerDisconnection db appConfig
+      reportLedgerDisconnection db appConfig False
       updateConnectedLedger Nothing
     Right mliv -> do
       case mliv of
         Nothing -> do
-          reportLedgerDisconnection db appConfig
+          reportLedgerDisconnection db appConfig False
           $(logDebug) "The connectedledger is Nothing"
 
-        Just _ -> do
+        Just (_, LedgerApp_Baking, _) -> do
           clearLedgerDisconnection db appConfig
+
+        Just (_, LedgerApp_Wallet, _) -> do
+          reportLedgerDisconnection db appConfig True
 
       updateConnectedLedger mliv
 
@@ -313,12 +316,12 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths = do
         insert connectedLedger
         notify NotifyTag_ConnectedLedger $ Just connectedLedger
 
-reportLedgerDisconnection :: Pool Postgresql -> AppConfig -> LoggingT IO ()
-reportLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
+reportLedgerDisconnection :: Pool Postgresql -> AppConfig -> Bool -> LoggingT IO ()
+reportLedgerDisconnection db appConfig isWrongApp = withDbAndConfig db appConfig $ do
   bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
   for_ bdis $ \bdi -> do
     for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
-      reportBakerLedgerDisconnected pkh
+      reportBakerLedgerDisconnected pkh isWrongApp
 
 clearLedgerDisconnection :: Pool Postgresql -> AppConfig -> LoggingT IO ()
 clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do

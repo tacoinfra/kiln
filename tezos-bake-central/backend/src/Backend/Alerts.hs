@@ -208,10 +208,10 @@ reportBakerLedgerDisconnected
      PersistBackend m, PostgresLargeObject m, HasAppConfig a,
      MonadBase Serializable m
      )
-  => PublicKeyHash -> m ()
-reportBakerLedgerDisconnected pkh = do
+  => PublicKeyHash -> Bool -> m ()
+reportBakerLedgerDisconnected pkh isWrongApp = do
   chainId <- _appConfig_chainId <$> askAppConfig
-  existingLog :: Maybe (Id ErrorLog, Id ErrorLogInsufficientFunds) <- listToMaybe <$> [queryQ|
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerLedgerDisconnected) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
       FROM "ErrorLog" el
       JOIN "ErrorLogBakerLedgerDisconnected" t ON t.log = el.id
@@ -223,10 +223,11 @@ reportBakerLedgerDisconnected pkh = do
      LIMIT 1
     |]
   case existingLog of
-    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogBakerLedgerDisconnected_logField []
+    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogBakerLedgerDisconnected_logField
+      [ ErrorLogBakerLedgerDisconnected_isWrongAppField =. isWrongApp ]
     Nothing -> do
       (logId, log) <- insertErrorLog $ \logId ->
-        ErrorLogBakerLedgerDisconnected logId (Id pkh)
+        ErrorLogBakerLedgerDisconnected logId (Id pkh) isWrongApp
       queueAlert (Just logId) $ unresolvedBakerAlert $ bakerLedgerDisconnectedDescriptions log
 
 clearBakerLedgerDisconnected
