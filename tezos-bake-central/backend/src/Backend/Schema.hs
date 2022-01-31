@@ -330,16 +330,16 @@ selectIds
 selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
 data CacheBakingRights = CacheBakingRights
-  { _cacheBakingRights_context :: !BlockHash
-  , _cacheBakingRights_level :: !RawLevel
-  , _cacheBakingRights_result :: !(Json Aeson.Value)
+  { _cacheBakingRights_context :: BlockHash
+  , _cacheBakingRights_level :: RawLevel
+  , _cacheBakingRights_result :: Json Aeson.Value
   }
   deriving (Eq, Show, Typeable)
 
 data CacheEndorsingRights = CacheEndorsingRights
-  { _cacheEndorsingRights_context :: !BlockHash
-  , _cacheEndorsingRights_level :: !RawLevel
-  , _cacheEndorsingRights_result :: !(Json Aeson.Value)
+  { _cacheEndorsingRights_context :: BlockHash
+  , _cacheEndorsingRights_level :: RawLevel
+  , _cacheEndorsingRights_result :: Json Aeson.Value
   }
   deriving (Eq, Show, Typeable)
 

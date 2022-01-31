@@ -501,26 +501,26 @@ configPath :: FilePath -> FilePath
 configPath = ("config" </>)
 
 data Opts = Opts
-  { _opts_pgConnectionString :: !(Maybe Text)
-  , _opts_route :: !(Maybe URI)
-  , _opts_emailFromAddress :: !(Maybe Text)
-  , _opts_chain :: !(Maybe (Either NamedChain ChainId))
-  , _opts_checkForUpgrade :: !(Maybe Bool)
-  , _opts_tzscanApiUri     :: !(Option (NonEmpty URI))
-  , _opts_blockscaleApiUri :: !(Option (NonEmpty URI))
-  , _opts_nodes :: !(Option (Map.Map URI (Maybe Text)))
-  , _opts_bakers :: !(Option (Map.Map PublicKeyHash (Maybe Text)))
-  , _opts_networkGitLabProjectId :: !(Maybe Text)
-  , _opts_tezosReleaseTag :: !(Maybe Text)
-  , _opts_kilnNodeRpcPort :: !(Maybe Port)
-  , _opts_kilnNodeNetPort :: !(Maybe Port)
-  , _opts_kilnNodeCustomArgs :: !(Maybe Text)
-  , _opts_kilnBakerCustomArgs :: !(Maybe Text)
-  , _opts_kilnDataDir :: !(Maybe FilePath)
-  , _opts_binaryPaths :: !(Maybe Text)
-  , _opts_ledgerCheckDelaySeconds :: !(Maybe NominalDiffTime)
-  , _opts_nodeConfigFile :: !(Maybe FilePath)
-  , _opts_rightsHistoryWindow :: !(Maybe Int)
+  { _opts_pgConnectionString :: Maybe Text
+  , _opts_route :: Maybe URI
+  , _opts_emailFromAddress :: Maybe Text
+  , _opts_chain :: Maybe (Either NamedChain ChainId)
+  , _opts_checkForUpgrade :: Maybe Bool
+  , _opts_tzscanApiUri     :: Option (NonEmpty URI)
+  , _opts_blockscaleApiUri :: Option (NonEmpty URI)
+  , _opts_nodes :: Option (Map.Map URI (Maybe Text))
+  , _opts_bakers :: Option (Map.Map PublicKeyHash (Maybe Text))
+  , _opts_networkGitLabProjectId :: Maybe Text
+  , _opts_tezosReleaseTag :: Maybe Text
+  , _opts_kilnNodeRpcPort :: Maybe Port
+  , _opts_kilnNodeNetPort :: Maybe Port
+  , _opts_kilnNodeCustomArgs :: Maybe Text
+  , _opts_kilnBakerCustomArgs :: Maybe Text
+  , _opts_kilnDataDir :: Maybe FilePath
+  , _opts_binaryPaths :: Maybe Text
+  , _opts_ledgerCheckDelaySeconds :: Maybe NominalDiffTime
+  , _opts_nodeConfigFile :: Maybe FilePath
+  , _opts_rightsHistoryWindow :: Maybe Int
   }
 makeLenses ''Opts
 

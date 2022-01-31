@@ -136,7 +136,7 @@ instance ToJSON BakerNextRight
 data BakerSummary = BakerSummary
   { _bakerSummary_baker :: Either BakerData BakerInternalData
   , _bakerSummary_alertCount :: Int
-  , _bakerSummary_nextRight :: !BakerNextRight
+  , _bakerSummary_nextRight :: BakerNextRight
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerSummary
 instance ToJSON BakerSummary
@@ -278,38 +278,38 @@ instance FromJSONKey (Some LogTag)
 instance ToJSONKey (Some LogTag)
 
 data BakeViewSelector a = BakeViewSelector
-  { _bakeViewSelector_config :: !(MaybeSelector FrontendConfig a)
-  , _bakeViewSelector_bakerAddresses :: !(RangeSelector' PublicKeyHash (Deletable BakerSummary) a)
-  , _bakeViewSelector_bakerStats :: !(ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeViewSelector_bakerAlerts :: !(RangeSelector' PublicKeyHash (Deletable (NonEmpty BakerAlert)) a)
+  { _bakeViewSelector_config :: MaybeSelector FrontendConfig a
+  , _bakeViewSelector_bakerAddresses :: RangeSelector' PublicKeyHash (Deletable BakerSummary) a
+  , _bakeViewSelector_bakerStats :: ComposeSelector (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a
+  , _bakeViewSelector_bakerAlerts :: RangeSelector' PublicKeyHash (Deletable (NonEmpty BakerAlert)) a
   -- TODO don't need `Deletable` around `BakerDetails`.
-  , _bakeViewSelector_bakerDetails :: !(RangeSelector' PublicKeyHash (Deletable BakerDetails) a)
-  , _bakeViewSelector_errors :: !(MonoidalMap AlertsFilter (ComposeSelector (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
-  , _bakeViewSelector_mailServer :: !(MaybeSelector (Maybe MailServerView) a)
-  , _bakeViewSelector_nodeAddresses :: !(RangeSelector' (Id Node) (Deletable NodeSummary) a) -- TODO: rename to 'nodeSummaries' ?
-  , _bakeViewSelector_nodeVersions :: !(RangeSelector' (Id Node) (Maybe TezosVersion) a)
-  , _bakeViewSelector_nodeDetails :: !(RangeSelector' (Id Node) NodeDetailsData a)
-  , _bakeViewSelector_latestTezosRelease :: !(MaybeSelector (Maybe MajorMinorVersion) a)
-  , _bakeViewSelector_parameters :: !(MapSelector ProtocolHash ProtocolIndex a)
-  , _bakeViewSelector_latestHead :: !(MaybeSelector BranchInfo a)
-  , _bakeViewSelector_amendment :: !(RangeSelector VotingPeriodKind (Deletable Amendment) a)
-  , _bakeViewSelector_proposals :: !(RangeSelector' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
-  , _bakeViewSelector_bakerVote :: !(MaybeSelector (Maybe BakerVote) a)
-  , _bakeViewSelector_periodTestingVote :: !(MaybeSelector (Maybe PeriodTestingVote) a)
-  , _bakeViewSelector_periodTesting :: !(MaybeSelector (Maybe PeriodTesting) a)
-  , _bakeViewSelector_periodPromotionVote :: !(MaybeSelector (Maybe PeriodPromotionVote) a)
-  , _bakeViewSelector_periodAdoption :: !(MaybeSelector (Maybe PeriodAdoption) a)
-  , _bakeViewSelector_upstreamVersion :: !(MaybeSelector UpstreamVersion a)
-  , _bakeViewSelector_telegramConfig :: !(MaybeSelector (Maybe TelegramConfig) a)
-  , _bakeViewSelector_telegramRecipients :: !(RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
-  , _bakeViewSelector_alertCount :: !(MaybeSelector (DMap LogTag (Const Int)) a)
-  , _bakeViewSelector_snapshotMeta :: !(MaybeSelector SnapshotMeta a)
-  , _bakeViewSelector_connectedLedger :: !(MaybeSelector (Maybe ConnectedLedger) a)
-  , _bakeViewSelector_showLedger :: !(RangeSelector SecretKey (Deletable' Text (PublicKeyHash, Tez)) a)
-  , _bakeViewSelector_prompting :: !(RangeSelector SecretKey (Deletable SetupState) a)
-  , _bakeViewSelector_votePrompting :: !(RangeSelector SecretKey (Deletable VoteState) a)
-  , _bakeViewSelector_rightNotificationSettings :: !(RangeSelector RightKind (Deletable RightNotificationLimit) a)
-  , _bakeViewSelector_bakerRegistered :: !(RangeSelector' PublicKeyHash Bool a)
+  , _bakeViewSelector_bakerDetails :: RangeSelector' PublicKeyHash (Deletable BakerDetails) a
+  , _bakeViewSelector_errors :: MonoidalMap AlertsFilter (ComposeSelector (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
+  , _bakeViewSelector_mailServer :: MaybeSelector (Maybe MailServerView) a
+  , _bakeViewSelector_nodeAddresses :: RangeSelector' (Id Node) (Deletable NodeSummary) a -- TODO: rename to 'nodeSummaries' ?
+  , _bakeViewSelector_nodeVersions :: RangeSelector' (Id Node) (Maybe TezosVersion) a
+  , _bakeViewSelector_nodeDetails :: RangeSelector' (Id Node) NodeDetailsData a
+  , _bakeViewSelector_latestTezosRelease :: MaybeSelector (Maybe MajorMinorVersion) a
+  , _bakeViewSelector_parameters :: MapSelector ProtocolHash ProtocolIndex a
+  , _bakeViewSelector_latestHead :: MaybeSelector BranchInfo a
+  , _bakeViewSelector_amendment :: RangeSelector VotingPeriodKind (Deletable Amendment) a
+  , _bakeViewSelector_proposals :: RangeSelector' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a
+  , _bakeViewSelector_bakerVote :: MaybeSelector (Maybe BakerVote) a
+  , _bakeViewSelector_periodTestingVote :: MaybeSelector (Maybe PeriodTestingVote) a
+  , _bakeViewSelector_periodTesting :: MaybeSelector (Maybe PeriodTesting) a
+  , _bakeViewSelector_periodPromotionVote :: MaybeSelector (Maybe PeriodPromotionVote) a
+  , _bakeViewSelector_periodAdoption :: MaybeSelector (Maybe PeriodAdoption) a
+  , _bakeViewSelector_upstreamVersion :: MaybeSelector UpstreamVersion a
+  , _bakeViewSelector_telegramConfig :: MaybeSelector (Maybe TelegramConfig) a
+  , _bakeViewSelector_telegramRecipients :: RangeSelector' (Id TelegramRecipient) (Deletable TelegramRecipient) a
+  , _bakeViewSelector_alertCount :: MaybeSelector (DMap LogTag (Const Int)) a
+  , _bakeViewSelector_snapshotMeta :: MaybeSelector SnapshotMeta a
+  , _bakeViewSelector_connectedLedger :: MaybeSelector (Maybe ConnectedLedger) a
+  , _bakeViewSelector_showLedger :: RangeSelector SecretKey (Deletable' Text (PublicKeyHash, Tez)) a
+  , _bakeViewSelector_prompting :: RangeSelector SecretKey (Deletable SetupState) a
+  , _bakeViewSelector_votePrompting :: RangeSelector SecretKey (Deletable VoteState) a
+  , _bakeViewSelector_rightNotificationSettings :: RangeSelector RightKind (Deletable RightNotificationLimit) a
+  , _bakeViewSelector_bakerRegistered :: RangeSelector' PublicKeyHash Bool a
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq, Ord)
 
 instance (Monoid a, Num a, Ord a, Ord k) => PositivePart (BakeViewSelector (MonoidMap k a)) where
@@ -318,54 +318,54 @@ instance (Monoid a, Num a, Ord a, Ord k) => PositivePart (BakeViewSelector (Mono
 instance Additive a => Additive (BakeViewSelector a)
 
 data BakeView a = BakeView
-  { _bakeView_config :: !(MaybeView FrontendConfig a)
-  , _bakeView_bakerAddresses :: !(RangeView' PublicKeyHash (Deletable BakerSummary) a)
-  , _bakeView_bakerStats :: !(ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a)
-  , _bakeView_bakerAlerts :: !(RangeView' PublicKeyHash (Deletable (NonEmpty BakerAlert)) a)
-  , _bakeView_bakerDetails :: !(RangeView' PublicKeyHash (Deletable BakerDetails) a)
+  { _bakeView_config :: MaybeView FrontendConfig a
+  , _bakeView_bakerAddresses :: RangeView' PublicKeyHash (Deletable BakerSummary) a
+  , _bakeView_bakerStats :: ComposeView (RangeSelector PublicKeyHash Account) (RangeSelector RawLevel BakeEfficiency) a
+  , _bakeView_bakerAlerts :: RangeView' PublicKeyHash (Deletable (NonEmpty BakerAlert)) a
+  , _bakeView_bakerDetails :: RangeView' PublicKeyHash (Deletable BakerDetails) a
   -- TODO: I'm more than a little concerned about this approach for dealing
   -- with deletes in IntervalView.  I think in this particular case, we can get
   -- away with it; since we never go from Resolved to Unresolved, so the
   -- relevant selection window should *eventually* roll off for the resolved
   -- things and be dropped anyway.  In other cases, this approach is likely to
   -- leak memory in Reflex (deletes never really get to go away)
-  , _bakeView_errors :: !(MonoidalMap AlertsFilter (ComposeView (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a))
-  , _bakeView_mailServer :: !(MaybeView (Maybe MailServerView) a)
-  , _bakeView_nodeAddresses :: !(RangeView' (Id Node) (Deletable NodeSummary) a)
-  , _bakeView_nodeVersions :: !(RangeView' (Id Node) (Maybe TezosVersion) a)
-  , _bakeView_nodeDetails :: !(RangeView' (Id Node) NodeDetailsData a)
-  , _bakeView_latestTezosRelease :: !(MaybeView (Maybe MajorMinorVersion) a)
-  , _bakeView_parameters :: !(Common.Vassal.View (MapSelector ProtocolHash ProtocolIndex) a)
-  , _bakeView_latestHead :: !(MaybeView BranchInfo a)
-  , _bakeView_amendment :: !(RangeView VotingPeriodKind (Deletable Amendment) a)
-  , _bakeView_proposals :: !(RangeView' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a)
-  , _bakeView_bakerVote :: !(MaybeView (Maybe BakerVote) a)
-  , _bakeView_periodTestingVote :: !(MaybeView (Maybe PeriodTestingVote) a)
-  , _bakeView_periodTesting :: !(MaybeView (Maybe PeriodTesting) a)
-  , _bakeView_periodPromotionVote :: !(MaybeView (Maybe PeriodPromotionVote) a)
-  , _bakeView_periodAdoption :: !(MaybeView (Maybe PeriodAdoption) a)
-  , _bakeView_upstreamVersion :: !(MaybeView UpstreamVersion a)
-  , _bakeView_telegramConfig :: !(MaybeView (Maybe TelegramConfig) a)
-  , _bakeView_telegramRecipients :: !(RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a)
-  , _bakeView_alertCount :: !(MaybeView (DMap LogTag (Const Int)) a)
-  , _bakeView_snapshotMeta :: !(MaybeView SnapshotMeta a)
-  -- , _bakeView_graphs       :: !(AppendMap (Id BakerDaemon) (First (Maybe (Micro, Text)), a))
-  -- , _bakeView_summaryGraph :: !(Single (Maybe (Micro, Text)) a)
-  , _bakeView_connectedLedger :: !(MaybeView (Maybe ConnectedLedger) a)
-  , _bakeView_showLedger :: !(RangeView SecretKey (Deletable' Text (PublicKeyHash, Tez)) a)
-  , _bakeView_prompting :: !(RangeView SecretKey (Deletable SetupState) a)
-  , _bakeView_votePrompting :: !(RangeView SecretKey (Deletable VoteState) a)
-  , _bakeView_rightNotificationSettings :: !(RangeView RightKind (Deletable RightNotificationLimit) a)
-  , _bakeView_bakerRegistered :: !(RangeView' PublicKeyHash Bool a)
+  , _bakeView_errors :: MonoidalMap AlertsFilter (ComposeView (MapSelector (Some LogTag) ()) (IntervalSelector' UTCTime (Id ErrorLog) (Deletable ErrorInfo)) a)
+  , _bakeView_mailServer :: MaybeView (Maybe MailServerView) a
+  , _bakeView_nodeAddresses :: RangeView' (Id Node) (Deletable NodeSummary) a
+  , _bakeView_nodeVersions :: RangeView' (Id Node) (Maybe TezosVersion) a
+  , _bakeView_nodeDetails :: RangeView' (Id Node) NodeDetailsData a
+  , _bakeView_latestTezosRelease :: MaybeView (Maybe MajorMinorVersion) a
+  , _bakeView_parameters :: Common.Vassal.View (MapSelector ProtocolHash ProtocolIndex) a
+  , _bakeView_latestHead :: MaybeView BranchInfo a
+  , _bakeView_amendment :: RangeView VotingPeriodKind (Deletable Amendment) a
+  , _bakeView_proposals :: RangeView' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a
+  , _bakeView_bakerVote :: MaybeView (Maybe BakerVote) a
+  , _bakeView_periodTestingVote :: MaybeView (Maybe PeriodTestingVote) a
+  , _bakeView_periodTesting :: MaybeView (Maybe PeriodTesting) a
+  , _bakeView_periodPromotionVote :: MaybeView (Maybe PeriodPromotionVote) a
+  , _bakeView_periodAdoption :: MaybeView (Maybe PeriodAdoption) a
+  , _bakeView_upstreamVersion :: MaybeView UpstreamVersion a
+  , _bakeView_telegramConfig :: MaybeView (Maybe TelegramConfig) a
+  , _bakeView_telegramRecipients :: RangeView' (Id TelegramRecipient) (Deletable TelegramRecipient) a
+  , _bakeView_alertCount :: MaybeView (DMap LogTag (Const Int)) a
+  , _bakeView_snapshotMeta :: MaybeView SnapshotMeta a
+  -- , _bakeView_graphs       :: AppendMap (Id BakerDaemon) (First (Maybe (Micro, Text)), a)
+  -- , _bakeView_summaryGraph :: Single (Maybe (Micro, Text)) a
+  , _bakeView_connectedLedger :: MaybeView (Maybe ConnectedLedger) a
+  , _bakeView_showLedger :: RangeView SecretKey (Deletable' Text (PublicKeyHash, Tez)) a
+  , _bakeView_prompting :: RangeView SecretKey (Deletable SetupState) a
+  , _bakeView_votePrompting :: RangeView SecretKey (Deletable VoteState) a
+  , _bakeView_rightNotificationSettings :: RangeView RightKind (Deletable RightNotificationLimit) a
+  , _bakeView_bakerRegistered :: RangeView' PublicKeyHash Bool a
   } deriving (Functor, Generic, Typeable, Traversable, Foldable, Show, Eq)
 
 data MailServerView = MailServerView
-  { _mailServerView_hostName :: !Text
-  , _mailServerView_portNumber :: !Word16
-  , _mailServerView_smtpProtocol :: !SmtpProtocol
-  , _mailServerView_userName :: !Text
-  , _mailServerView_enabled :: !Bool
-  , _mailServerView_notificatees :: ![Email]
+  { _mailServerView_hostName :: Text
+  , _mailServerView_portNumber :: Word16
+  , _mailServerView_smtpProtocol :: SmtpProtocol
+  , _mailServerView_userName :: Text
+  , _mailServerView_enabled :: Bool
+  , _mailServerView_notificatees :: [Email]
   } deriving (Eq, Ord, Generic, Typeable, Read, Show)
 instance FromJSON MailServerView
 instance ToJSON MailServerView
