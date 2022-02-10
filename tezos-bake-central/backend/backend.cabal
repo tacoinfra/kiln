@@ -158,6 +158,7 @@ library
   cpp-options: -DREAL_BUILD
   if flag(support-systemd-journal) && os(linux)
     cpp-options: -DSUPPORT_SYSTEMD_JOURNAL:
+  default-extensions: StrictData
 
 executable backend
   hs-source-dirs: src-bin
@@ -170,3 +171,4 @@ executable backend
 
   other-extensions: UnboxedSums
   ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
+  default-extensions: StrictData

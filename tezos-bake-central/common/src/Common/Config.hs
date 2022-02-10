@@ -203,15 +203,15 @@ instance Aeson.ToJSON UsingNodeOption
 instance Aeson.FromJSON UsingNodeOption
 
 data FrontendConfig = FrontendConfig
-  { _frontendConfig_chain :: !(Either NamedChain ChainId)
-  , _frontendConfig_chainId :: !ChainId
-  , _frontendConfig_checkForUpgrade :: !Bool
-  , _frontendConfig_appVersion :: !Version
-  , _frontendConfig_usingNodeOption :: !(Maybe UsingNodeOption)
-  , _frontendConfig_logExportAvailable :: !Bool
-  , _frontendConfig_ledgerConnectedChecks :: !Bool
-  , _frontendConfig_tezosGitlabProjectId :: !Text
-  , _frontendConfig_tezosRelease :: !(Maybe Text)
+  { _frontendConfig_chain :: Either NamedChain ChainId
+  , _frontendConfig_chainId :: ChainId
+  , _frontendConfig_checkForUpgrade :: Bool
+  , _frontendConfig_appVersion :: Version
+  , _frontendConfig_usingNodeOption :: Maybe UsingNodeOption
+  , _frontendConfig_logExportAvailable :: Bool
+  , _frontendConfig_ledgerConnectedChecks :: Bool
+  , _frontendConfig_tezosGitlabProjectId :: Text
+  , _frontendConfig_tezosRelease :: Maybe Text
   } deriving (Eq, Show, Generic, Typeable)
 
 class HasFrontendConfig r where

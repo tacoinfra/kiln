@@ -85,9 +85,9 @@ telegramApiGetMeUri :: Text -> Maybe URI
 telegramApiGetMeUri botApiKey = telegramApiBotUri botApiKey >>= flip appendPaths ["getMe"]
 
 data TelegramGetUpdates = TelegramGetUpdates
-  { _telegramGetUpdates_botApiKey :: !Text
-  , _telegramGetUpdates_offset :: !(Maybe Int64) -- ID of first message to show
-  , _telegramGetUpdates_timeout :: !(Maybe NominalDiffTime) -- Long-polling timeout
+  { _telegramGetUpdates_botApiKey :: Text
+  , _telegramGetUpdates_offset :: Maybe Int64 -- ID of first message to show
+  , _telegramGetUpdates_timeout :: Maybe NominalDiffTime -- Long-polling timeout
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 telegramApiGetUpdatesUri :: TelegramGetUpdates -> Maybe URI
@@ -101,9 +101,9 @@ telegramApiGetUpdatesUri cfg =
     )
 
 data SendMessageRequest = SendMessageRequest
-  { _sendMessageRequest_chatId :: !Int64
-  , _sendMessageRequest_text :: !Text
-  , _sendMessageRequest_parseMode :: !(Maybe Text)
+  { _sendMessageRequest_chatId :: Int64
+  , _sendMessageRequest_text :: Text
+  , _sendMessageRequest_parseMode :: Maybe Text
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 telegramApiSendMessageUri :: Text -> Maybe URI
@@ -128,45 +128,45 @@ instance ToJSON OnlyTrue where
   toEncoding OnlyTrue = Aeson.toEncoding True
 
 data ApiResult a = ApiResult
-  { _apiResult_ok :: !OnlyTrue
-  , _apiResult_result :: !a
+  { _apiResult_ok :: OnlyTrue
+  , _apiResult_result :: a
   } deriving (Eq, Ord, Show, Typeable, Generic, Functor, Foldable, Traversable)
 
 data BotGetMe = BotGetMe
-  { _botGetMe_id :: !Word64
-  , _botGetMe_isBot :: !Bool
-  , _botGetMe_firstName :: !Text
-  , _botGetMe_username :: !Text
+  { _botGetMe_id :: Word64
+  , _botGetMe_isBot :: Bool
+  , _botGetMe_firstName :: Text
+  , _botGetMe_username :: Text
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data BotGetUpdates = BotGetUpdates
-  { _botGetUpdates_updateId :: !Word64
-  , _botGetUpdates_message :: !BotMessage
+  { _botGetUpdates_updateId :: Word64
+  , _botGetUpdates_message :: BotMessage
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data BotMessage = BotMessage
-  { _botMessage_messageId :: !Word64
-  , _botMessage_from :: !Sender -- This is optional in the spec, but we will require it
-  , _botMessage_chat :: !Chat
-  , _botMessage_text :: !(Maybe Text)
-  , _botMessage_date :: !UnixTimestamp
+  { _botMessage_messageId :: Word64
+  , _botMessage_from :: Sender -- This is optional in the spec, but we will require it
+  , _botMessage_chat :: Chat
+  , _botMessage_text :: Maybe Text
+  , _botMessage_date :: UnixTimestamp
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data Sender = Sender
-  { _sender_id :: !Int64
-  , _sender_isBot :: !Bool
-  , _sender_firstName :: !Text
-  , _sender_lastName :: !(Maybe Text)
-  , _sender_username :: !(Maybe Text)
+  { _sender_id :: Int64
+  , _sender_isBot :: Bool
+  , _sender_firstName :: Text
+  , _sender_lastName :: Maybe Text
+  , _sender_username :: Maybe Text
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data Chat = Chat
-  { _chat_id :: !Int64
-  , _chat_type :: !Text
-  , _chat_title :: !(Maybe Text)
-  , _chat_firstName :: !(Maybe Text)
-  , _chat_lastName :: !(Maybe Text)
-  , _chat_username :: !(Maybe Text)
+  { _chat_id :: Int64
+  , _chat_type :: Text
+  , _chat_title :: Maybe Text
+  , _chat_firstName :: Maybe Text
+  , _chat_lastName :: Maybe Text
+  , _chat_username :: Maybe Text
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 newtype SendMessageResult = SendMessageResult

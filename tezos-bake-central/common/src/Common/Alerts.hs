@@ -108,13 +108,13 @@ errorPlain :: Text -> ErrorDescription
 errorPlain = ErrorDescription_Plain
 
 data BakerErrorDescriptions = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title :: !Text
-  , _bakerErrorDescriptions_tile :: !Text
-  , _bakerErrorDescriptions_notification :: !Text
-  , _bakerErrorDescriptions_problem :: ![ ErrorDescription ]
-  , _bakerErrorDescriptions_warning :: !(Maybe Text)
-  , _bakerErrorDescriptions_fix :: !Text
-  , _bakerErrorDescriptions_resolved :: !(Baker -> (Text, Text))
+  { _bakerErrorDescriptions_title :: Text
+  , _bakerErrorDescriptions_tile :: Text
+  , _bakerErrorDescriptions_notification :: Text
+  , _bakerErrorDescriptions_problem :: [ ErrorDescription ]
+  , _bakerErrorDescriptions_warning :: Maybe Text
+  , _bakerErrorDescriptions_fix :: Text
+  , _bakerErrorDescriptions_resolved :: Baker -> (Text, Text)
   }
 
 data ErrorLogMessage = ErrorLogMessage

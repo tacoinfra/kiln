@@ -133,7 +133,7 @@ data NoRightsException = NoRightsException BlockHash RawLevel Priority
 instance Exception NoRightsException
 
 data NodeQuery a where
-  NodeQuery_ProtocolConstants :: !BlockHash -> NodeQuery ProtoInfo
+  NodeQuery_ProtocolConstants :: BlockHash -> NodeQuery ProtoInfo
   NodeQuery_BakingRights    :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRights)
   NodeQuery_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRights)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
@@ -171,8 +171,8 @@ toCacheDelegateInfo di = CacheDelegateInfo
   }
 
 data RpcResult a = RpcResult
-  { _rpcResult_raw :: !LBS.ByteString
-  , _rpcResult_value :: !a
+  { _rpcResult_raw :: LBS.ByteString
+  , _rpcResult_value :: a
   } deriving (Functor)
 
 -- | Cache that is used within @NodeQueryT@.
@@ -188,14 +188,14 @@ emptyNodeQueryTCache = NodeQueryTCache DMap.empty DMap.empty
 makeLenses 'NodeQueryTCache
 
 data NodeDataSource = NodeDataSource
-  { _nodeDataSource_chain :: !ChainId
-  , _nodeDataSource_httpMgr :: !Http.Manager
-  , _nodeDataSource_pool :: !(Pool Postgresql)
-  , _nodeDataSource_latestHead :: !(TVar (Maybe BranchInfo))
-  , _nodeDataSource_logger :: !LoggingEnv
-  , _nodeDataSource_ioQueue :: !(TQueue (IO ()))
-  , _nodeDataSource_kilnNodeUri :: !URI
-  , _nodeDataSource_nodeForQuery :: !(Maybe URI) -- Override the node selection algo, and do RPC using this node
+  { _nodeDataSource_chain :: ChainId
+  , _nodeDataSource_httpMgr :: Http.Manager
+  , _nodeDataSource_pool :: Pool Postgresql
+  , _nodeDataSource_latestHead :: TVar (Maybe BranchInfo)
+  , _nodeDataSource_logger :: LoggingEnv
+  , _nodeDataSource_ioQueue :: TQueue (IO ())
+  , _nodeDataSource_kilnNodeUri :: URI
+  , _nodeDataSource_nodeForQuery :: Maybe URI -- Override the node selection algo, and do RPC using this node
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 

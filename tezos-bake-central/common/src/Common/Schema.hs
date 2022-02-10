@@ -148,14 +148,14 @@ sumFees baker = getSum . views balanceUpdates getFee
 
 
 data Error = Error
-  { _error_time :: !UTCTime
-  , _error_text :: !Text
+  { _error_time :: UTCTime
+  , _error_text :: Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 data BlockBaker = BlockBaker
-  { _blockBaker_publicKeyHash :: !PublicKeyHash
-  , _blockBaker_priority :: !Priority
-  , _blockBaker_endorsements :: !(Map PublicKeyHash (Seq Word8))
+  { _blockBaker_publicKeyHash :: PublicKeyHash
+  , _blockBaker_priority :: Priority
+  , _blockBaker_endorsements :: Map PublicKeyHash (Seq Word8)
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 getBakerFromBlock :: Block -> BlockBaker
@@ -178,8 +178,8 @@ getBakerFromBlock block = BlockBaker
       (_endorsementMetadata_slots em)
 
 data DeletableRow a = DeletableRow
-  { _deletableRow_data :: !a
-  , _deletableRow_deleted :: !Bool
+  { _deletableRow_data :: a
+  , _deletableRow_deleted :: Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 --------------------------------------------------------------------------------
@@ -192,34 +192,34 @@ data BakerDaemon = BakerDaemon
 instance HasId BakerDaemon
 
 data BakerDaemonInternal = BakerDaemonInternal
-  { _bakerDaemonInternal_id :: !(Id BakerDaemon)
-  , _bakerDaemonInternal_data :: !(DeletableRow BakerDaemonInternalData)
+  { _bakerDaemonInternal_id :: Id BakerDaemon
+  , _bakerDaemonInternal_data :: DeletableRow BakerDaemonInternalData
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId BakerDaemonInternal where
   type IdData BakerDaemonInternal = Id BakerDaemon
 
 data ConnectedLedger = ConnectedLedger
-  { _connectedLedger_ledgerIdentifier :: !(Maybe LedgerIdentifier)
-  , _connectedLedger_bakingAppVersion :: !(Maybe Text)
-  , _connectedLedger_walletAppVersion :: !(Maybe Text)
-  , _connectedLedger_forceConnectivityCheck :: !Bool
-  , _connectedLedger_updated :: !(Maybe UTCTime)
+  { _connectedLedger_ledgerIdentifier :: Maybe LedgerIdentifier
+  , _connectedLedger_bakingAppVersion :: Maybe Text
+  , _connectedLedger_walletAppVersion :: Maybe Text
+  , _connectedLedger_forceConnectivityCheck :: Bool
+  , _connectedLedger_updated :: Maybe UTCTime
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ConnectedLedger
 instance Aeson.FromJSON ConnectedLedger
 
 data LedgerAccount = LedgerAccount
-  { _ledgerAccount_publicKeyHash :: !(Maybe PublicKeyHash)
-  , _ledgerAccount_secretKey :: !SecretKey
-  , _ledgerAccount_balance :: !(Maybe Tez)
-  , _ledgerAccount_shouldImport :: !Bool
-  , _ledgerAccount_imported :: !Bool
-  , _ledgerAccount_shouldSetupToBake :: !Bool
-  , _ledgerAccount_shouldRegister :: !Bool
-  , _ledgerAccount_shouldSetHWM :: !(Maybe RawLevel) -- ^ Contains the block level if we need to set the HWM
-  , _ledgerAccount_shouldDoVoteProtocol :: !(Maybe (Id PeriodProposal)) -- ^ Proposal to vote for
-  , _ledgerAccount_shouldDoVoteBallot :: !(Maybe Ballot) -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.
+  { _ledgerAccount_publicKeyHash :: Maybe PublicKeyHash
+  , _ledgerAccount_secretKey :: SecretKey
+  , _ledgerAccount_balance :: Maybe Tez
+  , _ledgerAccount_shouldImport :: Bool
+  , _ledgerAccount_imported :: Bool
+  , _ledgerAccount_shouldSetupToBake :: Bool
+  , _ledgerAccount_shouldRegister :: Bool
+  , _ledgerAccount_shouldSetHWM :: Maybe RawLevel -- ^ Contains the block level if we need to set the HWM
+  , _ledgerAccount_shouldDoVoteProtocol :: Maybe (Id PeriodProposal) -- ^ Proposal to vote for
+  , _ledgerAccount_shouldDoVoteBallot :: Maybe Ballot -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one
@@ -228,14 +228,14 @@ kilnLedgerAlias :: Text
 kilnLedgerAlias = "ledger_kiln"
 
 data BakerDaemonInternalData = BakerDaemonInternalData
-  { _bakerDaemonInternalData_alias :: !Text
-  , _bakerDaemonInternalData_publicKeyHash :: !(Maybe PublicKeyHash)
-  , _bakerDaemonInternalData_protocol :: !ProtocolHash
-  , _bakerDaemonInternalData_bakerProcessData :: !(Id ProcessData)
-  , _bakerDaemonInternalData_endorserProcessData :: !(Id ProcessData)
-  , _bakerDaemonInternalData_altProtocol :: !(Maybe ProtocolHash)
-  , _bakerDaemonInternalData_altBakerProcessData :: !(Id ProcessData)
-  , _bakerDaemonInternalData_altEndorserProcessData :: !(Id ProcessData)
+  { _bakerDaemonInternalData_alias :: Text
+  , _bakerDaemonInternalData_publicKeyHash :: Maybe PublicKeyHash
+  , _bakerDaemonInternalData_protocol :: ProtocolHash
+  , _bakerDaemonInternalData_bakerProcessData :: Id ProcessData
+  , _bakerDaemonInternalData_endorserProcessData :: Id ProcessData
+  , _bakerDaemonInternalData_altProtocol :: Maybe ProtocolHash
+  , _bakerDaemonInternalData_altBakerProcessData :: Id ProcessData
+  , _bakerDaemonInternalData_altEndorserProcessData :: Id ProcessData
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId BakerDaemonInternalData where
@@ -256,8 +256,8 @@ instance HasId a => HasId (DeletableRow a) where
 -- data NodeExternal = NodeExternal (WithId (Id Node) (Deletable NodeExternal'))
 
 data NodeExternal = NodeExternal
-  { _nodeExternal_id :: !(Id Node)
-  , _nodeExternal_data :: !(DeletableRow NodeExternalData)
+  { _nodeExternal_id :: Id Node
+  , _nodeExternal_data :: DeletableRow NodeExternalData
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId NodeExternal where
   -- Should be the same as `IdData NodeExternalData` always.
@@ -278,16 +278,16 @@ instance Eq TezosVersion where
   TezosVersion a == TezosVersion b = a == b
 
 data NodeVersion = NodeVersion
-     { _nodeVersion_version :: !MajorMinorVersion
-     , _nodeVersion_networkVersion :: !NetworkVersion
-     , _nodeVersion_commitInfo :: !CommitInfo
+     { _nodeVersion_version :: MajorMinorVersion
+     , _nodeVersion_networkVersion :: NetworkVersion
+     , _nodeVersion_commitInfo :: CommitInfo
      } deriving (Eq, Ord, Read, Show)
 
 data MajorMinorVersion = MajorMinorVersion
-     { _majorMinorVersion_major :: !Int32
-     , _majorMinorVersion_minor :: !Int32
-     , _majorMinorVersion_extra :: !(Maybe Int32)
-     , _majorMinorVersion_additional_info :: !AdditionalInfo
+     { _majorMinorVersion_major :: Int32
+     , _majorMinorVersion_minor :: Int32
+     , _majorMinorVersion_extra :: Maybe Int32
+     , _majorMinorVersion_additional_info :: AdditionalInfo
      } deriving (Eq, Ord, Read, Show)
 
 data AdditionalInfo =
@@ -314,9 +314,9 @@ instance Aeson.FromJSON AdditionalInfo where
     <|> Aeson.withText "Release" (\text -> if text == "release" then pure Release else empty) v
 
 data NetworkVersion = NetworkVersion
-  { _networkVersion_chainName :: !Text -- This is not quite synonymous with the usual chainName or chainId.
-  , _networkVersion_distributedDbVersion :: !Word16
-  , _networkVersion_p2pVersion :: !Word16
+  { _networkVersion_chainName :: Text -- This is not quite synonymous with the usual chainName or chainId.
+  , _networkVersion_distributedDbVersion :: Word16
+  , _networkVersion_p2pVersion :: Word16
   } deriving (Eq, Generic, Ord, Read, Show)
 
 {- These aeson instances and lenses were written because the auto  -}
@@ -346,22 +346,22 @@ networkVersion_p2pVersion :: Functor f => (Word16 -> f Word16) -> NetworkVersion
 networkVersion_p2pVersion f s = (\u -> s {_networkVersion_p2pVersion = u}) <$> f (_networkVersion_p2pVersion s)
 
 data CommitInfo = CommitInfo
-     { _commitInfo_commitDate :: !Text
-     , _commitInfo_commitHash :: !Text
+     { _commitInfo_commitDate :: Text
+     , _commitInfo_commitHash :: Text
      } deriving (Eq, Generic, Ord, Read, Show)
 
 data NodeExternalData = NodeExternalData
-  { _nodeExternalData_address :: !URI
-  , _nodeExternalData_alias :: !(Maybe Text)
-  , _nodeExternalData_minPeerConnections :: !(Maybe Int)
+  { _nodeExternalData_address :: URI
+  , _nodeExternalData_alias :: Maybe Text
+  , _nodeExternalData_minPeerConnections :: Maybe Int
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeExternalData where
   type IdData NodeExternalData = Id Node
 
 data NodeInternal = NodeInternal
-  { _nodeInternal_id :: !(Id Node)
-  , _nodeInternal_data :: !(DeletableRow (Id ProcessData))
+  { _nodeInternal_id :: Id Node
+  , _nodeInternal_data :: DeletableRow (Id ProcessData)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId NodeInternal where
@@ -403,34 +403,34 @@ data ProcessControl
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
 data ProcessData = ProcessData
-  { _processData_control :: !ProcessControl
-  , _processData_state :: !ProcessState -- the state the process is actually in.
-  , _processData_updated :: !(Maybe UTCTime) -- the time the process' state was last set.
-  , _processData_backend :: !(Maybe Int) -- a "unique" process id
-  , _processData_errorLog :: !(Maybe Text) -- error message provided by binary. it shouldn't be 'Nothing' only when state == 'ProcessState_Failed'
+  { _processData_control :: ProcessControl
+  , _processData_state :: ProcessState -- the state the process is actually in.
+  , _processData_updated :: Maybe UTCTime -- the time the process' state was last set.
+  , _processData_backend :: Maybe Int -- a "unique" process id
+  , _processData_errorLog :: Maybe Text -- error message provided by binary. it shouldn't be 'Nothing' only when state == 'ProcessState_Failed'
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId ProcessData
 
 data NodeDetails = NodeDetails
-  { _nodeDetails_id :: !(Id Node)
-  , _nodeDetails_data :: !NodeDetailsData
+  { _nodeDetails_id :: Id Node
+  , _nodeDetails_data :: NodeDetailsData
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- TODO don't need Maybes here probably.
 data NodeDetailsData = NodeDetailsData
-  { _nodeDetailsData_identity :: !(Maybe CryptoboxPublicKeyHash)
-  , _nodeDetailsData_headLevel :: !(Maybe RawLevel)
-  , _nodeDetailsData_headBlockHash :: !(Maybe BlockHash)
-  , _nodeDetailsData_headBlockPred :: !(Maybe BlockHash)
-  , _nodeDetailsData_headBlockBakedAt :: !(Maybe UTCTime)
-  , _nodeDetailsData_savePoint :: !(Maybe RawLevel)
-  , _nodeDetailsData_savePointUpdated :: !(Maybe Cycle)
-  , _nodeDetailsData_peerCount :: !(Maybe Word64)
-  , _nodeDetailsData_networkStat :: !NetworkStat
-  , _nodeDetailsData_fitness :: !(Maybe Fitness)
-  , _nodeDetailsData_updated :: !(Maybe UTCTime)
-  , _nodeDetailsData_synchronisationThreshold :: !Word8
+  { _nodeDetailsData_identity :: Maybe CryptoboxPublicKeyHash
+  , _nodeDetailsData_headLevel :: Maybe RawLevel
+  , _nodeDetailsData_headBlockHash :: Maybe BlockHash
+  , _nodeDetailsData_headBlockPred :: Maybe BlockHash
+  , _nodeDetailsData_headBlockBakedAt :: Maybe UTCTime
+  , _nodeDetailsData_savePoint :: Maybe RawLevel
+  , _nodeDetailsData_savePointUpdated :: Maybe Cycle
+  , _nodeDetailsData_peerCount :: Maybe Word64
+  , _nodeDetailsData_networkStat :: NetworkStat
+  , _nodeDetailsData_fitness :: Maybe Fitness
+  , _nodeDetailsData_updated :: Maybe UTCTime
+  , _nodeDetailsData_synchronisationThreshold :: Word8
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance HasId NodeDetailsData where
   type IdData NodeDetailsData = Id Node
@@ -485,59 +485,59 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
 --
 -- We can cache ProtoInfo types in memory,  but given the changes to ProtoInfo across protocol versions, it's not really a structured data type we can cleanly unpack into a common record or a fully "structured" SQL schema.
 data ProtocolIndex = ProtocolIndex
-  { _protocolIndex_chainId :: !ChainId
-  , _protocolIndex_hash :: !ProtocolHash
-  , _protocolIndex_jsonConstants :: !(Json Aeson.Value)
-  , _protocolIndex_constants :: !ProtoInfo
-  , _protocolIndex_proto :: !Word8
-  , _protocolIndex_firstBlockHash :: !(Maybe BlockHash)
-  , _protocolIndex_firstBlockPredecessor :: !(Maybe BlockHash)
-  , _protocolIndex_firstBlockLevel :: !(Maybe RawLevel)
-  , _protocolIndex_firstBlockFitness :: !(Maybe Fitness)
-  , _protocolIndex_firstBlockTimestamp :: !(Maybe UTCTime)
-  , _protocolIndex_firstBlockCycle :: !(Maybe Cycle)
+  { _protocolIndex_chainId :: ChainId
+  , _protocolIndex_hash :: ProtocolHash
+  , _protocolIndex_jsonConstants :: Json Aeson.Value
+  , _protocolIndex_constants :: ProtoInfo
+  , _protocolIndex_proto :: Word8
+  , _protocolIndex_firstBlockHash :: Maybe BlockHash
+  , _protocolIndex_firstBlockPredecessor :: Maybe BlockHash
+  , _protocolIndex_firstBlockLevel :: Maybe RawLevel
+  , _protocolIndex_firstBlockFitness :: Maybe Fitness
+  , _protocolIndex_firstBlockTimestamp :: Maybe UTCTime
+  , _protocolIndex_firstBlockCycle :: Maybe Cycle
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
 data Accusation = Accusation
-  { _accusation_hash :: !OperationHash -- ^ hash of the accusation operation
-  , _accusation_blockHash :: !BlockHash -- ^ hash of the block where the accusation was included
-  , _accusation_chain :: !ChainId -- ^ chainId of the network where the accusation occurred
-  , _accusation_level :: !RawLevel -- ^ level where accusation was incorporated in the blockchain
-  , _accusation_baker :: !PublicKeyHash -- ^ PKH of baker who was accused
-  , _accusation_occurredLevel :: !RawLevel -- ^ level at which the baker double baked or double endorsed
-  , _accusation_isBake :: !Bool -- ^ is this a double bake?  (as opposed to double endorsement...)
+  { _accusation_hash :: OperationHash -- ^ hash of the accusation operation
+  , _accusation_blockHash :: BlockHash -- ^ hash of the block where the accusation was included
+  , _accusation_chain :: ChainId -- ^ chainId of the network where the accusation occurred
+  , _accusation_level :: RawLevel -- ^ level where accusation was incorporated in the blockchain
+  , _accusation_baker :: PublicKeyHash -- ^ PKH of baker who was accused
+  , _accusation_occurredLevel :: RawLevel -- ^ level at which the baker double baked or double endorsed
+  , _accusation_isBake :: Bool -- ^ is this a double bake?  (as opposed to double endorsement...)
   } deriving (Show, Eq, Ord, Typeable, Generic)
 instance HasId Accusation where
   type IdData Accusation = (OperationHash, BlockHash)
 
 data Amendment = Amendment
-  { _amendment_period :: !VotingPeriodKind
-  , _amendment_chainId :: !ChainId
-  , _amendment_votingPeriod :: !RawLevel
-  , _amendment_start :: !UTCTime -- ^ Start time
-  , _amendment_startLevel :: !RawLevel -- ^ Start level
-  , _amendment_position :: !RawLevel -- ^ Blocks passed in this period
+  { _amendment_period :: VotingPeriodKind
+  , _amendment_chainId :: ChainId
+  , _amendment_votingPeriod :: RawLevel
+  , _amendment_start :: UTCTime -- ^ Start time
+  , _amendment_startLevel :: RawLevel -- ^ Start level
+  , _amendment_position :: RawLevel -- ^ Blocks passed in this period
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodProposal = PeriodProposal
-  { _periodProposal_hash :: !ProtocolHash
-  , _periodProposal_chainId :: !ChainId
-  , _periodProposal_votingPeriod :: !RawLevel
-  , _periodProposal_votes :: !Int
+  { _periodProposal_hash :: ProtocolHash
+  , _periodProposal_chainId :: ChainId
+  , _periodProposal_votingPeriod :: RawLevel
+  , _periodProposal_votes :: Int
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId PeriodProposal
 
 data PeriodVote = PeriodVote
-  { _periodVote_ballots :: !Ballots
-  , _periodVote_quorum :: !Int -- Percent * 100, e.g. 80.02% would be 8002
-  , _periodVote_totalRolls :: !Int -- Total number of rolls of delegates who are eligible to vote
+  { _periodVote_ballots :: Ballots
+  , _periodVote_quorum :: Int -- Percent * 100, e.g. 80.02% would be 8002
+  , _periodVote_totalRolls :: Int -- Total number of rolls of delegates who are eligible to vote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodTestingVote = PeriodTestingVote
-  { _periodTestingVote_proposal :: !(Id PeriodProposal)
-  , _periodTestingVote_periodVote :: !PeriodVote
+  { _periodTestingVote_proposal :: Id PeriodProposal
+  , _periodTestingVote_periodVote :: PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 -- | Like Tezos.TestChainStatus, but for a single column
@@ -547,42 +547,42 @@ instance Aeson.ToJSON TestChainStatus
 instance Aeson.FromJSON TestChainStatus
 
 data PeriodTesting = PeriodTesting
-  { _periodTesting_proposal :: !(Id PeriodProposal)
+  { _periodTesting_proposal :: Id PeriodProposal
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodPromotionVote = PeriodPromotionVote
-  { _periodPromotionVote_proposal :: !(Id PeriodProposal)
-  , _periodPromotionVote_periodVote :: !PeriodVote
+  { _periodPromotionVote_proposal :: Id PeriodProposal
+  , _periodPromotionVote_periodVote :: PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 -- There is no actual voting in this period.
 data PeriodAdoption = PeriodAdoption
-  { _periodAdoption_proposal :: !(Id PeriodProposal)
-  , _periodAdoption_periodVote :: !PeriodVote
+  { _periodAdoption_proposal :: Id PeriodProposal
+  , _periodAdoption_periodVote :: PeriodVote
   }
    deriving (Eq, Ord, Generic, Typeable, Show)
 
 -- Proposal period
 data BakerProposal = BakerProposal
-  { _bakerProposal_pkh :: !PublicKeyHash
-  , _bakerProposal_proposal :: !(Id PeriodProposal)
-  , _bakerProposal_included :: !(Maybe BlockHash)
-  , _bakerProposal_attempted :: !(Maybe BlockHash)
+  { _bakerProposal_pkh :: PublicKeyHash
+  , _bakerProposal_proposal :: Id PeriodProposal
+  , _bakerProposal_included :: Maybe BlockHash
+  , _bakerProposal_attempted :: Maybe BlockHash
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 -- Exploration/promotion period
 data BakerVote = BakerVote
-  { _bakerVote_pkh :: !PublicKeyHash
-  , _bakerVote_proposal :: !(Id PeriodProposal)
-  , _bakerVote_ballot :: !Ballot
-  , _bakerVote_included :: !(Maybe BlockHash)
-  , _bakerVote_attempted :: !(Maybe BlockHash)
+  { _bakerVote_pkh :: PublicKeyHash
+  , _bakerVote_proposal :: Id PeriodProposal
+  , _bakerVote_ballot :: Ballot
+  , _bakerVote_included :: Maybe BlockHash
+  , _bakerVote_attempted :: Maybe BlockHash
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data AccusationBlock = AccusationBlock
-  { _accusationBlock_hash :: !BlockHash
-  , _accusationBlock_level :: !RawLevel
-  , _accusationBlock_chain :: !ChainId
+  { _accusationBlock_hash :: BlockHash
+  , _accusationBlock_level :: RawLevel
+  , _accusationBlock_chain :: ChainId
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 data ClientDaemonWorker
@@ -592,24 +592,24 @@ data ClientDaemonWorker
   deriving (Ord, Enum, Show, Eq, Typeable, Generic)
 
 data ClientConfig = ClientConfig
-  { _clientConfig_startTime :: !UTCTime
-  , _clientConfig_bakers :: ![PublicKeyHash] -- Ident
-  , _clientConfig_workers :: ![ClientDaemonWorker]
-  , _clientConfig_nodeUri :: !URI
+  { _clientConfig_startTime :: UTCTime
+  , _clientConfig_bakers :: [PublicKeyHash] -- Ident
+  , _clientConfig_workers :: [ClientDaemonWorker]
+  , _clientConfig_nodeUri :: URI
   } deriving (Show, Eq, Ord, Typeable, Generic)
 
 -- newtype Baker_ = Baker (WithId PublicKeyHash (Deletable Baker'))
 
 data Baker = Baker
-  { _baker_publicKeyHash :: !PublicKeyHash
-  , _baker_data :: !(DeletableRow BakerData)
+  { _baker_publicKeyHash :: PublicKeyHash
+  , _baker_data :: DeletableRow BakerData
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Baker where
   -- Should be the same as `IdData BakerData` always.
   type IdData Baker = PublicKeyHash
 
 data BakerData = BakerData
-  { _bakerData_alias :: !(Maybe Text)
+  { _bakerData_alias :: Maybe Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId BakerData where
@@ -618,35 +618,35 @@ instance HasId BakerData where
 -- delegatedContracts isn't interesting to kiln at this time.  Even if it were,
 -- we'd probably want to cache it seperately  (it changes way slower anyhow)
 data CacheDelegateInfo = CacheDelegateInfo
-  { _cacheDelegateInfo_balance :: !Tez
-  , _cacheDelegateInfo_frozenBalance :: !Tez
-  , _cacheDelegateInfo_frozenBalanceByCycle :: !FrozenBalanceByCycleSeqCrossCompat
-  , _cacheDelegateInfo_stakingBalance :: !Tez
-  -- , _cacheDelegateInfo_delegatedContracts :: !(Seq.Seq ContractId)
-  , _cacheDelegateInfo_delegatedBalance :: !Tez
-  , _cacheDelegateInfo_deactivated :: !Bool
-  , _cacheDelegateInfo_gracePeriod :: !Cycle
+  { _cacheDelegateInfo_balance :: Tez
+  , _cacheDelegateInfo_frozenBalance :: Tez
+  , _cacheDelegateInfo_frozenBalanceByCycle :: FrozenBalanceByCycleSeqCrossCompat
+  , _cacheDelegateInfo_stakingBalance :: Tez
+  -- , _cacheDelegateInfo_delegatedContracts :: Seq.Seq ContractId
+  , _cacheDelegateInfo_delegatedBalance :: Tez
+  , _cacheDelegateInfo_deactivated :: Bool
+  , _cacheDelegateInfo_gracePeriod :: Cycle
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- newtype BakerDetails = BakerDetails (WithId PublicKeyHash BakerDetails')
 
 data BakerDetails = BakerDetails
-  { _bakerDetails_publicKeyHash :: !PublicKeyHash
+  { _bakerDetails_publicKeyHash :: PublicKeyHash
   -- Used to say what block we examined for delegate info, and also for missed baking and endorsing. It would be the same thing per worker
-  , _bakerDetails_branch :: !VeryBlockLike
-  , _bakerDetails_delegateInfo :: !(Maybe (Json CacheDelegateInfo))
+  , _bakerDetails_branch :: VeryBlockLike
+  , _bakerDetails_delegateInfo :: Maybe (Json CacheDelegateInfo)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails where
   type IdData BakerDetails = PublicKeyHash
 
 data BakerRightsProgress = BakerRightsProgress
-  { _bakerRightsProgress_chainId :: !ChainId
+  { _bakerRightsProgress_chainId :: ChainId
   -- | we reuse this table to also give us clues about which cycles we've ever
   -- tried to cache, so we can start caching before any delegates have been
   -- configured.
-  , _bakerRightsProgress_publicKeyHash :: !PublicKeyHash
+  , _bakerRightsProgress_publicKeyHash :: PublicKeyHash
   -- | The last level for which rights were successfully gathered and stored.
-  , _bakerRightsProgress_progress :: !RawLevel
+  , _bakerRightsProgress_progress :: RawLevel
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerRightsProgress
 
@@ -660,31 +660,31 @@ instance Aeson.ToJSONKey RightKind
 -- rather than all possible.  For the same reason we /do/ include endorsement
 -- slots, since that affects expected returns.
 data BakerRight = BakerRight
-  { _bakerRight_branch :: !(Id BakerRightsProgress)
-  , _bakerRight_level :: !RawLevel
-  , _bakerRight_right :: !RightKind
-  , _bakerRight_slots :: !(Maybe Int)
+  { _bakerRight_branch :: Id BakerRightsProgress
+  , _bakerRight_level :: RawLevel
+  , _bakerRight_right :: RightKind
+  , _bakerRight_slots :: Maybe Int
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerRight
 
 
 data BakeEfficiency = BakeEfficiency
-  { _bakeEfficiency_bakedBlocks :: !Word64
-  , _bakeEfficiency_bakingRights :: !Word64
+  { _bakeEfficiency_bakedBlocks :: Word64
+  , _bakeEfficiency_bakingRights :: Word64
   -- TODO:
-  -- { _bakeEfficiency_bakerSucecss :: !(Sum Int)
-  -- , _bakeEfficiency_bakerTotal :: !(Sum Int)
+  -- { _bakeEfficiency_bakerSucecss :: Sum Int
+  -- , _bakeEfficiency_bakerTotal :: Sum Int
   -- , _bakeEfficiency_endorseOperationSuccess
   -- , _bakeEfficiency_endorseOperationTotal
   -- , _bakeEfficiency_endorseSlotsSuccess
   -- , _bakeEfficiency_endorseSlotsTotal
-  -- , _bakeEfficiency_bakingRights :: !Word64
-  -- , _bakeEfficiency_endorsedBlocks :: !Word64
-  -- , _bakeEfficiency_endorsingRights :: !Word64
-  -- , _bakeEfficiency_endorsedSlots :: !Word64
-  -- , _bakeEfficiency_endorsingSlotRights :: !Word64
-  -- , _bakeEfficiency_branch :: !BlockHash
-  -- , _bakeEfficiency_range :: !RawLevel
+  -- , _bakeEfficiency_bakingRights :: Word64
+  -- , _bakeEfficiency_endorsedBlocks :: Word64
+  -- , _bakeEfficiency_endorsingRights :: Word64
+  -- , _bakeEfficiency_endorsedSlots :: Word64
+  -- , _bakeEfficiency_endorsingSlotRights :: Word64
+  -- , _bakeEfficiency_branch :: BlockHash
+  -- , _bakeEfficiency_range :: RawLevel
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance Semigroup BakeEfficiency where
@@ -694,7 +694,7 @@ instance Monoid BakeEfficiency where
   mempty = BakeEfficiency 0 0
 
 data Notificatee = Notificatee
-  { _notificatee_email :: !Email
+  { _notificatee_email :: Email
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId Notificatee
 instance Aeson.ToJSON Notificatee
@@ -723,117 +723,117 @@ instance Universe SmtpProtocol where universe = universeDef
 instance Finite SmtpProtocol
 
 data MailServerConfig = MailServerConfig
-  { _mailServerConfig_hostName :: !Text
-  , _mailServerConfig_portNumber :: !Word16
-  , _mailServerConfig_smtpProtocol :: !SmtpProtocol
-  , _mailServerConfig_userName :: !Text
-  , _mailServerConfig_password :: !Text
+  { _mailServerConfig_hostName :: Text
+  , _mailServerConfig_portNumber :: Word16
+  , _mailServerConfig_smtpProtocol :: SmtpProtocol
+  , _mailServerConfig_userName :: Text
+  , _mailServerConfig_password :: Text
   -- TODO this `madeDefaultAt` seems to be for old design
-  , _mailServerConfig_madeDefaultAt :: !UTCTime
-  , _mailServerConfig_enabled :: !Bool
+  , _mailServerConfig_madeDefaultAt :: UTCTime
+  , _mailServerConfig_enabled :: Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId MailServerConfig
 
 data ErrorLogNetworkUpdate = ErrorLogNetworkUpdate
-  { _errorLogNetworkUpdate_log :: !(Id ErrorLog)
-  , _errorLogNetworkUpdate_namedChain :: !NamedChain
-  , _errorLogNetworkUpdate_version :: !TezosVersion
-  , _errorLogNetworkUpdate_gitLabProjectId :: !Text
+  { _errorLogNetworkUpdate_log :: Id ErrorLog
+  , _errorLogNetworkUpdate_namedChain :: NamedChain
+  , _errorLogNetworkUpdate_version :: TezosVersion
+  , _errorLogNetworkUpdate_gitLabProjectId :: Text
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNetworkUpdate where
   type IdData ErrorLogNetworkUpdate = Id ErrorLog
 
 data ErrorLogBakerLedgerDisconnected = ErrorLogBakerLedgerDisconnected
-  { _errorLogBakerLedgerDisconnected_log :: !(Id ErrorLog)
-  , _errorLogBakerLedgerDisconnected_baker :: !(Id Baker)
+  { _errorLogBakerLedgerDisconnected_log :: Id ErrorLog
+  , _errorLogBakerLedgerDisconnected_baker :: Id Baker
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerLedgerDisconnected where
   type IdData ErrorLogBakerLedgerDisconnected = Id ErrorLog
 
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
-  { _errorLogInaccessibleNode_log :: !(Id ErrorLog)
-  , _errorLogInaccessibleNode_node :: !(Id Node)
+  { _errorLogInaccessibleNode_log :: Id ErrorLog
+  , _errorLogInaccessibleNode_node :: Id Node
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInaccessibleNode where
   type IdData ErrorLogInaccessibleNode = Id ErrorLog
 
 data ErrorLogNodeWrongChain = ErrorLogNodeWrongChain
-  { _errorLogNodeWrongChain_log :: !(Id ErrorLog)
-  , _errorLogNodeWrongChain_node :: !(Id Node)
-  , _errorLogNodeWrongChain_expectedChainId :: !ChainId
-  , _errorLogNodeWrongChain_actualChainId :: !ChainId
+  { _errorLogNodeWrongChain_log :: Id ErrorLog
+  , _errorLogNodeWrongChain_node :: Id Node
+  , _errorLogNodeWrongChain_expectedChainId :: ChainId
+  , _errorLogNodeWrongChain_actualChainId :: ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeWrongChain where
   type IdData ErrorLogNodeWrongChain = Id ErrorLog
 
 data ErrorLogNodeInvalidPeerCount = ErrorLogNodeInvalidPeerCount
-  { _errorLogNodeInvalidPeerCount_log :: !(Id ErrorLog)
-  , _errorLogNodeInvalidPeerCount_node :: !(Id Node)
-  , _errorLogNodeInvalidPeerCount_minPeerCount :: !Int
-  , _errorLogNodeInvalidPeerCount_actualPeerCount :: !Word64
+  { _errorLogNodeInvalidPeerCount_log :: Id ErrorLog
+  , _errorLogNodeInvalidPeerCount_node :: Id Node
+  , _errorLogNodeInvalidPeerCount_minPeerCount :: Int
+  , _errorLogNodeInvalidPeerCount_actualPeerCount :: Word64
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeInvalidPeerCount where
   type IdData ErrorLogNodeInvalidPeerCount = Id ErrorLog
 
 data ErrorLogNodeInsufficientPeers = ErrorLogNodeInsufficientPeers
-  { _errorLogNodeInsufficientPeers_log :: !(Id ErrorLog)
-  , _errorLogNodeInsufficientPeers_node :: !(Id Node)
-  , _errorLogNodeInsufficientPeers_synchronisationThreshold :: !Word8
-  , _errorLogNodeInsufficientPeers_actualPeerCount :: !Word64
+  { _errorLogNodeInsufficientPeers_log :: Id ErrorLog
+  , _errorLogNodeInsufficientPeers_node :: Id Node
+  , _errorLogNodeInsufficientPeers_synchronisationThreshold :: Word8
+  , _errorLogNodeInsufficientPeers_actualPeerCount :: Word64
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogNodeInsufficientPeers where
   type IdData ErrorLogNodeInsufficientPeers = Id ErrorLog
 
 -- | Bakers in the daemon sense, not delegate sense
 data ErrorLogBakerNoHeartbeat = ErrorLogBakerNoHeartbeat
-  { _errorLogBakerNoHeartbeat_log :: !(Id ErrorLog)
-  , _errorLogBakerNoHeartbeat_lastLevel :: !RawLevel
-  , _errorLogBakerNoHeartbeat_lastBlockHash :: !BlockHash
-  , _errorLogBakerNoHeartbeat_client :: !(Id BakerDaemon)
+  { _errorLogBakerNoHeartbeat_log :: Id ErrorLog
+  , _errorLogBakerNoHeartbeat_lastLevel :: RawLevel
+  , _errorLogBakerNoHeartbeat_lastBlockHash :: BlockHash
+  , _errorLogBakerNoHeartbeat_client :: Id BakerDaemon
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerNoHeartbeat where
   type IdData ErrorLogBakerNoHeartbeat = Id ErrorLog
 
 data ErrorLogBakerDeactivated = ErrorLogBakerDeactivated
-  { _errorLogBakerDeactivated_log :: !(Id ErrorLog)
-  , _errorLogBakerDeactivated_publicKeyHash :: !PublicKeyHash
-  , _errorLogBakerDeactivated_preservedCycles :: !Cycle
-  , _errorLogBakerDeactivated_fitness :: !Fitness
+  { _errorLogBakerDeactivated_log :: Id ErrorLog
+  , _errorLogBakerDeactivated_publicKeyHash :: PublicKeyHash
+  , _errorLogBakerDeactivated_preservedCycles :: Cycle
+  , _errorLogBakerDeactivated_fitness :: Fitness
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerDeactivated where
   type IdData ErrorLogBakerDeactivated = Id ErrorLog
 
 data ErrorLogBakerDeactivationRisk = ErrorLogBakerDeactivationRisk
-  { _errorLogBakerDeactivationRisk_log :: !(Id ErrorLog)
-  , _errorLogBakerDeactivationRisk_publicKeyHash :: !PublicKeyHash
-  , _errorLogBakerDeactivationRisk_gracePeriod :: !Cycle
-  , _errorLogBakerDeactivationRisk_latestCycle :: !Cycle
-  , _errorLogBakerDeactivationRisk_preservedCycles :: !Cycle
-  , _errorLogBakerDeactivationRisk_fitness :: !Fitness
+  { _errorLogBakerDeactivationRisk_log :: Id ErrorLog
+  , _errorLogBakerDeactivationRisk_publicKeyHash :: PublicKeyHash
+  , _errorLogBakerDeactivationRisk_gracePeriod :: Cycle
+  , _errorLogBakerDeactivationRisk_latestCycle :: Cycle
+  , _errorLogBakerDeactivationRisk_preservedCycles :: Cycle
+  , _errorLogBakerDeactivationRisk_fitness :: Fitness
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerDeactivationRisk where
   type IdData ErrorLogBakerDeactivationRisk = Id ErrorLog
 
 data ErrorLogBakerAccused = ErrorLogBakerAccused
-  { _errorLogBakerAccused_log :: !(Id ErrorLog)
-  , _errorLogBakerAccused_op :: !(Id Accusation)
-  , _errorLogBakerAccused_baker :: !(Id Baker)
-  , _errorLogBakerAccused_cycle :: !Cycle
-  , _errorLogBakerAccused_level :: !RawLevel
-  , _errorLogBakerAccused_accusedCycle :: !Cycle
-  , _errorLogBakerAccused_accusedLevel :: !RawLevel
-  , _errorLogBakerAccused_right :: !RightKind
+  { _errorLogBakerAccused_log :: Id ErrorLog
+  , _errorLogBakerAccused_op :: Id Accusation
+  , _errorLogBakerAccused_baker :: Id Baker
+  , _errorLogBakerAccused_cycle :: Cycle
+  , _errorLogBakerAccused_level :: RawLevel
+  , _errorLogBakerAccused_accusedCycle :: Cycle
+  , _errorLogBakerAccused_accusedLevel :: RawLevel
+  , _errorLogBakerAccused_right :: RightKind
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerAccused where
   type IdData ErrorLogBakerAccused = Id ErrorLog
 
 data ErrorLogBadNodeHead = ErrorLogBadNodeHead
-  { _errorLogBadNodeHead_log :: !(Id ErrorLog)
-  , _errorLogBadNodeHead_node :: !(Id Node)
-  , _errorLogBadNodeHead_bootstrapped :: !Bool
-  , _errorLogBadNodeHead_chainStatus :: !SyncState
-  , _errorLogBadNodeHead_nodeHead :: !(Json VeryBlockLike)
-  , _errorLogBadNodeHead_latestHead :: !(Maybe (Json VeryBlockLike))
+  { _errorLogBadNodeHead_log :: Id ErrorLog
+  , _errorLogBadNodeHead_node :: Id Node
+  , _errorLogBadNodeHead_bootstrapped :: Bool
+  , _errorLogBadNodeHead_chainStatus :: SyncState
+  , _errorLogBadNodeHead_nodeHead :: Json VeryBlockLike
+  , _errorLogBadNodeHead_latestHead :: Maybe (Json VeryBlockLike)
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBadNodeHead where
   type IdData ErrorLogBadNodeHead = Id ErrorLog
@@ -847,32 +847,32 @@ instance HasId ErrorLogBadNodeHead where
 -- possible for a user to acknowledge a miss, then for the same level missed to
 -- be re-reported;  we explicitly ignore that possibility.
 data ErrorLogBakerMissed = ErrorLogBakerMissed
-  { _errorLogBakerMissed_log :: !(Id ErrorLog)
-  , _errorLogBakerMissed_baker :: !(Id Baker)
-  , _errorLogBakerMissed_right :: !RightKind
-  , _errorLogBakerMissed_level :: !RawLevel
-  , _errorLogBakerMissed_fitness :: !Fitness
-  , _errorLogBakerMissed_bakeTime :: !UTCTime
+  { _errorLogBakerMissed_log :: Id ErrorLog
+  , _errorLogBakerMissed_baker :: Id Baker
+  , _errorLogBakerMissed_right :: RightKind
+  , _errorLogBakerMissed_level :: RawLevel
+  , _errorLogBakerMissed_fitness :: Fitness
+  , _errorLogBakerMissed_bakeTime :: UTCTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerMissed where
   type IdData ErrorLogBakerMissed = Id ErrorLog
 
 data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
-  { _errorLogInsufficientFunds_log :: !(Id ErrorLog)
-  , _errorLogInsufficientFunds_baker :: !(Id Baker)
-  , _errorLogInsufficientFunds_detected :: !UTCTime
+  { _errorLogInsufficientFunds_log :: Id ErrorLog
+  , _errorLogInsufficientFunds_baker :: Id Baker
+  , _errorLogInsufficientFunds_detected :: UTCTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInsufficientFunds where
   type IdData ErrorLogInsufficientFunds = Id ErrorLog
 
 data ErrorLogVotingReminder = ErrorLogVotingReminder
-  { _errorLogVotingReminder_log :: !(Id ErrorLog)
-  , _errorLogVotingReminder_baker :: !(Id Baker)
-  , _errorLogVotingReminder_periodKind :: !VotingPeriodKind
-  , _errorLogVotingReminder_votingPeriod :: !RawLevel
-  , _errorLogVotingReminder_previouslyVoted :: !Bool
-  , _errorLogVotingReminder_rangeMax :: !Int
-  , _errorLogVotingReminder_periodEndsAt :: !UTCTime
+  { _errorLogVotingReminder_log :: Id ErrorLog
+  , _errorLogVotingReminder_baker :: Id Baker
+  , _errorLogVotingReminder_periodKind :: VotingPeriodKind
+  , _errorLogVotingReminder_votingPeriod :: RawLevel
+  , _errorLogVotingReminder_previouslyVoted :: Bool
+  , _errorLogVotingReminder_rangeMax :: Int
+  , _errorLogVotingReminder_periodEndsAt :: UTCTime
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogVotingReminder where
   type IdData ErrorLogVotingReminder = Id ErrorLog
@@ -885,19 +885,19 @@ data InternalNodeFailureReason
 instance Exception InternalNodeFailureReason
 
 data ErrorLogInternalNodeFailed = ErrorLogInternalNodeFailed
-  { _errorLogInternalNodeFailed_log :: !(Id ErrorLog)
-  , _errorLogInternalNodeFailed_node :: !(Id NodeInternal)
-  , _errorLogInternalNodeFailed_reason :: !InternalNodeFailureReason
+  { _errorLogInternalNodeFailed_log :: Id ErrorLog
+  , _errorLogInternalNodeFailed_node :: Id NodeInternal
+  , _errorLogInternalNodeFailed_reason :: InternalNodeFailureReason
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogInternalNodeFailed where
   type IdData ErrorLogInternalNodeFailed = Id ErrorLog
 
 data ErrorLog = ErrorLog
-  { _errorLog_started :: !UTCTime
-  , _errorLog_stopped :: !(Maybe UTCTime)
-  , _errorLog_lastSeen :: !UTCTime
-  , _errorLog_noticeSentAt :: !(Maybe UTCTime)
-  , _errorLog_chainId :: !ChainId
+  { _errorLog_started :: UTCTime
+  , _errorLog_stopped :: Maybe UTCTime
+  , _errorLog_lastSeen :: UTCTime
+  , _errorLog_noticeSentAt :: Maybe UTCTime
+  , _errorLog_chainId :: ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLog
 
@@ -908,67 +908,67 @@ data UpgradeCheckError
   deriving (Eq, Ord, Generic, Typeable, Enum, Bounded, Read, Show)
 
 data UpstreamVersion = UpstreamVersion
-  { _upstreamVersion_error :: !(Maybe UpgradeCheckError)
-  , _upstreamVersion_version :: !(Maybe Version)
-  , _upstreamVersion_updated :: !UTCTime
-  , _upstreamVersion_dismissed :: !Bool
+  { _upstreamVersion_error :: Maybe UpgradeCheckError
+  , _upstreamVersion_version :: Maybe Version
+  , _upstreamVersion_updated :: UTCTime
+  , _upstreamVersion_dismissed :: Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId UpstreamVersion
 
 -- | Stores settings for limiting notifications. Missing records for a
 -- 'RightKind' indicate not to do any filtering
 data RightNotificationSettings = RightNotificationSettings
-  { _rightNotificationSettings_rightKind :: !RightKind
-  , _rightNotificationSettings_limit :: !RightNotificationLimit
+  { _rightNotificationSettings_rightKind :: RightKind
+  , _rightNotificationSettings_limit :: RightNotificationLimit
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data RightNotificationLimit = RightNotificationLimit
-  { _rightNotificationLimit_amount :: !Int -- ^ How many rights have to be missed before notifying
-  , _rightNotificationLimit_withinMinutes :: !Int -- ^ Time window (minutes) for counting missed rights
+  { _rightNotificationLimit_amount :: Int -- ^ How many rights have to be missed before notifying
+  , _rightNotificationLimit_withinMinutes :: Int -- ^ Time window (minutes) for counting missed rights
   } deriving (Eq, Ord, Show, Typeable, Generic)
 
 data TelegramConfig = TelegramConfig
-  { _telegramConfig_botName :: !(Maybe Text)
-  , _telegramConfig_botApiKey :: !Text
-  , _telegramConfig_created :: !UTCTime
-  , _telegramConfig_updated :: !UTCTime
-  , _telegramConfig_enabled :: !Bool
-  , _telegramConfig_validated :: !(Maybe Bool)
+  { _telegramConfig_botName :: Maybe Text
+  , _telegramConfig_botApiKey :: Text
+  , _telegramConfig_created :: UTCTime
+  , _telegramConfig_updated :: UTCTime
+  , _telegramConfig_enabled :: Bool
+  , _telegramConfig_validated :: Maybe Bool
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramConfig
 
 data TelegramRecipient = TelegramRecipient
-  { _telegramRecipient_config :: !(Id TelegramConfig)
-  , _telegramRecipient_userId :: !Int64
-  , _telegramRecipient_chatId :: !Int64
-  , _telegramRecipient_firstName :: !Text
-  , _telegramRecipient_lastName :: !(Maybe Text)
-  , _telegramRecipient_username :: !(Maybe Text)
-  , _telegramRecipient_created :: !UTCTime
-  , _telegramRecipient_deleted :: !Bool
+  { _telegramRecipient_config :: Id TelegramConfig
+  , _telegramRecipient_userId :: Int64
+  , _telegramRecipient_chatId :: Int64
+  , _telegramRecipient_firstName :: Text
+  , _telegramRecipient_lastName :: Maybe Text
+  , _telegramRecipient_username :: Maybe Text
+  , _telegramRecipient_created :: UTCTime
+  , _telegramRecipient_deleted :: Bool
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramRecipient
 
 data TelegramMessageQueue = TelegramMessageQueue
-  { _telegramMessageQueue_recipient :: !(Id TelegramRecipient)
-  , _telegramMessageQueue_message :: !Text
-  , _telegramMessageQueue_created :: !UTCTime
+  { _telegramMessageQueue_recipient :: Id TelegramRecipient
+  , _telegramMessageQueue_message :: Text
+  , _telegramMessageQueue_created :: UTCTime
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId TelegramMessageQueue
 
 data SnapshotMeta = SnapshotMeta
-  { _snapshotMeta_filename :: !Text -- user supplied
-  , _snapshotMeta_storePath :: !Text -- where stored
-  , _snapshotMeta_uploadTime :: !UTCTime
-  , _snapshotMeta_importCompleteTime :: !(Maybe UTCTime)
-  , _snapshotMeta_importError :: !(Maybe Text)
-  , _snapshotMeta_headBlock :: !(Maybe BlockHash)
-  , _snapshotMeta_headBlockPrefix :: !(Maybe Text)
-  , _snapshotMeta_headBlockLevel :: !(Maybe RawLevel)
-  , _snapshotMeta_headBlockBakeTime :: !(Maybe UTCTime)
-  , _snapshotMeta_control :: !ProcessControl
-  , _snapshotMeta_mbUri :: !(Maybe URI)
-  , _snapshotMeta_downloadError :: !(Maybe Text)
+  { _snapshotMeta_filename :: Text -- user supplied
+  , _snapshotMeta_storePath :: Text -- where stored
+  , _snapshotMeta_uploadTime :: UTCTime
+  , _snapshotMeta_importCompleteTime :: Maybe UTCTime
+  , _snapshotMeta_importError :: Maybe Text
+  , _snapshotMeta_headBlock :: Maybe BlockHash
+  , _snapshotMeta_headBlockPrefix :: Maybe Text
+  , _snapshotMeta_headBlockLevel :: Maybe RawLevel
+  , _snapshotMeta_headBlockBakeTime :: Maybe UTCTime
+  , _snapshotMeta_control :: ProcessControl
+  , _snapshotMeta_mbUri :: Maybe URI
+  , _snapshotMeta_downloadError :: Maybe Text
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId SnapshotMeta
 

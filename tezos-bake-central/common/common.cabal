@@ -99,3 +99,4 @@ library
   else
     if flag(linux-package)
       cpp-options: -DDISTRO_LINUX_PACKAGE
+  default-extensions: StrictData

@@ -25,9 +25,9 @@ import ExtraPrelude
 data AlertType = Unresolved | Resolved
 
 data Alert = Alert
-  { _alert_type :: !AlertType
-  , _alert_subject :: !Text
-  , _alert_content :: !Text
+  { _alert_type :: AlertType
+  , _alert_subject :: Text
+  , _alert_content :: Text
   }
 
 queueAlert
