@@ -38,6 +38,7 @@ import Data.Semigroup ((<>), Max(..))
 import Data.Sequence (Seq())
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
+import Data.Time (UTCTime)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
@@ -55,7 +56,7 @@ import qualified Tezos.V010.Types as V010
 import qualified Tezos.V005.Types as V005
 import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 
-import Backend.Config (AppConfig (..), HasAppConfig)
+import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
 import Backend.Alerts
 import Backend.Common (worker', AppSerializable)
 import Backend.Config (AppConfig (..))
@@ -288,6 +289,25 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     -- if so, examine the block to see if they exercized those rights
     -- if not, report an error; if so, clear an error.
     detailsBranch :: BlockHash = maybe headPred (view hash . _bakerDetails_branch) details
+    cleanAction = \blockTimestamp blockFitness kind bakerPkh blockLevel -> do
+      clearMissedBake blockFitness kind bakerPkh blockLevel
+      -- If the internal baker successfully endorses or baker, then there is an
+      -- evidence that the Ledger device is connected properly
+      when isInternal $ do
+        chainId <- _appConfig_chainId <$> askAppConfig
+        mbLedgerDisconnectionError :: Maybe (Id ErrorLog) <- listToMaybe . fmap fromOnly <$> [queryQ|
+          SELECT el.id
+            FROM "ErrorLog" el
+            JOIN "ErrorLogBakerLedgerDisconnected" t ON t.log = el.id
+           WHERE el.stopped IS NULL
+             AND el."chainId" = ?chainId
+             AND t."baker#publicKeyHash" = ?pkh
+             AND el."lastSeen" < ?blockTimestamp
+           ORDER BY el."lastSeen" DESC, el.started DESC
+           LIMIT 1
+          |]
+        whenJust mbLedgerDisconnectionError $ \_ -> clearBakerLedgerDisconnected bakerPkh
+
   detailsBlock <- nodeQueryDataSource $ NodeQuery_Block detailsBranch
   bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl, headLvl - 1 .. detailsBlock ^. level] $ \lvl -> do
     thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
@@ -296,7 +316,8 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     bakingAlerts :: [AppSerializable ()]
                  <- whenM (any (\br -> ((== 0) . _bakingRights_priority) br && ((== _baker_publicKeyHash baker) . _bakingRights_delegate) br) bakingRights) $ do
       let action =
-            bool (reportMissedBake (thisBlock ^. timestamp)) clearMissedBake ((thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker)
+            bool reportMissedBake cleanAction ((thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker)
+              (thisBlock ^. timestamp)
               (headBlock ^. fitness)
               RightKind_Baking
               (baker ^. baker_publicKeyHash)
@@ -313,8 +334,8 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
           (^..V010.block_operations . traverse . traverse . V010.operation_contents . traverse . V010._OperationContents_EndorsementWithSlot . V010.operationContentsEndorsementWithSlot_metadata . V010.endorsementMetadata_delegate)
           (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
           thisBlock
-        mkAction = bool (reportMissedBake (predBlock ^. timestamp)) clearMissedBake (_baker_publicKeyHash baker `elem` endorserDelegates)
-        action = mkAction (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
+        mkAction = bool reportMissedBake cleanAction (_baker_publicKeyHash baker `elem` endorserDelegates)
+        action = mkAction (predBlock ^. timestamp) (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
       return $ pure action
 
     return $ sequence_ $ bakingAlerts <> endorsingAlerts

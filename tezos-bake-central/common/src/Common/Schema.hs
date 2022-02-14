@@ -746,6 +746,7 @@ instance HasId ErrorLogNetworkUpdate where
 data ErrorLogBakerLedgerDisconnected = ErrorLogBakerLedgerDisconnected
   { _errorLogBakerLedgerDisconnected_log :: Id ErrorLog
   , _errorLogBakerLedgerDisconnected_baker :: Id Baker
+  , _errorLogBakerLedgerDisconnected_isWrongApp :: Bool
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerLedgerDisconnected where
   type IdData ErrorLogBakerLedgerDisconnected = Id ErrorLog

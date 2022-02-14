@@ -64,11 +64,13 @@ networkGitLabProjectIdDefault = "3836952"
 ledgerCheckDelay :: FilePath
 ledgerCheckDelay = "ledger-check-delay"
 
+defaultLedgerCheckDelay :: NominalDiffTime
+defaultLedgerCheckDelay = 10 -- seconds
+
 parseSecondsUnsafe :: Text -> NominalDiffTime
 parseSecondsUnsafe = unsafeParse "seconds" $ \a -> case readMaybe (T.unpack a) of
   Nothing -> Left "Not a number of seconds"
-  Just b | b >= 45 -> Right $ fromIntegral (b :: Integer)
-  _ -> Left "Ledger check delay must be 45 seconds or more"
+  Just b -> Right $ fromIntegral (b :: Integer)
 
 parseBool :: Text -> Bool
 parseBool txt

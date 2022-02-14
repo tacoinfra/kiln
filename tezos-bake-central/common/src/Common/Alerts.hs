@@ -129,18 +129,37 @@ data ErrorLogWidgets m = ErrorLogWidgets
   }
 
 bakerLedgerDisconnectedDescriptions :: ErrorLogBakerLedgerDisconnected -> BakerErrorDescriptions
-bakerLedgerDisconnectedDescriptions _elog = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Ledger Device is disconnected"
-  , _bakerErrorDescriptions_tile = "Ledger Device is disconnected"
-  , _bakerErrorDescriptions_notification = "The Ledger Device for this baker is disconected."
-  , _bakerErrorDescriptions_problem = ["The Ledger Device that is used by this baker is not connected and will cause this baker to miss any baking or endorsing rights that occur while the device is disconnected."]
+bakerLedgerDisconnectedDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = title
+  , _bakerErrorDescriptions_tile = title
+  , _bakerErrorDescriptions_notification = notification
+  , _bakerErrorDescriptions_problem = problem
   , _bakerErrorDescriptions_warning = Nothing
-  , _bakerErrorDescriptions_fix = "Make sure the Ledger Device is connected to your computer and has the Tezos Baking app open."
+  , _bakerErrorDescriptions_fix = fixMessage
   , _bakerErrorDescriptions_resolved = const
-     ( "The Ledger Device that is used by this baker has been re-connected."
+     ( resolved
      , ""
      )
   }
+  where
+    isWrongApp = elog ^.errorLogBakerLedgerDisconnected_isWrongApp
+    title = bool "Ledger Device is disconnected" "Tezos Wallet app is opened on the Ledger Device" isWrongApp
+    notification = bool
+      "The Ledger Device for this baker is disconected."
+      "The Ledger Device for this baker is connected, but the Tezos Wallet app is opened on it."
+      isWrongApp
+    problem = bool
+      ["The Ledger Device that is used by this baker is not connected and will cause this baker to miss any baking or endorsing rights that occur while the device is disconnected."]
+      ["The Ledger Device for this baker is connected, but the Tezos Wallet app is opened on it, this will cause this baker to miss any baking or endorsing rights that occur while the Tezos Baking app is not opened."]
+      isWrongApp
+    fixMessage = bool
+      "Make sure the Ledger Device is connected to your computer and has the Tezos Baking app open."
+      "Open the Tezos Baking app on the Ledger Device."
+      isWrongApp
+    resolved = bool
+      "The Ledger Device that is used by this baker has been re-connected."
+      "Tezos Baking app was opened on the Ledger Device."
+      isWrongApp
 
 bakerVotingReminderDescriptions :: ErrorLogVotingReminder -> Time.NominalDiffTime -> BakerErrorDescriptions
 bakerVotingReminderDescriptions elog periodEndsIn = BakerErrorDescriptions
