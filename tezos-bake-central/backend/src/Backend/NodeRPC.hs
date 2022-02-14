@@ -62,7 +62,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logWarnSH)
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -81,6 +81,7 @@ import Data.Either (rights)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
+import Data.Int (Int32)
 import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
@@ -134,8 +135,8 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_BakingRights    :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRights)
-  NodeQuery_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRights)
+  NodeQuery_BakingRights    :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
+  NodeQuery_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
   NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
   NodeQuery_Ballot          :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
@@ -146,28 +147,28 @@ data NodeQuery a where
   NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
   NodeQuery_Block           :: BlockHash -> NodeQuery BlockCrossCompat
   NodeQuery_BlockPred       :: BlockHash -> RawLevel -> NodeQuery BlockCrossCompat
-  NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeader
+  NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeaderCrossCompat
   NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
   NodeQuery_Blocks          :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
+  NodeQuery_Round           :: BlockHash -> NodeQuery Int32
 deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
 data NodeQueryIx a where
-  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq BakingRights)
-  NodeQueryIx_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq EndorsingRights)
+  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq BakingRightsCrossCompat)
+  NodeQueryIx_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq EndorsingRightsCrossCompat)
 deriving instance Show (NodeQueryIx a)
 
 toCacheDelegateInfo :: DelegateInfoCrossCompat -> CacheDelegateInfo
 toCacheDelegateInfo di = CacheDelegateInfo
-  { _cacheDelegateInfo_balance = _delegateInfoCrossCompat_balance di
-  , _cacheDelegateInfo_frozenBalance = _delegateInfoCrossCompat_frozenBalance di
-  , _cacheDelegateInfo_frozenBalanceByCycle = _delegateInfoCrossCompat_frozenBalanceByCycle di
-  , _cacheDelegateInfo_stakingBalance = _delegateInfoCrossCompat_stakingBalance di
+  { _cacheDelegateInfo_balance = di ^. delegateInfoCrossCompat_balance
+  , _cacheDelegateInfo_frozenBalance = di ^. delegateInfoCrossCompat_frozenBalance
+  , _cacheDelegateInfo_stakingBalance = di ^. delegateInfoCrossCompat_stakingBalance
   -- , _cacheDelegateInfo_delegatedContracts = _delegateInfo_delegatedContracts di
-  , _cacheDelegateInfo_delegatedBalance = _delegateInfoCrossCompat_delegatedBalance di
-  , _cacheDelegateInfo_deactivated = _delegateInfoCrossCompat_deactivated di
-  , _cacheDelegateInfo_gracePeriod = _delegateInfoCrossCompat_gracePeriod di
+  , _cacheDelegateInfo_delegatedBalance = di ^. delegateInfoCrossCompat_delegatedBalance
+  , _cacheDelegateInfo_deactivated = di ^. delegateInfoCrossCompat_deactivated
+  , _cacheDelegateInfo_gracePeriod = di ^. delegateInfoCrossCompat_gracePeriod
   }
 
 data RpcResult a = RpcResult
@@ -595,6 +596,7 @@ getContext = \case
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
   NodeQuery_PublicKey _ -> getLatestBranch
   NodeQuery_Blocks ctx _ -> pure ctx
+  NodeQuery_Round ctx -> pure ctx
 
   where
     getLatestBranch :: m BlockHash
@@ -765,7 +767,7 @@ nodeQueryDataSourceImpl = nodeQueryImpl myNodeRPC ChainTag_Hash
 
 nodeQueryImpl
   :: forall a chain repr.
-   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
+   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeaderCrossCompat, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
      => repr c -> m (RpcResult c))
@@ -804,6 +806,7 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)
     pure $ RpcResult (Aeson.encode blocks) blocks
+  NodeQuery_Round branch -> nodeRPC' $ rRound chainId branch
   where
     nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT KilnRpcError IO (RpcResult c)
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx
@@ -885,8 +888,8 @@ nodeQueryIx q = do
     addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
       NodeQueryIx_BakingRights ctx lvls -> case result' of
-        (bakingRights :: Seq BakingRights) -> for_ lvls $ \lvl -> do
-          let lvlRights = Seq.filter (\right -> right ^. bakingRights_level == lvl) bakingRights
+        (bakingRights :: Seq BakingRightsCrossCompat) -> for_ lvls $ \lvl -> do
+          let lvlRights = Seq.filter (\right -> right ^. bakingRightsCrossCompat_level == lvl) bakingRights
               result = Json $ Aeson.toJSON lvlRights
           unless (null lvlRights) $
             void [executeQ|
@@ -894,8 +897,8 @@ nodeQueryIx q = do
               values (?ctx, ?lvl, ?result)
             |]
       NodeQueryIx_EndorsingRights ctx lvls -> case result' of
-        (endorsingRights :: Seq EndorsingRights) -> for_ lvls $ \lvl -> do
-          let lvlRights = Seq.filter (\right -> right ^. endorsingRights_level == lvl) endorsingRights
+        (endorsingRights :: Seq EndorsingRightsCrossCompat) -> for_ lvls $ \lvl -> do
+          let lvlRights = Seq.filter (\right -> right ^. endorsingRightsCrossCompat_level == lvl) endorsingRights
               result = Json $ Aeson.toJSON lvlRights
           unless (null lvlRights) $
             void [executeQ|
@@ -913,21 +916,21 @@ nodeQueryIxBakingRights1
   => BlockHash -- ^ Context block hash
   -> RawLevel -- ^ Context block level
   -> Priority -- ^ The minimum priority in the window of rights we want. The window will be 'priorityChunkSize' large.
-  -> NodeQueryT m BakingRights
+  -> NodeQueryT m BakingRightsCrossCompat
 nodeQueryIxBakingRights1 ctx lvl prio = do
   allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx (Set.singleton lvl)
   let
     chunked = fillChunk allRights
 
-    fillChunk :: Seq BakingRights -> V.Vector BakingRights
+    fillChunk :: Seq BakingRightsCrossCompat -> V.Vector BakingRightsCrossCompat
     fillChunk = (makeBlanks V.//)
-      . map (\x -> (fromIntegral $ _bakingRights_priority x - prio, x))
+      . map (\x -> (fromIntegral $ x ^. bakingRightsCrossCompat_priority - prio, x))
       -- Ensure things are in the window we want.
       -- Newer nodes return more than older nodes (see https://tezos.gitlab.io/protocols/006_carthage.html#baking-rights)
-      . filter (\x -> _bakingRights_priority x >= prio && _bakingRights_priority x < prio + priorityChunkSize)
+      . filter (\x -> x ^. bakingRightsCrossCompat_priority >= prio && x ^. bakingRightsCrossCompat_priority < prio + priorityChunkSize)
       . toList
 
-    makeBlanks :: V.Vector BakingRights
+    makeBlanks :: V.Vector BakingRightsCrossCompat
     makeBlanks = V.generate priorityChunkSize $ \i' ->
       throw $ NoRightsException ctx lvl $ prio + fromIntegral i'
 
@@ -960,7 +963,7 @@ calculateBakerStats pkhs = do
 {-# INLINE logKilnRpcError #-}
 logKilnRpcError :: MonadLogger m => Text -> KilnRpcError -> m ()
 logKilnRpcError _ (KilnRpcError_RpcError (RpcError_RestrictedEndpoint _)) = pure ()
-logKilnRpcError desc err = $(logDebug) $
+logKilnRpcError desc err = $(logError) $
   "Node Query failed for '" <> desc <> "' Reason: " <> prettyKilnRpcError err
 
 prettyKilnRpcError :: KilnRpcError -> Text
@@ -1144,7 +1147,7 @@ buildProtocolIndex branch protoHash = do
           pure ProtocolIndex
             { _protocolIndex_chainId = chainId
             , _protocolIndex_hash = firstBlock ^. protocolHash
-            , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
+            , _protocolIndex_proto = firstBlock ^. blockHeaderFullCrossCompat . blockHeaderFullCrossCompat_proto
             , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw constants) of
                                                Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
                                                Right x -> x
@@ -1265,7 +1268,7 @@ fetchProtocolForBlock chainId blkHash = do
                                              Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
                                              Right x -> x
           , _protocolIndex_constants = _rpcResult_value protoInfo
-          , _protocolIndex_proto = blockHeader ^. blockHeader_proto
+          , _protocolIndex_proto = blockHeader ^. blockHeaderCrossCompat_proto
           , _protocolIndex_firstBlockHash = Nothing
           , _protocolIndex_firstBlockPredecessor = Nothing
           , _protocolIndex_firstBlockLevel = Nothing

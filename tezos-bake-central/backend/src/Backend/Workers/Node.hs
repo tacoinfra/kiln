@@ -64,7 +64,6 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC hiding (getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
-import qualified Tezos.V005.Types as V005
 import qualified Tezos.V009.Types as V009
 import qualified Tezos.V010.Types as V010
 import qualified Tezos.Unsafe
@@ -688,7 +687,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       for_ mEndBlock $ \endBlock -> do
         (startBlockTimestamp, periodEndBlockPred) <- do
           startBlock <- flip runReaderT nds . runExceptT @KilnRpcError $
-            fmap toBlockHeader $ getBlockLevelAncestor (latestBlock ^. level - startBlockLevel) (latestBlock ^. hash)
+            fmap toBlockHeaderCrossCompat $ getBlockLevelAncestor (latestBlock ^. level - startBlockLevel) (latestBlock ^. hash)
           let startBlockTimestamp = case startBlock of
                 Right block -> block ^. timestamp
                 Left _ -> unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
@@ -698,14 +697,14 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     EQ -> do
       let startBlockLevel = latestBlock ^. level - currentVotingPosition
       startBlock <- flip runReaderT nds . runExceptT @KilnRpcError $
-        fmap toBlockHeader $ getBlockLevelAncestor currentVotingPosition (latestBlock ^. hash)
+        fmap toBlockHeaderCrossCompat $ getBlockLevelAncestor currentVotingPosition (latestBlock ^. hash)
       let startBlockTimestamp = case startBlock of
             Right block -> block ^. timestamp
             Left _ -> unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlockHeader $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
-        else pure (toBlockHeader latestBlock)
+        else pure (toBlockHeaderCrossCompat latestBlock)
       updateTo startBlockLevel startBlockTimestamp predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p
@@ -718,8 +717,6 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Adoption -> notify NotifyTag_PeriodAdoption Nothing
 
   where
-    toBlockHeader = blockCrossCata V010.toBlockHeader V005.toBlockHeader
-
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
     getBlockLevelAncestor lvl hash' = nodeQueryDataSource $ NodeQuery_BlockPred hash' lvl
 

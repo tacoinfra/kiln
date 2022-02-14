@@ -34,6 +34,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
+import Data.Maybe (mapMaybe)
 import Data.Semigroup ((<>), Max(..))
 import Data.Sequence (Seq())
 import qualified Data.Sequence as Seq
@@ -52,8 +53,13 @@ import Rhyolite.Schema (Json(..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
-import qualified Tezos.V010.Types as V010
 import qualified Tezos.V005.Types as V005
+import qualified Tezos.V010.Types as V010
+import qualified Tezos.V012.Types as V012
+import Tezos.V012.NodeRPC.CrossCompat as V012
+  (BakingRightsCrossCompat, EndorsingRightsCrossCompat, bakingRightsCrossCompat_delegate, bakingRightsCrossCompat_level,
+  bakingRightsCrossCompat_priority, blockCrossData, endorsingRightsCrossCompat_delegates, endorsingRightsCrossCompat_level)
+import Tezos.V012.NodeRPC.CrossCompat as V011 (blockCrossCata)
 import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
@@ -154,10 +160,10 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
           (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvls)
           (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvls)
         let
-          pri1bakers :: [BakingRights]
-          pri1bakers = filter (\br -> (flip Set.member pkhs . _bakingRights_delegate) br && ((== 0) . _bakingRights_priority) br) $ toList reqBakers
-          endorsers :: [EndorsingRights]
-          endorsers = filter (flip Set.member pkhs . _endorsingRights_delegate) $ toList reqEndorsers
+          pri1bakers :: [BakingRightsCrossCompat]
+          pri1bakers = filter (\br -> (flip Set.member pkhs . view bakingRightsCrossCompat_delegate) br && ((== 0) . view bakingRightsCrossCompat_priority) br) $ toList reqBakers
+          endorsers :: [EndorsingRightsCrossCompat]
+          endorsers = filter (any (flip Set.member pkhs) . view endorsingRightsCrossCompat_delegates) $ toList reqEndorsers
 
           bakerRightCycleInfo :: PublicKeyHash -> BakerRightsProgress
           bakerRightCycleInfo pkh = BakerRightsProgress
@@ -169,16 +175,18 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
           bakerRights pid pkh = flip (maybe mempty) pid $ \pid' ->
             map (\br -> BakerRight
               { _bakerRight_branch = pid'
-              , _bakerRight_level = _bakingRights_level br
+              , _bakerRight_level = br ^. bakingRightsCrossCompat_level
               , _bakerRight_right = RightKind_Baking
-              , _bakerRight_slots = Nothing
-              }) (filter ((== pkh) ._bakingRights_delegate) pri1bakers) ++
-            map (\end -> BakerRight
-              { _bakerRight_branch = pid'
-              , _bakerRight_level = _endorsingRights_level end
-              , _bakerRight_right = RightKind_Endorsing
-              , _bakerRight_slots = Just $ length $ _endorsingRights_slots end
-              }) (filter ((== pkh) ._endorsingRights_delegate) endorsers)
+              }) (filter ((== pkh) . view bakingRightsCrossCompat_delegate) pri1bakers) ++
+            mapMaybe (\end ->
+              if pkh `elem` end ^. endorsingRightsCrossCompat_delegates
+                then Just $ BakerRight
+                  { _bakerRight_branch = pid'
+                  , _bakerRight_level = end ^. endorsingRightsCrossCompat_level
+                  , _bakerRight_right = RightKind_Endorsing
+                  }
+                else Nothing
+              ) endorsers
 
         $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel $ Set.findMax lvls))
         lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ for_ pkhs $ \pkh -> do
@@ -312,9 +320,9 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
   bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl, headLvl - 1 .. detailsBlock ^. level] $ \lvl -> do
     thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
     predBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl + 1)
-    bakingRights :: Seq BakingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
+    bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
     bakingAlerts :: [AppSerializable ()]
-                 <- whenM (any (\br -> ((== 0) . _bakingRights_priority) br && ((== _baker_publicKeyHash baker) . _bakingRights_delegate) br) bakingRights) $ do
+                 <- whenM (any (\br -> ((== 0) . view bakingRightsCrossCompat_priority) br && ((== _baker_publicKeyHash baker) . view bakingRightsCrossCompat_delegate) br) bakingRights) $ do
       let action =
             bool reportMissedBake cleanAction ((thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker)
               (thisBlock ^. timestamp)
@@ -325,15 +333,18 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
       return $ pure action
 
     -- endorsements *on* this block are *of* the previous block
-    endorsers :: Seq EndorsingRights <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
+    endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
     endorsingAlerts :: [AppSerializable ()]
-                    <- whenM (elem (_baker_publicKeyHash baker) $ _endorsingRights_delegate <$> endorsers) $ do
+                    <- whenM (any (elem (_baker_publicKeyHash baker)) $ view endorsingRightsCrossCompat_delegates <$> endorsers) $ do
 
       let
-        endorserDelegates = blockCrossCata
-          (^..V010.block_operations . traverse . traverse . V010.operation_contents . traverse . V010._OperationContents_EndorsementWithSlot . V010.operationContentsEndorsementWithSlot_metadata . V010.endorsementMetadata_delegate)
-          (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
-          thisBlock
+        endorserDelegates = V012.blockCrossData
+            (^..V012.block_operations . traverse . traverse . V012.operation_contents . traverse . V012._OperationContents_Endorsement . V012.operationContentsEndorsement_metadata . V012.endorsementMetadata_delegate)
+            (V011.blockCrossCata
+              (^..V010.block_operations . traverse . traverse . V010.operation_contents . traverse . V010._OperationContents_EndorsementWithSlot . V010.operationContentsEndorsementWithSlot_metadata . V010.endorsementMetadata_delegate)
+              (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
+            )
+            thisBlock
         mkAction = bool reportMissedBake cleanAction (_baker_publicKeyHash baker `elem` endorserDelegates)
         action = mkAction (predBlock ^. timestamp) (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
       return $ pure action
