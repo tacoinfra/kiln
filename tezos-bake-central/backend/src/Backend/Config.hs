@@ -220,9 +220,14 @@ data NodeConfigFile' = NodeConfigFile'
 data BinaryPaths = BinaryPaths
   { _binaryPaths_nodePath :: FilePath
   , _binaryPaths_clientPath :: FilePath
-  , _binaryPaths_bakerEndorserPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
-  }
-  deriving (Show)
+  , _binaryPaths_bakerEndorserPaths :: NonEmpty BakerEndorserPaths
+  } deriving (Show)
+
+data BakerEndorserPaths = BakerEndorserPaths
+  { _bakerEndorserPaths_proto :: ProtocolHash
+  , _bakerEndorserPaths_bakerPath :: Maybe FilePath
+  , _bakerEndorserPaths_endorserPath :: Maybe FilePath
+  } deriving (Show)
 
 concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   { Aeson.fieldLabelModifier
@@ -240,4 +245,5 @@ concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   , ''NodeConfigShellPeerValidator
   , ''NodeConfigShellPrevalidator
   , ''BinaryPaths
+  , ''BakerEndorserPaths
   ]
