@@ -263,15 +263,23 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
         dsh <- liftIO $ atomically $ dataSourceHead nds
         doCheck <- for dsh $ \blk -> checkKilnBakerAndNextRights appConfig nds blk >>= \case
           -- If we don't have an internal baker, don't bother checking
-          (Nothing, _) -> pure False
+          (Nothing, _, _) -> pure False
           -- Avoid sending commands to the ledger within two blocks of baking rights
-          (_, Just (_, lvl)) -> do
-            let doC = (blk ^. level < lvl - 2 || blk ^. level > lvl + 2)
+          (_, Just (_, lvl), progressMay) -> do
+            let doC = blk ^. level < lvl - 2 || blk ^. level > lvl + 2
             -- This is pretty spammy. We probably don't want this without updating the updated flag...
             -- unless (doC || wasConnected) $ $(logWarn) ("Baking rights approaching at level " <> tshow lvl <> ". Kiln last saw that the ledger was disconnected!")
-            pure doC
+            case progressMay of
+              -- If there are no rights we check that we actually seen all rights up to current block
+              -- since there is a possibility that there are rights that we haven't seen yet
+              Just progressLvl -> pure $ doC && progressLvl >= blk ^. level
+              -- This case shouldn't actually be possible
+              Nothing -> pure False
           -- If we have no rights but a baker, we may as well check because the rights are coming
-          _ -> pure True
+          (_, Nothing, progressMay) -> case progressMay of
+              -- If we have no rights, we still check that we've seen all rights up to current block
+              Just progressLvl -> pure $ progressLvl >= blk ^. level
+              Nothing -> pure False
         when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
 
 withDbAndConfig :: Pool Postgresql -> AppConfig -> AppSerializable a -> LoggingT IO a
@@ -635,17 +643,24 @@ submitBallot appConfig maybePaths proposal ballot = do
       Ballot_Pass -> "pass"
 
 -- Logic mostly copied from viewselector' next rights code
-checkKilnBakerAndNextRights :: (BlockLike blk) => AppConfig -> NodeDataSource -> blk -> LoggingT IO (Maybe PublicKeyHash, Maybe (RightKind, RawLevel))
+checkKilnBakerAndNextRights :: (BlockLike blk) => AppConfig -> NodeDataSource -> blk -> LoggingT IO (Maybe PublicKeyHash, Maybe (RightKind, RawLevel), Maybe RawLevel)
 checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
   v <- flip runReaderT nds $ runExceptT @KilnRpcError $ tryNodeQueryT $ do
+    let headLevel = blk ^. level
+        chainId = _appConfig_chainId appConfig
     bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
       (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
 
-    rightsMay :: Maybe [(RightKind, RawLevel)] <- for bakerInt $ \pkh -> do
-      let headLevel = blk ^. level
-          chainId = _appConfig_chainId appConfig
+    progressMay :: Maybe RawLevel <- flip (maybe (pure Nothing)) bakerInt $ \pkh -> do
+      fmap (headMay . fmap fromOnly) [queryQ|
+        SELECT brp."progress"
+        FROM "BakerRightsProgress" brp
+        WHERE brp."chainId" = ?chainId
+          AND brp."publicKeyHash" = ?pkh
+      |]
 
-      [queryQ|
+    rightsMay :: Maybe (RightKind, RawLevel) <- flip (maybe (pure Nothing)) bakerInt $ \pkh -> do
+      fmap headMay [queryQ|
           SELECT br."right", MIN(br.level)
           FROM "BakerRightsProgress" brp
           JOIN "BakerRight" br
@@ -656,5 +671,5 @@ checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource
           GROUP BY brp."publicKeyHash", br."right"
         |]
 
-    pure (bakerInt, (rightsMay >>= headMay))
-  pure $ (v^?_Right._Just._1._Just, v^?_Right._Just._2._Just)
+    pure (bakerInt, rightsMay, progressMay)
+  pure (v^?_Right._Just._1._Just, v^?_Right._Just._2._Just, v^?_Right._Just._3._Just)
