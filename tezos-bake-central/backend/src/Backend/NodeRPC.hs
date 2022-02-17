@@ -1032,7 +1032,7 @@ calculateBakeEfficiency branch len baker = do
 -}
 
 getActiveNodeDetails
-  :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike, Maybe RawLevel)]
+  :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike)]
 getActiveNodeDetails kilnNodeUri = do
   int <- let runningState = ProcessState_Running in [queryQ|
       SELECT d."data#headLevel"
@@ -1040,13 +1040,12 @@ getActiveNodeDetails kilnNodeUri = do
            , d."data#headBlockPred"
            , d."data#headBlockBakedAt" AT TIME ZONE 'UTC'
            , d."data#fitness"
-           , d."data#savePoint"
         FROM "NodeInternal" n
         JOIN "NodeDetails" d ON d.id = n.id
         JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND p."state" = ?runningState
-      |] <&> fmap (\(l, b, p, t, f, s) -> (kilnNodeUri, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
+      |] <&> fmap (\(l, b, p, t, f) -> (kilnNodeUri, VeryBlockLike <$> b <*> p <*> f <*> l <*> t))
   ext <- [queryQ|
       SELECT n."data#data#address"
            , d."data#headLevel"
@@ -1054,11 +1053,10 @@ getActiveNodeDetails kilnNodeUri = do
            , d."data#headBlockPred"
            , d."data#headBlockBakedAt" AT TIME ZONE 'UTC'
            , d."data#fitness"
-           , d."data#savePoint"
         FROM "NodeExternal" n
         JOIN "NodeDetails" d ON d.id = n.id
       WHERE NOT n."data#deleted"
-      |] <&> fmap (\(addr, l, b, p, t, f, s) -> (addr, VeryBlockLike <$> b <*> p <*> f <*> l <*> t, s))
+      |] <&> fmap (\(addr, l, b, p, t, f) -> (addr, VeryBlockLike <$> b <*> p <*> f <*> l <*> t))
   pure $ ext <> int
 
 -- Protocol Constants

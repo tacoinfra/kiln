@@ -82,6 +82,7 @@ preMigrate chainId =
   >=> migrateErrorLogBakerLedgerDisconnected
   >=> removeUnusedProtocolIndexColumns
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "BakerRight") "slots"
+  >=> removeNodeSavePointInfo
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -818,4 +819,11 @@ removeUnusedProtocolIndexColumns ta = do
         ]
   forM_ columns $ \column -> do
     dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") column ta
+  getTableAnalysis
+
+removeNodeSavePointInfo :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+removeNodeSavePointInfo ta = do
+  let columns = ["data#savePointUpdated", "data#savePoint"]
+  forM_ columns $ \column -> do
+    dropColumnIfExists (QualifiedIdentifier Nothing "NodeDetails") column ta
   getTableAnalysis
