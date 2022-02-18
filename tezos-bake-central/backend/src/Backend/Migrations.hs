@@ -9,6 +9,7 @@
 module Backend.Migrations where
 
 import Backend.Schema (migrateSchema)
+import Control.Monad (forM_)
 import Control.Monad.Fail (MonadFail(..))
 import Control.Monad.Logger (MonadLogger, logInfoS)
 import Data.String (fromString)
@@ -79,6 +80,8 @@ preMigrate chainId =
   >=> migrateNodeDetailsAddSynchronisationThreshold
   >=> migratePeriodTestingTable
   >=> migrateErrorLogBakerLedgerDisconnected
+  >=> removeUnusedProtocolIndexColumns
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "BakerRight") "slots"
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -797,3 +800,22 @@ migrateErrorLogBakerLedgerDisconnected ta = do
             |]
           getTableAnalysis
     _ -> pure ta
+
+removeUnusedProtocolIndexColumns :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+removeUnusedProtocolIndexColumns ta = do
+  let columns =
+        [ "constants#minProposalQuorum", "constants#quorumMax", "constants#quorumMin"
+        , "constants#initialEndorsers", "constants#delayPerMissingEndorsement"
+        , "constants#hardStorageLimitPerOperation", "constants#costPerByte"
+        , "constants#endorsementSecurityDeposit", "constants#blockSecurityDeposit"
+        , "constants#originationBurn", "constants#seedNonceRevelationTip"
+        , "constants#michelsonMaximumTypeSize", "constants#proofOfWorkThreshold"
+        , "constants#hardGasLimitPerBlock", "constants#hardGasLimitPerOperation"
+        , "constants#endorsersPerBlock", "constants#blocksPerRollSnapshot"
+        , "constants#blocksPerCommitment", "constants#maxOperationDataLength"
+        , "constants#maxRevelationsPerBlock", "constants#nonceLength"
+        , "constants#proofOfWorkNonceSize", "constants#originationSize"
+        ]
+  forM_ columns $ \column -> do
+    dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") column ta
+  getTableAnalysis
