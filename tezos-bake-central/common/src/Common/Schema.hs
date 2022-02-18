@@ -56,10 +56,7 @@ import Data.GADT.Compare.TH (deriveGCompare)
 import Data.GADT.Compare.TH (deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import qualified Data.HashMap.Strict as HashMap
-import Data.Map (Map)
-import qualified Data.Map as Map
-import Data.Semigroup (Semigroup, Sum (..), getSum, (<>))
-import Data.Sequence (Seq)
+import Data.Semigroup (Semigroup, (<>))
 import Data.Some (Some(..))
 import Data.Text (Text)
 import Data.Int (Int32, Int64)
@@ -81,7 +78,6 @@ import qualified Text.URI as Uri
 import Tezos.Common.NodeRPC.Types (RpcError, AsRpcError(asRpcError))
 import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Types hiding (TestChainStatus)
-import Tezos.V010.NodeRPC.CrossCompat (FrozenBalanceByCycleSeqCrossCompat)
 
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude
@@ -139,43 +135,12 @@ instance Aeson.ToJSON Uri.URI where
 instance Aeson.FromJSON Uri.URI where
   parseJSON x = maybe (fail "Invalid URI") pure . Uri.mkURI =<< Aeson.parseJSON x
 
-sumFees :: PublicKeyHash -> Operation -> TezDelta
-sumFees baker = getSum . views balanceUpdates getFee
-  where
-    getFee :: BalanceUpdate -> Sum TezDelta
-    getFee (BalanceUpdate_Freezer x) | _freezerUpdate_delegate x == baker = Sum (_freezerUpdate_change x)
-    getFee _ = Sum 0
-
 
 data Error = Error
   { _error_time :: UTCTime
   , _error_text :: Text
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
-data BlockBaker = BlockBaker
-  { _blockBaker_publicKeyHash :: PublicKeyHash
-  , _blockBaker_priority :: Priority
-  , _blockBaker_endorsements :: Map PublicKeyHash (Seq Word8)
-  } deriving (Eq, Ord, Show, Typeable, Generic)
-
-getBakerFromBlock :: Block -> BlockBaker
-getBakerFromBlock block = BlockBaker
-  { _blockBaker_publicKeyHash = block ^. block_metadata . blockMetadata_baker
-  , _blockBaker_priority = block ^. block_header . blockHeaderFull_priority
-  , _blockBaker_endorsements = block ^. block_operations
-    . traverse
-    . traverse
-    . operation_contents
-    . traverse
-    . _OperationContents_EndorsementWithSlot
-    . operationContentsEndorsementWithSlot_metadata
-    . to f
-  }
-  where
-    f :: EndorsementMetadata -> Map PublicKeyHash (Seq Word8)
-    f em = Map.singleton
-      (_endorsementMetadata_delegate em)
-      (_endorsementMetadata_slots em)
 
 data DeletableRow a = DeletableRow
   { _deletableRow_data :: a
@@ -424,8 +389,6 @@ data NodeDetailsData = NodeDetailsData
   , _nodeDetailsData_headBlockHash :: Maybe BlockHash
   , _nodeDetailsData_headBlockPred :: Maybe BlockHash
   , _nodeDetailsData_headBlockBakedAt :: Maybe UTCTime
-  , _nodeDetailsData_savePoint :: Maybe RawLevel
-  , _nodeDetailsData_savePointUpdated :: Maybe Cycle
   , _nodeDetailsData_peerCount :: Maybe Word64
   , _nodeDetailsData_networkStat :: NetworkStat
   , _nodeDetailsData_fitness :: Maybe Fitness
@@ -442,8 +405,6 @@ mkNodeDetails = NodeDetailsData
   , _nodeDetailsData_headBlockHash = Nothing
   , _nodeDetailsData_headBlockPred = Nothing
   , _nodeDetailsData_headBlockBakedAt = Nothing
-  , _nodeDetailsData_savePoint = Nothing
-  , _nodeDetailsData_savePointUpdated = Nothing
   , _nodeDetailsData_peerCount = Nothing
   , _nodeDetailsData_networkStat = NetworkStat 0 0 0 0
   , _nodeDetailsData_fitness = Nothing
@@ -620,9 +581,7 @@ instance HasId BakerData where
 data CacheDelegateInfo = CacheDelegateInfo
   { _cacheDelegateInfo_balance :: Tez
   , _cacheDelegateInfo_frozenBalance :: Tez
-  , _cacheDelegateInfo_frozenBalanceByCycle :: FrozenBalanceByCycleSeqCrossCompat
   , _cacheDelegateInfo_stakingBalance :: Tez
-  -- , _cacheDelegateInfo_delegatedContracts :: Seq.Seq ContractId
   , _cacheDelegateInfo_delegatedBalance :: Tez
   , _cacheDelegateInfo_deactivated :: Bool
   , _cacheDelegateInfo_gracePeriod :: Cycle
@@ -663,7 +622,6 @@ data BakerRight = BakerRight
   { _bakerRight_branch :: Id BakerRightsProgress
   , _bakerRight_level :: RawLevel
   , _bakerRight_right :: RightKind
-  , _bakerRight_slots :: Maybe Int
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerRight
 
@@ -1050,7 +1008,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''BakerRight
   , ''BakerRightsProgress
   , ''BakerVote
-  , ''BlockBaker
   , ''CacheDelegateInfo
   , ''DeletableRow
   , ''ErrorLog
@@ -1111,7 +1068,6 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'BakerDetails
   , 'BakerRight
   , 'BakerRightsProgress
-  , 'BlockBaker
   , 'DeletableRow
   , 'Error
   , 'ErrorLog

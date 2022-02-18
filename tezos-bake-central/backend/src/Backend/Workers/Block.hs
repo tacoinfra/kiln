@@ -15,7 +15,7 @@
 
 module Backend.Workers.Block where
 
-import Control.Monad.Catch (MonadMask, throwM)
+import Control.Monad.Catch (MonadMask, throwM, try)
 import Data.ByteString as BS (ByteString)
 import Data.Either.Combinators (whenLeft, whenRight)
 import Data.Maybe (fromMaybe)
@@ -33,6 +33,7 @@ import Safe (headMay)
 import Tezos.Common.Binary as TBin
 import Tezos.NodeRPC
 import Tezos.Types
+import qualified Tezos.V012.Types as V012
 import qualified Tezos.V010.Types as V010
 import qualified Tezos.V005.Types as V005
 import Tezos.Signature.Verify as Sig
@@ -98,18 +99,26 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
         -- that still needs to be handled.
         -- Note that the loop runs in 'ExceptT' so no computation will follow
         -- the first one throwing an error/'Left'.
-        loopResult <- flip runReaderT nds $ runExceptT @KilnRpcError $
+        loopResult <- try $ flip runReaderT nds $
           for_ (Seq.reverse blocks) $ \blockHash -> do
-            block <- runNodeQueryT $ do
+            blockOrErr <- runExceptT @KilnRpcError $ runNodeQueryT $ do
               block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
-              blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId) block
+              blockCrossData
+                (insertAccusationsV12 blockHash chainId)
+                (blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId))
+                block
               return block
-
-            let blockLevel = block ^. level
-            void $ runDb (Identity db) [executeQ|
-              insert into "AccusationBlock" ("hash", "level", "chain")
-              values (?blockHash, ?blockLevel, ?chainId)
-            |]
+            case blockOrErr of
+              Right block -> do
+                let blockLevel = block ^. level
+                void $ runDb (Identity db) [executeQ|
+                  insert into "AccusationBlock" ("hash", "level", "chain")
+                  values (?blockHash, ?blockLevel, ?chainId)
+                |]
+              Left e -> case e of
+                -- If the block isn't known within all existing nodes, then we cannot effectively handle it
+                KilnRpcError_NoSuitableNode _ _ -> pure ()
+                _ -> throwM e
         -- Not all errors are thrown equal...
         -- AFAIU the ones below are both more common and less disruptive than
         -- the real unexpected errors, the latter being the only ones that we
@@ -129,6 +138,37 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
             throwM e
 
 -- TODO: This could use a better abstraction here.
+insertAccusationsV12
+  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
+     , PostgresRaw m, MonadMask m, PersistBackend m
+     )
+  => BlockHash -> ChainId -> V012.Block -> NodeQueryT m ()
+insertAccusationsV12 blockHash chainId block = do
+  -- Operations into a block are divided into 4 subsections.  Accusations
+  -- are always in the third of these sections.
+  let mightBeAccusations = fold $ Seq.lookup 2 $ V012._block_operations block
+  for_ mightBeAccusations $ \op -> do
+    let
+      opHash = V012._operation_hash op
+      blockLevel = block ^. level
+    for_ (V012._operation_contents op) $ \case
+      -- TODO [#112]: handle double preendorsement
+      V012.OperationContents_DoubleBakingEvidence ev -> do
+        round' <- nodeQueryDataSourceSafe $ NodeQuery_Round blockHash
+        let
+          accusedLevel = ev ^. V012.operationContentsDoubleBakingEvidence_bh1 . V012.blockHeaderFull_level
+          accusedPriority = fromIntegral round'
+        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority
+      V012.OperationContents_DoubleEndorsementEvidence ev -> do
+        let
+          accusedLevel = ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . V012.inlinedEndorsement_operations . V012.endorsementMempoolContents_level
+        (possibles,possiblesKeys) <- loadPossibles blockHash accusedLevel
+        let
+          encodedOp1 = TBin.encode $ V012.Envelope_Endorsement chainId $ V012.outlineEndorsement $ ev ^. V012.operationContentsDoubleEndorsementEvidence_op1
+          sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $ ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . V012.inlinedEndorsement_signature
+        insertDoubleEndorsementEvidence blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
+      _ -> return ()
+
 insertAccusationsV9
   :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
      , PostgresRaw m, MonadMask m, PersistBackend m
@@ -191,7 +231,7 @@ insertDoubleBakingEvidence
   :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
   => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Priority -> NodeQueryT m ()
 insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority = do
-  baker <- fmap _bakingRights_delegate $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedPriority
+  baker <- fmap (view bakingRightsCrossCompat_delegate) $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedPriority
   void [executeQ|
     insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "isBake")
     values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, true)
@@ -213,6 +253,7 @@ loadPossibles
   :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
   => BlockHash -> RawLevel -> NodeQueryT m (Seq.Seq PublicKeyHash, Seq.Seq PublicKey)
 loadPossibles blockHash accusedLevel = do
-  possibles <- (fmap.fmap) _endorsingRights_delegate $ nodeQueryIx $ NodeQueryIx_EndorsingRights blockHash (Set.singleton accusedLevel)
+  possibles <- fmap (mconcat . toList) $
+    (fmap.fmap) (view endorsingRightsCrossCompat_delegates) $ nodeQueryIx $ NodeQueryIx_EndorsingRights blockHash (Set.singleton accusedLevel)
   possiblesKeys <- traverse (nodeQueryDataSourceSafe . NodeQuery_PublicKey . Implicit) possibles
   pure (possibles, possiblesKeys)

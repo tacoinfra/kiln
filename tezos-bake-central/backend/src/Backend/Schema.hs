@@ -495,6 +495,7 @@ instance NeverNull TezosWord64
 instance NeverNull Version
 instance NeverNull VeryBlockLike
 instance NeverNull URI
+instance NeverNull PeriodSequence
 
 parseVersionOrError :: Text -> Version
 parseVersionOrError = fromMaybe (error "Invalid version") . parseVersion

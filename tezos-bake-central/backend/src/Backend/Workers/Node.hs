@@ -23,7 +23,7 @@ import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
-import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logInfo)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logInfo)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
@@ -45,7 +45,7 @@ import Data.Time (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import qualified Data.Text as T
 import Data.Word
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (Postgresql(..), in_, (&&.), (=.), (==.))
+import Database.Groundhog.Postgresql (Postgresql(..), in_, (=.), (==.))
 import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
@@ -64,10 +64,7 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC hiding (getBlock)
 import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
-import qualified Tezos.V005.Types as V005
-import qualified Tezos.V009.Types as V009
-import qualified Tezos.V010.Types as V010
-import qualified Tezos.Unsafe
+import qualified Tezos.Unsafe as Unsafe
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -127,8 +124,8 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
               pure Nothing
         for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> (Maybe RawLevel, Maybe Cycle) -> IO ()
-nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
+nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
+nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity db) . flip runReaderT appConfig $ do
     $(logDebug) $ fold
@@ -138,8 +135,6 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
       , Uri.render nodeAddr
       , " at block "
       , tshow headBlockInfo
-      , " savepoint "
-      , tshow mSpData
       ]
 
     now <- getTime
@@ -154,21 +149,16 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo mSpData = do
           , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
           , _nodeDetailsData_updated = Just now
           , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
-          , _nodeDetailsData_savePoint = fst mSpData
-          , _nodeDetailsData_savePointUpdated = snd mSpData
           }
         }
       (_:_) -> update
-        ([ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
+        [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
         , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
         , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
         , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
         , p NodeDetailsData_updatedSelector =. Just now
         , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
-        ] <> maybe [] (\sp -> [ p NodeDetailsData_savePointSelector =. Just sp
-                              , p NodeDetailsData_savePointUpdatedSelector =. snd mSpData
-                              ]) (fst mSpData)
-        )
+        ]
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
     traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
@@ -376,41 +366,13 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k chunkedQueryTimeout) $
           NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-        updateCheckpoint :: (MonadIO m, MonadLogger m)
-          => MonitorBlock
-          -> (Maybe (Maybe RawLevel, Maybe Cycle), Maybe ProtoInfo)
-          -> m (Maybe RawLevel, Maybe Cycle)
-        updateCheckpoint blk (mSavePointData, mProtoInfo) = do
-          let
-            mCurrentCycle = fmap (\protoInfo -> Tezos.Unsafe.unsafeAssumptionLevelToCycle protoInfo (blk ^. level)) mProtoInfo
-            mLastCycle = snd =<< mSavePointData
-            mSavePoint = fst =<< mSavePointData
-            skipUpdate = isJust mSavePoint && isJust mCurrentCycle && mCurrentCycle == mLastCycle
-
-          if skipUpdate
-            then pure (Nothing, Nothing)
-            else do
-              $(logInfo) [i|nodeWorker: fetching checkpoint for Node: ${nodeAddr}|]
-              liftIO (nodeQuery $ rCheckpoint chainId) >>= \case
-                Left (RpcError_UnexpectedStatus _url 404 _) -> pure (Just 0, mCurrentCycle)
-                Right (CheckpointV009 checkpoint) -> pure (Just $ V009._checkpoint_savePoint checkpoint, mCurrentCycle)
-                Right (CheckpointV010 checkpoint) -> pure (Just $ V010._checkpoint_savepoint checkpoint, mCurrentCycle)
-                Left (RpcError_RestrictedEndpoint _) -> pure (Nothing, Nothing)
-                Left err -> (Nothing, Nothing) <$ $(logError) [i|nodeWorker: could not fetch checkpoint for Node: ${nodeAddr} ${err}|]
-
       killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
         _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
-          -- Since we receive a new head, we can clear connectivity and wrong-chain errors for this node.
-          mNewSp <- runLoggingEnv (_nodeDataSource_logger nds) $ do
-            mSavePointAndProto <- inDb $ do
-              clearInaccessibleNodeError nodeId
-              clearNodeWrongChainError nodeId
-              mSavePoint <- project1 (NodeDetails_dataField ~> NodeDetailsData_savePointSelector, NodeDetails_dataField ~> NodeDetailsData_savePointUpdatedSelector) (NodeDetails_idField `in_` [nodeId])
-              mProto <- project1 ProtocolIndex_constantsField (ProtocolIndex_protoField ==. _monitorBlock_proto block &&. ProtocolIndex_chainIdField ==. chainId)
-              pure (mSavePoint, mProto)
-            updateCheckpoint block mSavePointAndProto
+          runLoggingEnv (_nodeDataSource_logger nds) $ inDb $ do
+            clearInaccessibleNodeError nodeId
+            clearNodeWrongChainError nodeId
 
-          nodeMonitor nds appConfig nodeAddr nodeId block mNewSp
+          nodeMonitor nds appConfig nodeAddr nodeId block
           nodeAlertMonitor nds appConfig db nodeAddr nodeId block
 
           nodeVersionMonitor nds nodeAddr nodeId
@@ -423,8 +385,6 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
               , p NodeDetailsData_headBlockHashSelector =. (Nothing :: Maybe BlockHash)
               , p NodeDetailsData_headBlockPredSelector =. (Nothing :: Maybe BlockHash)
               , p NodeDetailsData_headBlockBakedAtSelector =. (Nothing :: Maybe UTCTime)
-              , p NodeDetailsData_savePointSelector =. (Nothing :: Maybe RawLevel)
-              , p NodeDetailsData_savePointUpdatedSelector =. (Nothing :: Maybe Cycle)
               , p NodeDetailsData_peerCountSelector =. (Nothing :: Maybe Word64)
               , p NodeDetailsData_networkStatSelector =. nwStat
               , p NodeDetailsData_fitnessSelector =. (Nothing :: Maybe Fitness)
@@ -688,24 +648,24 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       for_ mEndBlock $ \endBlock -> do
         (startBlockTimestamp, periodEndBlockPred) <- do
           startBlock <- flip runReaderT nds . runExceptT @KilnRpcError $
-            fmap toBlockHeader $ getBlockLevelAncestor (latestBlock ^. level - startBlockLevel) (latestBlock ^. hash)
+            fmap toBlockHeaderCrossCompat $ getBlockLevelAncestor (latestBlock ^. level - startBlockLevel) (latestBlock ^. hash)
           let startBlockTimestamp = case startBlock of
                 Right block -> block ^. timestamp
-                Left _ -> unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
+                Left _ -> Unsafe.unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
           predBlock <- throwing $ getBlockHeader $ endBlock ^. predecessor
           pure (startBlockTimestamp, predBlock)
         updateTo startBlockLevel startBlockTimestamp periodEndBlockPred endBlock p
     EQ -> do
       let startBlockLevel = latestBlock ^. level - currentVotingPosition
       startBlock <- flip runReaderT nds . runExceptT @KilnRpcError $
-        fmap toBlockHeader $ getBlockLevelAncestor currentVotingPosition (latestBlock ^. hash)
+        fmap toBlockHeaderCrossCompat $ getBlockLevelAncestor currentVotingPosition (latestBlock ^. hash)
       let startBlockTimestamp = case startBlock of
             Right block -> block ^. timestamp
-            Left _ -> unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
+            Left _ -> Unsafe.unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlockHeader $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
-        else pure (toBlockHeader latestBlock)
+        else pure (toBlockHeaderCrossCompat latestBlock)
       updateTo startBlockLevel startBlockTimestamp predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p
@@ -718,8 +678,6 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Adoption -> notify NotifyTag_PeriodAdoption Nothing
 
   where
-    toBlockHeader = blockCrossCata V010.toBlockHeader V005.toBlockHeader
-
     getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
     getBlockLevelAncestor lvl hash' = nodeQueryDataSource $ NodeQuery_BlockPred hash' lvl
 

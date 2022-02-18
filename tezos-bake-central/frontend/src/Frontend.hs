@@ -85,7 +85,6 @@ import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHea
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Calculations (levelToCycleSameProtocol)
 import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
                       frontendConfig_chain, frontendConfig_chainId, frontendConfig_usingNodeOption, frontendConfig_logExportAvailable)
 import Common.Config (UsingNodeOption(..), _UsingCustomNode)
@@ -423,9 +422,8 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
               )
 -}
 
-      cyc <- holdUniqDyn $ (liftA2.liftA2) levelToCycleSameProtocol knownProto latestHead
-      whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $
-        text $ either ("Error: " <>) (tshow . unCycle) c
+      cyc <- holdUniqDyn $ (fmap . fmap) (view branchInfo_cycle) latestHead
+      whenJustDyn cyc $ \c -> infoItem disconnected "Cycle" $ text $ tshow $ unCycle c
 
       whenJustDyn latestHead $ \b -> infoItem disconnected "Block" $ el "span" $ do
         text $ tshow (unRawLevel $ b ^. level)
