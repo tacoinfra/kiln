@@ -15,15 +15,16 @@ module Backend.Config where
 
 import Control.Lens (Lens', view)
 import Control.Monad.Reader (MonadReader, asks)
-import Data.Aeson (Value(..))
+import Data.Aeson (FromJSON(..), Value(..), withObject, (.:))
+import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
 import Data.Validation
+import qualified Data.Vector as V
 import Data.Word
 import Network.Mail.Mime (Address)
 import System.FilePath ((</>))
 import Text.URI (URI)
 import Data.Aeson.Lens
-import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Text as T
 import qualified Language.Haskell.TH.Quote as QQ
@@ -220,9 +221,27 @@ data NodeConfigFile' = NodeConfigFile'
 data BinaryPaths = BinaryPaths
   { _binaryPaths_nodePath :: FilePath
   , _binaryPaths_clientPath :: FilePath
-  , _binaryPaths_bakerEndorserPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
-  }
-  deriving (Show)
+  , _binaryPaths_bakerEndorserPaths :: NonEmpty BakerEndorserPaths
+  } deriving (Show)
+
+data BakerEndorserPaths = BakerEndorserPaths
+  { _bakerEndorserPaths_proto :: ProtocolHash
+  , _bakerEndorserPaths_bakerPath :: Maybe FilePath
+  , _bakerEndorserPaths_endorserPath :: Maybe FilePath
+  } deriving (Show)
+
+instance FromJSON BakerEndorserPaths where
+  parseJSON = \case
+    Aeson.Array arr -> do
+      proto        <- parseJSON $ arr V.! 0
+      bakerPath    <- parseJSON $ arr V.! 1
+      endorserPath <- parseJSON $ arr V.! 2
+      pure $ BakerEndorserPaths proto bakerPath endorserPath
+    v -> flip (withObject "BakerEndorserPaths") v $ \o -> do
+      proto        <- o .: "proto"
+      bakerPath    <- o .: "baker-path"
+      endorserPath <- o .: "endorser-path"
+      pure $ BakerEndorserPaths proto bakerPath endorserPath
 
 concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   { Aeson.fieldLabelModifier
@@ -241,3 +260,10 @@ concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   , ''NodeConfigShellPrevalidator
   , ''BinaryPaths
   ]
+
+Aeson.deriveToJSON tezosJsonOptions
+  { Aeson.fieldLabelModifier
+    = map (\case {'_' -> '-'; x -> x})
+    . Aeson.fieldLabelModifier tezosJsonOptions
+  , Aeson.omitNothingFields = True
+  } ''BakerEndorserPaths

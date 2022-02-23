@@ -47,9 +47,9 @@ import Text.URI (render)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
-import Tezos.Types (ProtocolHash)
+import Tezos.Types (ProtocolHash, toBase58Text)
 
-import Backend.Config (AppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir, BinaryPaths(..))
+import Backend.Config (AppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir, BinaryPaths(..), BakerEndorserPaths(..))
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.Workers.Process
@@ -63,30 +63,39 @@ needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 nixNodePath :: FilePath
 nixNodePath = $(staticWhich "tezos-node")
 
-bakerPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
-bakerPath = getPath (view _2)
+bakerPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
+bakerPath= getPath _bakerEndorserPaths_bakerPath
 
-endorserPath :: NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
-endorserPath = getPath (view _3)
+endorserPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
+endorserPath = getPath _bakerEndorserPaths_endorserPath
 
-getPath :: ((ProtocolHash, FilePath, FilePath) -> FilePath)
-  -> NonEmpty (ProtocolHash, FilePath, FilePath) -> Maybe ProtocolHash -> FilePath
-getPath f paths = \case
-  Nothing -> f $ NonEmpty.head paths
-  Just p -> maybe e f $ find (\(p', _, _) -> p' == p) paths
+getPath
+  :: (BakerEndorserPaths -> Maybe FilePath)
+  -> NonEmpty BakerEndorserPaths
+  -> Maybe ProtocolHash
+  -> Maybe FilePath
+getPath getter paths = \case
+  Nothing -> getter $ NonEmpty.head paths
+  Just p -> maybe e getter $ find (\bep -> _bakerEndorserPaths_proto bep == p) paths
     where
       e = error ("tezos-baker/endorser not available for the given protocol: " <> show p)
 
 -- You cannot use a mainnet binary against a babylonnet node because the mainnet
 -- binary expects a .tezos-node/<chain_id>/protocol dir
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
-tezosBinaryPaths :: NonEmpty (ProtocolHash, FilePath, FilePath)
-tezosBinaryPaths = NonEmpty.fromList
-  [ ("PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
-    , $(staticWhich "tezos-baker-011-PtHangz2")
-    , $(staticWhich "tezos-endorser-011-PtHangz2")
-    )
-  ]
+tezosBinaryPaths :: NonEmpty BakerEndorserPaths
+tezosBinaryPaths = NonEmpty.fromList [hangzhouPaths, ithacaPaths]
+  where
+    hangzhouPaths = BakerEndorserPaths
+      { _bakerEndorserPaths_proto = "PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
+      , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-011-PtHangz2")
+      , _bakerEndorserPaths_endorserPath = Just $(staticWhich "tezos-endorser-011-PtHangz2")
+      }
+    ithacaPaths = BakerEndorserPaths
+      { _bakerEndorserPaths_proto = "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A"
+      , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-012-Psithaca")
+      , _bakerEndorserPaths_endorserPath = Nothing
+      }
 
 -- TODO: use postgres for "process-id's"
 
@@ -143,7 +152,7 @@ internalNodeWorker appConfig logger db maybePaths = do
     ! #config appConfig
     ! #logNamespace "kiln-node"
     ! #mkProcess (\(dataDir, extraArgs) -> withNodeConfig appConfig $ \nodeConfigPath ->
-                    return $ proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
+                    return $ Right $ proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
     ! #pid pid
     ! #pidToRunAfter Nothing
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
@@ -277,17 +286,25 @@ bakerDaemonProcess appConfig logger db maybePaths = do
                    , "--base-dir", tezosClientDataDir appConfig
                    , "run"
                    , alias]
-    pw (pathF, args) pid = processWorker
+
+    mkProcess proto pathF args daemonName =
+      case proc <$> pathF proto <*> pure args of
+        Just cp -> Right cp
+        Nothing -> Left $ daemonName <> " is not available for the given protocol: "
+          <> maybe "<unknown protocol>" toBase58Text proto
+
+    pw (pathF, args, daemonName) pid = processWorker
       (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
       ! #db db
       ! #config appConfig
-      ! #mkProcess (\proto -> return $ proc (pathF proto) args)
+      ! #mkProcess (\proto -> return $ mkProcess proto pathF args daemonName)
       ! #pid pid
       ! #pidToRunAfter nodePPid
       ! #mkNotify Nothing
-    bakerPw = pw (bakerPath paths, bakerArgs) ! #logNamespace "kiln-baker"
-    endorserPw = pw (endorserPath paths, endorserArgs) ! #logNamespace "kiln-endorser"
+
+    bakerPw = pw (bakerPath paths, bakerArgs, "tezos-baker") ! #logNamespace "kiln-baker"
+    endorserPw = pw (endorserPath paths, endorserArgs, "tezos-endorser") ! #logNamespace "kiln-endorser"
     paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker

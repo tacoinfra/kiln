@@ -81,7 +81,7 @@ processWorker
   -> "db" :! Pool Postgresql
   -> "config" :! AppConfig
   -> "logNamespace" :! Text
-  -> "mkProcess" :! (a -> IO CreateProcess)
+  -> "mkProcess" :! (a -> IO (Either Text CreateProcess))
   -> "pid" :! Id ProcessData
   -> "pidToRunAfter" :! Maybe (Id ProcessData)
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
@@ -101,15 +101,21 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
       , Handler $ \(e :: ExitCode) -> inDb initFailed *> throwIO e
       ]
     inDb $ updateState ProcessState_Starting
-    procHandler <- mkProcess v
-    let
-      procSpec = procHandler
-        { Proc.std_out = Proc.CreatePipe
-        , Proc.std_err = Proc.CreatePipe
-        }
-    runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, procSpec)
-    withCreateProcess procSpec procMonitor
-    threadDelay' 10
+    eiProcHandler <- mkProcess v
+    case eiProcHandler of
+      Right procHandler -> do
+        let
+          procSpec = procHandler
+            { Proc.std_out = Proc.CreatePipe
+            , Proc.std_err = Proc.CreatePipe
+            }
+        runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, procSpec)
+        withCreateProcess procSpec procMonitor
+        threadDelay' 10
+      Left errMsg -> inDb $ update
+        [ ProcessData_errorLogField =. Just errMsg
+        , ProcessData_stateField =. ProcessState_Stopped
+        ] $ AutoKeyField ==. fromId pid
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => Serializable a -> m a
     inDb = runLoggingEnv logger . runDb (Identity db)
