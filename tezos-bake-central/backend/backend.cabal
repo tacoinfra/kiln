@@ -96,6 +96,7 @@ library
     , snap-core
     , snap-loader-static
     , snap-server
+    , split
     , stm
     , string-conv
     , svg-builder
@@ -130,6 +131,7 @@ library
     Backend.Common.TezosRelease
     Backend.Common.Worker
     Backend.Config
+    Backend.DB.Utils
     Backend.Http
     Backend.IndexQueries
     Backend.Migrations

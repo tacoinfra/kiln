@@ -86,7 +86,7 @@ import "template-haskell" Language.Haskell.TH (conT)
 import "template-haskell" Language.Haskell.TH (mkName)
 import "template-haskell" Language.Haskell.TH (nameBase)
 import Rhyolite.Backend.Account ()
-import Rhyolite.Backend.Listen (HasNotification (..), NotificationType (..), DbNotification (..), getSchemaName, notifyChannel)
+import Rhyolite.Backend.Listen (HasNotification (..), NotificationType (..), DbNotification (..), notifyChannel)
 import Rhyolite.Backend.Schema.Class (DefaultKeyIsUnique)
 import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 import Rhyolite.Backend.Schema.Class (defaultKeyToKey)
@@ -101,6 +101,7 @@ import qualified Text.URI as Uri
 
 import Tezos.Types hiding (TestChainStatus)
 
+import Backend.DB.Utils (getSchemaName)
 import Backend.Version (parseVersion)
 import Common.AppendIntervalMap (WithInfinity(..))
 import Common.App (SetupState, VoteState)
