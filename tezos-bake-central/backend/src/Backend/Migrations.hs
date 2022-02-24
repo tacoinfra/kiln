@@ -83,6 +83,8 @@ preMigrate chainId =
   >=> removeUnusedProtocolIndexColumns
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "BakerRight") "slots"
   >=> removeNodeSavePointInfo
+  >=> migrateAccusationTable
+  >=> migrateErrorLogBakerAccusedTable
   >=> createSequence (QualifiedIdentifier Nothing "NodeInternal_pid")
   >=> createSequence (QualifiedIdentifier Nothing "ProcessLockUniqueId")
   >=> migrateBakerDaemonInternalTable
@@ -827,3 +829,35 @@ removeNodeSavePointInfo ta = do
   forM_ columns $ \column -> do
     dropColumnIfExists (QualifiedIdentifier Nothing "NodeDetails") column ta
   getTableAnalysis
+
+migrateAccusationTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateAccusationTable ta = do
+  let table = (Nothing, "Accusation")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "isBake") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "Accusation" ADD COLUMN "accusationType" VARCHAR NULL;
+        UPDATE "Accusation" SET "accusationType" =
+          CASE
+            WHEN "isBake" THEN 'AccusationType_DoubleBake' ELSE 'AccusationType_DoubleEndorsement'
+          END;
+        ALTER TABLE "Accusation" ALTER COLUMN "accusationType" SET NOT NULL;
+        ALTER TABLE "Accusation" DROP COLUMN "isBake";
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateErrorLogBakerAccusedTable :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateErrorLogBakerAccusedTable ta = do
+  let table = (Nothing, "ErrorLogBakerAccused")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "right") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "ErrorLogBakerAccused" ADD COLUMN "accusationType" VARCHAR NULL;
+        UPDATE "ErrorLogBakerAccused" SET "accusationType" = 'AccusationType_DoubleBake' where "right" = 'RightKind_Baking';
+        UPDATE "ErrorLogBakerAccused" SET "accusationType" = 'AccusationType_DoubleEndorsement' where "right" = 'RightKind_Endorsing';
+        ALTER TABLE "ErrorLogBakerAccused" ALTER COLUMN "accusationType" SET NOT NULL;
+        ALTER TABLE "ErrorLogBakerAccused" DROP COLUMN "right";
+      |]
+      getTableAnalysis
+    _ -> pure ta
