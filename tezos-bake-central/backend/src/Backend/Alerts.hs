@@ -824,8 +824,8 @@ reportAccusation
      , SqlDb (PhantomDb m)
      , MonadBase Serializable m
      , MonadLogger m)
-  => OperationHash -> BlockHash -> RightKind -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
-reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
+  => OperationHash -> BlockHash -> AccusationType -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
+reportAccusation opHash blkHash accusationType pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   (accusedBakeLog pkh chainId opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
     Just _ -> pure ()
@@ -834,7 +834,7 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
         { _errorLogBakerAccused_log = eid
         , _errorLogBakerAccused_op = Id (opHash, blkHash)
         , _errorLogBakerAccused_baker = bid
-        , _errorLogBakerAccused_right = right
+        , _errorLogBakerAccused_accusationType = accusationType
         , _errorLogBakerAccused_level = lvl
         , _errorLogBakerAccused_cycle = cycle
         , _errorLogBakerAccused_accusedLevel = aLvl
@@ -843,11 +843,12 @@ reportAccusation opHash blkHash right pkh lvl cycle aLvl aCycle = when' (bakerNo
       queueAlert (Just eid) alert
   where
     alert = Alert Unresolved
-      ("Double " <> rightTxt)
-      ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> rightTxt <> " at level " <> tshow (unRawLevel lvl))
-    rightTxt = case right of
-      RightKind_Baking -> "baked"
-      RightKind_Endorsing -> "endorsed"
+      ("Double " <> accusationTxt)
+      ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> accusationTxt <> " at level " <> tshow (unRawLevel lvl))
+    accusationTxt = case accusationType of
+      AccusationType_DoubleBake -> "baked"
+      AccusationType_DoubleEndorsement -> "endorsed"
+      AccusationType_DoublePreendorsement -> "preendorsed"
 
 clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r
                    , MonadBase Serializable m

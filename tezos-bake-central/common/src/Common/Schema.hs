@@ -461,14 +461,20 @@ data ProtocolIndex = ProtocolIndex
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
+data AccusationType
+  = AccusationType_DoubleBake
+  | AccusationType_DoubleEndorsement
+  | AccusationType_DoublePreendorsement
+  deriving (Eq, Ord, Enum, Read, Show)
+
 data Accusation = Accusation
   { _accusation_hash :: OperationHash -- ^ hash of the accusation operation
   , _accusation_blockHash :: BlockHash -- ^ hash of the block where the accusation was included
   , _accusation_chain :: ChainId -- ^ chainId of the network where the accusation occurred
   , _accusation_level :: RawLevel -- ^ level where accusation was incorporated in the blockchain
   , _accusation_baker :: PublicKeyHash -- ^ PKH of baker who was accused
-  , _accusation_occurredLevel :: RawLevel -- ^ level at which the baker double baked or double endorsed
-  , _accusation_isBake :: Bool -- ^ is this a double bake?  (as opposed to double endorsement...)
+  , _accusation_occurredLevel :: RawLevel -- ^ level at which the baker was accused
+  , _accusation_accusationType :: AccusationType -- ^ which operation baker was accused of
   } deriving (Show, Eq, Ord, Typeable, Generic)
 instance HasId Accusation where
   type IdData Accusation = (OperationHash, BlockHash)
@@ -781,7 +787,7 @@ data ErrorLogBakerAccused = ErrorLogBakerAccused
   , _errorLogBakerAccused_level :: RawLevel
   , _errorLogBakerAccused_accusedCycle :: Cycle
   , _errorLogBakerAccused_accusedLevel :: RawLevel
-  , _errorLogBakerAccused_right :: RightKind
+  , _errorLogBakerAccused_accusationType :: AccusationType
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerAccused where
   type IdData ErrorLogBakerAccused = Id ErrorLog
@@ -995,6 +1001,7 @@ deriving instance Show (BakerLogTag a)
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   [ ''Accusation
   , ''AccusationBlock
+  , ''AccusationType
   , ''AddInternalNodeError
   , ''AlertNotificationMethod
   , ''Amendment

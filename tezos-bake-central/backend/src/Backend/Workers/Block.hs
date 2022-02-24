@@ -231,10 +231,11 @@ insertDoubleBakingEvidence
   :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
   => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Priority -> NodeQueryT m ()
 insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority = do
+  let t = AccusationType_DoubleBake
   baker <- fmap (view bakingRightsCrossCompat_delegate) $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedPriority
   void [executeQ|
-    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "isBake")
-    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, true)
+    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
+    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
     on conflict do nothing
     |]
 
@@ -243,9 +244,10 @@ insertDoubleEndorsementEvidence
   => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Signature -> ByteString -> Seq.Seq PublicKeyHash -> Seq.Seq PublicKey -> NodeQueryT m ()
 insertDoubleEndorsementEvidence blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys = do
   let actuals = Seq.filter (\(_,key) -> Sig.check key sig encodedOp1) $ Seq.zip possibles possiblesKeys
+      t = AccusationType_DoubleEndorsement
   for_ actuals $ \(baker,_) -> [executeQ|
-    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "isBake")
-    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, false)
+    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
+    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
     on conflict do nothing
     |]
 
