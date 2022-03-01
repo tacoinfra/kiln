@@ -193,6 +193,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_httpMgr :: Http.Manager
   , _nodeDataSource_pool :: Pool Postgresql
   , _nodeDataSource_latestHead :: TVar (Maybe BranchInfo)
+  , _nodeDataSource_latestFinalHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_logger :: LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
   , _nodeDataSource_kilnNodeUri :: URI
