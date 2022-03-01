@@ -526,7 +526,7 @@ amendmentProcessWorker
   -> NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ waitForNewFinalHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   (latestBlock, protoInfo) <- throwing $ runNodeQueryT $ liftA2 (,)
     (nodeQueryDataSourceSafe $ NodeQuery_Block (latestHead ^. hash))
     (getProtocolConstants $ Left $ latestHead ^. hash)
@@ -814,7 +814,7 @@ protocolMonitorWorker
   :: NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinalHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
     getProtocol = getProtocol' >>= \case

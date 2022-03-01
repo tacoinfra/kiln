@@ -188,7 +188,7 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
 
   alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount chainId
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
-  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceHead nds
+  latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceFinalHead nds
 
   snapshotMeta <- maybeViewHandler _bakeViewSelector_snapshotMeta $ selectSingle CondEmpty
 
@@ -730,6 +730,7 @@ getBakerAddresses nds bid = do
   -- we need to do this *here* instead of, say, on bakerdetails, because we
   -- need to show a grey dot when we "cant" show this, in the baker list.
   -- grab the hashes of the cycle starts, if they exist
+  -- Here we use latest head instead latest final head to notify about upcoming baking opportunities
   latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
   maxProgress_rightsInfo :: Either KilnRpcError (Maybe RawLevel) <- case latestHead' of
     Nothing -> pure $ Left KilnRpcError_NoKnownHeads

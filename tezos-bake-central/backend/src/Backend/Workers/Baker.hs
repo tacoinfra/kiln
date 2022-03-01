@@ -85,7 +85,7 @@ bakerRightsWorker
   => NodeDataSource
   -> Int
   -> m (IO ())
-bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* waitForNewFinalHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   res :: Either KilnRpcError () <- flip runReaderT nds $ runExceptT $ do
     (latestBranchInfo, protocolConstants) <- runNodeQueryT getLatestProtocolConstants
 
@@ -236,7 +236,7 @@ bakerWorker
   => AppConfig
   -> NodeDataSource
   -> m (IO ())
-bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewFinalHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   let db = _nodeDataSource_pool nds
 
   res <- flip runReaderT nds $ runExceptT $ do

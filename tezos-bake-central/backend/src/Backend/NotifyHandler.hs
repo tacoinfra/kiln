@@ -178,7 +178,10 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
           { _bakeView_nodeDetails = toRangeView1 nodeDetailsVS (Bounded nid) mNodeDetailsData
           }
       , whenM (viewSelects () latestHeadVS) $ do
-          latestHead <- liftIO $ atomically $ dataSourceHead nds
+          -- Ideally we should use different bakeView for latest final head instead of
+          -- reusing the existing view for latest head, but views update may cause
+          -- unexpected error during the update from the previous Kiln versions.
+          latestHead <- liftIO $ atomically $ dataSourceFinalHead nds
           pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
       ]
 
