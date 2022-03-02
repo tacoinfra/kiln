@@ -46,20 +46,19 @@ import Control.Exception.Safe (Exception, SomeException)
 import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Aeson.TH (deriveJSON)
 import qualified Data.Aeson.TH as Aeson
-import qualified Data.Aeson.Encoding as AesonE
 import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Dependent.Sum.Orphans ()
-import Data.GADT.Compare.TH (deriveGCompare)
-import Data.GADT.Compare.TH (deriveGEq)
+import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import qualified Data.HashMap.Strict as HashMap
-import Data.Semigroup (Semigroup, (<>))
-import Data.Some (Some(..))
-import Data.Text (Text)
 import Data.Int (Int32, Int64)
+import Data.Semigroup (Semigroup, (<>))
+import Data.Some (Some (..))
+import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
 import Data.Typeable (Typeable)
@@ -75,8 +74,8 @@ import Rhyolite.Schema (Email, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.Common.NodeRPC.Types (RpcError, AsRpcError(asRpcError))
 import Tezos.Common.Json (tezosJsonOptions)
+import Tezos.Common.NodeRPC.Types (AsRpcError (asRpcError), RpcError)
 import Tezos.Types hiding (TestChainStatus)
 
 import Common (defaultTezosCompatJsonOptions)
@@ -822,6 +821,15 @@ data ErrorLogBakerMissed = ErrorLogBakerMissed
 instance HasId ErrorLogBakerMissed where
   type IdData ErrorLogBakerMissed = Id ErrorLog
 
+data ErrorLogBakerMissedEndorsementBonus = ErrorLogBakerMissedEndorsementBonus
+  { _errorLogBakerMissedEndorsementBonus_log :: Id ErrorLog
+  , _errorLogBakerMissedEndorsementBonus_baker :: Id Baker
+  , _errorLogBakerMissedEndorsementBonus_level :: RawLevel
+  , _errorLogBakerMissedEndorsementBonus_bakeTime :: UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerMissedEndorsementBonus where
+  type IdData ErrorLogBakerMissedEndorsementBonus = Id ErrorLog
+
 data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
   { _errorLogInsufficientFunds_log :: Id ErrorLog
   , _errorLogInsufficientFunds_baker :: Id Baker
@@ -988,6 +996,7 @@ deriving instance Show (NodeLogTag a)
 data BakerLogTag a where
   BakerLogTag_BakerLedgerDisconnected :: BakerLogTag ErrorLogBakerLedgerDisconnected
   BakerLogTag_BakerMissed :: BakerLogTag ErrorLogBakerMissed
+  BakerLogTag_MissedEndorsementBonus :: BakerLogTag ErrorLogBakerMissedEndorsementBonus
   BakerLogTag_BakerDeactivated :: BakerLogTag ErrorLogBakerDeactivated
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
@@ -1024,6 +1033,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerMissedEndorsementBonus
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
@@ -1148,6 +1158,7 @@ instance UniverseSome NodeLogTag where
 instance UniverseSome BakerLogTag where
   universeSome =
     [ Some BakerLogTag_BakerMissed
+    , Some BakerLogTag_MissedEndorsementBonus
     , Some BakerLogTag_BakerDeactivated
     , Some BakerLogTag_BakerDeactivationRisk
     , Some BakerLogTag_BakerAccused
@@ -1185,6 +1196,7 @@ errorLogNames =
   , ''ErrorLogBakerDeactivationRisk
   , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogBakerMissed
+  , ''ErrorLogBakerMissedEndorsementBonus
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds

@@ -80,8 +80,8 @@ import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHea
                       bakerAccusedDescriptions, bakerDeactivatedDescriptions,
                       bakerDeactivationRiskDescriptions, bakerGroupedMissedDescriptions,
                       bakerInsufficientFundsDescriptions, bakerLedgerDisconnectedDescriptions,
-                      bakerMissedDescriptions, bakerVotingReminderDescriptions,
-                      standardTimeFormat)
+                      bakerMissedDescriptions, bakerMissedEndorsementBonusDescriptions,
+                      bakerVotingReminderDescriptions, standardTimeFormat)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -767,6 +767,8 @@ instance HasAlertMetaData (BakerLogTag a) where
           }
     BakerLogTag_BakerMissed ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
+    BakerLogTag_MissedEndorsementBonus ->
+      def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_BakerDeactivated -> def
     BakerLogTag_BakerDeactivationRisk -> def { _alertMetaData_severity = AlertSeverity_Warning }
     BakerLogTag_BakerAccused ->
@@ -996,6 +998,9 @@ liveErrorsWidget = void $ do
             pkh
           BakerLogTag_BakerMissed -> renderBakerError
             (bakerMissedDescriptions log)
+            pkh
+          BakerLogTag_MissedEndorsementBonus -> renderBakerError
+            (bakerMissedEndorsementBonusDescriptions log)
             pkh
           BakerLogTag_InsufficientFunds -> do
               dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
@@ -2339,6 +2344,7 @@ bakersTab =
                         aRight = case _errorLogBakerMissed_right log of
                           RightKind_Baking -> "a bake"
                           RightKind_Endorsing -> "an endorsement"
+                    BakerLogTag_MissedEndorsementBonus -> Just $ text "Missed endorsement bonus."
                     BakerLogTag_BakerLedgerDisconnected -> Just $ renderBakerError $ bakerLedgerDisconnectedDescriptions log
                     BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
                     BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
@@ -2438,6 +2444,7 @@ bakersTab =
         in case bTag of
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError ev (pure $ bakerLedgerDisconnectedDescriptions log) pkh
           BakerLogTag_BakerMissed -> renderBakerError ev (pure $ bakerMissedDescriptions log) pkh
+          BakerLogTag_MissedEndorsementBonus -> renderBakerError ev (pure $ bakerMissedEndorsementBonusDescriptions log) pkh
           BakerLogTag_BakerDeactivated -> renderBakerError ev (pure $ bakerDeactivatedDescriptions log) pkh
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh
           BakerLogTag_BakerAccused -> renderBakerError ev (pure $ bakerAccusedDescriptions log) pkh

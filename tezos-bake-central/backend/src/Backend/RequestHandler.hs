@@ -450,6 +450,7 @@ requestHandler appConfig emailFromAddr nds =
                 BakerLogTag_BakerAccused -> deleteLogsId tag ErrorLogBakerAccused_bakerField
                 BakerLogTag_InsufficientFunds -> deleteLogsId tag ErrorLogInsufficientFunds_bakerField
                 BakerLogTag_VotingReminder -> deleteLogsId tag ErrorLogVotingReminder_bakerField
+                BakerLogTag_MissedEndorsementBonus -> deleteLogsId tag ErrorLogBakerMissedEndorsementBonus_bakerField
 
             ids <- fmap concat $ for universe onTag
             now <- getTime

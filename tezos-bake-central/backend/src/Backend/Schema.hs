@@ -107,7 +107,6 @@ import Common.AppendIntervalMap (WithInfinity(..))
 import Common.App (SetupState, VoteState)
 import Common.Schema
 import ExtraPrelude
-import Common.Schema (ErrorLogNodeInsufficientPeers(ErrorLogNodeInsufficientPeers))
 
 stripOnly :: Coercible (f (Only a)) (f a) => f (Only a) -> f a
 stripOnly = coerce
@@ -211,6 +210,7 @@ instance HasDefaultNotify (Id ErrorLogNodeInsufficientPeers)
 instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogVotingReminder)
+instance HasDefaultNotify (Id ErrorLogBakerMissedEndorsementBonus)
 instance HasDefaultNotify (Id ProtocolIndex)
 
 instance HasNotification NotifyTag ProtocolIndex where
@@ -241,6 +241,8 @@ instance HasNotification NotifyTag ErrorLogInsufficientFunds where
   notification _ = mkBakerNotify BakerLogTag_InsufficientFunds
 instance HasNotification NotifyTag ErrorLogVotingReminder where
   notification _ = mkBakerNotify BakerLogTag_VotingReminder
+instance HasNotification NotifyTag ErrorLogBakerMissedEndorsementBonus where
+  notification _ = mkBakerNotify BakerLogTag_MissedEndorsementBonus
 
 instance HasNotification NotifyTag ErrorLogNetworkUpdate where
   notification _ = NotifyTag_ErrorLog LogTag_NetworkUpdate
@@ -1119,6 +1121,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerMissedId
             type: primary
             fields: [_errorLogBakerMissed_log]
+  - entity: ErrorLogBakerMissedEndorsementBonus
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerMissedEndorsementBonusId
+        default: true
+    constructors:
+      - name: ErrorLogBakerMissedEndorsementBonus
+        uniques:
+          - name: ErrorLogBakerMissedEndorsementBonusId
+            type: primary
+            fields: [_errorLogBakerMissedEndorsementBonus_log]
   - entity: ErrorLogVotingReminder
     autoKey: null
     keys:
@@ -1244,6 +1257,9 @@ instance DefaultKeyId ErrorLogBakerDeactivated where
 instance DefaultKeyId ErrorLogBakerDeactivationRisk where
   toIdData _ (ErrorLogBakerDeactivationRiskIdKey eid) = eid
   fromIdData _ = ErrorLogBakerDeactivationRiskIdKey
+instance DefaultKeyId ErrorLogBakerMissedEndorsementBonus where
+  toIdData _ (ErrorLogBakerMissedEndorsementBonusIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerMissedEndorsementBonusIdKey
 instance DefaultKeyId ErrorLogInsufficientFunds where
   toIdData _ (ErrorLogInsufficientFundsIdKey eid) = eid
   fromIdData _ = ErrorLogInsufficientFundsIdKey
@@ -1314,6 +1330,7 @@ bakerLogAssume :: BakerLogTag e -> (LogTagConstraints e => x) -> x
 bakerLogAssume = \case
   BakerLogTag_BakerLedgerDisconnected -> id
   BakerLogTag_BakerMissed -> id
+  BakerLogTag_MissedEndorsementBonus -> id
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
   BakerLogTag_BakerAccused -> id
@@ -1370,6 +1387,7 @@ bakerLogDep = \case
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
   BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
   BakerLogTag_VotingReminder -> depBakerAlert' ErrorLogVotingReminder_bakerField
+  BakerLogTag_MissedEndorsementBonus -> depBakerAlert' ErrorLogBakerMissedEndorsementBonus_bakerField
   where
     depBakerAlert' f = Related f ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
@@ -1393,6 +1411,7 @@ instance ArgDict c NotifyTag where
     , c (Id ErrorLogBakerDeactivationRisk)
     , c (Id ErrorLogBakerLedgerDisconnected)
     , c (Id ErrorLogBakerMissed)
+    , c (Id ErrorLogBakerMissedEndorsementBonus)
     , c (Id ErrorLogBakerNoHeartbeat)
     , c (Id ErrorLogInaccessibleNode)
     , c (Id ErrorLogInsufficientFunds)
@@ -1451,6 +1470,7 @@ instance ArgDict c NotifyTag where
         BakerLogTag_BakerAccused -> Dict
         BakerLogTag_InsufficientFunds -> Dict
         BakerLogTag_VotingReminder -> Dict
+        BakerLogTag_MissedEndorsementBonus -> Dict
     NotifyTag_ProtocolIndex -> Dict
     NotifyTag_UpstreamVersion -> Dict
     NotifyTag_MailServerConfig -> Dict

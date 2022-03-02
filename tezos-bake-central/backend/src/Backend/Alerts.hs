@@ -741,6 +741,28 @@ missedBakeLog right pkh lvl = do
       AND b."publicKeyHash" = ?pkh
   |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissed), Maybe Fitness)]) <&> Map.fromList . fmap (\(bid, elid, elbmid, f) -> (bid, toList $ (,,) <$> elid <*> elbmid <*> f))
 
+missedEndorsementBonusLog
+  :: forall m a. (PersistBackend m, PostgresRaw m, MonadReader a m, HasAppConfig a)
+  => PublicKeyHash
+  -> RawLevel
+  -> ChainId
+  -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissedEndorsementBonus)])
+missedEndorsementBonusLog pkh lvl chainId = do
+  ([queryQ|
+    SELECT b."publicKeyHash", el.id, elbm.log
+    FROM "Baker" b
+    LEFT OUTER JOIN "ErrorLogBakerMissedEndorsementBonus" elbm
+      ON b."publicKeyHash" = elbm."baker#publicKeyHash"
+      AND elbm.level = ?lvl
+    LEFT OUTER JOIN "ErrorLog" el
+      ON el.id = elbm.log
+      AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
+    WHERE NOT b."data#deleted"
+      AND b."publicKeyHash" = ?pkh
+  |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissedEndorsementBonus))])
+    <&> Map.fromList . fmap (\(bid, elid, elbmid) -> (bid, toList $ (,) <$> elid <*> elbmid))
+
 bakerNotDeleted :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m Bool
 bakerNotDeleted pkh = all not <$> project
   (Baker_dataField ~> DeletableRow_deletedSelector)
@@ -794,6 +816,31 @@ reportMissedBake bakeTime f right pkh lvl = when' (bakerNotDeleted pkh) $ do
       rightTxt = case right of
         RightKind_Baking -> "bake"
         RightKind_Endorsing -> "endorsement"
+
+reportMissedEndorsementBonus
+  :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
+     , SqlDb (PhantomDb m)
+     , MonadBase Serializable m
+     , MonadLogger m)
+  => UTCTime -> PublicKeyHash -> RawLevel -> m ()
+reportMissedEndorsementBonus bakeTime pkh lvl = when' (bakerNotDeleted pkh) $ do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  (missedEndorsementBonusLog pkh lvl chainId >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+    Nothing -> do
+      (eid, _) <- insertErrorLog $ \eid ->
+        ErrorLogBakerMissedEndorsementBonus
+          { _errorLogBakerMissedEndorsementBonus_log = eid
+          , _errorLogBakerMissedEndorsementBonus_baker = bid
+          , _errorLogBakerMissedEndorsementBonus_level = lvl
+          , _errorLogBakerMissedEndorsementBonus_bakeTime = bakeTime
+          }
+      queueAlert (Just eid) alert
+    Just xs -> do
+      for_ xs $ \(eid, _) -> queueAlert (Just eid) alert
+  where
+    alert = Alert Unresolved "Missed endorsement bonus" $
+      "Baker with address: " <> toPublicKeyHashText pkh <> " Missed endorsement bonus at level " <>
+      tshow (unRawLevel lvl)
 
 -- we care only to inform the baker of each accusation against them, and no other provenance matters.
 accusedBakeLog

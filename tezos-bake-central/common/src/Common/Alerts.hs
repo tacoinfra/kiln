@@ -244,6 +244,24 @@ bakerDeactivatedDescriptions elog = BakerErrorDescriptions
   where
     preserved = unCycle $ _errorLogBakerDeactivated_preservedCycles elog
 
+bakerMissedEndorsementBonusDescriptions
+  :: ErrorLogBakerMissedEndorsementBonus
+  -> BakerErrorDescriptions
+bakerMissedEndorsementBonusDescriptions elog =
+  BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker missed the endorsement bonus"
+  , _bakerErrorDescriptions_tile = "Missed endorsement bonus"
+  , _bakerErrorDescriptions_notification = "This baker missed the endorsement bonus for the block at level " <> lvl <> "."
+  , _bakerErrorDescriptions_problem = [
+      "This baker failed to get the bonus for including extra endorsements for the " <> errorEmphasis (" block at level " <> lvl ) <> "."
+    ]
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
+  , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
+  }
+  where
+    lvl = tshow $ unRawLevel $ _errorLogBakerMissedEndorsementBonus_level elog
+
 bakerMissedDescriptions :: ErrorLogBakerMissed -> BakerErrorDescriptions
 bakerMissedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
