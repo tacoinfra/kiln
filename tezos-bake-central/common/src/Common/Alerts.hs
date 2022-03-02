@@ -304,6 +304,27 @@ bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerError
       RightKind_Baking -> ("a bake", "bake opportunities", "bake")
       RightKind_Endorsing -> ("an endorsement", "endorsement operations", "endorsement")
 
+bakerGroupedMissedBonusDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> BakerErrorDescriptions
+bakerGroupedMissedBonusDescriptions tz count (fb, ft) (lb, lt) = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker missed the endorsemenet bonus"
+  , _bakerErrorDescriptions_tile = "Missed endorsement bonus."
+  , _bakerErrorDescriptions_notification = "This baker failed " -- TODO: ... failed what
+  , _bakerErrorDescriptions_problem =
+      [ "This baker has missed " <> errorEmphasis (tshow count <> " endorsement bonuses") <> "."
+      , "The first bonus missed was for "
+        <> errorEmphasis ("block level " <> tshow (unRawLevel fb))
+        <> " on " <> errorEmphasis (localTime ft) <> "."
+      , "The latest bonus missed was for "
+        <> errorEmphasis ("block level " <> tshow (unRawLevel lb))
+        <> " on " <> errorEmphasis (localTime lt) <> "."
+      ]
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
+  , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
+  }
+  where
+    localTime ts = T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts
+
 bakerInsufficientFundsDescriptions :: Maybe Tez -> ErrorLogInsufficientFunds -> BakerErrorDescriptions
 bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
     { _bakerErrorDescriptions_title = "Baker staking balance is insufficient to receive rights"

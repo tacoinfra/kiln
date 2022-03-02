@@ -35,7 +35,7 @@ import Data.Functor.Apply (liftF2)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Dependent.Sum (DSum(..))
-import Data.List (dropWhileEnd, intersperse, minimumBy, maximumBy, foldl')
+import Data.List (dropWhileEnd, intersperse, minimumBy, maximumBy)
 import qualified Data.List.NonEmpty as NEL
 import Data.Maybe (mapMaybe)
 import qualified Data.Map as Map
@@ -555,29 +555,52 @@ getBakerAlert chainId = do
       ]
 
     groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
-    groupBakerAlerts bs = map BakerAlert_Alert others ++ group bakerMiss ++ group endorseMiss
+    groupBakerAlerts bs = bakerAlerts
       where
-        (others, bakerMiss, endorseMiss) = foldl' partitionF ([], [], []) bs
-        partitionF
-          :: (bakerErrorLogView ~ (DSum BakerLogTag Identity), errorLogBakerMissed ~ ErrorLogBakerMissed)
-          => ([bakerErrorLogView], [(errorLog, errorLogBakerMissed)], [(errorLog, errorLogBakerMissed)])
-          -> (errorLog, bakerErrorLogView)
-          -> ([bakerErrorLogView], [(errorLog, errorLogBakerMissed)], [(errorLog, errorLogBakerMissed)])
-        partitionF (os, bms, ems) (elog, v@(lTag :=> Identity blog)) = case lTag of
-          BakerLogTag_BakerMissed -> case _errorLogBakerMissed_right blog of
-            RightKind_Baking -> (os, (elog, blog) : bms, ems)
-            RightKind_Endorsing -> (os, bms, (elog, blog) : ems)
-          _ -> (v : os, bms, ems)
+        groupedAlerts = bs
+          <&> (\(_, tag :=> Identity elog) -> DMap.fromList [tag :=> [elog]])
+          & DMap.unionsWithKey (\_ l1 l2 -> l1 ++ l2)
 
-        group ls' = case NEL.nonEmpty ls' of
-          Nothing -> []
-          Just ((_,l) :| []) -> [BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity l)]
-          Just ls -> [BakerAlert_GroupedAlert (applyF minimumBy) (applyF maximumBy) rightKind (Id pkh) $ fmap (_errorLogBakerMissed_log . snd) ls]
-            where
-              applyF f = (\(_e, elog) -> (_errorLogBakerMissed_level elog, _errorLogBakerMissed_bakeTime elog)) $ f (comparing fst) ls
-              rightKind = _errorLogBakerMissed_right eMissed
-              pkh = unId $ _errorLogBakerMissed_baker eMissed
-              eMissed = snd $ NEL.head ls
+        bakerAlerts = DMap.toList groupedAlerts >>= \(tag :=> elogs) ->
+          case tag of
+            -- groupable baker alerts
+            BakerLogTag_BakerMissed -> case NEL.nonEmpty elogs of
+              Nothing -> []
+              Just (elog :| []) -> pure $ BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity elog)
+              Just ls ->
+                let
+                  elog = NEL.head ls
+                  getLvl = _errorLogBakerMissed_level
+                  getBakeTime = _errorLogBakerMissed_bakeTime
+                  applyF f = (\el -> (getLvl el, getBakeTime el)) $ f (comparing getBakeTime) elogs
+                in pure $ BakerAlert_GroupedAlert $  GroupedBakerAlert
+                  { _groupedBakerAlert_type = GroupedAlertType_MissedBake
+                  , _groupedBakerAlert_first = applyF minimumBy
+                  , _groupedBakerAlert_latest = applyF maximumBy
+                  , _groupedBakerAlert_right = Just $ _errorLogBakerMissed_right elog
+                  , _groupedBakerAlert_baker = _errorLogBakerMissed_baker elog
+                  , _groupedBakerAlert_logs = _errorLogBakerMissed_log <$> ls
+                  }
+            BakerLogTag_MissedEndorsementBonus -> case NEL.nonEmpty elogs of
+              Nothing -> []
+              Just (elog :| []) -> pure $ BakerAlert_Alert (BakerLogTag_MissedEndorsementBonus :=> Identity elog)
+              Just ls ->
+                let
+                  elog = NEL.head ls
+                  getLvl = _errorLogBakerMissedEndorsementBonus_level
+                  getBakeTime = _errorLogBakerMissedEndorsementBonus_bakeTime
+                  applyF f = (\el -> (getLvl el, getBakeTime el)) $ f (comparing getBakeTime) elogs
+                in pure $ BakerAlert_GroupedAlert $ GroupedBakerAlert
+                    { _groupedBakerAlert_type = GroupedAlertType_MissedEndorsementBonus
+                    , _groupedBakerAlert_first = applyF minimumBy
+                    , _groupedBakerAlert_latest = applyF maximumBy
+                    , _groupedBakerAlert_right = Nothing
+                    , _groupedBakerAlert_baker = _errorLogBakerMissedEndorsementBonus_baker elog
+                    , _groupedBakerAlert_logs = _errorLogBakerMissedEndorsementBonus_log <$> ls
+                    }
+
+            -- non-groupable baker alerts
+            _ -> map (\al -> BakerAlert_Alert $ tag :=> Identity al) elogs
 
   pure $ mapMaybe (\(k, v) -> fmap (k,) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList bakerErrors
 
