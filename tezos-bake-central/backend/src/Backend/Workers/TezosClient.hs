@@ -200,7 +200,8 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
               |]
           inDb selectProposal >>= \case
             [(pkh :: PublicKeyHash, ledgerIdentifier, signingCurve, derivationPath, shouldDoVoteBallot, proposalId :: Id PeriodProposal, proposalHash)] -> do
-              dsh <- liftIO $ atomically $ dataSourceHead nds
+              -- tezos-client uses head~2 (which is the latest final block) on Ithaca for submitting voting operations
+              dsh <- liftIO $ atomically $ dataSourceFinalHead nds
               let attempted = view hash <$> dsh
                   sk = SecretKey ledgerIdentifier signingCurve derivationPath
               inDb $ notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
@@ -260,6 +261,8 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
       -- a baking right and we shouldn't bother checking if we don't have an internal baker running
       -- either
       doSensibleLedgerCheck _wasConnected = do
+        -- Here we use latest head instead of latest final head to check whether we have baking/endorsement
+        -- opportunities in upcoming blocks
         dsh <- liftIO $ atomically $ dataSourceHead nds
         doCheck <- for dsh $ \blk -> checkKilnBakerAndNextRights appConfig nds blk >>= \case
           -- If we don't have an internal baker, don't bother checking
@@ -540,7 +543,7 @@ setupLedgerToBake appConfig maybePaths = do
 checkIfRegistered :: MonadIO m => LoggingEnv -> Pool Postgresql -> NodeDataSource -> PublicKeyHash -> m Bool
 checkIfRegistered logger db nds pkh = do
   mDelegateInfo <- runMaybeT $ do
-    headBlock <- MaybeT $ liftIO $ atomically $ dataSourceHead nds
+    headBlock <- MaybeT $ liftIO $ atomically $ dataSourceFinalHead nds
     MaybeT $ runMaybe $ nodeQueryDataSource $ NodeQuery_DelegateInfo (headBlock ^. hash) (headBlock ^. level) pkh
   let isReg = case mDelegateInfo of
         Just delegateInfo | not (_cacheDelegateInfo_deactivated delegateInfo) -> True

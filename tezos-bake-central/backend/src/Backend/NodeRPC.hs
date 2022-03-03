@@ -193,6 +193,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_httpMgr :: Http.Manager
   , _nodeDataSource_pool :: Pool Postgresql
   , _nodeDataSource_latestHead :: TVar (Maybe BranchInfo)
+  , _nodeDataSource_latestFinalHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_logger :: LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
   , _nodeDataSource_kilnNodeUri :: URI
@@ -559,12 +560,12 @@ tryNodeQueryT f = do
 -- | Blocks until a new head is seen.
 --
 -- Returns most recently seen head.
-waitForNewHead :: (HasNodeDataSource nds) => nds -> IO VeryBlockLike
-waitForNewHead nds = do
-  oldHead <- view hash <<$>> dataSourceHead nds
+waitForNewFinalHead :: (HasNodeDataSource nds) => nds -> IO VeryBlockLike
+waitForNewFinalHead nds = do
+  oldHead <- view hash <<$>> dataSourceFinalHead nds
 
   atomically $ do
-    newHeadInfo <- maybe retry pure =<< readTVar (nds ^. nodeDataSource . nodeDataSource_latestHead)
+    newHeadInfo <- maybe retry pure =<< readTVar (nds ^. nodeDataSource . nodeDataSource_latestFinalHead)
     when (oldHead == Just (newHeadInfo ^. hash)) retry
     pure $ newHeadInfo ^.  branchInfo_block . withProtocolHash_value
 
@@ -573,6 +574,12 @@ dataSourceHead
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> m (Maybe BranchInfo)
 dataSourceHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestHead)
+
+-- | extracts the latest known final head
+dataSourceFinalHead
+  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
+  => nds -> m (Maybe BranchInfo)
+dataSourceFinalHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestFinalHead)
 
 priorityChunkSize :: Num a => a
 priorityChunkSize = 64
@@ -1077,7 +1084,7 @@ getProtocolConstants ct = do
     Just existing -> pure existing
     Nothing -> do
       hash' <- case ct of
-        Right _ -> askNodeDataSource >>= nqAtomically . dataSourceHead
+        Right _ -> askNodeDataSource >>= nqAtomically . dataSourceFinalHead
           >>= maybe (nqThrowError KilnRpcError_NoKnownHeads) (pure . view hash)
         Left hash' -> pure hash'
       getProtocolIndex hash' protoHash

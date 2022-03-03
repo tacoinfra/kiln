@@ -104,25 +104,44 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
   when (blockTimeDiff < maxTimeDiff) $ do
     oldHead <- liftIO $ atomically (dataSourceHead nds)
     when (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness) $ do
-      newStateRsp :: Either KilnRpcError BlockCrossCompat <- runExceptT $ do
+      newStateRsp :: Either KilnRpcError (BlockCrossCompat, BlockCrossCompat) <- runExceptT $ do
           flip runReaderT nds { _nodeDataSource_nodeForQuery = Just nodeAddr } $ do
-            nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
+            latestHead <- nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
+            -- TODO: remove this 'case' once Tenderbake is used on mainnet
+            (latestHead,) <$> case latestHead ^. protocolHash of
+              -- The latest final block within node is head~2 since Ithaca
+              "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" -> do
+                nodeQueryDataSourceImmediate $ NodeQuery_BlockPred (headBlockInfo ^. hash) 2
+              _ -> pure latestHead
       case newStateRsp of
         Left e -> logKilnRpcError "Handle new node head" e
-        Right headBlock -> do
-        updatedLevel <- liftIO $ atomically $ do
-          let latestHeadTVar = _nodeDataSource_latestHead nds
-          latestHead <- readTVar latestHeadTVar
-          if Just (headBlock ^. fitness) > latestHead ^? _Just . fitness
-            then do
-              let levelInfo = headBlock ^. blockMetadata . blockMetadata_levelInfo
-                  newHead = BranchInfo (WithProtocolHash (mkVeryBlockLike headBlock) (headBlock ^. protocolHash))
-                    (levelInfo ^. levelInfo_cycle) (levelInfo ^. levelInfo_cyclePosition)
-              writeTVar latestHeadTVar $ Just newHead
-              pure $ Just $ headBlock ^. level
-            else
-              pure Nothing
-        for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
+        Right (headBlock, headFinalBlock) -> do
+          updatedLevel <- liftIO $ atomically $ do
+            let latestHeadTVar = _nodeDataSource_latestHead nds
+                latestFinalHeadTVar = _nodeDataSource_latestFinalHead nds
+            latestHead <- readTVar latestHeadTVar
+            latestFinalHead <- readTVar latestFinalHeadTVar
+            if Just (headBlock ^. fitness) > latestHead ^? _Just . fitness
+              then do
+                let newHead = mkBranchInfo headBlock
+                writeTVar latestHeadTVar $ Just newHead
+                -- Final block should be the same within multiple nodes, so we're
+                -- doing this check to avoid redundant '_nodeDataSource_latestFinalHead' updates.
+                if Just (headFinalBlock ^. fitness) > latestFinalHead ^? _Just . fitness
+                  then do
+                    let newFinalHead = mkBranchInfo headFinalBlock
+                    writeTVar latestFinalHeadTVar $ Just newFinalHead
+                  else pure ()
+                pure $ Just $ headBlock ^. level
+              else
+                pure Nothing
+          for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
+  where
+    mkBranchInfo :: BlockCrossCompat -> BranchInfo
+    mkBranchInfo blk =
+      let levelInfo = blk ^. blockMetadata . blockMetadata_levelInfo in
+        BranchInfo (WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash))
+          (levelInfo ^. levelInfo_cycle) (levelInfo ^. levelInfo_cyclePosition)
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
@@ -507,7 +526,7 @@ amendmentProcessWorker
   -> NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ waitForNewFinalHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   (latestBlock, protoInfo) <- throwing $ runNodeQueryT $ liftA2 (,)
     (nodeQueryDataSourceSafe $ NodeQuery_Block (latestHead ^. hash))
     (getProtocolConstants $ Left $ latestHead ^. hash)
@@ -795,7 +814,7 @@ protocolMonitorWorker
   :: NodeDataSource
   -> Pool Postgresql
   -> IO (IO ())
-protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
+protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinalHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
     getProtocol = getProtocol' >>= \case
