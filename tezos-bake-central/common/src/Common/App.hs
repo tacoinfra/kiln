@@ -20,6 +20,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE RecordWildCards #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -143,21 +144,35 @@ instance ToJSON BakerSummary
 
 data BakerAlert
   = BakerAlert_Alert (DSum BakerLogTag Identity)
-  | BakerAlert_GroupedAlert
-    { _bakerAlert_groupedAlert_first :: (RawLevel, UTCTime)
-    , _bakerAlert_groupedAlert_latest :: (RawLevel, UTCTime)
-    , _bakerAlert_groupedAlert_right :: RightKind
-    , _bakerAlert_groupedAlert_baker :: Id Baker
-    , _bakerAlert_groupedAlert_logs :: NonEmpty (Id ErrorLog)
-    }
+  | BakerAlert_GroupedAlert GroupedBakerAlert
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerAlert
 instance ToJSON BakerAlert
 
+-- When adding a new type of grouped baker alert, make the neccessary changes
+-- in 'groupBakerAlerts' function.
+data GroupedAlertType
+  = GroupedAlertType_MissedBake
+  | GroupedAlertType_MissedEndorsementBonus
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON GroupedAlertType
+instance ToJSON GroupedAlertType
+
+data GroupedBakerAlert = GroupedBakerAlert
+  { _groupedBakerAlert_type :: GroupedAlertType
+  , _groupedBakerAlert_first :: (RawLevel, UTCTime)
+  , _groupedBakerAlert_latest :: (RawLevel, UTCTime)
+  , _groupedBakerAlert_right :: Maybe RightKind
+  , _groupedBakerAlert_baker :: Id Baker
+  , _groupedBakerAlert_logs :: NonEmpty (Id ErrorLog)
+  } deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON GroupedBakerAlert
+instance ToJSON GroupedBakerAlert
+
 errorLogFromBakerAlert :: BakerAlert -> NonEmpty (Id ErrorLog)
 errorLogFromBakerAlert = \case
   BakerAlert_Alert (btag :=> Identity blog) -> errorLogIdForBakerLogTag btag blog :| []
-  BakerAlert_GroupedAlert { _bakerAlert_groupedAlert_logs = elogIds } -> elogIds
+  BakerAlert_GroupedAlert GroupedBakerAlert{..} -> _groupedBakerAlert_logs
 
 -- data NodeSummary = Node Node' AlertCount
 
@@ -399,6 +414,7 @@ bakerIdForBakerLogTag :: BakerLogTag t -> t -> PublicKeyHash
 bakerIdForBakerLogTag = \case
   BakerLogTag_BakerLedgerDisconnected -> unId . _errorLogBakerLedgerDisconnected_baker
   BakerLogTag_BakerMissed -> unId . _errorLogBakerMissed_baker
+  BakerLogTag_MissedEndorsementBonus -> unId . _errorLogBakerMissedEndorsementBonus_baker
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_publicKeyHash
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
@@ -409,6 +425,7 @@ errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
 errorLogIdForBakerLogTag = \case
   BakerLogTag_BakerLedgerDisconnected -> _errorLogBakerLedgerDisconnected_log
   BakerLogTag_BakerMissed -> _errorLogBakerMissed_log
+  BakerLogTag_MissedEndorsementBonus -> _errorLogBakerMissedEndorsementBonus_log
   BakerLogTag_BakerDeactivated -> _errorLogBakerDeactivated_log
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log

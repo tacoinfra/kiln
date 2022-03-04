@@ -338,6 +338,8 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
                     <- whenM (any (elem (_baker_publicKeyHash baker)) $ view endorsingRightsCrossCompat_delegates <$> endorsers) $ do
 
       let
+        blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
+        mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer
         endorserDelegates = V012.blockCrossData
             (^..V012.block_operations . traverse . traverse . V012.operation_contents . traverse . V012._OperationContents_Endorsement . V012.operationContentsEndorsement_metadata . V012.endorsementMetadata_delegate)
             (V011.blockCrossCata
@@ -346,8 +348,11 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
             )
             thisBlock
         mkAction = bool reportMissedBake cleanAction (_baker_publicKeyHash baker `elem` endorserDelegates)
-        action = mkAction (predBlock ^. timestamp) (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
-      return $ pure action
+        missedEndorsementAction = mkAction (predBlock ^. timestamp) (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
+        missedBonusAction = whenJust mbBlockProposer $ \blockProposer ->
+          when (blockProposer /= blockBaker && blockProposer == _baker_publicKeyHash baker) $
+            reportMissedEndorsementBonus (thisBlock ^. timestamp) (baker ^. baker_publicKeyHash) lvl
+      return $ pure $ missedEndorsementAction *> missedBonusAction
 
     return $ sequence_ $ bakingAlerts <> endorsingAlerts
 

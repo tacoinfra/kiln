@@ -17,6 +17,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE RecordWildCards #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -78,9 +79,10 @@ import Common (humanBytes)
 import Common (unixEpoch, uriHostPortPath)
 import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHeadMessage,
                       bakerAccusedDescriptions, bakerDeactivatedDescriptions,
-                      bakerDeactivationRiskDescriptions, bakerGroupedMissedDescriptions,
-                      bakerInsufficientFundsDescriptions, bakerLedgerDisconnectedDescriptions,
-                      bakerMissedDescriptions, bakerVotingReminderDescriptions,
+                      bakerDeactivationRiskDescriptions, bakerGroupedMissedBonusDescriptions,
+                      bakerGroupedMissedDescriptions, bakerInsufficientFundsDescriptions,
+                      bakerLedgerDisconnectedDescriptions, bakerMissedDescriptions,
+                      bakerMissedEndorsementBonusDescriptions, bakerVotingReminderDescriptions,
                       standardTimeFormat)
 import Common.Api
 import Common.App
@@ -767,6 +769,8 @@ instance HasAlertMetaData (BakerLogTag a) where
           }
     BakerLogTag_BakerMissed ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
+    BakerLogTag_MissedEndorsementBonus ->
+      def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_BakerDeactivated -> def
     BakerLogTag_BakerDeactivationRisk -> def { _alertMetaData_severity = AlertSeverity_Warning }
     BakerLogTag_BakerAccused ->
@@ -787,7 +791,10 @@ instance HasAlertMetaData CollectiveNodesFailure where
 instance HasAlertMetaData BakerAlert where
   getAlertMetaData = \case
     BakerAlert_Alert a -> getAlertMetaData a
-    BakerAlert_GroupedAlert {} -> getAlertMetaData BakerLogTag_BakerMissed
+    BakerAlert_GroupedAlert GroupedBakerAlert{..} ->
+      case _groupedBakerAlert_type of
+        GroupedAlertType_MissedBake -> getAlertMetaData BakerLogTag_BakerMissed
+        GroupedAlertType_MissedEndorsementBonus -> getAlertMetaData BakerLogTag_MissedEndorsementBonus
 
 instance (HasAlertMetaData a, HasAlertMetaData b) => HasAlertMetaData (Either a b) where
   getAlertMetaData (Left v) = getAlertMetaData v
@@ -996,6 +1003,9 @@ liveErrorsWidget = void $ do
             pkh
           BakerLogTag_BakerMissed -> renderBakerError
             (bakerMissedDescriptions log)
+            pkh
+          BakerLogTag_MissedEndorsementBonus -> renderBakerError
+            (bakerMissedEndorsementBonusDescriptions log)
             pkh
           BakerLogTag_InsufficientFunds -> do
               dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
@@ -2271,8 +2281,12 @@ bakersTab =
               then Just $ case ba of
                 BakerAlert_Alert (btag :=> Identity blog) ->
                   (LogTag_Baker btag :=> Const (errorLogIdForBakerLogTag btag blog)) :| []
-                BakerAlert_GroupedAlert { _bakerAlert_groupedAlert_logs = elogIds } ->
-                  fmap (\i -> LogTag_Baker BakerLogTag_BakerMissed :=> Const i) elogIds
+                BakerAlert_GroupedAlert GroupedBakerAlert{..} ->
+                  case _groupedBakerAlert_type of
+                    GroupedAlertType_MissedBake ->
+                      fmap (\i -> LogTag_Baker BakerLogTag_BakerMissed :=> Const i) _groupedBakerAlert_logs
+                    GroupedAlertType_MissedEndorsementBonus ->
+                      fmap (\i -> LogTag_Baker BakerLogTag_MissedEndorsementBonus :=> Const i) _groupedBakerAlert_logs
               else Nothing
 
             resolvable = concatMap toList . concatMap (mapMaybe toLogTag . NEL.toList) . MMap.elems <$> dEbb
@@ -2339,6 +2353,7 @@ bakersTab =
                         aRight = case _errorLogBakerMissed_right log of
                           RightKind_Baking -> "a bake"
                           RightKind_Endorsing -> "an endorsement"
+                    BakerLogTag_MissedEndorsementBonus -> Just $ text "Missed endorsement bonus."
                     BakerLogTag_BakerLedgerDisconnected -> Just $ renderBakerError $ bakerLedgerDisconnectedDescriptions log
                     BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
                     BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
@@ -2347,16 +2362,18 @@ bakersTab =
                         dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
                         dyn_ $ ffor dTokensPerRoll $ \mTokensPerRoll -> renderBakerError $ bakerInsufficientFundsDescriptions mTokensPerRoll log
                     BakerLogTag_VotingReminder -> Nothing
-                  Right BakerAlert_GroupedAlert
-                    { _bakerAlert_groupedAlert_right = rightKind
-                    , _bakerAlert_groupedAlert_logs = elogIds } -> Just $ el "span" $ do
-                      elClass "span" "ui label circular" $ text $ tshow (length elogIds)
+                  Right (BakerAlert_GroupedAlert GroupedBakerAlert{..}) ->
+                    Just $ el "span" $ do
+                      elClass "span" "ui label circular" $ text $ tshow (length _groupedBakerAlert_logs)
                       text nbsp
-                      text $ "Missed " <> aRight <> "."
+                      text $ "Missed " <> subj <> "."
                       where
-                        aRight = case rightKind of
-                          RightKind_Baking -> "a bake"
-                          RightKind_Endorsing -> "an endorsement"
+                        subj = case _groupedBakerAlert_type of
+                          GroupedAlertType_MissedBake -> case _groupedBakerAlert_right of
+                            Just RightKind_Baking -> "a bake"
+                            Just RightKind_Endorsing -> "an endorsement"
+                            Nothing -> error "Inconsistent state of grouped alert. 'right' should be 'Just' value for 'MissedBake' alert."
+                          GroupedAlertType_MissedEndorsementBonus -> "the endorsement bonus"
 
               let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
               titleUniq <- holdUniqDyn title
@@ -2438,6 +2455,7 @@ bakersTab =
         in case bTag of
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError ev (pure $ bakerLedgerDisconnectedDescriptions log) pkh
           BakerLogTag_BakerMissed -> renderBakerError ev (pure $ bakerMissedDescriptions log) pkh
+          BakerLogTag_MissedEndorsementBonus -> renderBakerError ev (pure $ bakerMissedEndorsementBonusDescriptions log) pkh
           BakerLogTag_BakerDeactivated -> renderBakerError ev (pure $ bakerDeactivatedDescriptions log) pkh
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh
           BakerLogTag_BakerAccused -> renderBakerError ev (pure $ bakerAccusedDescriptions log) pkh
@@ -2448,11 +2466,24 @@ bakersTab =
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining ->
               renderBakerError ev (bakerVotingReminderDescriptions log <$> remaining) pkh
 
-      BakerAlert_GroupedAlert first' latest' rightKind (Id pkh) elogIds -> do
-        tz <- asks (^. timeZone)
+      BakerAlert_GroupedAlert GroupedBakerAlert{..} ->
         let
-          ev = fmap (\l -> LogTag_Baker BakerLogTag_BakerMissed :=> Const l) elogIds
-        renderBakerError ev (pure $ bakerGroupedMissedDescriptions tz (length elogIds) first' latest' rightKind) pkh
+          logs = _groupedBakerAlert_logs
+          first' = _groupedBakerAlert_first
+          latest' = _groupedBakerAlert_latest
+          pkh = unId _groupedBakerAlert_baker
+        in do
+          tz <- asks (^. timeZone)
+          case _groupedBakerAlert_type of
+            GroupedAlertType_MissedBake ->
+              let
+                ev = fmap (\l -> LogTag_Baker BakerLogTag_BakerMissed :=> Const l) logs
+                errMsg = "Inconsistent state of grouped alert. 'right' should be 'Just' value for 'MissedBake' alert."
+                rightKind = fromMaybe (error errMsg) _groupedBakerAlert_right
+              in renderBakerError ev (pure $ bakerGroupedMissedDescriptions tz (length logs) first' latest' rightKind) pkh
+            GroupedAlertType_MissedEndorsementBonus ->
+              let ev = fmap (\l -> LogTag_Baker BakerLogTag_MissedEndorsementBonus :=> Const l) logs
+              in renderBakerError ev (pure $ bakerGroupedMissedBonusDescriptions tz (length logs) first' latest') pkh
 
       where
         renderBakerError :: NonEmpty (DSum LogTag (Const (Id ErrorLog))) -> Dynamic t BakerErrorDescriptions -> PublicKeyHash -> m ()
