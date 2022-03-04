@@ -482,6 +482,12 @@ instance PrimitivePersistField PeriodSequence where
   toPrimitivePersistValue p (PeriodSequence x) = toPrimitivePersistValue p (Json x)
   fromPrimitivePersistValue p x = PeriodSequence $ unJson $ fromPrimitivePersistValue p x
 
+instance FromField AccusationType where
+  fromField f = maybe (fail "Invalid value for AccusationType") pure . readMaybe <=< fromField f
+
+instance ToField AccusationType where
+  toField v = toField (show v)
+
 instance NeverNull (HashedValue a)
 -- instance NeverNull (Json BlockInfo)
 instance NeverNull Cycle
@@ -820,6 +826,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - embedded: SecretKey
   - entity: LedgerAccount
     autoKey: null
+  - primitive: AccusationType
   - entity: Accusation
     autoKey: null
     constructors:

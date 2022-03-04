@@ -350,12 +350,14 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
     cycle = tshow $ unCycle $ _errorLogBakerAccused_cycle elog
     lvl = tshow $ unRawLevel $ _errorLogBakerAccused_level elog
     accusedLevel = tshow $ unRawLevel $ _errorLogBakerAccused_accusedLevel elog
-    right = case _errorLogBakerAccused_right elog of
-      RightKind_Baking -> "baking"
-      RightKind_Endorsing -> "endorsement"
-    rightI = case _errorLogBakerAccused_right elog of
-      RightKind_Baking -> "bake"
-      RightKind_Endorsing -> "endorsement"
+    right = case _errorLogBakerAccused_accusationType elog of
+      AccusationType_DoubleBake -> "baking"
+      AccusationType_DoubleEndorsement -> "endorsement"
+      AccusationType_DoublePreendorsement -> "preendorsement"
+    rightI = case _errorLogBakerAccused_accusationType elog of
+      AccusationType_DoubleBake -> "bake"
+      AccusationType_DoubleEndorsement -> "endorsement"
+      AccusationType_DoublePreendorsement -> "preendorsement"
     upTo = bool "" (" up to block level " <> accusedLevel) accusedInSameCycle
     accusedInSameCycle = liftA2 (==) _errorLogBakerAccused_cycle _errorLogBakerAccused_accusedCycle elog
 

@@ -41,18 +41,18 @@ accusationWorker delay nds appConfig = runLoggingEnv (_nodeDataSource_logger nds
 
     either (logKilnRpcError "Accusation Worker") pure <=< flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ do
       alertData <- [queryQ|
-        select a.hash, a."blockHash", a."isBake", a.baker, a."occurredLevel", a.level
+        select a.hash, a."blockHash", a."accusationType", a.baker, a."occurredLevel", a.level
         from "Baker" b join "Accusation" a on b."publicKeyHash" = a.baker
         where a.chain = ?chainId
         order by a.level asc
       |]
 
-      for_ alertData $ \(aHash, aBlockHash, aIsBake, aBaker, aOccurredLevel, aLevel) -> do
+      for_ alertData $ \(aHash, aBlockHash, aType, aBaker, aOccurredLevel, aLevel) -> do
         (aOccurredCycle, aCycle) <- liftA2 (,) (levelToCycle (aBlockHash, aLevel) aOccurredLevel) (levelToCycle (aBlockHash, aLevel) aLevel)
         flip runReaderT appConfig $ reportAccusation
           aHash
           aBlockHash
-          (bool RightKind_Endorsing RightKind_Baking aIsBake)
+          aType
           aBaker
           aOccurredLevel
           aOccurredCycle

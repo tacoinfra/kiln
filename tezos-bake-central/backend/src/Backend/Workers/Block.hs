@@ -147,12 +147,22 @@ insertAccusationsV12 blockHash chainId block = do
   -- Operations into a block are divided into 4 subsections.  Accusations
   -- are always in the third of these sections.
   let mightBeAccusations = fold $ Seq.lookup 2 $ V012._block_operations block
+      levelGetter = V012.inlinedEndorsementLike_operations . V012.endorsementLikeContents_level
   for_ mightBeAccusations $ \op -> do
     let
       opHash = V012._operation_hash op
       blockLevel = block ^. level
     for_ (V012._operation_contents op) $ \case
-      -- TODO [#112]: handle double preendorsement
+      V012.OperationContents_DoublePreendorsementEvidence ev -> do
+        let
+          accusedLevel = ev ^. V012.operationContentsDoublePreendorsementEvidence_op1 . levelGetter
+        (possibles,possiblesKeys) <- loadPossibles blockHash accusedLevel
+        let
+          encodedOp1 = TBin.encode $ V012.Envelope_Preendorsement chainId $ V012.outlinePreendorsement $
+            ev ^. V012.operationContentsDoublePreendorsementEvidence_op1
+          sig = fromMaybe (error "inlined preendorsements in double preendorsement evidence are always signed") $
+            ev ^. V012.operationContentsDoublePreendorsementEvidence_op1 . V012.inlinedEndorsementLike_signature
+        insertDoubleEndorsementLikeEvidence AccusationType_DoublePreendorsement blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
       V012.OperationContents_DoubleBakingEvidence ev -> do
         round' <- nodeQueryDataSourceSafe $ NodeQuery_Round blockHash
         let
@@ -161,12 +171,14 @@ insertAccusationsV12 blockHash chainId block = do
         insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority
       V012.OperationContents_DoubleEndorsementEvidence ev -> do
         let
-          accusedLevel = ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . V012.inlinedEndorsement_operations . V012.endorsementMempoolContents_level
+          accusedLevel = ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . levelGetter
         (possibles,possiblesKeys) <- loadPossibles blockHash accusedLevel
         let
-          encodedOp1 = TBin.encode $ V012.Envelope_Endorsement chainId $ V012.outlineEndorsement $ ev ^. V012.operationContentsDoubleEndorsementEvidence_op1
-          sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $ ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . V012.inlinedEndorsement_signature
-        insertDoubleEndorsementEvidence blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
+          encodedOp1 = TBin.encode $ V012.Envelope_Endorsement chainId $ V012.outlineEndorsement $
+            ev ^. V012.operationContentsDoubleEndorsementEvidence_op1
+          sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $
+            ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . V012.inlinedEndorsementLike_signature
+        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
       _ -> return ()
 
 insertAccusationsV9
@@ -195,7 +207,7 @@ insertAccusationsV9 blockHash chainId block = do
         let
           encodedOp1 = TBin.encode $ V010.Envelope_Endorsement chainId $ V010.outlineEndorsement $ ev ^. V010.operationContentsDoubleEndorsementEvidence_op1
           sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $ ev ^. V010.operationContentsDoubleEndorsementEvidence_op1 . V010.inlinedEndorsement_signature
-        insertDoubleEndorsementEvidence blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
+        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
       _ -> return ()
 
 insertAccusationsV5
@@ -224,28 +236,30 @@ insertAccusationsV5 blockHash chainId block = do
         let
           encodedOp1 = TBin.encode $ V005.Envelope_Endorsement chainId $ V005.outlineEndorsement $ ev ^. V005.operationContentsDoubleEndorsementEvidence_op1
           sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $ ev ^. V005.operationContentsDoubleEndorsementEvidence_op1 . V005.inlinedEndorsement_signature
-        insertDoubleEndorsementEvidence blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
+        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
       _ -> return ()
 
 insertDoubleBakingEvidence
   :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
   => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Priority -> NodeQueryT m ()
 insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority = do
+  let t = AccusationType_DoubleBake
   baker <- fmap (view bakingRightsCrossCompat_delegate) $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedPriority
   void [executeQ|
-    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "isBake")
-    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, true)
+    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
+    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
     on conflict do nothing
     |]
 
-insertDoubleEndorsementEvidence
+-- | Checks and inserts double endorsement or double preendorsement accusation data to the DB
+insertDoubleEndorsementLikeEvidence
   :: (MonadIO m, PostgresRaw m)
-  => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Signature -> ByteString -> Seq.Seq PublicKeyHash -> Seq.Seq PublicKey -> NodeQueryT m ()
-insertDoubleEndorsementEvidence blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys = do
+  => AccusationType -> BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Signature -> ByteString -> Seq.Seq PublicKeyHash -> Seq.Seq PublicKey -> NodeQueryT m ()
+insertDoubleEndorsementLikeEvidence t blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys = do
   let actuals = Seq.filter (\(_,key) -> Sig.check key sig encodedOp1) $ Seq.zip possibles possiblesKeys
   for_ actuals $ \(baker,_) -> [executeQ|
-    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "isBake")
-    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, false)
+    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
+    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
     on conflict do nothing
     |]
 
