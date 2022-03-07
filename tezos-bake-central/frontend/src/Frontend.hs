@@ -1122,7 +1122,7 @@ bakerStatus = \case
   Right bakerSummary
     | _bakerSummary_alertCount bakerSummary > 0 -> MonitoredStatus_Unhealthy
     | Right bid <- _bakerSummary_baker bakerSummary, not (isBakerRunning bid) -> MonitoredStatus_Stopped
-    | _bakerSummary_nextRight bakerSummary == BakerNextRight_GatheringData -> MonitoredStatus_Unknown
+    | BakerNextRight_GatheringData :| [] <- _bakerSummary_nextRights bakerSummary -> MonitoredStatus_Unknown
     | otherwise -> MonitoredStatus_Healthy
 
 bakersList ::
@@ -2690,23 +2690,35 @@ bakersTab =
             divClass ("ui message " <> severityColor severity) m
 
         let
-          nextRightsTxt = ffor (_bakerSummary_nextRight <$> bakerDyn) $ \case
+          nextRightsTxt :: Dynamic t (Either (m ()) (NonEmpty (RightKind, RawLevel)))
+          nextRightsTxt = ffor (_bakerSummary_nextRights <$> bakerDyn) $ traverse \case
             BakerNextRight_GatheringData -> Left $ text "-"
             BakerNextRight_WaitingForRights -> Left $ text "Waiting to receive rights"
             BakerNextRight_KnownNoRights -> Left $ text "None"
-            BakerNextRight_KnownRights (r,l) -> Right (r,l)
-          wantToGatherData = (== BakerNextRight_GatheringData) . _bakerSummary_nextRight <$> bakerDyn
+            BakerNextRight_KnownRights (r, l) -> Right (r, l)
+
+          -- Styles for column which contains info about next rights
+          rightsInfoColumn = elAttr "div"
+            (  "class" =: "fourteen wide column"
+            <> "style" =: "padding-left: 0"
+            )
+
+          wantToGatherData = bakerDyn
+            <&> _bakerSummary_nextRights
+            <&> \case
+              BakerNextRight_GatheringData :| [] -> True
+              _ -> False
         isGatheringData <- holdUniqDyn $ (&&) <$> wantToGatherData <*> connected
 
         divClass "divider" blank
 
-        el "dl" $ do
+        divClass "ui grid" $ do
           (latestHead, knownProto) <- watchHeadWithProtocol
-          el "div" $ do
-            el "dt" (text "Next")
-            el "dd" $ dyn_ $ ffor nextRightsTxt $ \case
-              Left t -> t
-              Right (r,l) -> do
+          divClass "two wide column" (text "Next:")
+          dyn_ $ ffor nextRightsTxt $ \case
+            Left t -> rightsInfoColumn t
+            Right rights -> rightsInfoColumn $ for_ rights $ \(r, l) ->
+              elAttr "div" ("style" =: "font-weight: bold") $ do
                 text $ case r of
                   RightKind_Baking -> "Bake block "
                   RightKind_Endorsing -> "Endorse block "

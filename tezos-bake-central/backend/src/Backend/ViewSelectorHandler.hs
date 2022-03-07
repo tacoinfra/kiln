@@ -83,7 +83,7 @@ import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
-import Safe (minimumByMay, headMay)
+import Safe (headMay)
 import Text.URI (render, URI)
 
 import Tezos.Types
@@ -794,23 +794,27 @@ getBakerAddresses nds bid = do
       |]
 
   let
+    getNextRights rights progress insufficientFunds = case NEL.nonEmpty $ Map.toList rights of
+      Nothing ->
+        let
+          right = if insufficientFunds
+            then BakerNextRight_KnownNoRights
+            else case subtract progress <$> maxProgress of
+              Just 0 -> BakerNextRight_WaitingForRights
+              Just _ -> BakerNextRight_GatheringData
+              Nothing -> BakerNextRight_GatheringData
+              -- if maxProgress is Nothing, then we don't yet have enough history to say much of
+              -- anything about how much work we still need to do per baker
+          in right :| []
+      Just rights' -> fmap BakerNextRight_KnownRights $ NEL.sortBy (compare `on` swap) rights'
 
-    getNextRight rights progress insufficientFunds = case minimumByMay (on compare swap) $ Map.toList rights of
-      Just v -> BakerNextRight_KnownRights v
-      Nothing -> if insufficientFunds
-        then BakerNextRight_KnownNoRights
-        else case subtract progress <$> maxProgress of
-          Just 0 -> BakerNextRight_WaitingForRights
-          Just _ -> BakerNextRight_GatheringData
-          Nothing -> BakerNextRight_GatheringData
-        -- if maxProgress is Nothing, then we don't yet have enough history to say much of anything about how much work we still need to do per baker
     nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
     nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) nextBakeRightsL
     result = fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
-        (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
+        (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount (BakerNextRight_GatheringData :| []))
         (const Nothing)
-        (\(b, (alertCount, insufficientFunds)) (Max progress, rights) -> Just $ BakerSummary b alertCount (getNextRight rights progress insufficientFunds))
+        (\(b, (alertCount, insufficientFunds)) (Max progress, rights) -> Just $ BakerSummary b alertCount (getNextRights rights progress insufficientFunds))
       ) bakers (getMonoidalMap nextBakeRights)
 
   return result

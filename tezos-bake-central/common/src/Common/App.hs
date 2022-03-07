@@ -137,7 +137,7 @@ instance ToJSON BakerNextRight
 data BakerSummary = BakerSummary
   { _bakerSummary_baker :: Either BakerData BakerInternalData
   , _bakerSummary_alertCount :: Int
-  , _bakerSummary_nextRight :: BakerNextRight
+  , _bakerSummary_nextRights :: NonEmpty BakerNextRight
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerSummary
 instance ToJSON BakerSummary
