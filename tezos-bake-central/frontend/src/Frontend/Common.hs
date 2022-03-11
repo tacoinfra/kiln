@@ -23,14 +23,12 @@ module Frontend.Common where
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
-import qualified Data.ByteString.Base16 as BS16
 import Data.Fixed (divMod')
 import Data.List (intercalate)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.String (fromString)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import Data.Time (TimeZone, UTCTime)
 import qualified Data.Time as Time
 import Obelisk.Generated.Static (static)
@@ -52,7 +50,7 @@ import qualified GHCJS.DOM.HTMLTextAreaElement as TextArea
 import qualified GHCJS.DOM.Node as Node
 import qualified GHCJS.DOM.Types as DOM
 
-import Tezos.Types (BlockHash, Fitness, PublicKeyHash, Tez (..), toBase58Text, toPublicKeyHashText, unFitness, fromShort, NamedChain(..))
+import Tezos.Types (BlockHash, NamedChain(..), PublicKeyHash, Tez(..), toBase58Text, toPublicKeyHashText)
 
 import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
 import Common.Api (PublicRequest, PrivateRequest)
@@ -453,9 +451,6 @@ blockHashLinkAs blockHash = blockExplorerLink (toBase58Text <$> blockHash)
 publicKeyHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => PublicKeyHash -> m ()
 publicKeyHashLink pkh = blockExplorerLink (pure hash) (text hash)
   where hash = toPublicKeyHashText pkh
-
-fitnessText :: Fitness -> Text
-fitnessText = T.intercalate ":" . toList . fmap (T.decodeUtf8 . BS16.encode . fromShort) . unFitness
 
 iconClass :: Text -> Text
 iconClass i = "ui " <> i <> " icon"

@@ -2177,10 +2177,6 @@ nodesTab usingNodeOption =
       withPlaceholder $ withMaybeDyn b blockHashLink (view hash)
 
       el "dl" $ do
-        el "div" $ do
-          el "dt" (text "Fitness")
-          el "dd" $
-            withPlaceholder $ withMaybeDyn b dynText (fitnessText . view fitness)
 
         el "div" $ do
           el "dt" (text "Baked")
