@@ -115,6 +115,8 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "PublicNodeHead")
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "RawCacheEntry")
   >=> migrateBakerDetailsAddMissedRigtsInRow
+  >=> migrateCacheBakingRights
+  >=> migrateCacheEndorsingRightsDropContext
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -870,6 +872,36 @@ migrateBakerDetailsAddMissedRigtsInRow ta = do
     Just analyzedTable | all ((/= "missedRightsInRow") . colName) $ tableColumns analyzedTable -> do
       void [traceExecuteQ|
         ALTER TABLE "BakerDetails" ADD COLUMN "missedRightsInRow" INT NOT NULL DEFAULT 0;
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateCacheBakingRights :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateCacheBakingRights ta = do
+  let table = (Nothing,  "CacheBakingRights")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | all ((/= "round") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        DELETE FROM "CacheBakingRights";
+        ALTER TABLE "CacheBakingRights" DROP CONSTRAINT "CacheBakingRights_context";
+        ALTER TABLE "CacheBakingRights" ADD COLUMN "round" INT NOT NULL;
+        ALTER TABLE "CacheBakingRights" DROP COLUMN "result";
+        ALTER TABLE "CacheBakingRights" DROP COLUMN "context";
+        ALTER TABLE "CacheBakingRights" ADD COLUMN "delegate" VARCHAR NOT NULL;
+        ALTER TABLE "CacheBakingRights" ADD COLUMN "estimatedTime" TIMESTAMP WITHOUT TIME ZONE NULL;
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateCacheEndorsingRightsDropContext :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateCacheEndorsingRightsDropContext ta = do
+  let table = (Nothing,  "CacheEndorsingRights")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "context") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        DELETE FROM "CacheEndorsingRights";
+        ALTER TABLE "CacheEndorsingRights" DROP CONSTRAINT "CacheEndorsingRights_context";
+        ALTER TABLE "CacheEndorsingRights" DROP COLUMN "context";
       |]
       getTableAnalysis
     _ -> pure ta

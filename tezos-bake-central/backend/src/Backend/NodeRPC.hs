@@ -135,7 +135,7 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
+  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> Priority -> NodeQuery (Seq BakingRightsCrossCompat)
   NodeQuery_EndorsingRights   :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
   NodeQuery_Account           :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots           :: BlockHash -> NodeQuery Ballots
@@ -157,7 +157,7 @@ deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
 data NodeQueryIx a where
-  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq BakingRightsCrossCompat)
+  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> Priority -> NodeQueryIx (Seq BakingRightsCrossCompat)
   NodeQueryIx_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq EndorsingRightsCrossCompat)
 deriving instance Show (NodeQueryIx a)
 
@@ -588,7 +588,7 @@ priorityChunkSize = 64
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
   NodeQuery_ProtocolConstants ctx -> pure ctx
-  NodeQuery_BakingRights ctx _lvl -> pure ctx
+  NodeQuery_BakingRights ctx _lvl _maxRound -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
   NodeQuery_BlockPred ctx _offset -> pure ctx
@@ -789,10 +789,10 @@ nodeQueryImpl
   -> IO (Either KilnRpcError (RpcResult a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
-  NodeQuery_BakingRights branch targetLevel ->
-    nodeRPC' $ rBakingRightsFull (Set.map Left targetLevel) priorityChunkSize chainId branch
+  NodeQuery_BakingRights branch targetLevel maxRound ->
+    nodeRPC' $ rBakingRightsFull (Right targetLevel) maxRound chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
-    nodeRPC' $ rEndorsingRights (Set.map Left targetLevel) chainId branch
+    nodeRPC' $ rEndorsingRights (Right targetLevel) chainId branch
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract contractId (toChain chainId) branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
@@ -851,32 +851,34 @@ nodeQueryIx q = do
   where
     queryLvls :: Set RawLevel
     queryLvls = case q of
-      NodeQueryIx_BakingRights _ lvls -> lvls
+      NodeQueryIx_BakingRights _ lvls _maxRound -> lvls
       NodeQueryIx_EndorsingRights _ lvls -> lvls
 
     getNodeQuery :: NodeQueryIx a -> NodeQuery a
     getNodeQuery = \case
-      NodeQueryIx_BakingRights ctx lvl -> NodeQuery_BakingRights ctx lvl
+      NodeQueryIx_BakingRights ctx lvl maxRound -> NodeQuery_BakingRights ctx lvl maxRound
       NodeQueryIx_EndorsingRights ctx lvl -> NodeQuery_EndorsingRights ctx lvl
 
     filterCachedLvls :: Set RawLevel -> NodeQueryIx a -> NodeQueryIx a
     filterCachedLvls cachedLvls = \case
-      NodeQueryIx_BakingRights ctx lvls -> NodeQueryIx_BakingRights ctx (lvls `Set.difference` cachedLvls)
+      NodeQueryIx_BakingRights ctx lvls maxRound -> NodeQueryIx_BakingRights ctx (lvls `Set.difference` cachedLvls) maxRound
       NodeQueryIx_EndorsingRights ctx lvls -> NodeQueryIx_EndorsingRights ctx (lvls `Set.difference` cachedLvls)
 
     checkCacheDb
       :: ( Monad m1
-      , PostgresRaw m1
-      , MonadLogger m1)
+         , PostgresRaw m1
+         , MonadLogger m1
+         )
       => NodeQueryIx a -> m1 [(RawLevel, Maybe a)]
     checkCacheDb = \case
-      NodeQueryIx_BakingRights _ lvls -> do
+      NodeQueryIx_BakingRights _ lvls maxRound -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
         (rawData :: [(RawLevel, Json Aeson.Value)]) <- [queryQ|
           SELECT "level", "result"
           FROM "CacheBakingRights"
           WHERE "level" BETWEEN ?minLvl AND ?maxLvl
+            AND "priority" <= ?maxRound
         |]
         mapM (\(lvl, rawRight) -> fmap (lvl,) (getResult rawRight)) rawData
       NodeQueryIx_EndorsingRights _ lvls -> do
@@ -897,15 +899,19 @@ nodeQueryIx q = do
 
     addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
-      NodeQueryIx_BakingRights ctx lvls -> case result' of
-        (bakingRights :: Seq BakingRightsCrossCompat) -> for_ lvls $ \lvl -> do
-          let lvlRights = Seq.filter (\right -> right ^. bakingRightsCrossCompat_level == lvl) bakingRights
-              result = Json $ Aeson.toJSON lvlRights
-          unless (null lvlRights) $
-            void [executeQ|
-              INSERT INTO "CacheBakingRights" ("context", "level", "result")
-              values (?ctx, ?lvl, ?result)
-            |]
+      NodeQueryIx_BakingRights ctx lvls maxRound-> case result' of
+        (bakingRights :: Seq BakingRightsCrossCompat) ->
+          for_ lvls $ \lvl ->
+            for_ [0..maxRound] $ \prio -> do
+              let
+                lvlRights = flip Seq.filter bakingRights $ \right ->
+                  right ^. bakingRightsCrossCompat_level == lvl && right ^. bakingRightsCrossCompat_priority == prio
+                result = Json $ Aeson.toJSON lvlRights
+              unless (null lvlRights) $
+                void [executeQ|
+                  INSERT INTO "CacheBakingRights" ("context", "level", "priority", "result")
+                  values (?ctx, ?lvl, ?prio, ?result)
+                |]
       NodeQueryIx_EndorsingRights ctx lvls -> case result' of
         (endorsingRights :: Seq EndorsingRightsCrossCompat) -> for_ lvls $ \lvl -> do
           let lvlRights = Seq.filter (\right -> right ^. endorsingRightsCrossCompat_level == lvl) endorsingRights
@@ -928,7 +934,11 @@ nodeQueryIxBakingRights1
   -> Priority -- ^ The minimum priority in the window of rights we want. The window will be 'priorityChunkSize' large.
   -> NodeQueryT m BakingRightsCrossCompat
 nodeQueryIxBakingRights1 ctx lvl prio = do
-  allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx (Set.singleton lvl)
+  let
+    -- To get the [prio, prio + priorityChunkSize) window,
+    -- because 'max_priority/round' parameter is inclusive.
+    maxPriority = prio + priorityChunkSize - 1
+  allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx (Set.singleton lvl) maxPriority
   let
     chunked = fillChunk allRights
 
@@ -937,7 +947,7 @@ nodeQueryIxBakingRights1 ctx lvl prio = do
       . map (\x -> (fromIntegral $ x ^. bakingRightsCrossCompat_priority - prio, x))
       -- Ensure things are in the window we want.
       -- Newer nodes return more than older nodes (see https://tezos.gitlab.io/protocols/006_carthage.html#baking-rights)
-      . filter (\x -> x ^. bakingRightsCrossCompat_priority >= prio && x ^. bakingRightsCrossCompat_priority < prio + priorityChunkSize)
+      . filter (\x -> x ^. bakingRightsCrossCompat_priority >= prio)
       . toList
 
     makeBlanks :: V.Vector BakingRightsCrossCompat

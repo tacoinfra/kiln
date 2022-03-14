@@ -335,6 +335,7 @@ selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 data CacheBakingRights = CacheBakingRights
   { _cacheBakingRights_context :: BlockHash
   , _cacheBakingRights_level :: RawLevel
+  , _cacheBakingRights_priority :: Priority
   , _cacheBakingRights_result :: Json Aeson.Value
   }
   deriving (Eq, Show, Typeable)
@@ -537,6 +538,10 @@ deriving instance FromField RawLevel
 deriving instance ToField Cycle
 deriving instance FromField Cycle
 
+deriving instance ToField Priority
+instance FromField Priority where
+  fromField f b = fromInteger <$> fromField f b
+
 instance PrimitivePersistField TezosWord64 where
   toPrimitivePersistValue x (TezosWord64 v) = toPrimitivePersistValue x v
   fromPrimitivePersistValue x v = TezosWord64 $ fromPrimitivePersistValue x v
@@ -552,6 +557,10 @@ instance PrimitivePersistField Cycle where
 instance PrimitivePersistField (HashedValue t) where
   toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x $ fromShort v
   fromPrimitivePersistValue x v = HashedValue $ toShort $ fromPrimitivePersistValue x v
+
+instance PrimitivePersistField Priority where
+  toPrimitivePersistValue x (Priority v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = Priority $ fromPrimitivePersistValue x v
 
 instance PersistField TezosWord64 where
   persistName _ = "TezosWord64"
@@ -590,6 +599,12 @@ instance PersistField PublicKeyHash where
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
   dbType p _ = dbType p ("" :: Text)
+
+instance PersistField Priority where
+  persistName _ = "Priority"
+  toPersistValues (Priority x) = primToPersistValue x
+  fromPersistValues = (fmap . first) Priority . primFromPersistValue
+  dbType p (Priority x) = dbType p x
 
 leftPad :: Int -> Text
 leftPad n = if T.length n' > 4 then error "too dang big" else n'
@@ -1182,7 +1197,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         uniques:
           - name: CacheBakingRights_context
             type: primary
-            fields: [_cacheBakingRights_context, _cacheBakingRights_level]
+            fields: [_cacheBakingRights_priority, _cacheBakingRights_level, _cacheBakingRights_context]
   - entity: CacheEndorsingRights
     autoKey: null
     constructors:
