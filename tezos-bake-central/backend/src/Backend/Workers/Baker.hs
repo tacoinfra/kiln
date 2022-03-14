@@ -235,8 +235,9 @@ bakerWorker
   :: forall m. MonadIO m
   => AppConfig
   -> NodeDataSource
+  -> Int
   -> m (IO ())
-bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewFinalHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+bakerWorker appConfig nds rightsHistoryWindow = worker' "bakerWorker" $ (<* waitForNewFinalHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   let db = _nodeDataSource_pool nds
 
   res <- flip runReaderT nds $ runExceptT $ do
@@ -254,7 +255,7 @@ bakerWorker appConfig nds = worker' "bakerWorker" $ (<* waitForNewFinalHead nds)
 
     wantedActions <- for currentState $ \(baker, details) -> do
       let isInternal = Just (_baker_publicKeyHash baker) == bakerInt
-      res <- (Right <$> getWantedAction protoInfo headBlock headCycle baker details isInternal)
+      res <- (Right <$> getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHistoryWindow)
         `catchError` (pure . Left)
       case res of
         Right commit -> do
@@ -284,19 +285,20 @@ getWantedAction
   , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare
   , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare, MonadLoggerIO mPrepare
   )
-  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT KilnRpcError mPrepare (AppSerializable ())
-getWantedAction protoInfo headBlock headCycle baker details isInternal = do
+  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> Int -> ExceptT KilnRpcError mPrepare (AppSerializable ())
+getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHistoryWindow = do
   let
     headHash = headBlock ^. hash
-    headPred = headBlock ^. predecessor
     headLvl = headBlock ^. level
     pkh = _baker_publicKeyHash baker
     headFitness = headBlock ^. fitness
-    -- for each baker; follow the branch it was on previously to the new head
+    -- For each baker check at most 'rightsHistoryWindow' from the current head down
+    -- to 'bakerDetails_branch' level;
     -- check at each level to see if the baker had rights there;
     -- if so, examine the block to see if they exercized those rights
     -- if not, report an error; if so, clear an error.
-    detailsBranch :: BlockHash = maybe headPred (view hash . _bakerDetails_branch) details
+    cutoffLevel :: RawLevel = max (headLvl - fromIntegral rightsHistoryWindow) $
+      maybe (headLvl - 1) (view level . _bakerDetails_branch) details
     cleanAction = \blockTimestamp blockFitness kind bakerPkh blockLevel -> do
       clearMissedBake blockFitness kind bakerPkh blockLevel
       -- If the internal baker successfully endorses or baker, then there is an
@@ -315,9 +317,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
            LIMIT 1
           |]
         whenJust mbLedgerDisconnectionError $ \_ -> clearBakerLedgerDisconnected bakerPkh
-
-  detailsBlock <- nodeQueryDataSource $ NodeQuery_Block detailsBranch
-  bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl, headLvl - 1 .. detailsBlock ^. level] $ \lvl -> do
+  bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl, headLvl - 1 .. cutoffLevel + 1] $ \lvl -> do
     thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
     predBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl + 1)
     bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
