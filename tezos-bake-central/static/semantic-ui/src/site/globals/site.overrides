@@ -1439,6 +1439,22 @@ i.ui.icon-letter.icon {
         }
       }
 
+      table.participation-info {
+        border-spacing: 0;
+        > tr > td:first-child::after {
+          content: ":";
+        }
+        > tr > td:not(:first-child) {
+          padding-right: 0;
+          text-align: right;
+          font-weight: bold;
+        }
+        .tez {
+          margin-left: @5px;
+          color: @grey;
+        }
+      }
+
       > .peer-count {
         font-size: @16px;
       }
