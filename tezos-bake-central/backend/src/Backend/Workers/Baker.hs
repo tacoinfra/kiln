@@ -367,6 +367,14 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
     Nothing -> pure []
     Just delegatePkh -> do
       di <- nodeQueryDataSource (NodeQuery_DelegateInfo headHash headLvl delegatePkh)
+
+      -- TODO: remove this condition when Tenderbake becomes widely used
+      protoHash <- (^. protocolHash) <$> nodeQueryDataSource (NodeQuery_Block headHash)
+      pti <- case protoHash of
+        "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" ->
+          Just <$> nodeQueryDataSource (NodeQuery_ParticipationInfo headHash headLvl delegatePkh)
+        _ -> pure Nothing
+
       let
         gracePeriod = _cacheDelegateInfo_gracePeriod di
 
@@ -384,6 +392,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal = do
               -- , _bakerDetails_nextEndorseRights = _endorsingRights_level <$> Map.lookup delegatePkh endorsingRights
               , _bakerDetails_branch = mkVeryBlockLike headBlock
               , _bakerDetails_delegateInfo = Just $ Json di
+              , _bakerDetails_participationInfo = Json <$> pti
               }
           case nonEmpty existingIds of
             Nothing -> void $ insert newVal

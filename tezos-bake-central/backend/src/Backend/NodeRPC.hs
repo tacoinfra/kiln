@@ -135,23 +135,24 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_BakingRights    :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
-  NodeQuery_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
-  NodeQuery_Account         :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
-  NodeQuery_Ballots         :: BlockHash -> NodeQuery Ballots
-  NodeQuery_Ballot          :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
-  NodeQuery_ProposalVote    :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
-  NodeQuery_Listings        :: BlockHash -> NodeQuery (Seq VoterDelegate)
-  NodeQuery_Proposals       :: BlockHash -> NodeQuery (Seq ProposalVotes)
-  NodeQuery_CurrentProposal :: BlockHash -> NodeQuery (Maybe ProtocolHash)
-  NodeQuery_CurrentQuorum   :: BlockHash -> NodeQuery Int
-  NodeQuery_Block           :: BlockHash -> NodeQuery BlockCrossCompat
-  NodeQuery_BlockPred       :: BlockHash -> RawLevel -> NodeQuery BlockCrossCompat
-  NodeQuery_BlockHeader     :: BlockHash -> NodeQuery BlockHeaderCrossCompat
-  NodeQuery_DelegateInfo    :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
-  NodeQuery_PublicKey       :: ContractId -> NodeQuery PublicKey
-  NodeQuery_Blocks          :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
-  NodeQuery_Round           :: BlockHash -> NodeQuery Int32
+  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
+  NodeQuery_EndorsingRights   :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
+  NodeQuery_Account           :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
+  NodeQuery_Ballots           :: BlockHash -> NodeQuery Ballots
+  NodeQuery_Ballot            :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
+  NodeQuery_ProposalVote      :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
+  NodeQuery_Listings          :: BlockHash -> NodeQuery (Seq VoterDelegate)
+  NodeQuery_Proposals         :: BlockHash -> NodeQuery (Seq ProposalVotes)
+  NodeQuery_CurrentProposal   :: BlockHash -> NodeQuery (Maybe ProtocolHash)
+  NodeQuery_CurrentQuorum     :: BlockHash -> NodeQuery Int
+  NodeQuery_Block             :: BlockHash -> NodeQuery BlockCrossCompat
+  NodeQuery_BlockPred         :: BlockHash -> RawLevel -> NodeQuery BlockCrossCompat
+  NodeQuery_BlockHeader       :: BlockHash -> NodeQuery BlockHeaderCrossCompat
+  NodeQuery_DelegateInfo      :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
+  NodeQuery_ParticipationInfo :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
+  NodeQuery_PublicKey         :: ContractId -> NodeQuery PublicKey
+  NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
+  NodeQuery_Round             :: BlockHash -> NodeQuery Int32
 deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
@@ -601,6 +602,7 @@ getContext = \case
   NodeQuery_CurrentProposal ctx -> pure ctx
   NodeQuery_CurrentQuorum ctx -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
+  NodeQuery_ParticipationInfo ctx _lvl _pkh -> pure ctx
   NodeQuery_PublicKey _ -> getLatestBranch
   NodeQuery_Blocks ctx _ -> pure ctx
   NodeQuery_Round ctx -> pure ctx
@@ -804,6 +806,7 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_BlockPred branch offset -> nodeRPC' $ rBlockPred offset chainId branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
+  NodeQuery_ParticipationInfo branch _lvl pkh -> nodeRPC' $ rParticipationInfo pkh chainId branch
   NodeQuery_PublicKey contractId -> do
     (RpcResult raw managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
     case view managerKeyCrossCompat_key managerkeyResp of

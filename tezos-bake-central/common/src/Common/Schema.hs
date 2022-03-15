@@ -599,6 +599,7 @@ data BakerDetails = BakerDetails
   -- Used to say what block we examined for delegate info, and also for missed baking and endorsing. It would be the same thing per worker
   , _bakerDetails_branch :: VeryBlockLike
   , _bakerDetails_delegateInfo :: Maybe (Json CacheDelegateInfo)
+  , _bakerDetails_participationInfo :: Maybe (Json ParticipationInfo)
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails where
   type IdData BakerDetails = PublicKeyHash
