@@ -2747,6 +2747,42 @@ bakersTab =
               text p
               elClass "span" "tez" $ text tz
 
+        let
+          dmParticipationInfo = preview (_Just . bakerDetails_participationInfo . _Just . to unJson) <$> details'
+
+        dyn_ $ ffor dmParticipationInfo $ \case
+          Nothing -> blank
+          Just participationInfo  -> do
+            divClass "divider" blank
+
+            let
+              infoTableRow rtitle label method = el "tr" $ do
+                el "td" (text rtitle)
+                elClass "td" label (text . tshow . method $ participationInfo)
+
+            elClass "table" "participation-info" $ do
+
+              infoTableRow "Expected cycle activity" "expected-cycle-activity"
+                _participationInfo_expectedCycleActivity
+
+              infoTableRow "Minimal cycle activity" "minimal-cycle-activity"
+                _participationInfo_minimalCycleActivity
+
+              infoTableRow "Missed slots" "missed-slots" _participationInfo_missedSlots
+
+              infoTableRow "Missed levels" "missed-levels" _participationInfo_missedLevels
+
+              infoTableRow "Remaining allowed missed slots" "remaining-allowed-missed-slots"
+                _participationInfo_remainingAllowedMissedSlots
+
+              el "tr" $ do
+                el "td" (text "Expected endorsing rewards")
+                elClass "td" "expected-endorsing-rewards" . withPlaceholder . ffor dmParticipationInfo .
+                  fmap $ \t -> do
+                    let (w, p, tz) = tez' $ _participationInfo_expectedEndorsingRewards t
+                    text $ w <> p
+                    elClass "span" "tez" $ text tz
+
         dyn_ $ ffor isGatheringData $ \case
           False -> blank
           True -> divClass "ui active inline loader mini blue" blank
