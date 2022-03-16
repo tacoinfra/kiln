@@ -422,7 +422,7 @@ backendImpl cfg serve = do
 
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
       addFinalizer =<< bakerRightsWorker dataSrc rightsHistoryWindow
-      addFinalizer =<< bakerWorker appConfig dataSrc
+      addFinalizer =<< bakerWorker appConfig dataSrc rightsHistoryWindow
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
       addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
       addFinalizer =<< amendmentProcessWorker appConfig dataSrc db

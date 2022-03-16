@@ -25,6 +25,7 @@ import Control.Monad.Logger
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Maybe (MaybeT(..))
 import Data.Aeson.Lens
+import Data.List (sortOn)
 import Data.Maybe (mapMaybe)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
@@ -663,7 +664,7 @@ checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource
       |]
 
     rightsMay :: Maybe (RightKind, RawLevel) <- flip (maybe (pure Nothing)) bakerInt $ \pkh -> do
-      fmap headMay [queryQ|
+      fmap (headMay . sortOn snd) [queryQ|
           SELECT br."right", MIN(br.level)
           FROM "BakerRightsProgress" brp
           JOIN "BakerRight" br

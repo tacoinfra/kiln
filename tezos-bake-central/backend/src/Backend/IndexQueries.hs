@@ -38,8 +38,8 @@ getLatestProtocolConstants
   :: (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
   => NodeQueryT m (BranchInfo, ProtoInfo)
 getLatestProtocolConstants = do
-  latestHeadVar <- asksNodeDataSource _nodeDataSource_latestHead
-  mbBranchInfo <- nqAtomically $ readTVar' latestHeadVar
+  latestFinalHeadVar <- asksNodeDataSource _nodeDataSource_latestFinalHead
+  mbBranchInfo <- nqAtomically $ readTVar' latestFinalHeadVar
   flip (maybe (nqThrowError KilnRpcError_NoKnownHeads)) mbBranchInfo $ \branchInfo ->
     (branchInfo,) . _protocolIndex_constants <$> getProtocolIndex (branchInfo ^. hash) (branchInfo ^. protocolHash)
 
