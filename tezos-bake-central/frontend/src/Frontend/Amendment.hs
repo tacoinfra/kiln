@@ -20,7 +20,7 @@
 module Frontend.Amendment where
 
 import Control.Monad.Fix (MonadFix)
-import Data.List (minimumBy, sortOn)
+import Data.List (sortOn)
 import Data.Ord (Down (..))
 import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
@@ -30,7 +30,6 @@ import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Text as T
 import qualified Data.Time as Time
-import Data.Tuple (swap)
 
 import Tezos.Types hiding (protocolHash)
 
@@ -532,14 +531,9 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     nextBakingRights = do
       mBakerDyn <- fmap (MMap.lookup bakerPkh) <$> watchBakerAddresses
       let
-        getMbRightAndLevel = \case
-          BakerNextRight_KnownRights (r, l) -> Just (r, l)
+        mLevel = ffor (fmap _bakerSummary_nextRight <$> mBakerDyn) $ \case
+          Just (BakerNextRight_BakeBlock lvl) -> pure lvl
           _ -> Nothing
-        mLevel = fmap join $ ffor mBakerDyn $ \mbBakerSummary ->
-          for mbBakerSummary $ \bakerSummary ->
-            let mbRightLevels = traverse getMbRightAndLevel $ _bakerSummary_nextRights bakerSummary
-            in fmap (snd . minimumBy (compare `on` swap) . toList) mbRightLevels
-
       dyn_ $ ffor mLevel $ \case
         Nothing -> blank
         Just l -> divClass "ui message" $ do

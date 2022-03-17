@@ -128,7 +128,7 @@ isBakerRunning = (==) ProcessControl_Run
 data BakerNextRight
   = BakerNextRight_GatheringData
   | BakerNextRight_WaitingForRights
-  | BakerNextRight_KnownRights (RightKind, RawLevel)
+  | BakerNextRight_BakeBlock RawLevel
   | BakerNextRight_KnownNoRights
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerNextRight
@@ -137,7 +137,7 @@ instance ToJSON BakerNextRight
 data BakerSummary = BakerSummary
   { _bakerSummary_baker :: Either BakerData BakerInternalData
   , _bakerSummary_alertCount :: Int
-  , _bakerSummary_nextRights :: NonEmpty BakerNextRight
+  , _bakerSummary_nextRight :: BakerNextRight
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON BakerSummary
 instance ToJSON BakerSummary

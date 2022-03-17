@@ -43,13 +43,12 @@ import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (comparing)
 import Data.Pool (Pool)
-import Data.Semigroup (Max(..), sconcat)
+import Data.Semigroup (sconcat)
 import Data.Some (Some(..))
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (UTCTime)
 import Data.These (these)
-import Data.Tuple (swap)
 import Data.Validation hiding (ensure)
 import Data.Universe (universe)
 import Database.Groundhog.Core (ConstructorMarker)
@@ -775,47 +774,45 @@ getBakerAddresses nds bid = do
     bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b endorserProcessData), c)) int) $
       fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
 
-  nextBakeRightsL <- case latestHead' ^? _Just . level of
-    Nothing -> pure []
-    Just headLevel -> [queryQ|
-      SELECT brcp."publicKeyHash",
-        ( SELECT MAX(progress) -- this is a subselect so that we get the highest result even if "BakerRight" rows are found
-          FROM "BakerRightsProgress" b1
-          WHERE b1."publicKeyHash" = brcp."publicKeyHash"
-            AND b1."chainId" = ?chainId
-        ), br."right", MIN(br.level)
-      FROM "BakerRightsProgress" brcp
-      LEFT OUTER JOIN "BakerRight" br
-        ON br.branch = brcp.id
-        AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
-      WHERE brcp."chainId" = ?chainId
-        AND brcp."publicKeyHash" in ?bakerHashes
-      GROUP BY brcp."publicKeyHash", br."right"
+  nextBakes <- case latestHead' ^? _Just . level of
+    Nothing -> pure Map.empty
+    Just headLevel -> fmap (Map.fromList . map (\(pkh, pr, mbLvl) -> (pkh, (pr, mbLvl))))
+      [queryQ|
+        SELECT brcp."publicKeyHash",
+          ( SELECT MAX(progress) -- this is a subselect so that we get the highest result even if "BakerRight" rows are found
+            FROM "BakerRightsProgress" b1
+            WHERE b1."publicKeyHash" = brcp."publicKeyHash"
+              AND b1."chainId" = ?chainId
+          ), MIN(br.level)
+        FROM "BakerRightsProgress" brcp
+        LEFT OUTER JOIN "BakerRight" br
+          ON br.branch = brcp.id
+          AND br."right" = 'RightKind_Baking'
+          AND br.level > ?headLevel
+        WHERE brcp."chainId" = ?chainId
+          AND brcp."publicKeyHash" in ?bakerHashes
+        GROUP BY brcp."publicKeyHash"
       |]
 
   let
-    getNextRights rights progress insufficientFunds = case NEL.nonEmpty $ Map.toList rights of
+    getNextRight mbBakeLvl progress insufficientFunds = case mbBakeLvl of
       Nothing ->
-        let
-          right = if insufficientFunds
-            then BakerNextRight_KnownNoRights
-            else case subtract progress <$> maxProgress of
-              Just 0 -> BakerNextRight_WaitingForRights
-              Just _ -> BakerNextRight_GatheringData
-              Nothing -> BakerNextRight_GatheringData
-              -- if maxProgress is Nothing, then we don't yet have enough history to say much of
-              -- anything about how much work we still need to do per baker
-          in right :| []
-      Just rights' -> fmap BakerNextRight_KnownRights $ NEL.sortBy (compare `on` swap) rights'
+        if insufficientFunds
+          then BakerNextRight_KnownNoRights
+          else case subtract progress <$> maxProgress of
+            Just 0 -> BakerNextRight_WaitingForRights
+            Just _ -> BakerNextRight_GatheringData
+            Nothing -> BakerNextRight_GatheringData
+            -- if maxProgress is Nothing, then we don't yet have enough history to say much of
+            -- anything about how much work we still need to do per baker
+      Just bakeLvl -> BakerNextRight_BakeBlock bakeLvl
 
-    nextBakeRights :: MonoidalMap PublicKeyHash (Max RawLevel, Map.Map RightKind RawLevel)
-    nextBakeRights = foldMap (\(pkh, progress, rightKind, rightLvl) -> MMap.singleton pkh (Max progress, fromMaybe mempty $ Map.singleton <$> rightKind <*> rightLvl)) nextBakeRightsL
     result = fmap (bimap Bounded (First . Just)) $ Map.toList $ Map.mapMaybe id $ alignWith
       (these
-        (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount (BakerNextRight_GatheringData :| []))
+        (\(b, (alertCount, _)) -> Just $ BakerSummary b alertCount BakerNextRight_GatheringData)
         (const Nothing)
-        (\(b, (alertCount, insufficientFunds)) (Max progress, rights) -> Just $ BakerSummary b alertCount (getNextRights rights progress insufficientFunds))
-      ) bakers (getMonoidalMap nextBakeRights)
+        (\(b, (alertCount, insufficientFunds)) (progress, mbBakeLvl) -> Just $ BakerSummary b alertCount (getNextRight mbBakeLvl progress insufficientFunds))
+      ) bakers nextBakes
 
   return result
 
