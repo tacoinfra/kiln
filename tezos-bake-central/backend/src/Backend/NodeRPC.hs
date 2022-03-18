@@ -909,7 +909,7 @@ nodeQueryIx q = do
 
     addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1, PersistBackend m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
-      NodeQueryIx_BakingRights ctx lvls maxRound-> case result' of
+      NodeQueryIx_BakingRights _ctx lvls maxRound-> case result' of
         (bakingRights :: Seq BakingRightsCrossCompat) -> do
 
           -- Since [#111] we query only baking rights with 'priority == 0' from RPC.
@@ -940,8 +940,8 @@ nodeQueryIx q = do
               result = Json $ Aeson.toJSON lvlRights
           unless (null lvlRights) $
             void [executeQ|
-              INSERT INTO "CacheEndorsingRights" ("context", "level", "result")
-              values (?ctx, ?lvl, ?result)
+              INSERT INTO "CacheEndorsingRights" ("level", "result")
+              values (?lvl, ?result)
             |]
 
 nodeQueryIxBakingRights1

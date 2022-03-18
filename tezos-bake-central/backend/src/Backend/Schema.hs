@@ -333,8 +333,7 @@ selectIds
 selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
 data CacheBakingRights = CacheBakingRights
-  { _cacheBakingRights_context :: BlockHash
-  , _cacheBakingRights_level :: RawLevel
+  { _cacheBakingRights_level :: RawLevel
   , _cacheBakingRights_priority :: Priority
   , _cacheBakingRights_delegate :: PublicKeyHash
   , _cacheBakingRights_estimatedTime :: Maybe UTCTime
@@ -342,8 +341,7 @@ data CacheBakingRights = CacheBakingRights
   deriving (Eq, Show, Typeable)
 
 data CacheEndorsingRights = CacheEndorsingRights
-  { _cacheEndorsingRights_context :: BlockHash
-  , _cacheEndorsingRights_level :: RawLevel
+  { _cacheEndorsingRights_level :: RawLevel
   , _cacheEndorsingRights_result :: Json Aeson.Value
   }
   deriving (Eq, Show, Typeable)
@@ -1196,17 +1194,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     constructors:
       - name: CacheBakingRights
         uniques:
-          - name: CacheBakingRights_context
+          - name: CacheBakingRights_priority_level
             type: primary
-            fields: [_cacheBakingRights_priority, _cacheBakingRights_level, _cacheBakingRights_context]
+            fields: [_cacheBakingRights_priority, _cacheBakingRights_level]
   - entity: CacheEndorsingRights
     autoKey: null
     constructors:
       - name: CacheEndorsingRights
         uniques:
-          - name: CacheEndorsingRights_context
+          - name: CacheEndorsingRights_level
             type: primary
-            fields: [_cacheEndorsingRights_context, _cacheEndorsingRights_level]
+            fields: [_cacheEndorsingRights_level]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
