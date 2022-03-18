@@ -336,7 +336,8 @@ data CacheBakingRights = CacheBakingRights
   { _cacheBakingRights_context :: BlockHash
   , _cacheBakingRights_level :: RawLevel
   , _cacheBakingRights_priority :: Priority
-  , _cacheBakingRights_result :: Json Aeson.Value
+  , _cacheBakingRights_delegate :: PublicKeyHash
+  , _cacheBakingRights_estimatedTime :: Maybe UTCTime
   }
   deriving (Eq, Show, Typeable)
 

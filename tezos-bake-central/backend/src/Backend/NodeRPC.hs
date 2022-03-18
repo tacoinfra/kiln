@@ -45,8 +45,7 @@ import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
 import Control.Exception.Safe (toException)
-import Control.Lens (re, (<>~))
-import Control.Lens (review)
+import Control.Lens (re, review, (<>~))
 import Control.Lens.TH (makeLenses)
 import Control.Monad (ap)
 import Control.Monad.Base (MonadBase(..), liftBaseDefault)
@@ -78,6 +77,7 @@ import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Either (rights)
+import Data.Foldable (find)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
@@ -86,10 +86,11 @@ import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (mapMaybe)
 import Data.Ord (Down(..))
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
-import qualified Data.Sequence as Seq (filter, (<|))
+import qualified Data.Sequence as Seq (filter, singleton, (<|))
 import qualified Data.Set as Set
 import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
@@ -106,7 +107,7 @@ import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeMany, executeQ, queryQ, sql)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Schema (Json (..), LargeObjectId (..))
@@ -116,6 +117,7 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
+import qualified Tezos.V012.Types as V012
 
 import Backend.Common (timeout')
 import Backend.Schema
@@ -874,13 +876,21 @@ nodeQueryIx q = do
       NodeQueryIx_BakingRights _ lvls maxRound -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
-        (rawData :: [(RawLevel, Json Aeson.Value)]) <- [queryQ|
-          SELECT "level", "result"
+        cachedRights <- [queryQ|
+          SELECT "level", "delegate", "round", "estimatedTime" AT TIME ZONE 'UTC'
           FROM "CacheBakingRights"
           WHERE "level" BETWEEN ?minLvl AND ?maxLvl
             AND "priority" <= ?maxRound
         |]
-        mapM (\(lvl, rawRight) -> fmap (lvl,) (getResult rawRight)) rawData
+        for cachedRights $ \(lvl, delegate, round, estimatedTime) ->
+          let
+            bakingRight = BakingRightsV012 $ V012.BakingRights
+              { _bakingRights_level = lvl
+              , _bakingRights_delegate = delegate
+              , _bakingRights_round = priority
+              , _bakingRights_estimatedTime = estimatedTime
+              }
+          in pure (lvl, Just $ Seq.singleton bakingRight)
       NodeQueryIx_EndorsingRights _ lvls -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
@@ -897,22 +907,34 @@ nodeQueryIx q = do
             $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
             return Nothing
 
-    addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1) => a -> NodeQueryIx a -> m1 ()
+    addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1, PersistBackend m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
       NodeQueryIx_BakingRights ctx lvls maxRound-> case result' of
-        (bakingRights :: Seq BakingRightsCrossCompat) ->
-          for_ lvls $ \lvl ->
-            for_ [0..maxRound] $ \prio -> do
-              let
-                lvlRights = flip Seq.filter bakingRights $ \right ->
-                  right ^. bakingRightsCrossCompat_level == lvl && right ^. bakingRightsCrossCompat_priority == prio
-                result = Json $ Aeson.toJSON lvlRights
-              unless (null lvlRights) $
-                void [executeQ|
-                  INSERT INTO "CacheBakingRights" ("context", "level", "priority", "result")
-                  values (?ctx, ?lvl, ?prio, ?result)
-                |]
-      NodeQueryIx_EndorsingRights ctx lvls -> case result' of
+        (bakingRights :: Seq BakingRightsCrossCompat) -> do
+
+          -- Since [#111] we query only baking rights with 'priority == 0' from RPC.
+          --
+          -- If in the future we need caching of baking rights with different priorities
+          -- we need to change this logic, so this log message serves as a reminder of it.
+          let priorityToCache = 0
+          when (maxRound > priorityToCache) $
+            $(logError) $ "An attempt to cache baking rights with priority > " <> tshow (unPriority priorityToCache)
+
+          let
+            rightsToCache = flip mapMaybe (Set.toList lvls) $ \lvl ->
+              flip find bakingRights $ \right ->
+                right ^. bakingRightsCrossCompat_level == lvl && right ^. bakingRightsCrossCompat_round == roundToCache
+
+          void $ executeMany [sql|
+            INSERT INTO "CacheBakingRights" ("level", "round", "delegate", "estimatedTime")
+            VALUES (?, ?, ?, ?)
+          |] $ rightsToCache <&> \br ->
+            ( br ^. bakingRightsCrossCompat_level
+            , br ^. bakingRightsCrossCompat_round
+            , br ^. bakingRightsCrossCompat_delegate
+            , br ^. bakingRightsCrossCompat_estimatedTime
+            )
+      NodeQueryIx_EndorsingRights _ctx lvls -> case result' of
         (endorsingRights :: Seq EndorsingRightsCrossCompat) -> for_ lvls $ \lvl -> do
           let lvlRights = Seq.filter (\right -> right ^. endorsingRightsCrossCompat_level == lvl) endorsingRights
               result = Json $ Aeson.toJSON lvlRights
@@ -938,7 +960,10 @@ nodeQueryIxBakingRights1 ctx lvl prio = do
     -- To get the [prio, prio + priorityChunkSize) window,
     -- because 'max_priority/round' parameter is inclusive.
     maxPriority = prio + priorityChunkSize - 1
-  allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx (Set.singleton lvl) maxPriority
+
+  -- Caching baking rights with 'priority > 0' is not as effective because
+  -- double baking is a fairly rare event, so we don't use 'nodeQueryIx' there.
+  allRights <- nodeQueryDataSourceSafe $ NodeQuery_BakingRights ctx (Set.singleton lvl) maxPriority
   let
     chunked = fillChunk allRights
 
