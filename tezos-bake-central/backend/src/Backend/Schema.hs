@@ -100,6 +100,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Types hiding (TestChainStatus)
+import Tezos.V012.Types (Round)
 
 import Backend.DB.Utils (getSchemaName)
 import Backend.Version (parseVersion)
@@ -334,7 +335,7 @@ selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
 data CacheBakingRights = CacheBakingRights
   { _cacheBakingRights_level :: RawLevel
-  , _cacheBakingRights_priority :: Priority
+  , _cacheBakingRights_round :: Round
   , _cacheBakingRights_delegate :: PublicKeyHash
   , _cacheBakingRights_estimatedTime :: Maybe UTCTime
   }
@@ -537,8 +538,8 @@ deriving instance FromField RawLevel
 deriving instance ToField Cycle
 deriving instance FromField Cycle
 
-deriving instance ToField Priority
-instance FromField Priority where
+deriving instance ToField Round
+instance FromField Round where
   fromField f b = fromInteger <$> fromField f b
 
 instance PrimitivePersistField TezosWord64 where
@@ -557,9 +558,9 @@ instance PrimitivePersistField (HashedValue t) where
   toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x $ fromShort v
   fromPrimitivePersistValue x v = HashedValue $ toShort $ fromPrimitivePersistValue x v
 
-instance PrimitivePersistField Priority where
-  toPrimitivePersistValue x (Priority v) = toPrimitivePersistValue x v
-  fromPrimitivePersistValue x v = Priority $ fromPrimitivePersistValue x v
+instance PrimitivePersistField Round where
+  toPrimitivePersistValue x (Round v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = Round $ fromPrimitivePersistValue x v
 
 instance PersistField TezosWord64 where
   persistName _ = "TezosWord64"
@@ -599,11 +600,11 @@ instance PersistField PublicKeyHash where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
   dbType p _ = dbType p ("" :: Text)
 
-instance PersistField Priority where
-  persistName _ = "Priority"
-  toPersistValues (Priority x) = primToPersistValue x
-  fromPersistValues = (fmap . first) Priority . primFromPersistValue
-  dbType p (Priority x) = dbType p x
+instance PersistField Round where
+  persistName _ = "Round"
+  toPersistValues (Round x) = primToPersistValue x
+  fromPersistValues = (fmap . first) Round . primFromPersistValue
+  dbType p (Round x) = dbType p x
 
 leftPad :: Int -> Text
 leftPad n = if T.length n' > 4 then error "too dang big" else n'
@@ -1194,9 +1195,9 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     constructors:
       - name: CacheBakingRights
         uniques:
-          - name: CacheBakingRights_priority_level
+          - name: CacheBakingRights_round_level
             type: primary
-            fields: [_cacheBakingRights_priority, _cacheBakingRights_level]
+            fields: [_cacheBakingRights_round, _cacheBakingRights_level]
   - entity: CacheEndorsingRights
     autoKey: null
     constructors:

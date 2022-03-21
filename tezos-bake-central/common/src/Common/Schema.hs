@@ -621,7 +621,7 @@ data RightKind = RightKind_Baking | RightKind_Endorsing
 instance Aeson.FromJSONKey RightKind
 instance Aeson.ToJSONKey RightKind
 
--- It's an explicit choice not to include either the priority; this reduces the
+-- It's an explicit choice not to include either the round; this reduces the
 -- amount of reduntant data since we only really care about expected returns
 -- rather than all possible.  For the same reason we /do/ include endorsement
 -- slots, since that affects expected returns.

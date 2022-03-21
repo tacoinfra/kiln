@@ -58,7 +58,7 @@ import qualified Tezos.V010.Types as V010
 import qualified Tezos.V012.Types as V012
 import Tezos.V012.NodeRPC.CrossCompat as V012
   (BakingRightsCrossCompat, EndorsingRightsCrossCompat, bakingRightsCrossCompat_delegate, bakingRightsCrossCompat_level,
-  bakingRightsCrossCompat_priority, blockCrossData, endorsingRightsCrossCompat_delegates, endorsingRightsCrossCompat_level)
+  bakingRightsCrossCompat_round, blockCrossData, endorsingRightsCrossCompat_delegates, endorsingRightsCrossCompat_level)
 import Tezos.V012.NodeRPC.CrossCompat as V011 (blockCrossCata)
 import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 

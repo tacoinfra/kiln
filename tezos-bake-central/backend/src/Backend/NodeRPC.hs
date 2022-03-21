@@ -29,7 +29,7 @@
 -- TODO: move this to ~lib?
 module Backend.NodeRPC where
 
-import Prelude hiding (cycle)
+import Prelude hiding (cycle, round)
 import Control.Arrow (left)
 import Control.Concurrent.STM (
     STM,
@@ -117,6 +117,7 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
+import Tezos.V012.Types (Round, unRound)
 import qualified Tezos.V012.Types as V012
 
 import Backend.Common (timeout')
@@ -130,14 +131,14 @@ import Orphans.Instances ()
 -- This exception should be impossible, but that depends on the node
 -- working correctly.  The information inside is just the arguments of
 -- the request you would have made to end up with it.
-data NoRightsException = NoRightsException BlockHash RawLevel Priority
+data NoRightsException = NoRightsException BlockHash RawLevel Round
   deriving (Eq, Ord, Show, Typeable)
 
 instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> Priority -> NodeQuery (Seq BakingRightsCrossCompat)
+  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> Round -> NodeQuery (Seq BakingRightsCrossCompat)
   NodeQuery_EndorsingRights   :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
   NodeQuery_Account           :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots           :: BlockHash -> NodeQuery Ballots
@@ -159,7 +160,7 @@ deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
 data NodeQueryIx a where
-  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> Priority -> NodeQueryIx (Seq BakingRightsCrossCompat)
+  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> Round -> NodeQueryIx (Seq BakingRightsCrossCompat)
   NodeQueryIx_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq EndorsingRightsCrossCompat)
 deriving instance Show (NodeQueryIx a)
 
@@ -584,8 +585,8 @@ dataSourceFinalHead
   => nds -> m (Maybe BranchInfo)
 dataSourceFinalHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestFinalHead)
 
-priorityChunkSize :: Num a => a
-priorityChunkSize = 64
+roundChunkSize :: Num a => a
+roundChunkSize = 64
 
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
@@ -873,21 +874,20 @@ nodeQueryIx q = do
          )
       => NodeQueryIx a -> m1 [(RawLevel, Maybe a)]
     checkCacheDb = \case
-      NodeQueryIx_BakingRights _ lvls maxRound -> do
+      NodeQueryIx_BakingRights _ lvls _ -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
         cachedRights <- [queryQ|
           SELECT "level", "delegate", "round", "estimatedTime" AT TIME ZONE 'UTC'
           FROM "CacheBakingRights"
           WHERE "level" BETWEEN ?minLvl AND ?maxLvl
-            AND "priority" <= ?maxRound
         |]
         for cachedRights $ \(lvl, delegate, round, estimatedTime) ->
           let
             bakingRight = BakingRightsV012 $ V012.BakingRights
               { _bakingRights_level = lvl
               , _bakingRights_delegate = delegate
-              , _bakingRights_round = priority
+              , _bakingRights_round = round
               , _bakingRights_estimatedTime = estimatedTime
               }
           in pure (lvl, Just $ Seq.singleton bakingRight)
@@ -912,13 +912,13 @@ nodeQueryIx q = do
       NodeQueryIx_BakingRights _ctx lvls maxRound-> case result' of
         (bakingRights :: Seq BakingRightsCrossCompat) -> do
 
-          -- Since [#111] we query only baking rights with 'priority == 0' from RPC.
+          -- Since [#111] we query only baking rights with 'round == 0' from RPC.
           --
           -- If in the future we need caching of baking rights with different priorities
           -- we need to change this logic, so this log message serves as a reminder of it.
-          let priorityToCache = 0
-          when (maxRound > priorityToCache) $
-            $(logError) $ "An attempt to cache baking rights with priority > " <> tshow (unPriority priorityToCache)
+          let roundToCache = 0
+          when (maxRound > roundToCache) $
+            $(logError) $ "An attempt to cache baking rights with round > " <> tshow (unRound roundToCache)
 
           let
             rightsToCache = flip mapMaybe (Set.toList lvls) $ \lvl ->
@@ -953,33 +953,33 @@ nodeQueryIxBakingRights1
     )
   => BlockHash -- ^ Context block hash
   -> RawLevel -- ^ Context block level
-  -> Priority -- ^ The minimum priority in the window of rights we want. The window will be 'priorityChunkSize' large.
+  -> Round -- ^ The minimum round in the window of rights we want. The window will be 'roundChunkSize' large.
   -> NodeQueryT m BakingRightsCrossCompat
-nodeQueryIxBakingRights1 ctx lvl prio = do
+nodeQueryIxBakingRights1 ctx lvl round = do
   let
-    -- To get the [prio, prio + priorityChunkSize) window,
-    -- because 'max_priority/round' parameter is inclusive.
-    maxPriority = prio + priorityChunkSize - 1
+    -- To get the [round, round + roundChunkSize) window,
+    -- because 'max_round' parameter is inclusive.
+    maxRound = round + roundChunkSize - 1
 
-  -- Caching baking rights with 'priority > 0' is not as effective because
+  -- Caching baking rights with 'round > 0' is not as effective because
   -- double baking is a fairly rare event, so we don't use 'nodeQueryIx' there.
-  allRights <- nodeQueryDataSourceSafe $ NodeQuery_BakingRights ctx (Set.singleton lvl) maxPriority
+  allRights <- nodeQueryDataSourceSafe $ NodeQuery_BakingRights ctx (Set.singleton lvl) maxRound
   let
     chunked = fillChunk allRights
 
     fillChunk :: Seq BakingRightsCrossCompat -> V.Vector BakingRightsCrossCompat
     fillChunk = (makeBlanks V.//)
-      . map (\x -> (fromIntegral $ x ^. bakingRightsCrossCompat_priority - prio, x))
+      . map (\x -> (fromIntegral $ x ^. bakingRightsCrossCompat_round - round, x))
       -- Ensure things are in the window we want.
       -- Newer nodes return more than older nodes (see https://tezos.gitlab.io/protocols/006_carthage.html#baking-rights)
-      . filter (\x -> x ^. bakingRightsCrossCompat_priority >= prio)
+      . filter (\x -> x ^. bakingRightsCrossCompat_round >= round)
       . toList
 
     makeBlanks :: V.Vector BakingRightsCrossCompat
-    makeBlanks = V.generate priorityChunkSize $ \i' ->
-      throw $ NoRightsException ctx lvl $ prio + fromIntegral i'
+    makeBlanks = V.generate roundChunkSize $ \i' ->
+      throw $ NoRightsException ctx lvl $ round + fromIntegral i'
 
-  maybe (nqThrowError $ KilnRpcError_SomeException $ toException $ NoRightsException ctx lvl prio) pure $ chunked V.!? fromIntegral (prio `mod` priorityChunkSize)
+  maybe (nqThrowError $ KilnRpcError_SomeException $ toException $ NoRightsException ctx lvl round) pure $ chunked V.!? fromIntegral (round `mod` roundChunkSize)
 
 {-
 calculateBakerStats ::
