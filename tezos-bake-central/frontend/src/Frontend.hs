@@ -18,7 +18,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE RecordWildCards #-}
-
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Frontend where
@@ -1114,13 +1113,13 @@ sidebarList name nodes' modal = do
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> pluralOf name)
     tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses modal
 
-bakerStatus :: Either CollectiveNodesFailure BakerSummary -> MonitoredStatus
+bakerStatus :: Either CollectiveNodesFailure (BakerSummary, Maybe BakerDetails) -> MonitoredStatus
 bakerStatus = \case
   Left e -> case e of
     CollectiveNodesFailure_NoNodes -> MonitoredStatus_Unhealthy
     CollectiveNodesFailure_AllNodesDownSince _ -> MonitoredStatus_Unhealthy
-  Right bakerSummary
-    | _bakerSummary_alertCount bakerSummary > 0 -> MonitoredStatus_Unhealthy
+  Right (bakerSummary, mbBakerDetails)
+    | _bakerSummary_alertCount bakerSummary > 0 || fmap _bakerDetails_missedRightsInRow mbBakerDetails >= Just 5 -> MonitoredStatus_Unhealthy
     | Right bid <- _bakerSummary_baker bakerSummary, not (isBakerRunning bid) -> MonitoredStatus_Stopped
     | _bakerSummary_nextRight bakerSummary == BakerNextRight_GatheringData -> MonitoredStatus_Unknown
     | otherwise -> MonitoredStatus_Healthy
@@ -1136,14 +1135,20 @@ bakersList ::
   => m ()
 bakersList = do
   dCollectedNodesStatus <- watchCollectiveNodesStatus everythingWindow
-  bakerAddrs <- watchBakerAddresses
-  let bakers = ffor2 dCollectedNodesStatus bakerAddrs
-        $ \collectiveNodeStatus -> imap $ \pkh b ->
-          ( bakerSummaryIdentification (pkh, b)
-          , bakerStatus $ b <$ collectiveNodeStatus
-          , isRight $ _bakerSummary_baker b -- Is this an internal baker?
+  bakerAddrsDyn <- watchBakerAddresses
+  bakerDetailsDyn <- watchBakerDetailsFull
+
+  let
+    bakerAddrsDetails = ffor2 bakerAddrsDyn bakerDetailsDyn $ \(MMap.MonoidalMap bakerAddrs) (MMap.MonoidalMap bakerDetails) ->
+      flip Map.mapWithKey bakerAddrs $ \pkh bs -> (bs, Map.lookup pkh bakerDetails)
+
+  let bakers = ffor2 dCollectedNodesStatus bakerAddrsDetails
+        $ \collectiveNodeStatus -> imap $ \pkh (bs, bd) ->
+          ( bakerSummaryIdentification (pkh, bs)
+          , bakerStatus $ (bs, bd) <$ collectiveNodeStatus
+          , isRight $ _bakerSummary_baker bs -- Is this an internal baker?
           )
-  sidebarList "Baker" bakers addBakerModal
+  sidebarList "Baker" (MMap.MonoidalMap <$> bakers) addBakerModal
 
 addBakerModal :: forall t m js.
   ( MonadAppWidget js t m
@@ -2294,9 +2299,12 @@ bakersTab =
           elClass "h4" "dashboard-section-title" $ text "Bakers"
 
           let
-            bakerStatus' = ffor2 dCollectiveNodesStatus tilesDyn $ \cns ->
-              fmap $ \bakerSummary ->
-                bakerStatus $ bakerSummary <$ cns
+            bakerSummaryDetails = ffor2 tilesDyn (joinDynThroughMap bakersDetails) $ \(MMap.MonoidalMap bakerSummary) bakerDetails ->
+              flip Map.mapWithKey bakerSummary $ \pkh bs -> (bs, join $ Map.lookup pkh bakerDetails)
+
+            bakerStatus' = ffor2 dCollectiveNodesStatus bakerSummaryDetails $ \cns ->
+              fmap $ \(bs, bd) ->
+                bakerStatus $ (bs, bd) <$ cns
             wantBakerData = (||)
               <$> (elem MonitoredStatus_Unknown <$> bakerStatus')
               <*> (any isNothing <$> joinDynThroughMap bakersDetails)
@@ -2661,7 +2669,7 @@ bakersTab =
               removeEntry removeInternalBakerModal
 
         divClass "title" $ do
-          let bakerStatusDyn = (\b n -> bakerStatus $ b <$ n) <$> bakerDyn <*> dCollectiveNodesStatus
+          let bakerStatusDyn = (\b bd n -> bakerStatus $ (b, bd) <$ n) <$> bakerDyn <*> details' <*> dCollectiveNodesStatus
           for_ errors' $ \_ -> do
             iconDyn $ fmap (("tiny circle " <>) . statusColor) bakerStatusDyn
           title

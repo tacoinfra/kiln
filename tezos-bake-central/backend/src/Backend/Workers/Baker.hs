@@ -292,6 +292,33 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
     headLvl = headBlock ^. level
     pkh = _baker_publicKeyHash baker
     headFitness = headBlock ^. fitness
+
+    -- TODO use different counters for missed bakes and endorsements instead of weighted one
+    incMissedRightsInRow :: Int -> PublicKeyHash -> ReaderT AppConfig Serializable ()
+    incMissedRightsInRow weight pkh' = do
+      bakerDetails :: [BakerDetails] <- select $ BakerDetails_publicKeyHashField ==. pkh'
+      case bakerDetails of
+        [] -> pure ()
+        bd : _ -> do
+          let curMissedInRow = _bakerDetails_missedRightsInRow bd
+              newVal = bd { _bakerDetails_missedRightsInRow = curMissedInRow + weight }
+          update
+            [BakerDetails_missedRightsInRowField =. curMissedInRow + weight] $
+            BakerDetails_publicKeyHashField ==. pkh'
+          notifyDefault newVal
+
+    clearMissedRightsInRow :: PublicKeyHash -> ReaderT AppConfig Serializable ()
+    clearMissedRightsInRow pkh' = do
+      bakerDetails :: [BakerDetails] <- select $ BakerDetails_publicKeyHashField ==. pkh'
+      case bakerDetails of
+        [] -> pure ()
+        bd : _ -> do
+          let newVal = bd { _bakerDetails_missedRightsInRow = 0 }
+          update
+            [BakerDetails_missedRightsInRowField =. (0 :: Int)] $
+            BakerDetails_publicKeyHashField ==. pkh'
+          notifyDefault newVal
+
     -- For each baker check at most 'rightsHistoryWindow' from the current head down
     -- to 'bakerDetails_branch' level;
     -- check at each level to see if the baker had rights there;
@@ -323,14 +350,22 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
     bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
     bakingAlerts :: [AppSerializable ()]
                  <- whenM (any (\br -> ((== 0) . view bakingRightsCrossCompat_priority) br && ((== _baker_publicKeyHash baker) . view bakingRightsCrossCompat_delegate) br) bakingRights) $ do
-      let action =
-            bool reportMissedBake cleanAction ((thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker)
+      let
+        successfulBakeCondition = (thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker
+
+        -- Report missed bake alert if baker missed a bake, or clear the alert otherwise
+        missedBakeAction =
+            bool reportMissedBake cleanAction successfulBakeCondition
               (thisBlock ^. timestamp)
               (headBlock ^. fitness)
               RightKind_Baking
               (baker ^. baker_publicKeyHash)
               lvl
-      return $ pure action
+
+        -- Increment 'missedAlertsInRow' counter in db if baker missed an endorsement, or set it to zero otherwise
+        missedRightsInRowAction = bool (incMissedRightsInRow 5) clearMissedRightsInRow successfulBakeCondition (baker ^. baker_publicKeyHash)
+
+      return $ pure $ missedBakeAction *> missedRightsInRowAction
 
     -- endorsements *on* this block are *of* the previous block
     endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
@@ -347,12 +382,25 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
               (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
             )
             thisBlock
-        mkAction = bool reportMissedBake cleanAction (_baker_publicKeyHash baker `elem` endorserDelegates)
-        missedEndorsementAction = mkAction (predBlock ^. timestamp) (headBlock ^. fitness) RightKind_Endorsing (baker ^. baker_publicKeyHash) (lvl - 1)
+        successfulEndorsementCondition = _baker_publicKeyHash baker `elem` endorserDelegates
+
+        -- Report missed endorsement alert if baker missed an endorsement, or clear the alert otherwise
+        missedEndorsementAction = bool reportMissedBake cleanAction successfulEndorsementCondition
+          (predBlock ^. timestamp)
+          (headBlock ^. fitness)
+          RightKind_Endorsing
+          (baker ^. baker_publicKeyHash)
+          (lvl - 1)
+
+        -- Report missed endorsement bonus alerts if block proposer is not equal to block baker
         missedBonusAction = whenJust mbBlockProposer $ \blockProposer ->
           when (blockProposer /= blockBaker && blockProposer == _baker_publicKeyHash baker) $
             reportMissedEndorsementBonus (thisBlock ^. timestamp) (baker ^. baker_publicKeyHash) lvl
-      return $ pure $ missedEndorsementAction *> missedBonusAction
+
+        -- Increment 'missedAlertsInRow' counter in db if baker missed an endorsement, or set it to zero otherwise
+        missedRightsInRowAction = bool (incMissedRightsInRow 1) clearMissedRightsInRow successfulEndorsementCondition (_baker_publicKeyHash baker)
+
+      return $ pure $ missedEndorsementAction *> missedBonusAction *> missedRightsInRowAction
 
     return $ sequence_ $ bakingAlerts <> endorsingAlerts
 
@@ -393,6 +441,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
               , _bakerDetails_branch = mkVeryBlockLike headBlock
               , _bakerDetails_delegateInfo = Just $ Json di
               , _bakerDetails_participationInfo = Json <$> pti
+              , _bakerDetails_missedRightsInRow = 0
               }
           case nonEmpty existingIds of
             Nothing -> void $ insert newVal

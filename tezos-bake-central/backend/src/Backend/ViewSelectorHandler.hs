@@ -654,8 +654,18 @@ getBakerAddresses
   -> m [(WithInfinity PublicKeyHash, Deletable BakerSummary)]
 getBakerAddresses nds bid = do
   let chainId = _nodeDataSource_chain nds
-      qCount :: [Utf8]
-      qCount = flip map universe $ \(Some bTag) -> logAssume (LogTag_Baker bTag) $ case bakerLogDep bTag of
+
+      isBakerMissed = \case
+        Some BakerLogTag_BakerMissed -> True
+        _ -> False
+
+      escape s = "\"" <> s <> "\""
+      column t c = t <> "." <> escape c
+      paren s = "(" <> s <> ")"
+      makeKVs ks vs = zipWith (\k v -> k <> " = " <> v) ks vs
+
+      alertCountQueries :: [Utf8]
+      alertCountQueries = flip map (filter (not . isBakerMissed) universe) $ \(Some bTag) -> logAssume (LogTag_Baker bTag) $ case bakerLogDep bTag of
         r@(Related fld fk) ->
           let ctor = singleConstructor $ proxify bTag
               entityD = entityDef pg $ phantomize $ Compose ctor
@@ -668,37 +678,65 @@ getBakerAddresses nds bid = do
                 ForeignKey_UniqueId -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
                 ForeignKey_UniqueIdData -> fieldChain pg $ (undefined :: DefaultKey r ~ Key r (Unique u) => d (ConstructorMarker r) -> u (UniqueMarker r)) ctor2
                 ForeignKey_Field fld2 -> fieldChain pg fld2
-          in
-            "(SELECT COUNT(e.id) FROM \"" <> extraTbl
-            <> "\" elbm JOIN \"ErrorLog\" e on e.id = elbm.log WHERE " <> mconcat (intersperse " AND " $ "e.stopped IS NULL" : zipWith (\x y -> x <> " = " <> y) relatedColumns tColumns) <> ")"
-      qFull = "\
-        \ SELECT b.\"publicKeyHash\", b.\"data#data#alias\", "
-        <> mconcat (intersperse " + " qCount) <> " \
-        \ FROM \"Baker\" b \
-        \ WHERE NOT b.\"data#deleted\" \
-        \   AND COALESCE(?,b.\"publicKeyHash\") = b.\"publicKeyHash\" \
-        \ ORDER BY b.\"publicKeyHash\""
+          in paren $ mconcat $ intersperse " "
+            [ "SELECT COUNT(e.id) FROM " <> escape extraTbl <> " elbm"
+            , "JOIN " <> escape "ErrorLog" <> " e"
+            , "on e.id = elbm.log"
+            , "WHERE"
+            , mconcat $ intersperse " AND " $ "e.stopped IS NULL" : makeKVs relatedColumns tColumns
+            ]
+
+      getAlertsCountQuery :: Utf8
+      getAlertsCountQuery = mconcat $ intersperse " "
+        [ "SELECT"
+        , mconcat $ intersperse ", "
+          [ column "b" "publicKeyHash"
+          , column "b" "data#data#alias"
+          , mconcat $ intersperse " + " alertCountQueries
+          ]
+        , "FROM " <> escape "Baker" <> " b"
+        , "WHERE NOT " <> column "b" "data#deleted"
+        , "  AND COALESCE(?," <> column "b" "publicKeyHash" <> ")" <> " = " <> column "b" "publicKeyHash"
+        , "ORDER BY " <> column "b" "publicKeyHash"
+        ]
+
       buildRs :: (Monad f, PersistBackend f) => [PersistValue] -> f (PublicKeyHash, (Maybe Text, Int))
       buildRs = evalStateT $ do
         pkh :: PublicKeyHash <- StateT fromPersistValues
         alias :: Maybe Text <- StateT fromPersistValues
         errorCount :: Int <- StateT fromPersistValues
         pure (pkh, (alias, errorCount))
-  rs <- Map.fromAscList <$> traceQuery
-      qFull
+
+  bakersAlertCount <- Map.fromAscList <$> traceQuery
+      getAlertsCountQuery
       (toPrimitivePersistValue pg bid :)
       buildRs
-  int :: Map.Map PublicKeyHash (ProcessData, SecretKey, (Int, Bool)) <- [queryQ|
+
+  -- TODO make a bit prettier. Maybe use the same approach as in 'getAlertCountQuery'.
+  internalBakerData :: Map.Map PublicKeyHash (ProcessData, SecretKey, (Int, Bool)) <- [queryQ|
       SELECT b."data#data#publicKeyHash",
         la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
         p."control", p."state", p."errorLog",
-        ( SELECT COUNT(el.id)
-          FROM "ErrorLog" el
-          JOIN "ErrorLogBakerMissed" elbm
-            ON elbm.log = el.id
-          WHERE el.stopped IS NULL
-            AND elbm."baker#publicKeyHash" = b."data#data#publicKeyHash"
-            AND el."chainId" = ?chainId
+        ( SELECT COUNT(e.id) FROM "ErrorLogBakerMissedEndorsementBonus" elbm JOIN "ErrorLog" e on e.id = elbm.log
+          WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
+        ) +
+        ( SELECT COUNT(e.id) FROM "ErrorLogBakerDeactivated" elbm JOIN "ErrorLog" e on e.id = elbm.log
+            WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."publicKeyHash"
+        ) +
+        ( SELECT COUNT(e.id) FROM "ErrorLogBakerDeactivationRisk" elbm JOIN "ErrorLog" e on e.id = elbm.log
+          WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."publicKeyHash"
+        ) +
+        ( SELECT COUNT(e.id) FROM "ErrorLogBakerAccused" elbm JOIN "ErrorLog" e on e.id = elbm.log
+          WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
+        ) +
+        ( SELECT COUNT(e.id) FROM "ErrorLogBakerLedgerDisconnected" elbm JOIN "ErrorLog" e on e.id = elbm.log
+          WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
+        ) +
+        ( SELECT COUNT(e.id) FROM "ErrorLogInsufficientFunds" elbm JOIN "ErrorLog" e on e.id = elbm.log
+          WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
+        ) +
+        ( SELECT COUNT(e.id) FROM "ErrorLogVotingReminder" elbm JOIN "ErrorLog" e on e.id = elbm.log
+          WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
         ),
         EXISTS ( SELECT 1
           FROM "ErrorLog" el
@@ -712,7 +750,7 @@ getBakerAddresses nds bid = do
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, li, sc, dp, control, state, errorLog, missedAlertCount, insufficientFundsAlert) ->
+    |] <&> Map.fromList . fmap (\(pkh, li, sc, dp, control, state, errorLog, missedAlertsCount, insufficientFundsAlert) ->
       let sk = SecretKey
             { _secretKey_ledgerIdentifier = li
             , _secretKey_signingCurve = sc
@@ -725,7 +763,7 @@ getBakerAddresses nds bid = do
             , _processData_backend = Nothing
             , _processData_errorLog = errorLog
             }
-      in (pkh, (pd, sk, (missedAlertCount, insufficientFundsAlert))))
+      in (pkh, (pd, sk, (missedAlertsCount, insufficientFundsAlert))))
 
   endorserProcessData <- [queryQ|
     SELECT
@@ -771,8 +809,8 @@ getBakerAddresses nds bid = do
     maxProgress = maxProgress_rightsInfo ^? _Right . _Just
     bakerHashes :: Pg.In [PublicKeyHash] = Pg.In $ Map.keys bakers
     -- Insert pkh from Internal if present
-    bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b endorserProcessData), c)) int) $
-      fmap (\(a, c) -> (Left (BakerData a), (c, False))) rs
+    bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b endorserProcessData), c)) internalBakerData) $
+      fmap (\(a, c) -> (Left (BakerData a), (c, False))) bakersAlertCount
 
   nextBakes <- case latestHead' ^? _Just . level of
     Nothing -> pure Map.empty

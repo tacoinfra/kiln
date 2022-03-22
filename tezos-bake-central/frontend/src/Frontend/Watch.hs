@@ -155,6 +155,13 @@ watchBakerDetails pkh = do
     }
   return $ ffor theView $ \v' -> MMap.lookup pkh $ fmapMaybe getFirst $ getRangeView' (_bakeView_bakerDetails v')
 
+watchBakerDetailsFull :: MonadAppWidget js t m => m (Dynamic t (MonoidalMap PublicKeyHash BakerDetails))
+watchBakerDetailsFull = do
+  theView <- watchViewSelector . pure $ mempty
+    { _bakeViewSelector_bakerDetails = viewRangeAll 1
+    }
+  return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_bakerDetails v')
+
 watchBakerStats :: (MonadAppWidget js t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
 watchBakerStats bakers = do
   let levels :: (RawLevel, RawLevel) = (0, 30)

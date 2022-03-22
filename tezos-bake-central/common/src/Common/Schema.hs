@@ -600,6 +600,7 @@ data BakerDetails = BakerDetails
   , _bakerDetails_branch :: VeryBlockLike
   , _bakerDetails_delegateInfo :: Maybe (Json CacheDelegateInfo)
   , _bakerDetails_participationInfo :: Maybe (Json ParticipationInfo)
+  , _bakerDetails_missedRightsInRow :: Int
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails where
   type IdData BakerDetails = PublicKeyHash
