@@ -114,6 +114,7 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "PublicNodeConfig")
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "PublicNodeHead")
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "RawCacheEntry")
+  >=> migrateBakerDetailsAddMissedRigtsInRow
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -858,6 +859,17 @@ migrateErrorLogBakerAccusedTable ta = do
         UPDATE "ErrorLogBakerAccused" SET "accusationType" = 'AccusationType_DoubleEndorsement' where "right" = 'RightKind_Endorsing';
         ALTER TABLE "ErrorLogBakerAccused" ALTER COLUMN "accusationType" SET NOT NULL;
         ALTER TABLE "ErrorLogBakerAccused" DROP COLUMN "right";
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateBakerDetailsAddMissedRigtsInRow :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateBakerDetailsAddMissedRigtsInRow ta = do
+  let table = (Nothing, "BakerDetails")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | all ((/= "missedRightsInRow") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "BakerDetails" ADD COLUMN "missedRightsInRow" INT NOT NULL DEFAULT 0;
       |]
       getTableAnalysis
     _ -> pure ta

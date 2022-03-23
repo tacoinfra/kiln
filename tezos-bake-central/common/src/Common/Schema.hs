@@ -96,7 +96,7 @@ instance Aeson.FromJSON ClientError
 
 -- | Required Tezos Baking app version
 requiredTezosBakingAppVersion :: Text
-requiredTezosBakingAppVersion = "2.0.0"
+requiredTezosBakingAppVersion = "2.2.15"
 
 data UnsuitableNodeReason
   = UnsuitableNodeReason_QueryBeforeSavepoint RawLevel RawLevel
@@ -600,6 +600,7 @@ data BakerDetails = BakerDetails
   , _bakerDetails_branch :: VeryBlockLike
   , _bakerDetails_delegateInfo :: Maybe (Json CacheDelegateInfo)
   , _bakerDetails_participationInfo :: Maybe (Json ParticipationInfo)
+  , _bakerDetails_missedRightsInRow :: Int
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails where
   type IdData BakerDetails = PublicKeyHash
