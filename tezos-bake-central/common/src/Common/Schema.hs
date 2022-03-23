@@ -96,7 +96,7 @@ instance Aeson.FromJSON ClientError
 
 -- | Required Tezos Baking app version
 requiredTezosBakingAppVersion :: Text
-requiredTezosBakingAppVersion = "2.0.0"
+requiredTezosBakingAppVersion = "2.2.15"
 
 data UnsuitableNodeReason
   = UnsuitableNodeReason_QueryBeforeSavepoint RawLevel RawLevel
