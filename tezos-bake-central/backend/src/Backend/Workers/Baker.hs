@@ -416,12 +416,9 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
     Just delegatePkh -> do
       di <- nodeQueryDataSource (NodeQuery_DelegateInfo headHash headLvl delegatePkh)
 
-      -- TODO: remove this condition when Tenderbake becomes widely used
-      protoHash <- (^. protocolHash) <$> nodeQueryDataSource (NodeQuery_Block headHash)
-      pti <- case protoHash of
-        "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" ->
-          Just <$> nodeQueryDataSource (NodeQuery_ParticipationInfo headHash headLvl delegatePkh)
-        _ -> pure Nothing
+      j_pti <- catchError
+          (Just . Json <$> nodeQueryDataSource (NodeQuery_ParticipationInfo headHash headLvl delegatePkh))
+          (\_ -> pure $ _bakerDetails_participationInfo =<< details) -- reuse known data (if any)
 
       let
         gracePeriod = _cacheDelegateInfo_gracePeriod di
@@ -440,7 +437,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
               -- , _bakerDetails_nextEndorseRights = _endorsingRights_level <$> Map.lookup delegatePkh endorsingRights
               , _bakerDetails_branch = mkVeryBlockLike headBlock
               , _bakerDetails_delegateInfo = Just $ Json di
-              , _bakerDetails_participationInfo = Json <$> pti
+              , _bakerDetails_participationInfo = j_pti
               , _bakerDetails_missedRightsInRow = 0
               }
           case nonEmpty existingIds of
@@ -449,6 +446,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
               update
                 [ BakerDetails_branchField =. _bakerDetails_branch newVal
                 , BakerDetails_delegateInfoField =. _bakerDetails_delegateInfo newVal
+                , BakerDetails_participationInfoField =. _bakerDetails_participationInfo newVal
                 ]
                 ( BakerDetails_publicKeyHashField ==. brid)
           notifyDefault newVal
