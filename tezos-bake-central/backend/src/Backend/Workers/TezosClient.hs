@@ -261,13 +261,15 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
       -- Regardless of updated time, we ought not to check the ledger if we are two levels around
       -- a baking right and we shouldn't bother checking if we don't have an internal baker running
       -- either
-      doSensibleLedgerCheck _wasConnected = do
+      doSensibleLedgerCheck wasConnected = do
         -- Here we use latest head instead of latest final head to check whether we have baking/endorsement
         -- opportunities in upcoming blocks
         dsh <- liftIO $ atomically $ dataSourceHead nds
         doCheck <- for dsh $ \blk -> checkKilnBakerAndNextRights appConfig nds blk >>= \case
           -- If we don't have an internal baker, don't bother checking
           (Nothing, _, _) -> pure False
+          -- If we do and the ledger was previously disconnected, we need to check again
+          (_, _, _) | not wasConnected -> pure True
           -- Avoid sending commands to the ledger within two blocks of baking rights
           (_, Just (_, lvl), progressMay) -> do
             let doC = blk ^. level < lvl - 2 || blk ^. level > lvl + 2
