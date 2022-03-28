@@ -100,6 +100,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Types hiding (TestChainStatus)
+import Tezos.V012.Types (Round)
 
 import Backend.DB.Utils (getSchemaName)
 import Backend.Version (parseVersion)
@@ -333,15 +334,15 @@ selectIds
 selectIds constr = fmap (fmap (first toId)) . project (AutoKeyField, constr)
 
 data CacheBakingRights = CacheBakingRights
-  { _cacheBakingRights_context :: BlockHash
-  , _cacheBakingRights_level :: RawLevel
-  , _cacheBakingRights_result :: Json Aeson.Value
+  { _cacheBakingRights_level :: RawLevel
+  , _cacheBakingRights_round :: Round
+  , _cacheBakingRights_delegate :: PublicKeyHash
+  , _cacheBakingRights_estimatedTime :: Maybe UTCTime
   }
   deriving (Eq, Show, Typeable)
 
 data CacheEndorsingRights = CacheEndorsingRights
-  { _cacheEndorsingRights_context :: BlockHash
-  , _cacheEndorsingRights_level :: RawLevel
+  { _cacheEndorsingRights_level :: RawLevel
   , _cacheEndorsingRights_result :: Json Aeson.Value
   }
   deriving (Eq, Show, Typeable)
@@ -537,6 +538,10 @@ deriving instance FromField RawLevel
 deriving instance ToField Cycle
 deriving instance FromField Cycle
 
+deriving instance ToField Round
+instance FromField Round where
+  fromField f b = fromInteger <$> fromField f b
+
 instance PrimitivePersistField TezosWord64 where
   toPrimitivePersistValue x (TezosWord64 v) = toPrimitivePersistValue x v
   fromPrimitivePersistValue x v = TezosWord64 $ fromPrimitivePersistValue x v
@@ -552,6 +557,10 @@ instance PrimitivePersistField Cycle where
 instance PrimitivePersistField (HashedValue t) where
   toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x $ fromShort v
   fromPrimitivePersistValue x v = HashedValue $ toShort $ fromPrimitivePersistValue x v
+
+instance PrimitivePersistField Round where
+  toPrimitivePersistValue x (Round v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = Round $ fromPrimitivePersistValue x v
 
 instance PersistField TezosWord64 where
   persistName _ = "TezosWord64"
@@ -590,6 +599,12 @@ instance PersistField PublicKeyHash where
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
   dbType p _ = dbType p ("" :: Text)
+
+instance PersistField Round where
+  persistName _ = "Round"
+  toPersistValues (Round x) = primToPersistValue x
+  fromPersistValues = (fmap . first) Round . primFromPersistValue
+  dbType p (Round x) = dbType p x
 
 leftPad :: Int -> Text
 leftPad n = if T.length n' > 4 then error "too dang big" else n'
@@ -1180,17 +1195,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     constructors:
       - name: CacheBakingRights
         uniques:
-          - name: CacheBakingRights_context
+          - name: CacheBakingRights_round_level
             type: primary
-            fields: [_cacheBakingRights_context, _cacheBakingRights_level]
+            fields: [_cacheBakingRights_round, _cacheBakingRights_level]
   - entity: CacheEndorsingRights
     autoKey: null
     constructors:
       - name: CacheEndorsingRights
         uniques:
-          - name: CacheEndorsingRights_context
+          - name: CacheEndorsingRights_level
             type: primary
-            fields: [_cacheEndorsingRights_context, _cacheEndorsingRights_level]
+            fields: [_cacheEndorsingRights_level]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)

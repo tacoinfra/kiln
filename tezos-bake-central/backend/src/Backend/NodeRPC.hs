@@ -29,7 +29,7 @@
 -- TODO: move this to ~lib?
 module Backend.NodeRPC where
 
-import Prelude hiding (cycle)
+import Prelude hiding (cycle, round)
 import Control.Arrow (left)
 import Control.Concurrent.STM (
     STM,
@@ -45,8 +45,7 @@ import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
 import Control.Exception.Safe (toException)
-import Control.Lens (re, (<>~))
-import Control.Lens (review)
+import Control.Lens (re, review, (<>~))
 import Control.Lens.TH (makeLenses)
 import Control.Monad (ap)
 import Control.Monad.Base (MonadBase(..), liftBaseDefault)
@@ -78,6 +77,7 @@ import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Either (rights)
+import Data.Foldable (find)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Hashable (Hashable (hashWithSalt))
@@ -86,10 +86,11 @@ import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (mapMaybe)
 import Data.Ord (Down(..))
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
-import qualified Data.Sequence as Seq (filter, (<|))
+import qualified Data.Sequence as Seq (filter, singleton, (<|))
 import qualified Data.Set as Set
 import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
@@ -106,7 +107,7 @@ import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ, executeQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeMany, executeQ, queryQ, sql)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Schema (Json (..), LargeObjectId (..))
@@ -116,6 +117,8 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
+import Tezos.V012.Types (Round, unRound)
+import qualified Tezos.V012.Types as V012
 
 import Backend.Common (timeout')
 import Backend.Schema
@@ -128,14 +131,14 @@ import Orphans.Instances ()
 -- This exception should be impossible, but that depends on the node
 -- working correctly.  The information inside is just the arguments of
 -- the request you would have made to end up with it.
-data NoRightsException = NoRightsException BlockHash RawLevel Priority
+data NoRightsException = NoRightsException BlockHash RawLevel Round
   deriving (Eq, Ord, Show, Typeable)
 
 instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
+  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> Round -> NodeQuery (Seq BakingRightsCrossCompat)
   NodeQuery_EndorsingRights   :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
   NodeQuery_Account           :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots           :: BlockHash -> NodeQuery Ballots
@@ -157,7 +160,7 @@ deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
 data NodeQueryIx a where
-  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq BakingRightsCrossCompat)
+  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> Round -> NodeQueryIx (Seq BakingRightsCrossCompat)
   NodeQueryIx_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq EndorsingRightsCrossCompat)
 deriving instance Show (NodeQueryIx a)
 
@@ -582,13 +585,13 @@ dataSourceFinalHead
   => nds -> m (Maybe BranchInfo)
 dataSourceFinalHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestFinalHead)
 
-priorityChunkSize :: Num a => a
-priorityChunkSize = 64
+roundChunkSize :: Num a => a
+roundChunkSize = 64
 
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
   NodeQuery_ProtocolConstants ctx -> pure ctx
-  NodeQuery_BakingRights ctx _lvl -> pure ctx
+  NodeQuery_BakingRights ctx _lvl _maxRound -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
   NodeQuery_BlockPred ctx _offset -> pure ctx
@@ -789,10 +792,10 @@ nodeQueryImpl
   -> IO (Either KilnRpcError (RpcResult a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
-  NodeQuery_BakingRights branch targetLevel ->
-    nodeRPC' $ rBakingRightsFull (Set.map Left targetLevel) priorityChunkSize chainId branch
+  NodeQuery_BakingRights branch targetLevel maxRound ->
+    nodeRPC' $ rBakingRightsFull (Right targetLevel) maxRound chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
-    nodeRPC' $ rEndorsingRights (Set.map Left targetLevel) chainId branch
+    nodeRPC' $ rEndorsingRights (Right targetLevel) chainId branch
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract contractId (toChain chainId) branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
@@ -851,34 +854,43 @@ nodeQueryIx q = do
   where
     queryLvls :: Set RawLevel
     queryLvls = case q of
-      NodeQueryIx_BakingRights _ lvls -> lvls
+      NodeQueryIx_BakingRights _ lvls _maxRound -> lvls
       NodeQueryIx_EndorsingRights _ lvls -> lvls
 
     getNodeQuery :: NodeQueryIx a -> NodeQuery a
     getNodeQuery = \case
-      NodeQueryIx_BakingRights ctx lvl -> NodeQuery_BakingRights ctx lvl
+      NodeQueryIx_BakingRights ctx lvl maxRound -> NodeQuery_BakingRights ctx lvl maxRound
       NodeQueryIx_EndorsingRights ctx lvl -> NodeQuery_EndorsingRights ctx lvl
 
     filterCachedLvls :: Set RawLevel -> NodeQueryIx a -> NodeQueryIx a
     filterCachedLvls cachedLvls = \case
-      NodeQueryIx_BakingRights ctx lvls -> NodeQueryIx_BakingRights ctx (lvls `Set.difference` cachedLvls)
+      NodeQueryIx_BakingRights ctx lvls maxRound -> NodeQueryIx_BakingRights ctx (lvls `Set.difference` cachedLvls) maxRound
       NodeQueryIx_EndorsingRights ctx lvls -> NodeQueryIx_EndorsingRights ctx (lvls `Set.difference` cachedLvls)
 
     checkCacheDb
       :: ( Monad m1
-      , PostgresRaw m1
-      , MonadLogger m1)
+         , PostgresRaw m1
+         , MonadLogger m1
+         )
       => NodeQueryIx a -> m1 [(RawLevel, Maybe a)]
     checkCacheDb = \case
-      NodeQueryIx_BakingRights _ lvls -> do
+      NodeQueryIx_BakingRights _ lvls _ -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
-        (rawData :: [(RawLevel, Json Aeson.Value)]) <- [queryQ|
-          SELECT "level", "result"
+        cachedRights <- [queryQ|
+          SELECT "level", "delegate", "round", "estimatedTime" AT TIME ZONE 'UTC'
           FROM "CacheBakingRights"
           WHERE "level" BETWEEN ?minLvl AND ?maxLvl
         |]
-        mapM (\(lvl, rawRight) -> fmap (lvl,) (getResult rawRight)) rawData
+        for cachedRights $ \(lvl, delegate, round, estimatedTime) ->
+          let
+            bakingRight = BakingRightsV012 $ V012.BakingRights
+              { _bakingRights_level = lvl
+              , _bakingRights_delegate = delegate
+              , _bakingRights_round = round
+              , _bakingRights_estimatedTime = estimatedTime
+              }
+          in pure (lvl, Just $ Seq.singleton bakingRight)
       NodeQueryIx_EndorsingRights _ lvls -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
@@ -895,25 +907,41 @@ nodeQueryIx q = do
             $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
             return Nothing
 
-    addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1) => a -> NodeQueryIx a -> m1 ()
+    addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1, PersistBackend m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
-      NodeQueryIx_BakingRights ctx lvls -> case result' of
-        (bakingRights :: Seq BakingRightsCrossCompat) -> for_ lvls $ \lvl -> do
-          let lvlRights = Seq.filter (\right -> right ^. bakingRightsCrossCompat_level == lvl) bakingRights
-              result = Json $ Aeson.toJSON lvlRights
-          unless (null lvlRights) $
-            void [executeQ|
-              INSERT INTO "CacheBakingRights" ("context", "level", "result")
-              values (?ctx, ?lvl, ?result)
-            |]
-      NodeQueryIx_EndorsingRights ctx lvls -> case result' of
+      NodeQueryIx_BakingRights _ctx lvls maxRound-> case result' of
+        (bakingRights :: Seq BakingRightsCrossCompat) -> do
+
+          -- Since [#111] we query only baking rights with 'round == 0' from RPC.
+          --
+          -- If in the future we need caching of baking rights with different priorities
+          -- we need to change this logic, so this log message serves as a reminder of it.
+          let roundToCache = 0
+          when (maxRound > roundToCache) $
+            $(logError) $ "An attempt to cache baking rights with round > " <> tshow (unRound roundToCache)
+
+          let
+            rightsToCache = flip mapMaybe (Set.toList lvls) $ \lvl ->
+              flip find bakingRights $ \right ->
+                right ^. bakingRightsCrossCompat_level == lvl && right ^. bakingRightsCrossCompat_round == roundToCache
+
+          void $ executeMany [sql|
+            INSERT INTO "CacheBakingRights" ("level", "round", "delegate", "estimatedTime")
+            VALUES (?, ?, ?, ?)
+          |] $ rightsToCache <&> \br ->
+            ( br ^. bakingRightsCrossCompat_level
+            , br ^. bakingRightsCrossCompat_round
+            , br ^. bakingRightsCrossCompat_delegate
+            , br ^. bakingRightsCrossCompat_estimatedTime
+            )
+      NodeQueryIx_EndorsingRights _ctx lvls -> case result' of
         (endorsingRights :: Seq EndorsingRightsCrossCompat) -> for_ lvls $ \lvl -> do
           let lvlRights = Seq.filter (\right -> right ^. endorsingRightsCrossCompat_level == lvl) endorsingRights
               result = Json $ Aeson.toJSON lvlRights
           unless (null lvlRights) $
             void [executeQ|
-              INSERT INTO "CacheEndorsingRights" ("context", "level", "result")
-              values (?ctx, ?lvl, ?result)
+              INSERT INTO "CacheEndorsingRights" ("level", "result")
+              values (?lvl, ?result)
             |]
 
 nodeQueryIxBakingRights1
@@ -925,26 +953,33 @@ nodeQueryIxBakingRights1
     )
   => BlockHash -- ^ Context block hash
   -> RawLevel -- ^ Context block level
-  -> Priority -- ^ The minimum priority in the window of rights we want. The window will be 'priorityChunkSize' large.
+  -> Round -- ^ The minimum round in the window of rights we want. The window will be 'roundChunkSize' large.
   -> NodeQueryT m BakingRightsCrossCompat
-nodeQueryIxBakingRights1 ctx lvl prio = do
-  allRights <- nodeQueryIx $ NodeQueryIx_BakingRights ctx (Set.singleton lvl)
+nodeQueryIxBakingRights1 ctx lvl round = do
+  let
+    -- To get the [round, round + roundChunkSize) window,
+    -- because 'max_round' parameter is inclusive.
+    maxRound = round + roundChunkSize - 1
+
+  -- Caching baking rights with 'round > 0' is not as effective because
+  -- double baking is a fairly rare event, so we don't use 'nodeQueryIx' there.
+  allRights <- nodeQueryDataSourceSafe $ NodeQuery_BakingRights ctx (Set.singleton lvl) maxRound
   let
     chunked = fillChunk allRights
 
     fillChunk :: Seq BakingRightsCrossCompat -> V.Vector BakingRightsCrossCompat
     fillChunk = (makeBlanks V.//)
-      . map (\x -> (fromIntegral $ x ^. bakingRightsCrossCompat_priority - prio, x))
+      . map (\x -> (fromIntegral $ x ^. bakingRightsCrossCompat_round - round, x))
       -- Ensure things are in the window we want.
       -- Newer nodes return more than older nodes (see https://tezos.gitlab.io/protocols/006_carthage.html#baking-rights)
-      . filter (\x -> x ^. bakingRightsCrossCompat_priority >= prio && x ^. bakingRightsCrossCompat_priority < prio + priorityChunkSize)
+      . filter (\x -> x ^. bakingRightsCrossCompat_round >= round)
       . toList
 
     makeBlanks :: V.Vector BakingRightsCrossCompat
-    makeBlanks = V.generate priorityChunkSize $ \i' ->
-      throw $ NoRightsException ctx lvl $ prio + fromIntegral i'
+    makeBlanks = V.generate roundChunkSize $ \i' ->
+      throw $ NoRightsException ctx lvl $ round + fromIntegral i'
 
-  maybe (nqThrowError $ KilnRpcError_SomeException $ toException $ NoRightsException ctx lvl prio) pure $ chunked V.!? fromIntegral (prio `mod` priorityChunkSize)
+  maybe (nqThrowError $ KilnRpcError_SomeException $ toException $ NoRightsException ctx lvl round) pure $ chunked V.!? fromIntegral (round `mod` roundChunkSize)
 
 {-
 calculateBakerStats ::

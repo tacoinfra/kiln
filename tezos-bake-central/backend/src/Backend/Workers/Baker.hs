@@ -58,7 +58,7 @@ import qualified Tezos.V010.Types as V010
 import qualified Tezos.V012.Types as V012
 import Tezos.V012.NodeRPC.CrossCompat as V012
   (BakingRightsCrossCompat, EndorsingRightsCrossCompat, bakingRightsCrossCompat_delegate, bakingRightsCrossCompat_level,
-  bakingRightsCrossCompat_priority, blockCrossData, endorsingRightsCrossCompat_delegates, endorsingRightsCrossCompat_level)
+  bakingRightsCrossCompat_round, blockCrossData, endorsingRightsCrossCompat_delegates, endorsingRightsCrossCompat_level)
 import Tezos.V012.NodeRPC.CrossCompat as V011 (blockCrossCata)
 import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
 
@@ -157,11 +157,11 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
             maxLvl = Set.findMax lvls
         -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on,
         (reqBakers, reqEndorsers) <- runNodeQueryT $ liftA2 (,)
-          (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvls)
+          (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvls 0)
           (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvls)
         let
           pri1bakers :: [BakingRightsCrossCompat]
-          pri1bakers = filter (\br -> (flip Set.member pkhs . view bakingRightsCrossCompat_delegate) br && ((== 0) . view bakingRightsCrossCompat_priority) br) $ toList reqBakers
+          pri1bakers = filter (\br -> (flip Set.member pkhs . view bakingRightsCrossCompat_delegate) br) $ toList reqBakers
           endorsers :: [EndorsingRightsCrossCompat]
           endorsers = filter (any (flip Set.member pkhs) . view endorsingRightsCrossCompat_delegates) $ toList reqEndorsers
 
@@ -347,9 +347,9 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
   bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl, headLvl - 1 .. cutoffLevel + 1] $ \lvl -> do
     thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
     predBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl + 1)
-    bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
+    bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl) 0
     bakingAlerts :: [AppSerializable ()]
-                 <- whenM (any (\br -> ((== 0) . view bakingRightsCrossCompat_priority) br && ((== _baker_publicKeyHash baker) . view bakingRightsCrossCompat_delegate) br) bakingRights) $ do
+                 <- whenM (any (\br -> ((== _baker_publicKeyHash baker) . view bakingRightsCrossCompat_delegate) br) bakingRights) $ do
       let
         successfulBakeCondition = (thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker
 

@@ -33,6 +33,7 @@ import Safe (headMay)
 import Tezos.Common.Binary as TBin
 import Tezos.NodeRPC
 import Tezos.Types
+import Tezos.V012.Types (Round)
 import qualified Tezos.V012.Types as V012
 import qualified Tezos.V010.Types as V010
 import qualified Tezos.V005.Types as V005
@@ -167,8 +168,8 @@ insertAccusationsV12 blockHash chainId block = do
         round' <- nodeQueryDataSourceSafe $ NodeQuery_Round blockHash
         let
           accusedLevel = ev ^. V012.operationContentsDoubleBakingEvidence_bh1 . V012.blockHeaderFull_level
-          accusedPriority = fromIntegral round'
-        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority
+          accusedRound = fromIntegral round'
+        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedRound
       V012.OperationContents_DoubleEndorsementEvidence ev -> do
         let
           accusedLevel = ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . levelGetter
@@ -241,10 +242,10 @@ insertAccusationsV5 blockHash chainId block = do
 
 insertDoubleBakingEvidence
   :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
-  => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Priority -> NodeQueryT m ()
-insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority = do
+  => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Round -> NodeQueryT m ()
+insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedRound = do
   let t = AccusationType_DoubleBake
-  baker <- fmap (view bakingRightsCrossCompat_delegate) $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedPriority
+  baker <- fmap (view bakingRightsCrossCompat_delegate) $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedRound
   void [executeQ|
     insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
     values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
