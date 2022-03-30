@@ -27,6 +27,7 @@ library
     , clientsession
     , colour
     , common
+    , conduit
     , conduit-extra
     , constraints
     , constraints-extras
@@ -97,6 +98,7 @@ library
     , snap-loader-static
     , snap-server
     , split
+    , streaming-commons
     , stm
     , string-conv
     , svg-builder
@@ -111,6 +113,7 @@ library
     , transformers-base
     , unix
     , universe
+    , unliftio-core
     , unordered-containers
     , uri-encode
     , vector
