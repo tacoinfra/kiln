@@ -2,11 +2,11 @@
 
 stdenv.mkDerivation rec {
   name = "tezos-${version}";
-  version = "12.0";
+  version = "12.0-3";
 
   src = fetchzip {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/v${version}-1/binaries-${version}-1.tar.gz";
-      sha256 = "sha256-ELGd3u8iLSfcEkdeZx9f/WukIWg585Qs1uSSAzfLDwE=";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/v${version}/binaries-${version}.tar.gz";
+      sha256 = "14kx39hcjikmljfxjy171bvc92rwir7s30pww3gp82ydrjkj2wkx";
       stripRoot = false;
       };
   binaries = ["tezos-client" "tezos-node" "tezos-baker-*" "tezos-endorser-*" "tezos-admin-client"];
