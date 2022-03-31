@@ -1,31 +1,31 @@
 { pkgs }:
 with pkgs;
 let
-  outer-version = "v12.1-1";
+  outer-version = "v12.2-1";
   macos_version = "catalina";
     tezos-admin-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "11pycgfqcan9b42g3x0136kfy5aqj9cdcz3vc62h28p26c0rdmwy";
+      sha256 = "18m12g231dfhyxz00wx2a4ihim27cwi8jhajyax6y78zizlqy3z1";
     };
     tezos-baker-011-PtHangz2 = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-011-PtHangz2-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "15y5zf2yvam2r276q2dvr1l46k72j0ag4frfzdc3gifgsjkray5d";
+      sha256 = "1gq1551f6inksj8i13gi9f3xrpsv2lyvh82vyki7ig9w655sf5nk";
     };
     tezos-baker-012-Psithaca = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-012-Psithaca-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1qhhdifzfysapf8x8zp9j20adqk5fxjpxi5smjbzdjz6rwacy99k";
+      sha256 = "0sxzzbjsmfqhigiisn8ls2mz7p72jil2anvyi37p6k8kghjxi02j";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1kwqq9la5z1166wl1h8z4pqvqc6gqhk1nkkq0p5w4wgcm734gk4r";
+      sha256 = "1adv4wl2k9l64awmvcj3l4bgl0h7y3dz4s0k8926f7xqqfgy93qk";
     };
     tezos-endorser-011-PtHangz2 = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-011-PtHangz2-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "07vlfyihk57si0s84bbbwaam2bjwsbz0sds21w0250fwkdsyb2az";
+      sha256 = "1pwkx7sdwnnfm7fflszqsc4v0rd0csk095g025ywjgr56a0rwc3v";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0b3mar64d70hfi1iws6p00jd15k2i5kl3lkmf5vml5nn6y1sqryi";
+      sha256 = "05h57f5b5av02gc5n39gjwy789yp0156nbgb0s3dfq7m068cam9y";
     };
 
 in stdenv.mkDerivation rec {
