@@ -74,6 +74,7 @@ import Rhyolite.Schema (Email, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
+import Tezos.Common.Accusation
 import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Common.NodeRPC.Types (AsRpcError (asRpcError), RpcError)
 import Tezos.Types hiding (TestChainStatus)

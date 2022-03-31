@@ -19,6 +19,7 @@ import Data.Time (UTCTime, TimeZone)
 import Data.Witherable (Filterable)
 import Rhyolite.Schema (Json (..))
 
+import Tezos.Common.Accusation
 import Tezos.Types (getMicroTez, BlockHash, BlockLike (..), Cycle(..), RawLevel (..), SyncState(..), Tez(..), VotingPeriodKind(..))
 import Reflex (ffilter)
 
