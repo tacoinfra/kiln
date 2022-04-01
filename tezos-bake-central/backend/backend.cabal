@@ -119,6 +119,7 @@ library
 
   exposed-modules:
     Backend
+    Backend.Workers.Block
 
   other-modules:
     Paths_backend
@@ -148,7 +149,6 @@ library
     Backend.ViewSelectorHandler
     Backend.Workers.Accusation
     Backend.Workers.Baker
-    Backend.Workers.Block
     Backend.Workers.Node
     Backend.Workers.Process
     Backend.Workers.TezosClient
@@ -174,3 +174,20 @@ executable backend
   other-extensions: UnboxedSums
   ghc-options: -threaded -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -rtsopts -fexpose-all-unfoldings
   default-extensions: StrictData
+
+test-suite test
+  type:
+    exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  other-modules:
+    Accusation
+  build-depends:
+      aeson
+    , base >= 4 && < 5
+    , backend
+    , bytestring
+    , tasty
+    , tasty-hunit
+    , tezos-bake-monitor-lib
+    , tezos-noderpc

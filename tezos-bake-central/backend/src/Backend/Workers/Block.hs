@@ -182,7 +182,8 @@ insertAccusationsV12 blockHash chainId block = do
 
       _ -> pure ()
 
-insertAccusationsV9 :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
+insertAccusationsV9
+  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
      , PostgresRaw m, MonadMask m, PersistBackend m
      )
   => BlockHash -> ChainId -> V010.Block -> NodeQueryT m ()
