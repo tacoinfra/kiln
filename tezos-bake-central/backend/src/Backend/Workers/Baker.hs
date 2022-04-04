@@ -24,7 +24,6 @@ import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.State (MonadState, execStateT, gets, modify)
-import Control.Monad.Logger (logDebug, logDebugSH, logErrorSH)
 import Control.Monad.Reader (ReaderT (..), lift)
 import Control.Monad.State (execStateT, gets, modify)
 import Control.Monad.Trans.Maybe (MaybeT (..))
@@ -61,6 +60,7 @@ import Tezos.V012.NodeRPC.CrossCompat as V012
   bakingRightsCrossCompat_round, blockCrossData, endorsingRightsCrossCompat_delegates, endorsingRightsCrossCompat_level)
 import Tezos.V012.NodeRPC.CrossCompat as V011 (blockCrossCata)
 import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
+import Tezos.Unsafe (unsafeEstimatePastTimestamp)
 
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
 import Backend.Alerts
@@ -253,45 +253,44 @@ bakerWorker appConfig nds rightsHistoryWindow = worker' "bakerWorker" $ (<* wait
       return $ (bakerInt, protoInfo, headCycle, headBlock,) $ catMaybes $ toList $
         alignWith (these (Just . ($ Nothing) . (,)) (const Nothing) (curry (Just . fmap Just))) bakers details
 
-    wantedActions <- for currentState $ \(baker, details) -> do
+    for_ currentState $ \(baker, details) -> do
       let isInternal = Just (_baker_publicKeyHash baker) == bakerInt
-      res <- (Right <$> getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHistoryWindow)
-        `catchError` (pure . Left)
-      case res of
-        Right commit -> do
-          $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
-          pure $ Just commit
-        Left (err :: KilnRpcError) -> do
-          $(logErrorSH) ("bakerWorker failed to process baker: " <> tshow baker, err)
-          pure Nothing
+          headLvl = headBlock ^. level
+          -- For each baker check at most 'rightsHistoryWindow' from the current head down
+          -- to 'bakerDetails_branch' level;
+          -- check at each level to see if the baker had rights there;
+          -- if so, examine the block to see if they exercized those rights
+          -- if not, report an error; if so, clear an error.
+          cutoffLevel :: RawLevel = max (headLvl - fromIntegral rightsHistoryWindow) $
+            maybe (headLvl - 1) (view level . _bakerDetails_branch) details
+      for_ [headLvl, headLvl - 1 .. cutoffLevel + 1] $ \lvl -> do
+        checkRes <- (Right <$> checkMissedOpportunities protoInfo headBlock baker isInternal lvl) `catchError` (pure . Left)
+        case checkRes of
+          Right transaction -> runDb (Identity db) $ runReaderT transaction appConfig
+          Left err -> $(logErrorSH) $ "bakerWorker failed to check opportunities on level " <> tshow lvl <> " :" <> tshow err
 
-    -- beware of the jellyfish
-    lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ runReaderT (sequence_ $ fmapMaybe id wantedActions) appConfig
+      updateRes <- (Right <$> updateDelegateDetails protoInfo headBlock headCycle baker details isInternal) `catchError` (pure . Left)
+      case updateRes of
+        Right transaction -> do
+          runDb (Identity db) $ runReaderT transaction appConfig
+          $(logDebug) $ "bakerWorker DONE with baker: " <> tshow baker
+        Left err ->
+          $(logErrorSH) $ "bakerWorker failed to update baker details for " <> tshow baker <> " :" <> tshow err
 
   case res of
     Right () -> $(logDebug) "bakerWorker DONE"
     Left (err :: KilnRpcError) -> logKilnRpcError "bakerWorker" err
 
-
--- separating the monad that can do RPC(mPrepare) from the one that can do
--- SQL(mCommit) makes it a little easier to set up the transactions to succeed.
---
--- Make sure that the mCommit action has enough information to bail out or do
--- nothing if the data gathered in mPrepare can be stale
-{-# INLINE getWantedAction #-}
-getWantedAction
-  :: forall mPrepare rP blk.
-  ( BlockLike blk
-  , MonadIO mPrepare, MonadReader rP mPrepare, HasNodeDataSource rP, MonadLogger mPrepare
-  , MonadBaseNoPureAborts IO mPrepare, MonadMask mPrepare, MonadLoggerIO mPrepare
-  )
-  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> Int -> ExceptT KilnRpcError mPrepare (AppSerializable ())
-getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHistoryWindow = do
+checkMissedOpportunities
+  :: ( BlockLike blk
+     , MonadIO m, MonadReader rP m, HasNodeDataSource rP, MonadLogger m
+     , MonadBaseNoPureAborts IO m, MonadMask m, MonadLoggerIO m)
+  => ProtoInfo -> blk -> Baker -> Bool -> RawLevel -> ExceptT KilnRpcError m (AppSerializable ())
+checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
   let
     headHash = headBlock ^. hash
     headLvl = headBlock ^. level
     pkh = _baker_publicKeyHash baker
-    headFitness = headBlock ^. fitness
 
     -- TODO use different counters for missed bakes and endorsements instead of weighted one
     incMissedRightsInRow :: Int -> PublicKeyHash -> ReaderT AppConfig Serializable ()
@@ -318,14 +317,6 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
             [BakerDetails_missedRightsInRowField =. (0 :: Int)] $
             BakerDetails_publicKeyHashField ==. pkh'
           notifyDefault newVal
-
-    -- For each baker check at most 'rightsHistoryWindow' from the current head down
-    -- to 'bakerDetails_branch' level;
-    -- check at each level to see if the baker had rights there;
-    -- if so, examine the block to see if they exercized those rights
-    -- if not, report an error; if so, clear an error.
-    cutoffLevel :: RawLevel = max (headLvl - fromIntegral rightsHistoryWindow) $
-      maybe (headLvl - 1) (view level . _bakerDetails_branch) details
     cleanAction = \blockTimestamp blockFitness kind bakerPkh blockLevel -> do
       clearMissedBake blockFitness kind bakerPkh blockLevel
       -- If the internal baker successfully endorses or baker, then there is an
@@ -344,34 +335,29 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
            LIMIT 1
           |]
         whenJust mbLedgerDisconnectionError $ \_ -> clearBakerLedgerDisconnected bakerPkh
-  bakingEndorsingAlerts :: [AppSerializable ()] <- for [headLvl, headLvl - 1 .. cutoffLevel + 1] $ \lvl -> do
-    thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
-    predBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl + 1)
-    bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl) 0
-    bakingAlerts :: [AppSerializable ()]
-                 <- whenM (any (\br -> ((== _baker_publicKeyHash baker) . view bakingRightsCrossCompat_delegate) br) bakingRights) $ do
-      let
-        successfulBakeCondition = (thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker
-
-        -- Report missed bake alert if baker missed a bake, or clear the alert otherwise
-        missedBakeAction =
-            bool reportMissedBake cleanAction successfulBakeCondition
-              (thisBlock ^. timestamp)
-              (headBlock ^. fitness)
-              RightKind_Baking
-              (baker ^. baker_publicKeyHash)
-              lvl
-
-        -- Increment 'missedAlertsInRow' counter in db if baker missed an endorsement, or set it to zero otherwise
-        missedRightsInRowAction = bool (incMissedRightsInRow 5) clearMissedRightsInRow successfulBakeCondition (baker ^. baker_publicKeyHash)
-
-      return $ pure $ missedBakeAction *> missedRightsInRowAction
-
-    -- endorsements *on* this block are *of* the previous block
-    endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
-    endorsingAlerts :: [AppSerializable ()]
+  -- Check baking opportunities for the current block and endorsing opprotunities for the
+  -- previous block
+  thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
+  bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl) 0
+  bakingAlerts :: [AppSerializable ()]
+               <- whenM (any (\br -> ((== _baker_publicKeyHash baker) . view bakingRightsCrossCompat_delegate) br) bakingRights) $ do
+    let
+      successfulBakeCondition = (thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker
+      -- Report missed bake alert if baker missed a bake, or clear the alert otherwise
+      missedBakeAction =
+          bool reportMissedBake cleanAction successfulBakeCondition
+            (thisBlock ^. timestamp)
+            (headBlock ^. fitness)
+            RightKind_Baking
+            (baker ^. baker_publicKeyHash)
+            lvl
+      -- Increment 'missedAlertsInRow' counter in db if baker missed an endorsement, or set it to zero otherwise
+      missedRightsInRowAction = bool (incMissedRightsInRow 5) clearMissedRightsInRow successfulBakeCondition (baker ^. baker_publicKeyHash)
+    return $ pure $ missedBakeAction *> missedRightsInRowAction
+  -- endorsements *on* this block are *of* the previous block
+  endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
+  endorsingAlerts :: [AppSerializable ()]
                     <- whenM (any (elem (_baker_publicKeyHash baker)) $ view endorsingRightsCrossCompat_delegates <$> endorsers) $ do
-
       let
         blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
         mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer
@@ -386,7 +372,7 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
 
         -- Report missed endorsement alert if baker missed an endorsement, or clear the alert otherwise
         missedEndorsementAction = bool reportMissedBake cleanAction successfulEndorsementCondition
-          (predBlock ^. timestamp)
+          (unsafeEstimatePastTimestamp protoInfo 1 thisBlock)
           (headBlock ^. fitness)
           RightKind_Endorsing
           (baker ^. baker_publicKeyHash)
@@ -402,7 +388,21 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
 
       return $ pure $ missedEndorsementAction *> missedBonusAction *> missedRightsInRowAction
 
-    return $ sequence_ $ bakingAlerts <> endorsingAlerts
+  return $ sequence_ $ bakingAlerts <> endorsingAlerts
+
+updateDelegateDetails
+  :: forall m rP blk.
+  ( BlockLike blk
+  , MonadIO m, MonadReader rP m, HasNodeDataSource rP, MonadLogger m
+  , MonadBaseNoPureAborts IO m, MonadMask m, MonadLoggerIO m
+  )
+  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT KilnRpcError m (AppSerializable ())
+updateDelegateDetails protoInfo headBlock headCycle baker details isInternal = do
+  let
+    headHash = headBlock ^. hash
+    headLvl = headBlock ^. level
+    pkh = _baker_publicKeyHash baker
+    headFitness = headBlock ^. fitness
 
   -- TODO divide above and below this into two separate workers.
 
@@ -472,4 +472,4 @@ getWantedAction protoInfo headBlock headCycle baker details isInternal rightsHis
 
       pure $ [deactivationAlerts, updateDetails] ++ [insufficientFundAlerts | isInternal]
 
-  return $ sequence_ $ selfDelegateActions ++ bakingEndorsingAlerts
+  return $ sequence_ selfDelegateActions
