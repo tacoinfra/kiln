@@ -99,10 +99,7 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
           for_ (Seq.reverse blocks) $ \blockHash -> do
             blockOrErr <- runExceptT @KilnRpcError $ runNodeQueryT $ do
               block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
-              blockCrossData
-                (insertAccusationsV12 blockHash chainId)
-                (blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId))
-                block
+              insertAccusations blockHash chainId block
               return block
             case blockOrErr of
               Right block -> do
@@ -133,145 +130,23 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
             logKilnRpcError "blockWorker" e
             throwM e
 
-insertAccusationsV12
+insertAccusations
   :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
      , PostgresRaw m, MonadMask m, PersistBackend m
      )
-  => BlockHash -> ChainId -> V012.Block -> NodeQueryT m ()
-insertAccusationsV12 blockHash chainId block = do
-  -- Operations into a block are divided into 4 subsections.  Accusations
-  -- are always in the third of these sections.
+  => BlockHash -> ChainId -> BlockCrossCompat -> NodeQueryT m ()
+insertAccusations blockHash chainId block = do
   let
-    mightBeAccusations = fold $ Seq.lookup 2 $ V012._block_operations block
-    levelGetter = V012.inlinedEndorsementLike_operations . V012.endorsementLikeContents_level
-  for_ mightBeAccusations $ \op -> do
-    let
-      opHash = V012._operation_hash op
-      blockLevel = block ^. level
-    for_ (V012._operation_contents op) $ \case
-      V012.OperationContents_DoublePreendorsementEvidence ev -> do
-        let
-          accusedLevel = ev ^. V012.operationContentsDoublePreendorsementEvidence_op1 . levelGetter
-          balanceUpdates' = toList $ ev
-            ^. V012.operationContentsDoublePreendorsementEvidence_metadata
-            . V012.doublePreendorsementEvidenceMetadata_balanceUpdates
-          accusedBaker = getAccusedBaker balanceUpdates'
+    blockLevel = block ^. level
+    accusations = getAccusations block
+  for_ accusations $ \(AccusationInfo aType aLevel aHash aBalanceUpdates) ->
+    let accusedBaker = getAccusedBaker aBalanceUpdates
+    in insertAccusationToDb aType blockHash chainId aHash blockLevel aLevel accusedBaker
 
-        insertDoubleEndorsementLikeEvidence AccusationType_DoublePreendorsement blockHash chainId opHash blockLevel accusedLevel accusedBaker
-      V012.OperationContents_DoubleBakingEvidence ev -> do
-        let
-          accusedLevel = ev ^. V012.operationContentsDoubleBakingEvidence_bh1 . V012.blockHeaderFull_level
-          balanceUpdates' = toList $ ev
-            ^. V012.operationContentsDoubleBakingEvidence_metadata
-            . V012.doubleBakingEvidenceMetadata_balanceUpdates
-
-          accusedBaker = getAccusedBaker balanceUpdates'
-
-        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedBaker
-
-      V012.OperationContents_DoubleEndorsementEvidence ev -> do
-        let
-          accusedLevel = ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . levelGetter
-          balanceUpdates' = toList $ ev
-            ^. V012.operationContentsDoubleEndorsementEvidence_metadata
-            . V012.doubleEndorsementEvidenceMetadata_balanceUpdates
-
-          accusedBaker = getAccusedBaker balanceUpdates'
-
-        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel accusedBaker
-
-      _ -> pure ()
-
-insertAccusationsV9
-  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
-     , PostgresRaw m, MonadMask m, PersistBackend m
-     )
-  => BlockHash -> ChainId -> V010.Block -> NodeQueryT m ()
-insertAccusationsV9 blockHash chainId block = do
-  -- Operations into a block are divided into 4 subsections.  Accusations
-  -- are always in the third of these sections.
-  let mightBeAccusations = fold $ Seq.lookup 2 $ V010._block_operations block
-  for_ mightBeAccusations $ \op -> do
-    let
-      opHash = V010._operation_hash op
-      blockLevel = block ^. level
-    for_ (V010._operation_contents op) $ \case
-      V010.OperationContents_DoubleBakingEvidence ev -> do
-        let
-          accusedLevel = ev ^. V010.operationContentsDoubleBakingEvidence_bh1 . V010.blockHeaderFull_level
-          balanceUpdates' = toList $ ev
-            ^. V010.operationContentsDoubleBakingEvidence_metadata
-            . V010.doubleBakingEvidenceMetadata_balanceUpdates
-
-          accusedBaker = getAccusedBaker balanceUpdates'
-
-        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedBaker
-      V010.OperationContents_DoubleEndorsementEvidence ev -> do
-        let
-          accusedLevel = ev ^. V010.operationContentsDoubleEndorsementEvidence_op1 . V010.inlinedEndorsement_operations . V010.inlinedEndorsementContents_level
-          balanceUpdates' = toList $ ev
-            ^. V010.operationContentsDoubleEndorsementEvidence_metadata
-            . V010.doubleEndorsementEvidenceMetadata_balanceUpdates
-
-          accusedBaker = getAccusedBaker balanceUpdates'
-
-        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel accusedBaker
-
-      _ -> pure ()
-
-insertAccusationsV5
-  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
-     , PostgresRaw m, MonadMask m, PersistBackend m
-     )
-  => BlockHash -> ChainId -> V005.Block -> NodeQueryT m ()
-insertAccusationsV5 blockHash chainId block = do
-  -- Operations into a block are divided into 4 subsections.  Accusations
-  -- are always in the third of these sections.
-  let mightBeAccusations = fold $ Seq.lookup 2 $ V005._block_operations block
-  for_ mightBeAccusations $ \op -> do
-    let
-      opHash = V005._operation_hash op
-      blockLevel = block ^. level
-    for_ (V005._operation_contents op) $ \case
-      V005.OperationContents_DoubleBakingEvidence ev -> do
-        let
-          accusedLevel = ev ^. V005.operationContentsDoubleBakingEvidence_bh1 . V005.blockHeaderFull_level
-          balanceUpdates' = toList $ ev
-            ^. V005.operationContentsDoubleBakingEvidence_metadata
-            . V005.doubleBakingEvidenceMetadata_balanceUpdates
-
-          accusedBaker = getAccusedBaker balanceUpdates'
-
-        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedBaker
-      V005.OperationContents_DoubleEndorsementEvidence ev -> do
-        let
-          accusedLevel = ev ^. V005.operationContentsDoubleEndorsementEvidence_op1 . V005.inlinedEndorsement_operations . V005.inlinedEndorsementContents_level
-          balanceUpdates' = toList $ ev
-            ^. V005.operationContentsDoubleEndorsementEvidence_metadata
-            . V005.doubleEndorsementEvidenceMetadata_balanceUpdates
-
-          accusedBaker = getAccusedBaker balanceUpdates'
-
-        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel accusedBaker
-
-      _ -> pure ()
-
-insertDoubleBakingEvidence
-  :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
-  => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> PublicKeyHash -> NodeQueryT m ()
-insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel baker = do
-  let t = AccusationType_DoubleBake
-  void [executeQ|
-    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
-    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
-    on conflict do nothing
-    |]
-
--- | Checks and inserts double endorsement or double preendorsement accusation data to the DB
-insertDoubleEndorsementLikeEvidence
+insertAccusationToDb
   :: (MonadIO m, PostgresRaw m)
   => AccusationType -> BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> PublicKeyHash -> NodeQueryT m ()
-insertDoubleEndorsementLikeEvidence t blockHash chainId opHash blockLevel accusedLevel baker =
+insertAccusationToDb t blockHash chainId opHash blockLevel accusedLevel baker =
   void [executeQ|
     insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
     values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)

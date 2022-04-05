@@ -461,12 +461,6 @@ data ProtocolIndex = ProtocolIndex
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
-data AccusationType
-  = AccusationType_DoubleBake
-  | AccusationType_DoubleEndorsement
-  | AccusationType_DoublePreendorsement
-  deriving (Eq, Ord, Enum, Read, Show)
-
 data Accusation = Accusation
   { _accusation_hash :: OperationHash -- ^ hash of the accusation operation
   , _accusation_blockHash :: BlockHash -- ^ hash of the block where the accusation was included
