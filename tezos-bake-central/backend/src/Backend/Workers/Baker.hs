@@ -157,7 +157,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
             maxLvl = Set.findMax lvls
         -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on,
         (reqBakers, reqEndorsers) <- runNodeQueryT $ liftA2 (,)
-          (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvls 0)
+          (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvls)
           (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvls)
         let
           pri1bakers :: [BakingRightsCrossCompat]
@@ -338,7 +338,7 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
   -- Check baking opportunities for the current block and endorsing opprotunities for the
   -- previous block
   thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
-  bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl) 0
+  bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
   bakingAlerts :: [AppSerializable ()]
                <- whenM (any (\br -> ((== _baker_publicKeyHash baker) . view bakingRightsCrossCompat_delegate) br) bakingRights) $ do
     let

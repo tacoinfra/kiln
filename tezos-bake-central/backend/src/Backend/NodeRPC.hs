@@ -41,10 +41,8 @@ import Control.Concurrent.STM (
     writeTQueue,
   )
 
-import Control.Exception (throw)
 import Control.Exception.Safe (Exception)
 import Control.Exception.Safe (MonadMask, withException)
-import Control.Exception.Safe (toException)
 import Control.Lens (re, review, (<>~))
 import Control.Lens.TH (makeLenses)
 import Control.Monad (ap)
@@ -96,7 +94,6 @@ import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Vector as V
 import Database.Id.Class
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
@@ -117,7 +114,6 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
-import Tezos.V012.Types (Round, unRound)
 import qualified Tezos.V012.Types as V012
 
 import Backend.Common (timeout')
@@ -138,7 +134,8 @@ instance Exception NoRightsException
 
 data NodeQuery a where
   NodeQuery_ProtocolConstants :: BlockHash -> NodeQuery ProtoInfo
-  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> Round -> NodeQuery (Seq BakingRightsCrossCompat)
+  -- Query only baking rights with zero 'round'.
+  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
   NodeQuery_EndorsingRights   :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
   NodeQuery_Account           :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots           :: BlockHash -> NodeQuery Ballots
@@ -160,7 +157,7 @@ deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
 data NodeQueryIx a where
-  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> Round -> NodeQueryIx (Seq BakingRightsCrossCompat)
+  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq BakingRightsCrossCompat)
   NodeQueryIx_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq EndorsingRightsCrossCompat)
 deriving instance Show (NodeQueryIx a)
 
@@ -591,7 +588,7 @@ roundChunkSize = 64
 getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
 getContext = \case
   NodeQuery_ProtocolConstants ctx -> pure ctx
-  NodeQuery_BakingRights ctx _lvl _maxRound -> pure ctx
+  NodeQuery_BakingRights ctx _lvl -> pure ctx
   NodeQuery_EndorsingRights ctx _lvl -> pure ctx
   NodeQuery_Block ctx -> pure ctx
   NodeQuery_BlockPred ctx _offset -> pure ctx
@@ -792,8 +789,12 @@ nodeQueryImpl
   -> IO (Either KilnRpcError (RpcResult a))
 nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
-  NodeQuery_BakingRights branch targetLevel maxRound ->
-    nodeRPC' $ rBakingRightsFull (Right targetLevel) maxRound chainId branch
+  NodeQuery_BakingRights branch targetLevel ->
+    -- Now Kiln uses only baking rights with zero round, so it's not
+    -- neccessary to have an ability to set an arbitrary value of this parameter.
+    --
+    -- In case it's needed, the caching logic in 'nodeQueryIx' should also be changed.
+    nodeRPC' $ rBakingRightsFull (Right targetLevel) 0 chainId branch
   NodeQuery_EndorsingRights branch targetLevel ->
     nodeRPC' $ rEndorsingRights (Right targetLevel) chainId branch
   NodeQuery_Account branch contractId ->
@@ -854,17 +855,17 @@ nodeQueryIx q = do
   where
     queryLvls :: Set RawLevel
     queryLvls = case q of
-      NodeQueryIx_BakingRights _ lvls _maxRound -> lvls
+      NodeQueryIx_BakingRights _ lvls -> lvls
       NodeQueryIx_EndorsingRights _ lvls -> lvls
 
     getNodeQuery :: NodeQueryIx a -> NodeQuery a
     getNodeQuery = \case
-      NodeQueryIx_BakingRights ctx lvl maxRound -> NodeQuery_BakingRights ctx lvl maxRound
+      NodeQueryIx_BakingRights ctx lvl -> NodeQuery_BakingRights ctx lvl
       NodeQueryIx_EndorsingRights ctx lvl -> NodeQuery_EndorsingRights ctx lvl
 
     filterCachedLvls :: Set RawLevel -> NodeQueryIx a -> NodeQueryIx a
     filterCachedLvls cachedLvls = \case
-      NodeQueryIx_BakingRights ctx lvls maxRound -> NodeQueryIx_BakingRights ctx (lvls `Set.difference` cachedLvls) maxRound
+      NodeQueryIx_BakingRights ctx lvls -> NodeQueryIx_BakingRights ctx (lvls `Set.difference` cachedLvls)
       NodeQueryIx_EndorsingRights ctx lvls -> NodeQueryIx_EndorsingRights ctx (lvls `Set.difference` cachedLvls)
 
     checkCacheDb
@@ -874,7 +875,7 @@ nodeQueryIx q = do
          )
       => NodeQueryIx a -> m1 [(RawLevel, Maybe a)]
     checkCacheDb = \case
-      NodeQueryIx_BakingRights _ lvls _ -> do
+      NodeQueryIx_BakingRights _ lvls -> do
         let minLvl = Set.findMin lvls
             maxLvl = Set.findMax lvls
         cachedRights <- [queryQ|
@@ -909,21 +910,12 @@ nodeQueryIx q = do
 
     addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1, PersistBackend m1) => a -> NodeQueryIx a -> m1 ()
     addToDb result' = \case
-      NodeQueryIx_BakingRights _ctx lvls maxRound-> case result' of
+      NodeQueryIx_BakingRights _ctx lvls -> case result' of
         (bakingRights :: Seq BakingRightsCrossCompat) -> do
-
-          -- Since [#111] we query only baking rights with 'round == 0' from RPC.
-          --
-          -- If in the future we need caching of baking rights with different priorities
-          -- we need to change this logic, so this log message serves as a reminder of it.
-          let roundToCache = 0
-          when (maxRound > roundToCache) $
-            $(logError) $ "An attempt to cache baking rights with round > " <> tshow (unRound roundToCache)
-
           let
             rightsToCache = flip mapMaybe (Set.toList lvls) $ \lvl ->
               flip find bakingRights $ \right ->
-                right ^. bakingRightsCrossCompat_level == lvl && right ^. bakingRightsCrossCompat_round == roundToCache
+                right ^. bakingRightsCrossCompat_level == lvl
 
           void $ executeMany [sql|
             INSERT INTO "CacheBakingRights" ("level", "round", "delegate", "estimatedTime")
@@ -943,43 +935,6 @@ nodeQueryIx q = do
               INSERT INTO "CacheEndorsingRights" ("level", "result")
               values (?lvl, ?result)
             |]
-
-nodeQueryIxBakingRights1
-  :: forall m.
-    ( MonadNodeQuery (NodeQueryT m)
-    , MonadMask m
-    , PersistBackend m
-    , PostgresRaw m
-    )
-  => BlockHash -- ^ Context block hash
-  -> RawLevel -- ^ Context block level
-  -> Round -- ^ The minimum round in the window of rights we want. The window will be 'roundChunkSize' large.
-  -> NodeQueryT m BakingRightsCrossCompat
-nodeQueryIxBakingRights1 ctx lvl round = do
-  let
-    -- To get the [round, round + roundChunkSize) window,
-    -- because 'max_round' parameter is inclusive.
-    maxRound = round + roundChunkSize - 1
-
-  -- Caching baking rights with 'round > 0' is not as effective because
-  -- double baking is a fairly rare event, so we don't use 'nodeQueryIx' there.
-  allRights <- nodeQueryDataSourceSafe $ NodeQuery_BakingRights ctx (Set.singleton lvl) maxRound
-  let
-    chunked = fillChunk allRights
-
-    fillChunk :: Seq BakingRightsCrossCompat -> V.Vector BakingRightsCrossCompat
-    fillChunk = (makeBlanks V.//)
-      . map (\x -> (fromIntegral $ x ^. bakingRightsCrossCompat_round - round, x))
-      -- Ensure things are in the window we want.
-      -- Newer nodes return more than older nodes (see https://tezos.gitlab.io/protocols/006_carthage.html#baking-rights)
-      . filter (\x -> x ^. bakingRightsCrossCompat_round >= round)
-      . toList
-
-    makeBlanks :: V.Vector BakingRightsCrossCompat
-    makeBlanks = V.generate roundChunkSize $ \i' ->
-      throw $ NoRightsException ctx lvl $ round + fromIntegral i'
-
-  maybe (nqThrowError $ KilnRpcError_SomeException $ toException $ NoRightsException ctx lvl round) pure $ chunked V.!? fromIntegral (round `mod` roundChunkSize)
 
 {-
 calculateBakerStats ::
