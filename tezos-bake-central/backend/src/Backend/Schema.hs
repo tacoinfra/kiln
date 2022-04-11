@@ -99,6 +99,7 @@ import Text.Read (readMaybe)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
+import Tezos.Common.Accusation
 import Tezos.Types hiding (TestChainStatus)
 import Tezos.V012.Types (Round)
 

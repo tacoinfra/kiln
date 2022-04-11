@@ -16,12 +16,11 @@
 module Backend.Workers.Block where
 
 import Control.Monad.Catch (MonadMask, throwM, try)
-import Data.ByteString as BS (ByteString)
 import Data.Either.Combinators (whenLeft, whenRight)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
+import Data.List.NonEmpty (nonEmpty)
 import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
-import qualified Data.Set as Set (singleton)
 import Data.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Database.Groundhog.Core (PersistBackend)
 import Database.Groundhog.Postgresql (Postgresql(..))
@@ -30,14 +29,10 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, fromOnly, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Safe (headMay)
 
-import Tezos.Common.Binary as TBin
+import Tezos.Common.Accusation
+import Tezos.Common.BalanceUpdate
 import Tezos.NodeRPC
 import Tezos.Types
-import Tezos.V012.Types (Round)
-import qualified Tezos.V012.Types as V012
-import qualified Tezos.V010.Types as V010
-import qualified Tezos.V005.Types as V005
-import Tezos.Signature.Verify as Sig
 
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
@@ -104,10 +99,7 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
           for_ (Seq.reverse blocks) $ \blockHash -> do
             blockOrErr <- runExceptT @KilnRpcError $ runNodeQueryT $ do
               block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
-              blockCrossData
-                (insertAccusationsV12 blockHash chainId)
-                (blockCrossCata (insertAccusationsV9 blockHash chainId) (insertAccusationsV5 blockHash chainId))
-                block
+              insertAccusations blockHash chainId block
               return block
             case blockOrErr of
               Right block -> do
@@ -138,137 +130,39 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
             logKilnRpcError "blockWorker" e
             throwM e
 
--- TODO: This could use a better abstraction here.
-insertAccusationsV12
+insertAccusations
   :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
      , PostgresRaw m, MonadMask m, PersistBackend m
      )
-  => BlockHash -> ChainId -> V012.Block -> NodeQueryT m ()
-insertAccusationsV12 blockHash chainId block = do
-  -- Operations into a block are divided into 4 subsections.  Accusations
-  -- are always in the third of these sections.
-  let mightBeAccusations = fold $ Seq.lookup 2 $ V012._block_operations block
-      levelGetter = V012.inlinedEndorsementLike_operations . V012.endorsementLikeContents_level
-  for_ mightBeAccusations $ \op -> do
-    let
-      opHash = V012._operation_hash op
-      blockLevel = block ^. level
-    for_ (V012._operation_contents op) $ \case
-      V012.OperationContents_DoublePreendorsementEvidence ev -> do
-        let
-          accusedLevel = ev ^. V012.operationContentsDoublePreendorsementEvidence_op1 . levelGetter
-        (possibles,possiblesKeys) <- loadPossibles blockHash accusedLevel
-        let
-          encodedOp1 = TBin.encode $ V012.Envelope_Preendorsement chainId $ V012.outlinePreendorsement $
-            ev ^. V012.operationContentsDoublePreendorsementEvidence_op1
-          sig = fromMaybe (error "inlined preendorsements in double preendorsement evidence are always signed") $
-            ev ^. V012.operationContentsDoublePreendorsementEvidence_op1 . V012.inlinedEndorsementLike_signature
-        insertDoubleEndorsementLikeEvidence AccusationType_DoublePreendorsement blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
-      V012.OperationContents_DoubleBakingEvidence ev -> do
-        round' <- nodeQueryDataSourceSafe $ NodeQuery_Round blockHash
-        let
-          accusedLevel = ev ^. V012.operationContentsDoubleBakingEvidence_bh1 . V012.blockHeaderFull_level
-          accusedRound = fromIntegral round'
-        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedRound
-      V012.OperationContents_DoubleEndorsementEvidence ev -> do
-        let
-          accusedLevel = ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . levelGetter
-        (possibles,possiblesKeys) <- loadPossibles blockHash accusedLevel
-        let
-          encodedOp1 = TBin.encode $ V012.Envelope_Endorsement chainId $ V012.outlineEndorsement $
-            ev ^. V012.operationContentsDoubleEndorsementEvidence_op1
-          sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $
-            ev ^. V012.operationContentsDoubleEndorsementEvidence_op1 . V012.inlinedEndorsementLike_signature
-        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
-      _ -> return ()
+  => BlockHash -> ChainId -> BlockCrossCompat -> NodeQueryT m ()
+insertAccusations blockHash chainId block = do
+  let
+    blockLevel = block ^. level
+    accusations = getAccusations block
+  for_ accusations $ \(AccusationInfo aType aLevel aHash aBalanceUpdates) ->
+    let accusedBaker = getAccusedBaker aBalanceUpdates
+    in insertAccusationToDb aType blockHash chainId aHash blockLevel aLevel accusedBaker
 
-insertAccusationsV9
-  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
-     , PostgresRaw m, MonadMask m, PersistBackend m
-     )
-  => BlockHash -> ChainId -> V010.Block -> NodeQueryT m ()
-insertAccusationsV9 blockHash chainId block = do
-  -- Operations into a block are divided into 4 subsections.  Accusations
-  -- are always in the third of these sections.
-  let mightBeAccusations = fold $ Seq.lookup 2 $ V010._block_operations block
-  for_ mightBeAccusations $ \op -> do
-    let
-      opHash = V010._operation_hash op
-      blockLevel = block ^. level
-    for_ (V010._operation_contents op) $ \case
-      V010.OperationContents_DoubleBakingEvidence ev -> do
-        let
-          accusedLevel = ev ^. V010.operationContentsDoubleBakingEvidence_bh1 . V010.blockHeaderFull_level
-          accusedPriority = ev ^. V010.operationContentsDoubleBakingEvidence_bh1 . V010.blockHeaderFull_priority
-        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority
-      V010.OperationContents_DoubleEndorsementEvidence ev -> do
-        let
-          accusedLevel = ev ^. V010.operationContentsDoubleEndorsementEvidence_op1 . V010.inlinedEndorsement_operations . V010.inlinedEndorsementContents_level
-        (possibles,possiblesKeys) <- loadPossibles blockHash accusedLevel
-        let
-          encodedOp1 = TBin.encode $ V010.Envelope_Endorsement chainId $ V010.outlineEndorsement $ ev ^. V010.operationContentsDoubleEndorsementEvidence_op1
-          sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $ ev ^. V010.operationContentsDoubleEndorsementEvidence_op1 . V010.inlinedEndorsement_signature
-        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
-      _ -> return ()
-
-insertAccusationsV5
-  :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
-     , PostgresRaw m, MonadMask m, PersistBackend m
-     )
-  => BlockHash -> ChainId -> V005.Block -> NodeQueryT m ()
-insertAccusationsV5 blockHash chainId block = do
-  -- Operations into a block are divided into 4 subsections.  Accusations
-  -- are always in the third of these sections.
-  let mightBeAccusations = fold $ Seq.lookup 2 $ V005._block_operations block
-  for_ mightBeAccusations $ \op -> do
-    let
-      opHash = V005._operation_hash op
-      blockLevel = block ^. V005.level
-    for_ (V005._operation_contents op) $ \case
-      V005.OperationContents_DoubleBakingEvidence ev -> do
-        let
-          accusedLevel = ev ^. V005.operationContentsDoubleBakingEvidence_bh1 . V005.blockHeaderFull_level
-          accusedPriority = ev ^. V005.operationContentsDoubleBakingEvidence_bh1 . V005.blockHeaderFull_priority
-        insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedPriority
-      V005.OperationContents_DoubleEndorsementEvidence ev -> do
-        let
-          accusedLevel = ev ^. V005.operationContentsDoubleEndorsementEvidence_op1 . V005.inlinedEndorsement_operations . V005.inlinedEndorsementContents_level
-        (possibles,possiblesKeys) <- loadPossibles blockHash accusedLevel
-        let
-          encodedOp1 = TBin.encode $ V005.Envelope_Endorsement chainId $ V005.outlineEndorsement $ ev ^. V005.operationContentsDoubleEndorsementEvidence_op1
-          sig = fromMaybe (error "inlined endorsements in double endorsement evidence are always signed") $ ev ^. V005.operationContentsDoubleEndorsementEvidence_op1 . V005.inlinedEndorsement_signature
-        insertDoubleEndorsementLikeEvidence AccusationType_DoubleEndorsement blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys
-      _ -> return ()
-
-insertDoubleBakingEvidence
-  :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
-  => BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Round -> NodeQueryT m ()
-insertDoubleBakingEvidence blockHash chainId opHash blockLevel accusedLevel accusedRound = do
-  let t = AccusationType_DoubleBake
-  baker <- fmap (view bakingRightsCrossCompat_delegate) $ nodeQueryIxBakingRights1 blockHash accusedLevel accusedRound
+insertAccusationToDb
+  :: (MonadIO m, PostgresRaw m)
+  => AccusationType -> BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> PublicKeyHash -> NodeQueryT m ()
+insertAccusationToDb t blockHash chainId opHash blockLevel accusedLevel baker =
   void [executeQ|
     insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
     values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
     on conflict do nothing
-    |]
+  |]
 
--- | Checks and inserts double endorsement or double preendorsement accusation data to the DB
-insertDoubleEndorsementLikeEvidence
-  :: (MonadIO m, PostgresRaw m)
-  => AccusationType -> BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> Signature -> ByteString -> Seq.Seq PublicKeyHash -> Seq.Seq PublicKey -> NodeQueryT m ()
-insertDoubleEndorsementLikeEvidence t blockHash chainId opHash blockLevel accusedLevel sig encodedOp1 possibles possiblesKeys = do
-  let actuals = Seq.filter (\(_,key) -> Sig.check key sig encodedOp1) $ Seq.zip possibles possiblesKeys
-  for_ actuals $ \(baker,_) -> [executeQ|
-    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
-    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
-    on conflict do nothing
-    |]
-
-loadPossibles
-  :: (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e, PostgresRaw m, MonadMask m, PersistBackend m)
-  => BlockHash -> RawLevel -> NodeQueryT m (Seq.Seq PublicKeyHash, Seq.Seq PublicKey)
-loadPossibles blockHash accusedLevel = do
-  possibles <- fmap (mconcat . toList) $
-    (fmap.fmap) (view endorsingRightsCrossCompat_delegates) $ nodeQueryIx $ NodeQueryIx_EndorsingRights blockHash (Set.singleton accusedLevel)
-  possiblesKeys <- traverse (nodeQueryDataSourceSafe . NodeQuery_PublicKey . Implicit) possibles
-  pure (possibles, possiblesKeys)
+-- | Withdrawing money from accused baker has 'freezer' kind and
+-- 'deposits' category. It's expected that there is only one such
+-- balance update in 'double_*_evidence' metadata.
+getAccusedBaker :: [BalanceUpdate] -> PublicKeyHash
+getAccusedBaker updates =
+  let
+    pkhsLostMoney = flip mapMaybe updates $ \case
+      BalanceUpdate_Freezer (FreezerUpdate pkh change BalanceUpdateCategory_Deposits) | change < 0 -> Just pkh
+      _ -> Nothing
+  in case nonEmpty pkhsLostMoney of
+    Nothing -> error "Negative freezer balance update not found"
+    Just (pkh :| []) -> pkh
+    Just _ -> error "Found more than one negative freezer balance update"

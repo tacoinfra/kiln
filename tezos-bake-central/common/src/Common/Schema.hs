@@ -74,6 +74,7 @@ import Rhyolite.Schema (Email, Json)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
+import Tezos.Common.Accusation
 import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Common.NodeRPC.Types (AsRpcError (asRpcError), RpcError)
 import Tezos.Types hiding (TestChainStatus)
@@ -459,12 +460,6 @@ data ProtocolIndex = ProtocolIndex
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
-
-data AccusationType
-  = AccusationType_DoubleBake
-  | AccusationType_DoubleEndorsement
-  | AccusationType_DoublePreendorsement
-  deriving (Eq, Ord, Enum, Read, Show)
 
 data Accusation = Accusation
   { _accusation_hash :: OperationHash -- ^ hash of the accusation operation
