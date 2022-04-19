@@ -69,6 +69,37 @@ isVotingPeriod = \case
   VotingPeriodKind_Promotion -> True
   VotingPeriodKind_Adoption -> False
 
+calcAmendmentPeriodBounds
+  :: Amendment
+  -> VotingPeriodKind
+  -> ProtoInfo
+  -> BranchInfo
+  -> (Cycle, Cycle)
+calcAmendmentPeriodBounds amendment selectedPeriod protoInfo latestHead =
+  let
+    periodDiff = fromIntegral $ fromEnum selectedPeriod - fromEnum (amendment ^. amendment_period)
+    startLevel = amendment ^. amendment_startLevel
+
+    headLevel    = latestHead ^. branchInfo_block . level
+    headCycle    = latestHead ^. branchInfo_cycle
+    headCyclePos = latestHead ^. branchInfo_cyclePosition
+
+    blocksPerCycle        = fromIntegral $ protoInfo ^. protoInfo_blocksPerCycle
+    blocksPerVotingPeriod = fromIntegral $ protoInfo ^. protoInfo_blocksPerVotingPeriod
+
+    calcCycle periodDiff' =
+      let
+        -- Difference between voting period start/end level and current cycle's start level.
+        -- Can be both positive and negative value depending on the position of
+        -- selected period start/end to the current cycle's start level
+        levelDiff = fromIntegral $ startLevel + blocksPerVotingPeriod * periodDiff' - (headLevel - headCyclePos)
+        cyclesDiff = levelDiff `div` blocksPerCycle
+      in cyclesDiff + fromIntegral headCycle
+
+    periodStartCycle = calcCycle periodDiff
+    periodEndCycle   = calcCycle (periodDiff + 1) - 1
+  in (periodStartCycle, periodEndCycle)
+
 amendmentPopup
   ::    (MonadReader r m, HasTimeZone r, DomBuilder t m, MonadJSM (Performable m), MonadAppWidget js t m)
   => Dynamic t Amendment
@@ -78,15 +109,15 @@ amendmentPopup
   -> Dynamic t ProtoInfo
   -- ^ Protocol information
   -> m ()
-amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
+amendmentPopup dAmendment dAmendments dProtoInfo = divClass "amendment-popup" $ do
   rec
     chosenPeriod <- holdDyn Nothing $ Just <$> choosePeriod
-    selectedPeriod <- holdUniqDyn $ fromMaybe . _amendment_period <$> amendment <*> chosenPeriod
-    let selectedPeriodDemux = demux selectedPeriod
+    dSelectedPeriod <- holdUniqDyn $ fromMaybe . _amendment_period <$> dAmendment <*> chosenPeriod
+    let selectedPeriodDemux = demux dSelectedPeriod
     choosePeriod <- divClass "menu" $ do
       e <- fmap leftmost $ for periods $ \p -> do
         let selected = demuxed selectedPeriodDemux p
-            enabled = (p <=) . _amendment_period <$> amendment
+            enabled = (p <=) . _amendment_period <$> dAmendment
             itemConf = ffor2 enabled selected $ \e s -> "class" =: T.unwords
               (catMaybes [Just "item", "active" <$ guard s, "disabled" <$ guard (not e)])
         (e, _) <- elDynAttr' "div" itemConf $ do
@@ -95,8 +126,8 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
             when (isVotingPeriod p) $ elClass "i" "blue icon-vote-badge icon" blank
           divClass "date" $ do
             tz <- asks (^. timeZone)
-            let startTime = getStartTimeForPeriod p <$> amendment <*> amendments <*> protoInfo
-                endTime = getEndTimeForPeriod p <$> amendment <*> amendments <*> protoInfo
+            let startTime = getStartTimeForPeriod p <$> dAmendment <*> dAmendments <*> dProtoInfo
+                endTime = getEndTimeForPeriod p <$> dAmendment <*> dAmendments <*> dProtoInfo
                 dateOnly = "%b %d, %Y"
                 showDate (t, isEstimated) = T.concat
                   [ T.pack $ Time.formatTime Time.defaultTimeLocale dateOnly $ Time.utcToZonedTime tz t
@@ -105,7 +136,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
             dynText $ showDate <$> startTime
             text " - "
             dynText $ showDate <$> endTime
-          uncurry progressDots $ splitDynPure $ ffor2 amendment protoInfo $ \a i -> case compare p (_amendment_period a) of
+          uncurry progressDots $ splitDynPure $ ffor2 dAmendment dProtoInfo $ \a i -> case compare p (_amendment_period a) of
             LT -> (cyclesPerPeriod i + 1, cyclesPerPeriod i)
             EQ -> (currentCyclePosition a i, cyclesPerPeriod i)
             GT -> (0, cyclesPerPeriod i)
@@ -116,15 +147,22 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
 
   divClass "detail" $ do
     divClass "period" $ do
-      dynText $ textPeriod <$> selectedPeriod
+      dynText $ textPeriod <$> dSelectedPeriod
       text " Period"
       elClass "span" "cycles" $ do
-        text "Cycles "
-        dynText $ ffor3 selectedPeriod amendment protoInfo $ \p a info ->
-          let coeff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a)
-              calcCycle n = fromIntegral $ (_amendment_startLevel a + _protoInfo_blocksPerVotingPeriod info * n) `div` _protoInfo_blocksPerCycle info
-           in textWithCommas (calcCycle coeff) <> " - " <> textWithCommas (calcCycle (succ coeff) - 1)
-    dyn_ $ ffor selectedPeriod $ \case
+        dMbLatestHead <- watchLatestHead
+        whenJustDyn dMbLatestHead $ \latestHead -> do
+          text "Cycles "
+          dynText $ ffor3 dSelectedPeriod dAmendment dProtoInfo $ \selectedPeriod amendment protoInfo ->
+            let
+              (Cycle periodStartCycle, Cycle periodEndCycle) = calcAmendmentPeriodBounds
+                amendment
+                selectedPeriod
+                protoInfo
+                latestHead
+            in textWithCommas periodStartCycle <> " - " <> textWithCommas periodEndCycle
+
+    dyn_ $ ffor dSelectedPeriod $ \case
       VotingPeriodKind_Proposal -> periodProposals =<< watchProposals
       VotingPeriodKind_Exploration -> withLoader (periodVote "Exploration") =<< watchPeriodTestingVote
       VotingPeriodKind_Cooldown -> withLoader periodTest =<< watchPeriodTesting
@@ -136,7 +174,7 @@ amendmentPopup amendment amendments protoInfo = divClass "amendment-popup" $ do
     periods = [minBound .. maxBound]
 
 -- | Display a natural number with comma separation
-textWithCommas :: Int -> Text
+textWithCommas :: (Num a, Show a) => a -> Text
 textWithCommas = T.pack . reverse . f . reverse . show
   where f = \case
           (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
@@ -302,11 +340,13 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         text header
         elClass "span" "detail" $ do
           text "Cycles "
-          dynText $ ffor2 amendment protoInfo $ \a info ->
-            let startLevel = _amendment_startLevel a
-                endLevel = startLevel + _protoInfo_blocksPerVotingPeriod info
-                toCycle n = fromIntegral $ n `div` _protoInfo_blocksPerCycle info
-            in textWithCommas (toCycle startLevel) <> " - " <> textWithCommas (toCycle endLevel - 1)
+          dMbLatestHead <- watchLatestHead
+          whenJustDyn dMbLatestHead $ \latestHead ->
+            dynText $ ffor2 amendment protoInfo $ \a info ->
+              let
+                (Cycle periodStartCycle, Cycle periodEndCycle)
+                  = calcAmendmentPeriodBounds a (a ^. amendment_period) info latestHead
+              in textWithCommas periodStartCycle <> " - " <> textWithCommas periodEndCycle
       divClass "detail" $ text detail
       divClass "vote-cast-as" $ do
         elAttr "img" ("class" =: "kiln-icon" <> "src" =: static @"images/logo.svg") blank
