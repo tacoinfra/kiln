@@ -83,10 +83,10 @@ processWorker
   -> "logNamespace" :! Text
   -> "mkProcess" :! (a -> IO (Either Text CreateProcess))
   -> "pid" :! Id ProcessData
-  -> "pidToRunAfter" :! Maybe (Id ProcessData)
+  -> "prestartCheck" :! IO Bool
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
   -> m (IO ())
-processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg pidToRunAfter) (Arg makeNotify) = worker' "processWorker" $ do
+processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg prestartCheck) (Arg makeNotify) = worker' "processWorker" $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
     inDb $ updateState ProcessState_Initializing
@@ -131,10 +131,8 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
         -- We don't restart process with non-empty error log. It means that this process just failed with error.
         -- We guarantee this condition by the fact that in all other cases we clean the log.
         hasEmptyErrorLog <- fmap (isNothing . head) $ project ProcessData_errorLogField $ AutoKeyField ==. fromId pid
-        otherProcessRunning <- case pidToRunAfter of
-          Nothing -> pure True
-          Just pid1 -> all (== ProcessState_Running) <$> project state_ (AutoKeyField ==. fromId pid1)
-        pure $ not isStopped && otherProcessRunning && hasEmptyErrorLog
+        runPrestartCheck <- liftIO prestartCheck
+        pure $ not isStopped && hasEmptyErrorLog && runPrestartCheck
       unless canRun $ threadDelay' 1 *> waitUntilShouldRun
 
     obtainLock = runLoggingEnv logger $ do
