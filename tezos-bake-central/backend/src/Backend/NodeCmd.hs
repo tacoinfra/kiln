@@ -47,6 +47,7 @@ import Text.URI (render)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
+import Tezos.NodeRPC (NodeRPCContext(..), QueryNode(rIsBootstrapped), RpcError, nodeRPC)
 import Tezos.Types (ProtocolHash, toBase58Text)
 
 import Backend.Config (AppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir, BinaryPaths(..), BakerEndorserPaths(..))
@@ -154,7 +155,7 @@ internalNodeWorker appConfig logger db maybePaths = do
     ! #mkProcess (\(dataDir, extraArgs) -> withNodeConfig appConfig $ \nodeConfigPath ->
                     return $ Right $ proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
     ! #pid pid
-    ! #pidToRunAfter Nothing
+    ! #prestartCheck (pure True)
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
 
 getKilnNodeVersion :: MonadIO m => FilePath -> m (Maybe Version)
@@ -228,13 +229,11 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) (Arg nodeConfigPath) _ (Arg
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> Maybe BinaryPaths -> m (IO ())
-bakerDaemonProcess appConfig logger db maybePaths = do
-  (nodePPid, bdid) <- runLoggingEnv logger $ runDb (Identity db) $ do
-    -- nodePPid should always be a Just value
-    nodePPid <- project1 (NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+  => AppConfig -> NodeDataSource -> LoggingEnv -> Pool Postgresql -> Maybe BinaryPaths -> m (IO ())
+bakerDaemonProcess appConfig nds logger db maybePaths = do
+  bdid <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
-      (Just bdid) -> return (nodePPid, bdid)
+      (Just bdid) -> return bdid
       Nothing -> do
         let processData = ProcessData
               { _processData_control = ProcessControl_Stop
@@ -269,7 +268,7 @@ bakerDaemonProcess appConfig logger db maybePaths = do
             , _deletableRow_deleted = True
             }
           }
-        return (nodePPid, bdid)
+        return bdid
   let
     aliasT = _bakerDaemonInternalData_alias bdid
     bpid1 = _bakerDaemonInternalData_bakerProcessData bdid
@@ -293,6 +292,14 @@ bakerDaemonProcess appConfig logger db maybePaths = do
         Nothing -> Left $ daemonName <> " is not available for the given protocol: "
           <> maybe "<unknown protocol>" toBase58Text proto
 
+    -- tezos-node needs some time before it becomes able to respond to RPC queries.
+    -- Due to this, daemons may fail with connection timeout. So we check that node
+    -- is actually able to respond to requests before starting baker/endorser
+    checkKilnNodeAvailability :: IO Bool
+    checkKilnNodeAvailability = isRight <$> do
+      runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
+        runLoggingEnv logger $ nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
+
     pw (pathF, args, daemonName) pid = processWorker
       (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
@@ -300,7 +307,7 @@ bakerDaemonProcess appConfig logger db maybePaths = do
       ! #config appConfig
       ! #mkProcess (\proto -> return $ mkProcess proto pathF args daemonName)
       ! #pid pid
-      ! #pidToRunAfter nodePPid
+      ! #prestartCheck checkKilnNodeAvailability
       ! #mkNotify Nothing
 
     bakerPw = pw (bakerPath paths, bakerArgs, "tezos-baker") ! #logNamespace "kiln-baker"
