@@ -372,7 +372,7 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
 
         -- Report missed endorsement alert if baker missed an endorsement, or clear the alert otherwise
         missedEndorsementAction = bool reportMissedBake cleanAction successfulEndorsementCondition
-          (unsafeEstimatePastTimestamp protoInfo 1 thisBlock)
+          (unsafeEstimatePastTimestamp protoInfo (thisBlock ^. level - 1) thisBlock)
           (headBlock ^. fitness)
           RightKind_Endorsing
           (baker ^. baker_publicKeyHash)
