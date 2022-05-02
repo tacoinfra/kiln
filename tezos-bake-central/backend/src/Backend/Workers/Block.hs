@@ -29,8 +29,6 @@ import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, fromOnly, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Safe (headMay)
 
-import Tezos.Common.Accusation
-import Tezos.Common.BalanceUpdate
 import Tezos.NodeRPC
 import Tezos.Types
 

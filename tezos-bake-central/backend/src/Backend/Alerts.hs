@@ -40,7 +40,6 @@ import Rhyolite.Backend.DB.Serializable (Serializable)
 import Rhyolite.Schema (Json (..))
 import qualified Text.URI as Uri
 
-import Tezos.Common.Accusation
 import Tezos.Types
 
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))

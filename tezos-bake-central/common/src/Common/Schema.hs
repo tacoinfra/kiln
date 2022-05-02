@@ -77,7 +77,7 @@ import qualified Text.URI as Uri
 import Tezos.Common.Accusation
 import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Common.NodeRPC.Types (AsRpcError (asRpcError), RpcError)
-import Tezos.Types hiding (TestChainStatus)
+import Tezos.Types
 
 import Common (defaultTezosCompatJsonOptions)
 import ExtraPrelude

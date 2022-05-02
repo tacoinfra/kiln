@@ -12,7 +12,6 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Backend.Workers.Block (getAccusedBaker)
-import Tezos.Common.BalanceUpdate
 import qualified Tezos.V011.Types as V011
 import Tezos.V012.Types
 import qualified Tezos.V012.Types as V012

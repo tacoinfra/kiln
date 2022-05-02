@@ -150,7 +150,6 @@ data NodeQuery a where
   NodeQuery_BlockHeader       :: BlockHash -> NodeQuery BlockHeaderCrossCompat
   NodeQuery_DelegateInfo      :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_ParticipationInfo :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
-  NodeQuery_PublicKey         :: ContractId -> NodeQuery PublicKey
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
   NodeQuery_Round             :: BlockHash -> NodeQuery Int32
 deriving instance Show (NodeQuery a)
@@ -291,7 +290,7 @@ instance MonadNodeQuery NodeQueryQueued where
             answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
             Left es -> \anyNode -> do
               let ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
-              r <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+              r <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) ctx (_nodeDataSource_logger dsrc) q
               pure $ first ((:es).(anyNode,)) r
         case res of
           Right r -> pure $ Right r
@@ -603,16 +602,8 @@ getContext = \case
   NodeQuery_CurrentQuorum ctx -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
   NodeQuery_ParticipationInfo ctx _lvl _pkh -> pure ctx
-  NodeQuery_PublicKey _ -> getLatestBranch
   NodeQuery_Blocks ctx _ -> pure ctx
   NodeQuery_Round ctx -> pure ctx
-
-  where
-    getLatestBranch :: m BlockHash
-    getLatestBranch = do
-      latestHeadVar <- asksNodeDataSource _nodeDataSource_latestHead
-      mbLatestHead <- nqAtomically $ readTVar' latestHeadVar
-      maybe (nqThrowError KilnRpcError_NoKnownHeads) (pure . view hash) mbLatestHead
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
@@ -764,7 +755,6 @@ unliftEither action = (Right <$> action) `catchError` (pure . Left)
 nodeQueryDataSourceImpl
   :: forall a.
      ChainId
-  -> BlockHash
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
@@ -782,12 +772,11 @@ nodeQueryImpl
      => repr c -> m (RpcResult c))
   -> (ChainId -> chain)
   -> ChainId
-  -> BlockHash
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
   -> IO (Either KilnRpcError (RpcResult a))
-nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
+nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
   NodeQuery_BakingRights branch targetLevel ->
     -- Now Kiln uses only baking rights with zero round, so it's not
@@ -811,11 +800,6 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_ParticipationInfo branch _lvl pkh -> nodeRPC' $ rParticipationInfo pkh chainId branch
-  NodeQuery_PublicKey contractId -> do
-    (RpcResult raw managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
-    case view managerKeyCrossCompat_key managerkeyResp of
-      Nothing -> throwError $ KilnRpcError_UnrevealedPublicKey contractId
-      Just pk -> pure (RpcResult raw pk)
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)
@@ -935,29 +919,6 @@ nodeQueryIx q = do
               INSERT INTO "CacheEndorsingRights" ("level", "result")
               values (?lvl, ?result)
             |]
-
-{-
-calculateBakerStats ::
-  ( TraversableWithIndex (PublicKeyHash, RawLevel) f
-  , MonadReader r m, HasNodeDataSource r
-  , MonadIO m
-  )
-  => f a
-  -> m (f (First (Maybe (BakeEfficiency, Account)), a))
-calculateBakerStats pkhs = do
-  nds <- asks (^. nodeDataSource)
-  liftIO (atomically (dataSourceHead nds)) >>= \case
-    -- I think i should probably just ask for a `forall b. f b` to pass on the no heads case
-    Nothing -> return $ fmap (First Nothing,) pkhs
-    Just currentHead -> ifor pkhs $ \(pkh, lvl) a -> do
-      result <- fmap (First . either (const Nothing) Just) $ runExceptT $ do
-        efficiency <- calculateBakeEfficiency currentHead lvl pkh
-        account <- nodeQueryDataSource $ NodeQuery_Account (currentHead ^. hash) (Implicit pkh)
-        return (efficiency, account)
-      return (result, a)
-
-
--}
 
 -- | Logs the cache error if it's not caused by an endpoint restriction.
 {-# INLINE logKilnRpcError #-}

@@ -62,8 +62,9 @@ import Safe.Foldable (maximumMay, maximumByMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
 
-import Tezos.NodeRPC hiding (getBlock)
-import Tezos.Types hiding (TestChainStatus(..), toBlockHeader)
+import Tezos.NodeRPC
+import Tezos.Common.Vote
+import Tezos.Types hiding (toBlockHeader)
 import qualified Tezos.Unsafe as Unsafe
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,

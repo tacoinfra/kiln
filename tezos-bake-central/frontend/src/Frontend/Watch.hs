@@ -162,20 +162,6 @@ watchBakerDetailsFull = do
     }
   return $ ffor theView $ \v' -> fmapMaybe getFirst $ getRangeView' (_bakeView_bakerDetails v')
 
-watchBakerStats :: (MonadAppWidget js t m) => Dynamic t (Set PublicKeyHash) -> m (Dynamic t (MonoidalMap PublicKeyHash (BakeEfficiency, Account)))
-watchBakerStats bakers = do
-  let levels :: (RawLevel, RawLevel) = (0, 30)
-      --levels' :: ClosedInterval RawLevel = ClosedInterval 0 30
-  _theView <- watchViewSelector $ ffor bakers $ \ds -> mempty
-    { _bakeViewSelector_bakerStats = viewCompose $ viewRangeSet ds $ viewRangeBetween levels 1
-    }
-  holdDyn MMap.empty never
-  -- return $ ffor theView $ uncurry (mergeMMap
-  --     (\_ acc -> Just (mempty, acc))
-  --     (\_ _ -> Nothing)
-  --     (\pkh acc (AppendIMMap.AppendIntervalMap effs) -> Just (fold $ IMMap.findWithDefault mempty levels' effs, acc))
-  --   ) . second (fmap getRangeView) . first getRangeView . getComposeView . _bakeView_bakerStats
-
 watchMailServer
   :: MonadAppWidget js t m
   => m (Dynamic t (Maybe (Maybe MailServerView)))
