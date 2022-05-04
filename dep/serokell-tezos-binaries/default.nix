@@ -2,7 +2,7 @@
 
 stdenv.mkDerivation rec {
   name = "tezos-${version}";
-  version = "12.3-1";
+  version = "13.0-rc1-2";
 
   src = fetchzip {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v${version}/binaries-${version}.tar.gz";

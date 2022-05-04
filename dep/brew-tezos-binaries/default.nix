@@ -1,31 +1,27 @@
 { pkgs }:
 with pkgs;
 let
-  outer-version = "v12.3-1";
+  outer-version = "v13.0-rc1-2";
   macos_version = "catalina";
     tezos-admin-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0gafd5zg218hljv077cafv6b01ywz1zpgijhjzzqlk43vp6am9mb";
+      sha256 = "1kngh4kvdkbwaqbc6vlr2jmzcgsvfz6jzh7alhbldkjfvc9jry7h";
     };
-    tezos-baker-011-PtHangz2 = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-011-PtHangz2-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1f1fidhddhqwp5yls4pk5zv04j3kj464ww5nq75j7l90mbc8i3sg";
+    tezos-baker-013-PtJakart = fetchTarball {
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-013-PtJakart-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "03fq074ff3gslsd56py7x1imq4l4wa04xkfmckggsxha8vwd8v4n";
     };
     tezos-baker-012-Psithaca = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-012-Psithaca-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1yr932d3rxm6bjmry4bqfsc4q59wjvkwk3fzviaci93y12ifmcsz";
+      sha256 = "05ji7gw0x29ivxyhnrgkn5zzrvg1m2php4vdx7cbm5pgf29ccjds";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1w3kwh9cqx8w7ik6r7lzl5p850bffa42jihhr1lnxxlqq815knra";
-    };
-    tezos-endorser-011-PtHangz2 = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-endorser-011-PtHangz2-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0acmiddq3hyv1f5imryrsz9ncd1mrx2h5f45wqga977fqs2y9kd2";
+      sha256 = "1aj901hbh64sxsxdgvf8hzmm0cgx2z1zl3wy6k5c9fb5zwak61ms";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0a1lms3prhaz66f7l4ar3fk5y14cd9g9wsadw1l4jjajv0va29x4";
+      sha256 = "0p45gdhhkl4j23q3yx5708pkab6gri75rlzym9zzng4p70knjz4z";
     };
 
 in stdenv.mkDerivation rec {
@@ -39,17 +35,14 @@ in stdenv.mkDerivation rec {
   cp ${tezos-admin-client}/${outer-version}/bin/tezos-admin-client $out/bin/tezos-admin-client
   chmod +x $out/bin/tezos-admin-client
 
-  cp ${tezos-baker-011-PtHangz2}/${outer-version}/bin/tezos-baker-011-PtHangz2 $out/bin/tezos-baker-011-PtHangz2
-  chmod +x $out/bin/tezos-baker-011-PtHangz2
+  cp ${tezos-baker-013-PtJakart}/${outer-version}/bin/tezos-baker-013-PtJakart $out/bin/tezos-baker-013-PtJakart
+  chmod +x $out/bin/tezos-baker-013-PtJakart
 
   cp ${tezos-baker-012-Psithaca}/${outer-version}/bin/tezos-baker-012-Psithaca $out/bin/tezos-baker-012-Psithaca
   chmod +x $out/bin/tezos-baker-012-Psithaca
 
   cp ${tezos-client}/${outer-version}/bin/tezos-client $out/bin/tezos-client
   chmod +x $out/bin/tezos-client
-
-  cp ${tezos-endorser-011-PtHangz2}/${outer-version}/bin/tezos-endorser-011-PtHangz2 $out/bin/tezos-endorser-011-PtHangz2
-  chmod +x $out/bin/tezos-endorser-011-PtHangz2
 
   cp ${tezos-node}/${outer-version}/bin/tezos-node $out/bin/tezos-node
   chmod +x $out/bin/tezos-node
