@@ -85,16 +85,16 @@ getPath getter paths = \case
 -- binary expects a .tezos-node/<chain_id>/protocol dir
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
 tezosBinaryPaths :: NonEmpty BakerEndorserPaths
-tezosBinaryPaths = NonEmpty.fromList [hangzhouPaths, ithacaPaths]
+tezosBinaryPaths = NonEmpty.fromList [ithacaPaths, jakartaPaths]
   where
-    hangzhouPaths = BakerEndorserPaths
-      { _bakerEndorserPaths_proto = "PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
-      , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-011-PtHangz2")
-      , _bakerEndorserPaths_endorserPath = Just $(staticWhich "tezos-endorser-011-PtHangz2")
-      }
     ithacaPaths = BakerEndorserPaths
       { _bakerEndorserPaths_proto = "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A"
       , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-012-Psithaca")
+      , _bakerEndorserPaths_endorserPath = Nothing
+      }
+    jakartaPaths = BakerEndorserPaths
+      { _bakerEndorserPaths_proto = "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY"
+      , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-013-PtJakart")
       , _bakerEndorserPaths_endorserPath = Nothing
       }
 
