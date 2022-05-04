@@ -2032,8 +2032,8 @@ nodesTab usingNodeOption =
                   badge :: m ()
                   badge = tileBadgeImpliedByErrors (Just errors) (Just state)
 
-              nodeStartTile :: NodeProcessState -> Maybe SnapshotMeta -> m ()
-              nodeStartTile nodeState mSnapshotMeta = nodeTileWithSections
+              nodeStartTile :: NodeProcessState -> Dynamic t (Maybe SnapshotMeta) -> m ()
+              nodeStartTile nodeState dSnapshotMeta = nodeTileWithSections
                 [ tileHeader title subtitle menu badge Nothing (pure Nothing)
                 , divClass "internal-node-tile-body" $ do
                     -- when (nodeState == NodeProcessState_ImportingSnapshot || nodeState == NodeProcessState_GeneratingIdentity) $
@@ -2062,6 +2062,9 @@ nodesTab usingNodeOption =
                       NodeProcessState_DownloadFailed -> errorMessage "Snapshot download failed"
                       NodeProcessState_DownloadCanceled -> subHeader "Snapshot download canceled"
                       NodeProcessState_DownloadComplete -> subHeader "Snapshot download complete"
+                    when (nodeState == NodeProcessState_ImportingSnapshot) $ do
+                      withSnapshotMeta $ \mSnapshotMeta -> for_ mSnapshotMeta $ \sm ->
+                        whenJust (sm ^. snapshotMeta_importLog) $ \log -> divClass "import progress" $ text log
                     divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> "Depending on your hardware, importing a snapshot may take up to a few hours."
                       NodeProcessState_ImportComplete -> "You must verify this snapshot before starting the node."
@@ -2073,7 +2076,7 @@ nodesTab usingNodeOption =
                       NodeProcessState_DownloadFailed -> ""
                       NodeProcessState_DownloadCanceled -> ""
                       NodeProcessState_DownloadComplete -> ""
-                    when (nodeState == NodeProcessState_ImportComplete) $ for_ mSnapshotMeta $ \sm -> do
+                    when (nodeState == NodeProcessState_ImportComplete) $ withSnapshotMeta $ \mSnapshotMeta -> for_ mSnapshotMeta $ \sm -> do
                       ev <- divClass "buttons" $ uiButtonM "" $ do
                         icon "icon-angle-right"
                         text "Start Verification"
@@ -2090,19 +2093,20 @@ nodesTab usingNodeOption =
                       tellModal $ ev $> cancelSnapshotDownloadModal
                 ]
                 where
+                  withSnapshotMeta action = dyn_ $ ffor dSnapshotMeta $ \mSnapshotMeta -> action mSnapshotMeta
                   menu = case nodeState of
                     NodeProcessState_ImportingSnapshot -> Just cancelSnapshotMenu
                     NodeProcessState_ImportCanceled -> Nothing
-                    NodeProcessState_ImportComplete -> Just $ do
+                    NodeProcessState_ImportComplete -> Just $ withSnapshotMeta $ \mSnapshotMeta -> do
                       mapM_ verifyAndStartMenu mSnapshotMeta
                       removeNodeMenu
-                    NodeProcessState_ImportFailed -> Just $ do
+                    NodeProcessState_ImportFailed -> Just $ withSnapshotMeta $ \mSnapshotMeta -> do
                       mapM_ showLogMenu (_snapshotMeta_importError =<< mSnapshotMeta)
                       removeNodeMenu
                     NodeProcessState_ImportTimeout -> Just removeNodeMenu
                     NodeProcessState_GeneratingIdentity -> Just $ startStopNodeMenu *> removeNodeMenu
                     NodeProcessState_DownloadingSnapshot -> Just cancelSnapshotDownloadMenu
-                    NodeProcessState_DownloadFailed -> Just $ do
+                    NodeProcessState_DownloadFailed -> Just $ withSnapshotMeta $ \mSnapshotMeta -> do
                       mapM_ showLogMenu (_snapshotMeta_downloadError =<< mSnapshotMeta)
                       removeNodeMenu
                     NodeProcessState_DownloadCanceled -> Nothing
@@ -2110,9 +2114,9 @@ nodesTab usingNodeOption =
                   badge :: m ()
                   badge = tileBadgeImpliedByErrors (Just errors) (Just state)
             dSnapshotMeta <- watchSnapshotMeta
-            dyn_ $ ffor2 processData dSnapshotMeta $ \pd meta ->
+            dyn_ $ ffor processData $ \pd ->
               case _processData_state pd of
-                ProcessState_Node s -> nodeStartTile s meta
+                ProcessState_Node s -> nodeStartTile s dSnapshotMeta
                 ProcessState_Failed -> failedNodeTile pd
                 _ -> workingTile
 

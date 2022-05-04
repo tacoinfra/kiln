@@ -939,6 +939,7 @@ data SnapshotMeta = SnapshotMeta
   , _snapshotMeta_control :: ProcessControl
   , _snapshotMeta_mbUri :: Maybe URI
   , _snapshotMeta_downloadError :: Maybe Text
+  , _snapshotMeta_importLog :: Maybe Text
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId SnapshotMeta
 

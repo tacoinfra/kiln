@@ -16,17 +16,25 @@
 module Backend.Snapshot where
 
 import Control.Concurrent
+import Control.Concurrent.Async (runConcurrently, Concurrently(..))
+import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception.Safe (IOException, try)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
-import Control.Monad.Trans.Resource (MonadUnliftIO, runResourceT)
+import Control.Monad.IO.Unlift (MonadUnliftIO, withUnliftIO, unliftIO)
+import Control.Monad.Trans.Resource (runResourceT)
 import Control.Monad.Logger
+import Data.ByteString (ByteString)
 import Data.Conduit.Binary (sinkFileCautious)
+import qualified Data.Conduit.List as CL
+import Data.Conduit (ConduitT, runConduit, (.|))
+import Data.Conduit.Process (CreateProcess, getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
 import Data.Int (Int32)
+import Data.Streaming.Process (StreamingProcessHandle, streamingProcess)
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO as T
 import Data.Time.Clock (NominalDiffTime, UTCTime)
+import Data.Void (Void)
 import Database.Id.Groundhog (fromId)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql(..), (=.), (==.))
@@ -42,7 +50,6 @@ import System.Directory
 import System.Exit (ExitCode(..))
 import System.FilePath.Posix (takeFileName)
 import qualified System.Process as Process
-import System.Posix.Signals (signalProcess, sigKILL)
 import Text.Read (readMaybe)
 import Text.Regex.TDFA ((=~))
 import Text.URI (URI, renderStr)
@@ -259,19 +266,31 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
       updateState NodeProcessState_ImportFailed
 
-    procSpec configFile = (Process.proc nodePath ["snapshot", "import", storePath, "--data-dir", dataDir,"--config-file", configFile])
-      { Process.std_out = Process.CreatePipe
-      , Process.std_err = Process.CreatePipe
-      }
-    procMonitor _hStdin _hStdout hStderr ph = runLoggingEnv logger go
+    procSpec configFile = (Process.proc nodePath
+      ["snapshot", "import", storePath, "--data-dir", dataDir,"--config-file", configFile, "--progress-display-mode", "always"])
+        { Process.std_out = Process.CreatePipe
+        , Process.std_err = Process.CreatePipe
+        }
+    procMonitorStream cp = runLoggingEnv logger $ do
+      stderrLogVar :: TVar ByteString <- liftIO $ newTVarIO ""
+      let logStderrLine stderrLine = liftIO $ atomically $ modifyTVar stderrLogVar (<> stderrLine)
+          updateImportProgress stdoutLine = do
+            -- Progress output has some additional characters that are used to
+            -- animate the progress. These characters shoudn't be displayed in Kiln UI,
+            -- so we drop the prefix of the @stdoutLine@.
+            let line = T.drop 5 $ T.decodeUtf8 stdoutLine
+            runLoggingEnv logger $ inDb $ updateSnapshotMetaImportLog line smId
+      ph <- liftIO $
+        createProcessWithStreams cp (return ()) (CL.mapM_ updateImportProgress) (CL.mapM_ logStderrLine)
+      go ph stderrLogVar
       where
         {-# INLINE go #-}
-        go = do
+        go ph stderrLogVar = do
           let getPC = \case
                 [] -> ProcessControl_Stop
                 (c:_) -> c
           procControl <- inDb (getPC <$> project SnapshotMeta_controlField (AutoKeyField ==. smId))
-          liftIO (Process.getProcessExitCode ph) >>= \case
+          getStreamingProcessExitCode ph >>= \case
             Nothing -> do
               inDb $ updateState NodeProcessState_ImportingSnapshot
               let
@@ -279,12 +298,10 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
                 delayInSec = 1 :: NominalDiffTime
               when stop $ do
                 inDb $ updateState NodeProcessState_ImportCanceled
-                liftIO $ Process.getPid ph >>= traverse_ (signalProcess sigKILL)
-              threadDelay' delayInSec *> go
+                liftIO $ terminateProcess $ streamingProcessHandleRaw ph
+              threadDelay' delayInSec *> go ph stderrLogVar
             Just exitCode -> do
-              stderr <- case hStderr of
-                Nothing -> $(logError) "hStderr is Nothing" >> pure ""
-                Just h -> liftIO $ T.hGetContents h `catch` \(_ :: IOError) -> runLoggingEnv logger ($(logError) "Failed to get stderr" >> pure "")
+              stderr <- fmap T.decodeUtf8 $ liftIO $ readTVarIO stderrLogVar
               case exitCode of
                 ExitSuccess -> void $ do
                   $(logDebug) $ "importSnapshotData success: stderr: " <> stderr
@@ -311,9 +328,24 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
                   inDb $ updateState NodeProcessState_ImportComplete
                 ExitFailure _ -> inDb $ importFailed "importSnapshotData failed: " stderr
 
+    createProcessWithStreams
+      :: MonadUnliftIO m
+      => CreateProcess -> ConduitT () ByteString m () -> ConduitT ByteString Void m () -> ConduitT ByteString Void m ()
+      -> m StreamingProcessHandle
+    createProcessWithStreams cp producerStdin consumerStdout consumerStderr = withUnliftIO $ \u -> do
+      ((sinkStdin, closeStdin) , (sourceStdout, closeStdout), (sourceStderr, closeStderr), sph) <- streamingProcess cp
+      void $ forkIO $ void $ runConcurrently (
+          (,,)
+          <$> Concurrently (unliftIO u $ runConduit $ producerStdin .| sinkStdin)
+          <*> Concurrently (unliftIO u $ runConduit $ sourceStdout .| consumerStdout)
+          <*> Concurrently (unliftIO u $ runConduit $ sourceStderr .| consumerStderr))
+        `finally` (closeStdin >> closeStdout >> closeStderr)
+        `onException` (liftIO . terminateProcess . streamingProcessHandleRaw) sph
+      return sph
+
   liftIO $ withNodeConfig appConfig $ \configFile -> do
     runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec configFile)
-    Process.withCreateProcess (procSpec configFile) procMonitor
+    procMonitorStream (procSpec configFile)
 
   when shouldRemoveSnapshotFile $
     removeFileLogging storePath
@@ -349,6 +381,7 @@ initSnapshotMeta fileName storePath nds mbUri = runDb (Identity $ _nodeDataSourc
       , _snapshotMeta_control = ProcessControl_Run
       , _snapshotMeta_mbUri = mbUri
       , _snapshotMeta_downloadError = Nothing
+      , _snapshotMeta_importLog = Nothing
       }
   deleteAll sm
   k <- insert sm
@@ -371,6 +404,15 @@ updateSnapshotMeta mbBlockHash mbLevel mbTimestamp smId = do
     , SnapshotMeta_importCompleteTimeField =. Just now
     ]
     (AutoKeyField ==. smId)
+  traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
+
+updateSnapshotMetaImportLog
+  :: (PersistBackend m)
+  => Text
+  -> Key SnapshotMeta BackendSpecific
+  -> m ()
+updateSnapshotMetaImportLog importLog smId = do
+  update [SnapshotMeta_importLogField =. Just importLog] (AutoKeyField ==. smId)
   traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
 
 removeFileLogging :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
