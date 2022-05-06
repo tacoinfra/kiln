@@ -68,7 +68,7 @@ import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import qualified Data.Aeson as Aeson
-import Data.Aeson (ToJSON, FromJSON)
+import Data.Aeson (FromJSON)
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -78,7 +78,6 @@ import Data.Either (rights)
 import Data.Foldable (find)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
-import Data.Hashable (Hashable (hashWithSalt))
 import Data.Int (Int32)
 import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
@@ -217,7 +216,7 @@ class MonadLogger m => MonadNodeQuery m where
   default nqAtomically :: MonadIO m => STM a -> m a
   nqAtomically action = liftIO $ atomically action
   withFinishWith :: NodeDataSource -> (forall r. (Either KilnRpcError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
-  nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
+  nodeRPCOrBust :: (FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
@@ -325,7 +324,7 @@ instance MonadNodeQuery NodeQueryImmediate where
 
 data NodeQueryTResult a where
   NodeQueryTResult_Done :: a -> NodeQueryTResult a
-  NodeQueryTResult_Query :: forall a b. (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> NodeQueryTResult b
+  NodeQueryTResult_Query :: forall a b. (FromJSON a) => BlockHash -> NodeQuery a -> NodeQueryTResult b
 
 deriving instance Functor NodeQueryTResult
 
@@ -611,7 +610,7 @@ nodeQueryDataSource
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsKilnRpcError e
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m a
 nodeQueryDataSource q = fmap _rpcResult_value $ nodeQueryDataSource' q
@@ -621,7 +620,7 @@ nodeQueryDataSource'
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsKilnRpcError e
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m (RpcResult a)
 nodeQueryDataSource' q = do
@@ -644,8 +643,7 @@ nodeQueryDataSourceSafe
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> NodeQueryT m a
 nodeQueryDataSourceSafe q = unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw q
@@ -657,8 +655,7 @@ nodeQueryDataSourceImmediate
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsKilnRpcError e
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m a
 nodeQueryDataSourceImmediate q = runNodeQueryQueued $
@@ -668,8 +665,7 @@ nodeQueryDataSourceRaw
   :: forall m a.
     ( MonadNodeQuery m
     , MonadMask m
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m (AnswerM m a)
 nodeQueryDataSourceRaw q = do
@@ -685,8 +681,7 @@ nodeQueryDataSourceImmediate'
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsKilnRpcError e
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m (RpcResult a)
 nodeQueryDataSourceImmediate' q = runNodeQueryQueued $
@@ -699,8 +694,7 @@ nodeQueryDataSourceSafe'
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> NodeQueryT m (RpcResult a)
 nodeQueryDataSourceSafe' q = unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw' q
@@ -709,8 +703,7 @@ nodeQueryDataSourceRaw'
   :: forall m a.
     ( MonadNodeQuery m
     , MonadMask m
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m (AnswerM m (RpcResult a))
 nodeQueryDataSourceRaw' q = do
@@ -722,7 +715,7 @@ nodeQueryDataSourceRaw' q = do
 -- | Core primitive for running a 'NodeQuery' against the worker queue.
 -- Returns an action that will wait for a new request to be finished.
 nodeQueryDataSourceSTM
-  :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadLogger n, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
+  :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadLogger n, MonadNodeQuery n, MonadMask n, FromJSON a)
   => (RpcResult a -> b) -> nds -> BlockHash -> NodeQuery a -> m (n (AnswerM n b))
 nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
   liftSTM $ withFinishWith @n dsrc $ \finishWith -> do
@@ -819,7 +812,7 @@ nodeQueryIx
     , MonadMask m
     , PostgresRaw m
     , PersistBackend m
-    , Aeson.FromJSON a, Aeson.ToJSON a
+    , Aeson.FromJSON a
     , Monoid a
     )
   => NodeQueryIx a -> NodeQueryT m a
@@ -1247,6 +1240,3 @@ deriveGEq ''NodeQueryIx
 deriveGCompare ''NodeQueryIx
 deriveGShow ''NodeQueryIx
 deriveJSONGADT ''NodeQueryIx
-
-instance (ToJSON (NodeQuery a)) => Hashable (NodeQuery a) where
-  hashWithSalt s = hashWithSalt s . Aeson.toJSON
