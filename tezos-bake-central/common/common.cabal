@@ -87,7 +87,6 @@ library
     Common.Schema
     Common.URI
     Common.Vassal
-    Common.Verification
     Common.WrappedShow1
     ExtraPrelude
 

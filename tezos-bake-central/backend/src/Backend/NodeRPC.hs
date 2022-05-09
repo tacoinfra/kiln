@@ -945,46 +945,6 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
 
     prettyLevel = tshow . unRawLevel
 
-{-
-calculateBakeEfficiency ::
-  ( MonadIO m
-  , MonadReader s m , HasNodeDataSource s
-  , MonadError KilnRpcError m
-  , BlockLike b
-  )
-  => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
-calculateBakeEfficiency branch len baker = do
-  withNDSLogging $ $(logDebugSH) ("bake efficiency requested" :: Text, branch ^. hash, len, baker)
-
-  let
-    branchLevel = branch ^. level
-    branchHash = branch ^. hash
-    levels = [branchLevel - len..branchLevel]
-  branchHashes <- ancestors len branchHash
-
-  rights <- (fmap.fmap) bakingRightsMap $ for levels $ nodeQueryDataSource . NodeQuery_BakingRights branchHash
-  bakers <- for branchHashes $ fmap (^. block_metadata . blockMetadata_baker) . nodeQueryDataSource . NodeQuery_Block
-  let result = fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-  withNDSLogging $ $(logDebugSH) ("efficiency" :: Text, baker, result)
-  return result
-  where
-    efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
-    efficiencyOfBlock rights blockBaker = BakeEfficiency
-      { _bakeEfficiency_bakedBlocks = if blockBaker == baker then 1 else 0
-      , _bakeEfficiency_bakingRights = case (Map.lookup blockBaker rights, Map.lookup baker rights) of
-          (_, Nothing) -> 0
-          (Just them, Just us) -> if us <= them then 1 else 0
-          (Nothing, _) -> 0 -- error "Very wrong"
-      }
-
-    bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from baker to
-    bakingRightsMap xs = Map.fromList
-      [ (d, prio)
-      | BakingRights _lvl d prio _ <- toList xs
-      ]
-
--}
-
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike)]
 getActiveNodeDetails kilnNodeUri = do
