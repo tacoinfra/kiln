@@ -149,16 +149,6 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
   bakerAlerts <- whenM (not $ null bakerAlertsVS) $
     toRangeView bakerAlertsVS . fmap (\(pkh, v) -> (Bounded pkh, First $ Just v)) <$> getBakerAlert chainId
 
-  -- maybeCurrentHead <- runReaderT dataSourceHead nds
-
-  -- bakerStats :: AppendMap(PublicKeyHash, RawLevel) (First(Maybe(BakeEfficiency,Account)),a) <- whenJust maybeCurrentHead $ \currentHead -> do
-  let bakerStats -- :: ComposeView (RangeSelector PublicKeyHash Account) (IntervalSelector RawLevel BakeEfficiency) a
-       = mempty
-  --   <- whenJust maybeCurrentHead $ \currentHead -> do
-  --   forRWT nds $ withCache mempty $ \_protoInfo -> do
-  --     flip itraverse (_bakeViewSelector_bakerStats vs) $ \(i, j) -> _
-  --     -- calculateBakerStats (_bakeViewSelector_bakerStats vs)
-
   mailServer <- maybeViewHandler _bakeViewSelector_mailServer $ do
     rs <- fmap _notificatee_email . toList <$> selectMap' NotificateeConstructor CondEmpty
     fmap (Just . fmap (flip mailServerConfigToView rs)) $ selectSingle CondEmpty
@@ -351,7 +341,6 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
     , _bakeView_latestTezosRelease = latestTezosRelease
     , _bakeView_bakerAddresses = bakerAddresses
     , _bakeView_bakerAlerts = bakerAlerts
-    , _bakeView_bakerStats = bakerStats
     , _bakeView_mailServer = mailServer
     , _bakeView_bakerDetails = bakerDetails
     , _bakeView_errors = errors

@@ -68,7 +68,7 @@ import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader (ReaderT (..))
 import qualified Data.Aeson as Aeson
-import Data.Aeson (ToJSON, FromJSON)
+import Data.Aeson (FromJSON)
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -78,7 +78,6 @@ import Data.Either (rights)
 import Data.Foldable (find)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
-import Data.Hashable (Hashable (hashWithSalt))
 import Data.Int (Int32)
 import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
@@ -150,7 +149,6 @@ data NodeQuery a where
   NodeQuery_BlockHeader       :: BlockHash -> NodeQuery BlockHeaderCrossCompat
   NodeQuery_DelegateInfo      :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_ParticipationInfo :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
-  NodeQuery_PublicKey         :: ContractId -> NodeQuery PublicKey
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
   NodeQuery_Round             :: BlockHash -> NodeQuery Int32
 deriving instance Show (NodeQuery a)
@@ -218,7 +216,7 @@ class MonadLogger m => MonadNodeQuery m where
   default nqAtomically :: MonadIO m => STM a -> m a
   nqAtomically action = liftIO $ atomically action
   withFinishWith :: NodeDataSource -> (forall r. (Either KilnRpcError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
-  nodeRPCOrBust :: (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
+  nodeRPCOrBust :: (FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
@@ -291,7 +289,7 @@ instance MonadNodeQuery NodeQueryQueued where
             answer@(Right _) -> const $ pure answer -- short circuit if there is already an answer
             Left es -> \anyNode -> do
               let ctx = NodeRPCContext (_nodeDataSource_httpMgr dsrc) (Uri.render anyNode)
-              r <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) qBranch ctx (_nodeDataSource_logger dsrc) q
+              r <- NodeQueryQueued $ liftIO $ nodeQueryDataSourceImpl (_nodeDataSource_chain dsrc) ctx (_nodeDataSource_logger dsrc) q
               pure $ first ((:es).(anyNode,)) r
         case res of
           Right r -> pure $ Right r
@@ -326,7 +324,7 @@ instance MonadNodeQuery NodeQueryImmediate where
 
 data NodeQueryTResult a where
   NodeQueryTResult_Done :: a -> NodeQueryTResult a
-  NodeQueryTResult_Query :: forall a b. (ToJSON a, FromJSON a) => BlockHash -> NodeQuery a -> NodeQueryTResult b
+  NodeQueryTResult_Query :: forall a b. (FromJSON a) => BlockHash -> NodeQuery a -> NodeQueryTResult b
 
 deriving instance Functor NodeQueryTResult
 
@@ -603,16 +601,8 @@ getContext = \case
   NodeQuery_CurrentQuorum ctx -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
   NodeQuery_ParticipationInfo ctx _lvl _pkh -> pure ctx
-  NodeQuery_PublicKey _ -> getLatestBranch
   NodeQuery_Blocks ctx _ -> pure ctx
   NodeQuery_Round ctx -> pure ctx
-
-  where
-    getLatestBranch :: m BlockHash
-    getLatestBranch = do
-      latestHeadVar <- asksNodeDataSource _nodeDataSource_latestHead
-      mbLatestHead <- nqAtomically $ readTVar' latestHeadVar
-      maybe (nqThrowError KilnRpcError_NoKnownHeads) (pure . view hash) mbLatestHead
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
@@ -620,7 +610,7 @@ nodeQueryDataSource
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsKilnRpcError e
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m a
 nodeQueryDataSource q = fmap _rpcResult_value $ nodeQueryDataSource' q
@@ -630,7 +620,7 @@ nodeQueryDataSource'
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsKilnRpcError e
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m (RpcResult a)
 nodeQueryDataSource' q = do
@@ -653,8 +643,7 @@ nodeQueryDataSourceSafe
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> NodeQueryT m a
 nodeQueryDataSourceSafe q = unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw q
@@ -666,8 +655,7 @@ nodeQueryDataSourceImmediate
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsKilnRpcError e
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m a
 nodeQueryDataSourceImmediate q = runNodeQueryQueued $
@@ -677,8 +665,7 @@ nodeQueryDataSourceRaw
   :: forall m a.
     ( MonadNodeQuery m
     , MonadMask m
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m (AnswerM m a)
 nodeQueryDataSourceRaw q = do
@@ -694,8 +681,7 @@ nodeQueryDataSourceImmediate'
     ( MonadIO m
     , MonadReader s m, HasNodeDataSource s
     , MonadError e m, AsKilnRpcError e
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m (RpcResult a)
 nodeQueryDataSourceImmediate' q = runNodeQueryQueued $
@@ -708,8 +694,7 @@ nodeQueryDataSourceSafe'
   :: forall a m.
     ( MonadNodeQuery (NodeQueryT m)
     , MonadMask m
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> NodeQueryT m (RpcResult a)
 nodeQueryDataSourceSafe' q = unNodeQueryTAnswerM <$> nodeQueryDataSourceRaw' q
@@ -718,8 +703,7 @@ nodeQueryDataSourceRaw'
   :: forall m a.
     ( MonadNodeQuery m
     , MonadMask m
-    , ToJSON (NodeQuery a)
-    , FromJSON a, ToJSON a
+    , FromJSON a
     )
   => NodeQuery a -> m (AnswerM m (RpcResult a))
 nodeQueryDataSourceRaw' q = do
@@ -731,7 +715,7 @@ nodeQueryDataSourceRaw' q = do
 -- | Core primitive for running a 'NodeQuery' against the worker queue.
 -- Returns an action that will wait for a new request to be finished.
 nodeQueryDataSourceSTM
-  :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadLogger n, MonadNodeQuery n, MonadMask n, ToJSON (NodeQuery a), FromJSON a, ToJSON a)
+  :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadLogger n, MonadNodeQuery n, MonadMask n, FromJSON a)
   => (RpcResult a -> b) -> nds -> BlockHash -> NodeQuery a -> m (n (AnswerM n b))
 nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
   liftSTM $ withFinishWith @n dsrc $ \finishWith -> do
@@ -764,7 +748,6 @@ unliftEither action = (Right <$> action) `catchError` (pure . Left)
 nodeQueryDataSourceImpl
   :: forall a.
      ChainId
-  -> BlockHash
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
@@ -782,12 +765,11 @@ nodeQueryImpl
      => repr c -> m (RpcResult c))
   -> (ChainId -> chain)
   -> ChainId
-  -> BlockHash
   -> NodeRPCContext
   -> LoggingEnv
   -> NodeQuery a
   -> IO (Either KilnRpcError (RpcResult a))
-nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
+nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEnv logger ( $(logDebugSH) ("nodeQueryImpl called" :: Text,q)) *> case q of
   NodeQuery_ProtocolConstants branch -> nodeRPC' $ rProtoConstants chainId branch
   NodeQuery_BakingRights branch targetLevel ->
     -- Now Kiln uses only baking rights with zero round, so it's not
@@ -811,11 +793,6 @@ nodeQueryImpl doNodeRPC toChain chainId qBranch ctx logger q = runExceptT $ runL
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_ParticipationInfo branch _lvl pkh -> nodeRPC' $ rParticipationInfo pkh chainId branch
-  NodeQuery_PublicKey contractId -> do
-    (RpcResult raw managerkeyResp) <- nodeRPC' $ rManagerKey contractId chainId qBranch
-    case view managerKeyCrossCompat_key managerkeyResp of
-      Nothing -> throwError $ KilnRpcError_UnrevealedPublicKey contractId
-      Just pk -> pure (RpcResult raw pk)
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)
@@ -835,7 +812,7 @@ nodeQueryIx
     , MonadMask m
     , PostgresRaw m
     , PersistBackend m
-    , Aeson.FromJSON a, Aeson.ToJSON a
+    , Aeson.FromJSON a
     , Monoid a
     )
   => NodeQueryIx a -> NodeQueryT m a
@@ -936,29 +913,6 @@ nodeQueryIx q = do
               values (?lvl, ?result)
             |]
 
-{-
-calculateBakerStats ::
-  ( TraversableWithIndex (PublicKeyHash, RawLevel) f
-  , MonadReader r m, HasNodeDataSource r
-  , MonadIO m
-  )
-  => f a
-  -> m (f (First (Maybe (BakeEfficiency, Account)), a))
-calculateBakerStats pkhs = do
-  nds <- asks (^. nodeDataSource)
-  liftIO (atomically (dataSourceHead nds)) >>= \case
-    -- I think i should probably just ask for a `forall b. f b` to pass on the no heads case
-    Nothing -> return $ fmap (First Nothing,) pkhs
-    Just currentHead -> ifor pkhs $ \(pkh, lvl) a -> do
-      result <- fmap (First . either (const Nothing) Just) $ runExceptT $ do
-        efficiency <- calculateBakeEfficiency currentHead lvl pkh
-        account <- nodeQueryDataSource $ NodeQuery_Account (currentHead ^. hash) (Implicit pkh)
-        return (efficiency, account)
-      return (result, a)
-
-
--}
-
 -- | Logs the cache error if it's not caused by an endpoint restriction.
 {-# INLINE logKilnRpcError #-}
 logKilnRpcError :: MonadLogger m => Text -> KilnRpcError -> m ()
@@ -990,46 +944,6 @@ noSuitableNodeLogMessage q reasons = "No suitable node was found for query `" <>
       UnsuitableNodeReason_MissingSavepoint -> "Kiln has not yet retrieved the information about whether this node is on a savepoint or not"
 
     prettyLevel = tshow . unRawLevel
-
-{-
-calculateBakeEfficiency ::
-  ( MonadIO m
-  , MonadReader s m , HasNodeDataSource s
-  , MonadError KilnRpcError m
-  , BlockLike b
-  )
-  => b -> RawLevel -> PublicKeyHash -> m BakeEfficiency
-calculateBakeEfficiency branch len baker = do
-  withNDSLogging $ $(logDebugSH) ("bake efficiency requested" :: Text, branch ^. hash, len, baker)
-
-  let
-    branchLevel = branch ^. level
-    branchHash = branch ^. hash
-    levels = [branchLevel - len..branchLevel]
-  branchHashes <- ancestors len branchHash
-
-  rights <- (fmap.fmap) bakingRightsMap $ for levels $ nodeQueryDataSource . NodeQuery_BakingRights branchHash
-  bakers <- for branchHashes $ fmap (^. block_metadata . blockMetadata_baker) . nodeQueryDataSource . NodeQuery_Block
-  let result = fold $ efficiencyOfBlock <$> ZipList rights <*> ZipList bakers
-  withNDSLogging $ $(logDebugSH) ("efficiency" :: Text, baker, result)
-  return result
-  where
-    efficiencyOfBlock :: Map PublicKeyHash Priority -> PublicKeyHash -> BakeEfficiency
-    efficiencyOfBlock rights blockBaker = BakeEfficiency
-      { _bakeEfficiency_bakedBlocks = if blockBaker == baker then 1 else 0
-      , _bakeEfficiency_bakingRights = case (Map.lookup blockBaker rights, Map.lookup baker rights) of
-          (_, Nothing) -> 0
-          (Just them, Just us) -> if us <= them then 1 else 0
-          (Nothing, _) -> 0 -- error "Very wrong"
-      }
-
-    bakingRightsMap :: Foldable f => f BakingRights -> Map PublicKeyHash Priority -- map from baker to
-    bakingRightsMap xs = Map.fromList
-      [ (d, prio)
-      | BakingRights _lvl d prio _ <- toList xs
-      ]
-
--}
 
 getActiveNodeDetails
   :: (MonadLogger m, PostgresRaw m) => URI -> m [(URI, Maybe VeryBlockLike)]
@@ -1286,6 +1200,3 @@ deriveGEq ''NodeQueryIx
 deriveGCompare ''NodeQueryIx
 deriveGShow ''NodeQueryIx
 deriveJSONGADT ''NodeQueryIx
-
-instance (ToJSON (NodeQuery a)) => Hashable (NodeQuery a) where
-  hashWithSalt s = hashWithSalt s . Aeson.toJSON

@@ -23,7 +23,6 @@ import Control.Concurrent.STM (atomically, newTQueueIO, newTVarIO, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.Logger (NoLoggingT(..), LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
@@ -109,9 +108,6 @@ import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
 import Orphans.Instances ()
-
-onRpcError :: (MonadError Text m, Show a) => Either a b -> m b
-onRpcError = either (throwError . tshow) pure
 
 askLogger :: Monad m => LoggingT m LoggingEnv
 askLogger = LoggingT $ return . LoggingEnv
@@ -635,10 +631,6 @@ optsArgDescr =
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)
-
-encodeViaJson :: Aeson.ToJSON a => a -> Text
-encodeViaJson = T.decodeUtf8 . LBS.toStrict . Aeson.encode
-
 
 -- | This does *not* run in @ob run@.
 backendMain :: (Backend BackendRoute AppRoute -> Frontend (R AppRoute) -> IO ()) -> IO ()
