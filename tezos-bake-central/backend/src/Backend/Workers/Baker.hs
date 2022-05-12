@@ -6,6 +6,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RecordWildCards #-}
 
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 
@@ -425,31 +426,35 @@ updateDelegateDetails protoInfo headBlock headCycle baker details isInternal = d
 
         updateDetails :: AppSerializable ()
         updateDetails = do
-          existingIds <- project BakerDetails_publicKeyHashField
+          existingData <- project
+            ( BakerDetails_publicKeyHashField
+            -- We also need to fetch the current 'missedRightsInRow' value to
+            -- call 'notifyDefault' on consistent data.
+            , BakerDetails_missedRightsInRowField
+            )
             ( BakerDetails_publicKeyHashField ==. delegatePkh
             &&. BakerDetails_branchField ~> VeryBlockLike_fitnessSelector <=. headFitness
             )
 
           let
-            newVal = BakerDetails
+            mkBakerDetails missedRights = BakerDetails
               { _bakerDetails_publicKeyHash = delegatePkh
-              -- , _bakerDetails_nextBakeRights = _bakingRights_level <$> Map.lookup delegatePkh bakingRights
-              -- , _bakerDetails_nextEndorseRights = _endorsingRights_level <$> Map.lookup delegatePkh endorsingRights
               , _bakerDetails_branch = mkVeryBlockLike headBlock
               , _bakerDetails_delegateInfo = Just $ Json di
               , _bakerDetails_participationInfo = j_pti
-              , _bakerDetails_missedRightsInRow = 0
+              , _bakerDetails_missedRightsInRow = missedRights
               }
-          case nonEmpty existingIds of
-            Nothing -> void $ insert newVal
-            Just brids -> for_ brids $ \brid ->
+          case nonEmpty existingData of
+            Nothing -> void $ insert (mkBakerDetails 0)
+            Just brids -> for_ brids $ \(brid, missedRightsCnt) -> do
+              let newBakerDetails@BakerDetails{..} = mkBakerDetails missedRightsCnt
               update
-                [ BakerDetails_branchField =. _bakerDetails_branch newVal
-                , BakerDetails_delegateInfoField =. _bakerDetails_delegateInfo newVal
-                , BakerDetails_participationInfoField =. _bakerDetails_participationInfo newVal
+                [ BakerDetails_branchField =. _bakerDetails_branch
+                , BakerDetails_delegateInfoField =. _bakerDetails_delegateInfo
+                , BakerDetails_participationInfoField =. _bakerDetails_participationInfo
                 ]
                 ( BakerDetails_publicKeyHashField ==. brid)
-          notifyDefault newVal
+              notifyDefault newBakerDetails
 
         -- Within a single run of a kiln instance, the fitness of blocks we observe is non-decreasing,
         -- but there might be multiple instances or resets, so we can only clear an error when a fitter block claims it's gone.
