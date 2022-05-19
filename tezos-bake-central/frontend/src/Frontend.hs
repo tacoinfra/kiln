@@ -1119,8 +1119,8 @@ bakerStatus = \case
     CollectiveNodesFailure_NoNodes -> MonitoredStatus_Unhealthy
     CollectiveNodesFailure_AllNodesDownSince _ -> MonitoredStatus_Unhealthy
   Right (bakerSummary, mbBakerDetails)
-    | _bakerSummary_alertCount bakerSummary > 0 || fmap _bakerDetails_missedRightsInRow mbBakerDetails >= Just 5 -> MonitoredStatus_Unhealthy
     | Right bid <- _bakerSummary_baker bakerSummary, not (isBakerRunning bid) -> MonitoredStatus_Stopped
+    | _bakerSummary_alertCount bakerSummary > 0 || fmap _bakerDetails_missedRightsInRow mbBakerDetails >= Just 5 -> MonitoredStatus_Unhealthy
     | _bakerSummary_nextRight bakerSummary == BakerNextRight_GatheringData -> MonitoredStatus_Unknown
     | otherwise -> MonitoredStatus_Healthy
 
