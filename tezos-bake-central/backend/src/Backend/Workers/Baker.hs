@@ -96,8 +96,8 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
       chainId = _nodeDataSource_chain nds
       headHash :: BlockHash = latestBranchInfo ^. hash
       headLevel = latestBranchInfo ^. level
-      endOfCycle = headLevel - latestBranchInfo ^. branchInfo_cyclePosition +
-        protocolConstants ^. protoInfo_blocksPerCycle - 1
+      endOfPreservedCycles = headLevel - latestBranchInfo ^. branchInfo_cyclePosition +
+        (protocolConstants ^. protoInfo_blocksPerCycle) * fromIntegral (protocolConstants ^. protoInfo_preservedCycles + 1) - 1
 
     --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
@@ -139,7 +139,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
       -- drop the already completed bakers.
       mUnfinished :: Maybe (NonEmpty BakerRightsProgress)
       mUnfinished = nonEmpty $ fold $ flip MMap.map needProgress $ \(Max p) -> do
-        guard (_bakerRightsProgress_progress p <= endOfCycle)
+        guard (_bakerRightsProgress_progress p <= endOfPreservedCycles)
         return p
 
       toChunks :: Int -> [a] -> [[a]]
@@ -151,7 +151,7 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
     $(logDebugSH) ("Baker rights TODO:" :: Text, mUnfinished)
     for_ mUnfinished $ \(aBakerRight :| _) -> do
       let bakerMinBound = _bakerRightsProgress_progress aBakerRight + 1
-          bakerMaxBound = endOfCycle
+          bakerMaxBound = endOfPreservedCycles
           lvlChunks = toChunks 50 [bakerMinBound .. bakerMaxBound]
       for_ lvlChunks $ \lvlChunk -> do
         let lvls = Set.fromList lvlChunk
