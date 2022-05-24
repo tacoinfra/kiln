@@ -117,6 +117,10 @@ preMigrate chainId =
   >=> migrateBakerDetailsAddMissedRigtsInRow
   >=> migrateCacheBakingRights
   >=> migrateCacheEndorsingRightsDropContext
+  >=> removeErrorLogBakerAccusedForeignKey
+  >=> renameColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerAccused") "op#hash" "opHash"
+  >=> renameColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerAccused") "op#blockHash" "blockHash"
+  >=> dropTableIfExists False (QualifiedIdentifier Nothing "Accusation")
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -903,5 +907,16 @@ migrateCacheEndorsingRightsDropContext ta = do
         ALTER TABLE "CacheEndorsingRights" DROP CONSTRAINT "CacheEndorsingRights_context";
         ALTER TABLE "CacheEndorsingRights" DROP COLUMN "context";
       |]
+      getTableAnalysis
+    _ -> pure ta
+
+removeErrorLogBakerAccusedForeignKey :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+removeErrorLogBakerAccusedForeignKey ta = do
+  let table = (Nothing, "ErrorLogBakerAccused")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "op#hash") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+          ALTER TABLE "ErrorLogBakerAccused" DROP CONSTRAINT "ErrorLogBakerAccused_op#hash_fkey";
+        |]
       getTableAnalysis
     _ -> pure ta

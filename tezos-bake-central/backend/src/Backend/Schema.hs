@@ -844,17 +844,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
   - entity: LedgerAccount
     autoKey: null
   - primitive: AccusationType
-  - entity: Accusation
-    autoKey: null
-    constructors:
-      - name: Accusation
-        uniques:
-          - name: Accusation_hash
-            type: primary
-            fields: [_accusation_hash, _accusation_blockHash]
-    keys:
-      - name: Accusation_hash
-        default: true
   - entity: AccusationBlock
     autoKey: null
     constructors:
@@ -1228,10 +1217,6 @@ fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)
 instance DefaultKeyId ProtocolIndex where
   toIdData _ (ProtocolIndexKeyKey chainId protoHash) = (chainId, protoHash)
   fromIdData _ (chainId, protoHash) = ProtocolIndexKeyKey chainId protoHash
-
-instance DefaultKeyId Accusation where
-  toIdData _ (Accusation_hashKey oh bh) = (oh, bh)
-  fromIdData _ = uncurry Accusation_hashKey
 
 instance DefaultKeyId Baker where
   toIdData _ (BakerKeyKey pkh) = pkh

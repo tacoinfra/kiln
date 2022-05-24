@@ -150,7 +150,6 @@ library
     Backend.Upgrade
     Backend.Version
     Backend.ViewSelectorHandler
-    Backend.Workers.Accusation
     Backend.Workers.Baker
     Backend.Workers.Node
     Backend.Workers.Process

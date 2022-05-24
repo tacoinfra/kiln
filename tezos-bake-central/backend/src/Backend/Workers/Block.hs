@@ -15,6 +15,7 @@
 
 module Backend.Workers.Block where
 
+import Control.Monad.Base (MonadBase)
 import Control.Monad.Catch (MonadMask, throwM, try)
 import Data.Either.Combinators (whenLeft, whenRight)
 import Data.Maybe (fromMaybe, mapMaybe)
@@ -22,19 +23,22 @@ import Data.List.NonEmpty (nonEmpty)
 import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
 import Data.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
-import Database.Groundhog.Core (PersistBackend)
-import Database.Groundhog.Postgresql (Postgresql(..))
+import Database.Groundhog.Core (PhantomDb, PersistBackend)
+import Database.Groundhog.Postgresql (Postgresql(..), SqlDb)
 import Rhyolite.Backend.DB (runDb)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, fromOnly, queryQ)
+import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ, fromOnly, queryQ)
+import Rhyolite.Backend.DB.Serializable (Serializable)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Safe (headMay)
 
 import Tezos.NodeRPC
 import Tezos.Types
 
+import Backend.Alerts (reportAccusation)
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
-import Backend.IndexQueries (getLatestProtocolConstants)
+import Backend.IndexQueries (getLatestProtocolConstants, levelToCycle)
 import Backend.NodeRPC
 import Common.Schema
 import ExtraPrelude
@@ -45,7 +49,7 @@ blockWorker
   -> AppConfig
   -> Pool Postgresql
   -> IO (IO ())
-blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   headBlockOrErr <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ fmap fst getLatestProtocolConstants
   whenRight headBlockOrErr $ \headBlock -> do
     now <- liftIO getCurrentTime
@@ -97,7 +101,7 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
           for_ (Seq.reverse blocks) $ \blockHash -> do
             blockOrErr <- runExceptT @KilnRpcError $ runNodeQueryT $ do
               block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
-              insertAccusations blockHash chainId block
+              parseAndReportAccusations appConfig blockHash block
               return block
             case blockOrErr of
               Right block -> do
@@ -128,28 +132,29 @@ blockWorker delay nds _appConfig db = workerWithDelay "blockWorker" (pure delay)
             logKilnRpcError "blockWorker" e
             throwM e
 
-insertAccusations
+parseAndReportAccusations
   :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e
-     , PostgresRaw m, MonadMask m, PersistBackend m
+     , MonadMask m, PersistBackend m, PostgresLargeObject m, HasPgConn m
+     , SqlDb (PhantomDb m), MonadBase Serializable m
      )
-  => BlockHash -> ChainId -> BlockCrossCompat -> NodeQueryT m ()
-insertAccusations blockHash chainId block = do
+  => AppConfig -> BlockHash -> BlockCrossCompat -> NodeQueryT m ()
+parseAndReportAccusations appConfig blockHash block = do
   let
     blockLevel = block ^. level
+    blockCycle = block ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
     accusations = getAccusations block
-  for_ accusations $ \(AccusationInfo aType aLevel aHash aBalanceUpdates) ->
+  for_ accusations $ \(AccusationInfo aType aLevel aHash aBalanceUpdates) -> do
     let accusedBaker = getAccusedBaker aBalanceUpdates
-    in insertAccusationToDb aType blockHash chainId aHash blockLevel aLevel accusedBaker
-
-insertAccusationToDb
-  :: (MonadIO m, PostgresRaw m)
-  => AccusationType -> BlockHash -> ChainId -> OperationHash -> RawLevel -> RawLevel -> PublicKeyHash -> NodeQueryT m ()
-insertAccusationToDb t blockHash chainId opHash blockLevel accusedLevel baker =
-  void [executeQ|
-    insert into "Accusation" (hash, "blockHash", level, chain, baker, "occurredLevel", "accusationType")
-    values (?opHash, ?blockHash, ?blockLevel, ?chainId, ?baker, ?accusedLevel, ?t)
-    on conflict do nothing
-  |]
+    aCycle <- levelToCycle (blockHash, blockLevel) aLevel
+    flip runReaderT appConfig $ reportAccusation
+      aHash
+      blockHash
+      aType
+      accusedBaker
+      blockLevel
+      blockCycle
+      aLevel
+      aCycle
 
 -- | Withdrawing money from accused baker has 'freezer' kind and
 -- 'deposits' category. It's expected that there is only one such
