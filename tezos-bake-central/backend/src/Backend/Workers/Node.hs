@@ -668,7 +668,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
       for_ mEndBlock $ \endBlock -> do
         (startBlockTimestamp, periodEndBlockPred) <- do
           startBlock <- flip runReaderT nds . runExceptT @KilnRpcError $
-            fmap toBlockHeaderCrossCompat $ getBlockLevelAncestor (latestBlock ^. level - startBlockLevel) (latestBlock ^. hash)
+            fmap blockCrossCompatToBlockHeader $ getBlockLevelAncestor (latestBlock ^. level - startBlockLevel) (latestBlock ^. hash)
           let startBlockTimestamp = case startBlock of
                 Right block -> block ^. timestamp
                 Left _ -> Unsafe.unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
@@ -678,14 +678,14 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     EQ -> do
       let startBlockLevel = latestBlock ^. level - currentVotingPosition
       startBlock <- flip runReaderT nds . runExceptT @KilnRpcError $
-        fmap toBlockHeaderCrossCompat $ getBlockLevelAncestor currentVotingPosition (latestBlock ^. hash)
+        fmap blockCrossCompatToBlockHeader $ getBlockLevelAncestor currentVotingPosition (latestBlock ^. hash)
       let startBlockTimestamp = case startBlock of
             Right block -> block ^. timestamp
             Left _ -> Unsafe.unsafeEstimatePastTimestamp protoInfo startBlockLevel latestBlock
       predOrLatest <-
         if isLastBlockOfPeriod latestBlock
         then throwing $ getBlockHeader $ latestBlock ^. predecessor -- For some queries we need to use the predecessor block
-        else pure (toBlockHeaderCrossCompat latestBlock)
+        else pure (blockCrossCompatToBlockHeader latestBlock)
       updateTo startBlockLevel startBlockTimestamp predOrLatest latestBlock p
     GT -> runDb (Identity db) $ do
       wipe p

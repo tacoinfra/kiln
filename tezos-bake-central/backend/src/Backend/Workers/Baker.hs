@@ -53,14 +53,9 @@ import Rhyolite.Schema (Json(..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
-import qualified Tezos.V005.Types as V005
-import qualified Tezos.V010.Types as V010
 import qualified Tezos.V012.Types as V012
-import Tezos.V012.NodeRPC.CrossCompat as V012
-  (BakingRightsCrossCompat, EndorsingRightsCrossCompat, bakingRightsCrossCompat_delegate, bakingRightsCrossCompat_level,
-  bakingRightsCrossCompat_round, blockCrossData, endorsingRightsCrossCompat_delegates, endorsingRightsCrossCompat_level)
-import Tezos.V012.NodeRPC.CrossCompat as V011 (blockCrossCata)
-import Tezos.NodeRPC (accountCrossCompat_delegatePkh, blockCrossCata)
+import Tezos.CrossCompat.Account
+import Tezos.CrossCompat.Block
 import Tezos.Unsafe (unsafeEstimatePastTimestamp)
 
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
@@ -362,12 +357,8 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
       let
         blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
         mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer
-        endorserDelegates = V012.blockCrossData
+        endorserDelegates = blockCrossData
             (^..V012.block_operations . traverse . traverse . V012.operation_contents . traverse . V012._OperationContents_Endorsement . V012.operationContentsEndorsement_metadata . V012.endorsementMetadata_delegate)
-            (V011.blockCrossCata
-              (^..V010.block_operations . traverse . traverse . V010.operation_contents . traverse . V010._OperationContents_EndorsementWithSlot . V010.operationContentsEndorsementWithSlot_metadata . V010.endorsementMetadata_delegate)
-              (^..V005.block_operations . traverse . traverse . V005.operation_contents . traverse . V005._OperationContents_Endorsement . V005.operationContentsEndorsement_metadata . V005.endorsementMetadata_delegate)
-            )
             thisBlock
         successfulEndorsementCondition = _baker_publicKeyHash baker `elem` endorserDelegates
 
