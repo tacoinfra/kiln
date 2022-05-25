@@ -146,7 +146,7 @@ data NodeQuery a where
   NodeQuery_CurrentQuorum     :: BlockHash -> NodeQuery Int
   NodeQuery_Block             :: BlockHash -> NodeQuery BlockCrossCompat
   NodeQuery_BlockPred         :: BlockHash -> RawLevel -> NodeQuery BlockCrossCompat
-  NodeQuery_BlockHeader       :: BlockHash -> NodeQuery BlockHeaderCrossCompat
+  NodeQuery_BlockHeader       :: BlockHash -> NodeQuery BlockHeader
   NodeQuery_DelegateInfo      :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_ParticipationInfo :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
@@ -759,7 +759,7 @@ nodeQueryDataSourceImpl = nodeQueryImpl myNodeRPC ChainTag_Hash
 
 nodeQueryImpl
   :: forall a chain repr.
-   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeaderCrossCompat, ChainType repr ~ chain)
+   ( QueryBlock repr, QueryHistory repr, BlockType repr ~ BlockCrossCompat, BlockHeaderType repr ~ BlockHeader, ChainType repr ~ chain)
   => (forall c m s e.
        ( MonadIO m, MonadLogger m, MonadReader s m , HasNodeRPC s, MonadError e m , AsRpcError e, Aeson.FromJSON c)
      => repr c -> m (RpcResult c))
@@ -1059,7 +1059,7 @@ buildProtocolIndex branch protoHash = do
           pure ProtocolIndex
             { _protocolIndex_chainId = chainId
             , _protocolIndex_hash = firstBlock ^. protocolHash
-            , _protocolIndex_proto = firstBlock ^. blockHeaderFullCrossCompat . blockHeaderFullCrossCompat_proto
+            , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
             , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw constants) of
                                                Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
                                                Right x -> x
@@ -1180,7 +1180,7 @@ fetchProtocolForBlock chainId blkHash = do
                                              Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
                                              Right x -> x
           , _protocolIndex_constants = _rpcResult_value protoInfo
-          , _protocolIndex_proto = blockHeader ^. blockHeaderCrossCompat_proto
+          , _protocolIndex_proto = blockHeader ^. blockHeader_proto
           , _protocolIndex_firstBlockHash = Nothing
           , _protocolIndex_firstBlockPredecessor = Nothing
           , _protocolIndex_firstBlockLevel = Nothing
