@@ -461,18 +461,6 @@ data ProtocolIndex = ProtocolIndex
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
 
-data Accusation = Accusation
-  { _accusation_hash :: OperationHash -- ^ hash of the accusation operation
-  , _accusation_blockHash :: BlockHash -- ^ hash of the block where the accusation was included
-  , _accusation_chain :: ChainId -- ^ chainId of the network where the accusation occurred
-  , _accusation_level :: RawLevel -- ^ level where accusation was incorporated in the blockchain
-  , _accusation_baker :: PublicKeyHash -- ^ PKH of baker who was accused
-  , _accusation_occurredLevel :: RawLevel -- ^ level at which the baker was accused
-  , _accusation_accusationType :: AccusationType -- ^ which operation baker was accused of
-  } deriving (Show, Eq, Ord, Typeable, Generic)
-instance HasId Accusation where
-  type IdData Accusation = (OperationHash, BlockHash)
-
 data Amendment = Amendment
   { _amendment_period :: VotingPeriodKind
   , _amendment_chainId :: ChainId
@@ -777,7 +765,8 @@ instance HasId ErrorLogBakerDeactivationRisk where
 
 data ErrorLogBakerAccused = ErrorLogBakerAccused
   { _errorLogBakerAccused_log :: Id ErrorLog
-  , _errorLogBakerAccused_op :: Id Accusation
+  , _errorLogBakerAccused_opHash :: OperationHash
+  , _errorLogBakerAccused_blockHash :: BlockHash
   , _errorLogBakerAccused_baker :: Id Baker
   , _errorLogBakerAccused_cycle :: Cycle
   , _errorLogBakerAccused_level :: RawLevel
@@ -1006,8 +995,7 @@ deriving instance Ord (BakerLogTag a)
 deriving instance Show (BakerLogTag a)
 
 fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
-  [ ''Accusation
-  , ''AccusationBlock
+  [ ''AccusationBlock
   , ''AccusationType
   , ''AddInternalNodeError
   , ''AlertNotificationMethod
@@ -1072,8 +1060,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''UpgradeCheckError
   , ''UpstreamVersion
   ] ++ map makeLenses
-  [ 'Accusation
-  , 'AccusationBlock
+  [ 'AccusationBlock
   , 'Amendment
   , 'BakeEfficiency
   , 'Baker

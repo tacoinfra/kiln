@@ -93,7 +93,6 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (upgradeCheckWorker)
 import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
-import Backend.Workers.Accusation (accusationWorker)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
@@ -420,7 +419,6 @@ backendImpl cfg serve = do
       addFinalizer =<< bakerRightsWorker dataSrc rightsHistoryWindow
       addFinalizer =<< bakerWorker appConfig dataSrc rightsHistoryWindow
       addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
-      addFinalizer =<< accusationWorker (realToFrac (15*sqrt 5 :: Double)) dataSrc appConfig
       addFinalizer =<< amendmentProcessWorker appConfig dataSrc db
       addFinalizer =<< latestTezosReleaseWorker nominalDay networkGitLabProjectId tezosReleaseTag dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.

@@ -879,7 +879,8 @@ reportAccusation opHash blkHash accusationType pkh lvl cycle aLvl aCycle = when'
     Nothing -> do
       (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
         { _errorLogBakerAccused_log = eid
-        , _errorLogBakerAccused_op = Id (opHash, blkHash)
+        , _errorLogBakerAccused_opHash = opHash
+        , _errorLogBakerAccused_blockHash = blkHash
         , _errorLogBakerAccused_baker = bid
         , _errorLogBakerAccused_accusationType = accusationType
         , _errorLogBakerAccused_level = lvl
