@@ -20,16 +20,25 @@
 -- Kiln managed process/daemon
 module Backend.Workers.Process where
 
-import Control.Concurrent.Async (withAsync)
+import Control.Concurrent (forkIO)
+import Control.Concurrent.Async (Concurrently(..), runConcurrently)
 import Control.Concurrent.STM (TBQueue, atomically, flushTBQueue, isFullTBQueue, newTBQueueIO, readTBQueue, writeTBQueue)
-import Control.Exception.Safe (tryJust, throwIO)
+import Control.Exception.Safe (finally, onException, throwIO)
 import Control.Monad.Catch (Handler (..), bracket, catches)
 import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import Control.Monad.IO.Unlift (MonadUnliftIO, withUnliftIO, unliftIO)
 import qualified Data.Aeson as Aeson
+import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
+import Data.Conduit (ConduitT, runConduit, (.|))
+import qualified Data.Conduit.List as CL
+import Data.Conduit.Process (CreateProcess, getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
 import Data.Pool (Pool)
+import Data.Streaming.Process (StreamingProcessHandle, streamingProcess)
 import qualified Data.Text as T
+import Data.Text.Encoding (decodeUtf8)
 import Data.Time (getCurrentTime, addUTCTime, NominalDiffTime)
+import Data.Void (Void)
 import Database.Id.Groundhog
 import Database.Groundhog.Postgresql
 import Named
@@ -39,12 +48,10 @@ import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Posix.Signals (signalProcess, sigKILL)
-import System.Process (CreateProcess, withCreateProcess, getProcessExitCode, terminateProcess)
 import qualified System.Process as Proc
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
-import System.IO (IOMode(..), hFlush, hGetLine, withFile)
-import System.IO.Error (isEOFError)
+import System.IO (IOMode(..), hFlush, withFile)
 
 import Backend.Alerts (reportInternalNodeFailed)
 import Backend.Common
@@ -110,7 +117,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
             , Proc.std_err = Proc.CreatePipe
             }
         runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, procSpec)
-        withCreateProcess procSpec procMonitor
+        procMonitor procSpec
         threadDelay' 10
       Left errMsg -> inDb $ update
         [ ProcessData_errorLogField =. Just errMsg
@@ -167,16 +174,18 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
         update [updated_ =. Just now, backend_ =. (Nothing :: Maybe Int)]
           (AutoKeyField ==. fromId pid)
 
-    procMonitor _stdin hStdout hStderr ph = do
+    procMonitor cp = do
       let errorLogBufferSize = 30
       -- Buffer containing the last few lines of stderr.
       -- Needed to correctly display the error message in case of a process fail.
       errorLogBuffer <- newTBQueueIO @Text errorLogBufferSize
 
-      withHandleCopyWith (logInfoNS namespace) hStdout $ do
-        -- logInfoNS for stderr is intentional, the node prints the usual messages also on stderr
-        withHandleCopyWith (\line -> logInfoNS namespace line *> writeBuffer line errorLogBuffer) hStderr $ do
-          runLoggingEnv logger $ go Nothing errorLogBuffer
+      ph <- runLoggingEnv logger $ createProcessWithStreams cp (return ())
+        (CL.mapM_ $ logInfoNS namespace . decodeUtf8)
+        (CL.mapM_ $ \line ->
+          let decodedLine = decodeUtf8 line in
+              logInfoNS namespace decodedLine *> writeBuffer decodedLine errorLogBuffer)
+      runLoggingEnv logger $ go Nothing errorLogBuffer ph
       where
         writeBuffer :: Text -> TBQueue Text -> LoggingT IO ()
         writeBuffer line buffer = liftIO $ atomically $ do
@@ -185,39 +194,31 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
             void $ readTBQueue buffer
           writeTBQueue buffer line
 
-        withHandleCopyWith perLine h' f = case h' of
-          Nothing -> f
-          Just h -> withAsync forEachHandleLine $ const f
-            where
-              forEachHandleLine = runLoggingEnv logger $
-                fix $ \loop -> do
-                  liftIO (tryJust (guard . isEOFError) (hGetLine h)) >>= \case
-                    Left _ -> pure ()
-                    Right ln -> perLine (T.pack ln) *> loop
-
         {-# INLINE go #-}
         go
           :: forall m1. (MonadLoggerIO m1, MonadLogger m1, MonadIO m1, MonadBaseNoPureAborts IO m1)
           => Maybe Int
           -> TBQueue Text
+          -> StreamingProcessHandle
           -> m1 ()
-        go mCount buffer = do
+        go mCount buffer ph = do
           let getPC = \case
                 [] -> ProcessControl_Stop
                 (c:_) -> c
           procControl <- runDb (Identity db)
             (getPC <$> project control_ (AutoKeyField ==. fromId pid))
-          liftIO (getProcessExitCode ph) >>= \case
+          liftIO (getStreamingProcessExitCode ph) >>= \case
             Nothing -> do
               inDb $ updateState ProcessState_Running
               let
                 stop = procControl /= ProcessControl_Run
                 timeoutInSec = 60 :: Int
                 delayInSec = 1 :: NominalDiffTime
+                rawPh = streamingProcessHandleRaw ph
               liftIO $ when stop $ if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
-                then terminateProcess ph
-                else Proc.getPid ph >>= traverse_ (signalProcess sigKILL)
-              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing) buffer
+                then terminateProcess rawPh
+                else Proc.getPid rawPh >>= traverse_ (signalProcess sigKILL)
+              threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing) buffer ph
             Just _ -> case procControl of
               ProcessControl_Stop -> do
                 inDb $ updateState ProcessState_Stopped
@@ -266,3 +267,18 @@ withNodeConfig appConfig f = withFile (nodeDataDir appConfig </> "config.json") 
   LBS.hPut nodeConfigHandle $ either Aeson.encode Aeson.encode $ _appConfig_kilnNodeConfig appConfig
   hFlush nodeConfigHandle
   f $ nodeDataDir appConfig </> "config.json"
+
+createProcessWithStreams
+  :: MonadUnliftIO m
+  => CreateProcess -> ConduitT () ByteString m () -> ConduitT ByteString Void m () -> ConduitT ByteString Void m ()
+  -> m StreamingProcessHandle
+createProcessWithStreams cp producerStdin consumerStdout consumerStderr = withUnliftIO $ \u -> do
+  ((sinkStdin, closeStdin) , (sourceStdout, closeStdout), (sourceStderr, closeStderr), sph) <- streamingProcess cp
+  void $ forkIO $ void $ runConcurrently (
+      (,,)
+      <$> Concurrently (unliftIO u $ runConduit $ producerStdin .| sinkStdin)
+      <*> Concurrently (unliftIO u $ runConduit $ sourceStdout .| consumerStdout)
+      <*> Concurrently (unliftIO u $ runConduit $ sourceStderr .| consumerStderr))
+    `finally` (closeStdin >> closeStdout >> closeStderr)
+    `onException` (liftIO . terminateProcess . streamingProcessHandleRaw) sph
+  return sph

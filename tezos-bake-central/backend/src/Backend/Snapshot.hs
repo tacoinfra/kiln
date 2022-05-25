@@ -16,25 +16,21 @@
 module Backend.Snapshot where
 
 import Control.Concurrent
-import Control.Concurrent.Async (runConcurrently, Concurrently(..))
 import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception.Safe (IOException, try)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
-import Control.Monad.IO.Unlift (MonadUnliftIO, withUnliftIO, unliftIO)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Trans.Resource (runResourceT)
 import Control.Monad.Logger
 import Data.ByteString (ByteString)
 import Data.Conduit.Binary (sinkFileCautious)
 import qualified Data.Conduit.List as CL
-import Data.Conduit (ConduitT, runConduit, (.|))
-import Data.Conduit.Process (CreateProcess, getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
+import Data.Conduit.Process (getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
 import Data.Int (Int32)
-import Data.Streaming.Process (StreamingProcessHandle, streamingProcess)
 import Data.String (IsString(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Clock (NominalDiffTime, UTCTime)
-import Data.Void (Void)
 import Database.Id.Groundhog (fromId)
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql (Postgresql(..), (=.), (==.))
@@ -327,21 +323,6 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
                         updateSnapshotMeta mBlkHash mLevel (mBlk ^? _Right . timestamp) smId
                   inDb $ updateState NodeProcessState_ImportComplete
                 ExitFailure _ -> inDb $ importFailed "importSnapshotData failed: " stderr
-
-    createProcessWithStreams
-      :: MonadUnliftIO m
-      => CreateProcess -> ConduitT () ByteString m () -> ConduitT ByteString Void m () -> ConduitT ByteString Void m ()
-      -> m StreamingProcessHandle
-    createProcessWithStreams cp producerStdin consumerStdout consumerStderr = withUnliftIO $ \u -> do
-      ((sinkStdin, closeStdin) , (sourceStdout, closeStdout), (sourceStderr, closeStderr), sph) <- streamingProcess cp
-      void $ forkIO $ void $ runConcurrently (
-          (,,)
-          <$> Concurrently (unliftIO u $ runConduit $ producerStdin .| sinkStdin)
-          <*> Concurrently (unliftIO u $ runConduit $ sourceStdout .| consumerStdout)
-          <*> Concurrently (unliftIO u $ runConduit $ sourceStderr .| consumerStderr))
-        `finally` (closeStdin >> closeStdout >> closeStderr)
-        `onException` (liftIO . terminateProcess . streamingProcessHandleRaw) sph
-      return sph
 
   liftIO $ withNodeConfig appConfig $ \configFile -> do
     runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec configFile)
