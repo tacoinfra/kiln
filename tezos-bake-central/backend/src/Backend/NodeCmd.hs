@@ -16,12 +16,14 @@
 
 module Backend.NodeCmd where
 
+import Conduit (runConduit, sourceHandle, (.|))
 import Control.Exception.Safe (throwIO, tryJust)
-import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logWarn, logError, logErrorNS)
+import Control.Monad.Logger (MonadLogger, LoggingT, logInfoNS, logDebug, logWarn, logError, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Builder as Builder
+import qualified Data.Conduit.List as CL
 import Data.Dependent.Map (DSum (..))
 import Data.Either.Combinators (maybeToRight)
 import qualified Data.HashMap.Lazy as HashMap
@@ -31,16 +33,17 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Version
 import Database.Groundhog.Postgresql
+import Fmt (pretty)
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb, project1)
+import Rhyolite.Backend.DB (getTime, runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removePathForcibly)
 import System.Exit (ExitCode(..))
 import qualified System.FilePath as FilePath
 import System.Process as Proc
-import System.IO (hGetContents)
+import System.IO (Handle, hGetContents)
 import System.IO.Error (isEOFError)
 import qualified System.IO.Streams as Streams
 import System.Which (staticWhich)
@@ -49,12 +52,14 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
 import Tezos.NodeRPC (NodeRPCContext(..), QueryNode(rIsBootstrapped), RpcError, nodeRPC)
-import Tezos.Types (ProtocolHash, toBase58Text)
+import Tezos.Types (LedgerIdentifier, ProtocolHash, toBase58Text)
 
 import Backend.Config (AppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir, BinaryPaths(..), BakerEndorserPaths(..))
 import Backend.NodeRPC
+import Backend.Process.Errors (ErrorEvent(..), ErrorTrace(..))
 import Backend.Schema
 import Backend.Workers.Process
+import Backend.Workers.TezosClient (reportLedgerDisconnection)
 import Common.Route (ExportLog(..))
 import Common.Schema
 import ExtraPrelude
@@ -158,6 +163,7 @@ internalNodeWorker appConfig logger db maybePaths = do
     ! #pid pid
     ! #prestartCheck (pure True)
     ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+    ! #jsonErrorLogsHandler Nothing
 
 getKilnNodeVersion :: MonadIO m => FilePath -> m (Maybe Version)
 getKilnNodeVersion versionFile = liftIO $ do
@@ -309,8 +315,40 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
       ! #prestartCheck checkKilnNodeAvailability
       ! #mkNotify Nothing
 
-    bakerPw = pw (bakerPath paths, getBakerArgs appConfig alias, "tezos-baker") ! #logNamespace "kiln-baker"
-    endorserPw = pw (endorserPath paths, const (Right endorserArgs), "tezos-endorser") ! #logNamespace "kiln-endorser"
+    jsonLogsConsumer :: Handle -> IO ()
+    jsonLogsConsumer h = runConduit $ sourceHandle h .| CL.mapM_ (\errlogLine -> runLoggingEnv logger $ do
+        case Aeson.eitherDecodeStrict errlogLine of
+          Left decodingErr ->
+            $(logError) $ "Failed to decode error reported by baker daemons: " <> T.pack decodingErr
+          Right ev -> do
+            $(logError) $ "Baker daemon reported an error: " <> pretty ev
+            handleDaemonErrorEvent ev
+      )
+
+    handleDaemonErrorEvent :: ErrorEvent -> LoggingT IO ()
+    handleDaemonErrorEvent e = do
+      let trace = _errorEvent_trace e
+          isLedgerNotFound = \case
+            ErrorTrace_LedgerNotFound -> True
+            _ -> False
+          isWrongApp = \case
+            ErrorTrace_LedgerError msg | "Application level error (sign-with-hash): Parse error" `T.isPrefixOf` msg -> True
+            _ -> False
+          hasLedgerDisconnection = any isLedgerNotFound trace
+          hasWrongApp = any isWrongApp trace
+      when (hasLedgerDisconnection || hasWrongApp) $ reportLedgerDisconnection db appConfig hasWrongApp
+      when hasLedgerDisconnection $ runDb (Identity db) $ do
+        mbConnectedLedger :: Maybe ConnectedLedger <- fmap listToMaybe $ select CondEmpty
+        for_ mbConnectedLedger $ \connectedLedger -> do
+          now <- getTime
+          update
+            [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
+            , ConnectedLedger_updatedField =. Just now
+            ] CondEmpty
+          notify NotifyTag_ConnectedLedger $ Just $ connectedLedger { _connectedLedger_ledgerIdentifier = Nothing }
+
+    bakerPw = pw (bakerPath paths, getBakerArgs appConfig alias, "tezos-baker") ! #logNamespace "kiln-baker" ! #jsonErrorLogsHandler (Just jsonLogsConsumer)
+    endorserPw = pw (endorserPath paths, const (Right endorserArgs), "tezos-endorser") ! #logNamespace "kiln-endorser" ! #jsonErrorLogsHandler Nothing
     paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker

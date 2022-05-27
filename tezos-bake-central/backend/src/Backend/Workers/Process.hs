@@ -20,7 +20,7 @@
 -- Kiln managed process/daemon
 module Backend.Workers.Process where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.Async (Concurrently(..), runConcurrently)
 import Control.Concurrent.STM (TBQueue, atomically, flushTBQueue, isFullTBQueue, newTBQueueIO, readTBQueue, writeTBQueue)
 import Control.Exception.Safe (finally, onException, throwIO)
@@ -41,6 +41,7 @@ import Data.Time (getCurrentTime, addUTCTime, NominalDiffTime)
 import Data.Void (Void)
 import Database.Id.Groundhog
 import Database.Groundhog.Postgresql
+import GHC.IO.Handle.FD (handleToFd)
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB (runDb)
@@ -50,8 +51,9 @@ import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Posix.Signals (signalProcess, sigKILL)
 import qualified System.Process as Proc
 import System.Exit (ExitCode(..))
+import System.Environment (getEnvironment)
 import System.FilePath ((</>))
-import System.IO (IOMode(..), hFlush, withFile)
+import System.IO (Handle, IOMode(..), hClose, hFlush, withFile)
 
 import Backend.Alerts (reportInternalNodeFailed)
 import Backend.Common
@@ -92,8 +94,10 @@ processWorker
   -> "pid" :! Id ProcessData
   -> "prestartCheck" :! IO Bool
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
+  -> "jsonErrorLogsHandler" :! Maybe (Handle -> IO ())
   -> m (IO ())
-processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg prestartCheck) (Arg makeNotify) = worker' "processWorker" $ do
+processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg prestartCheck) (Arg makeNotify)
+  (Arg jsonErrorLogsHandler) = worker' "processWorker" $ do
   waitUntilShouldRun
   bracket obtainLock freeLock $ \_ -> do
     inDb $ updateState ProcessState_Initializing
@@ -111,14 +115,17 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
     eiProcHandler <- mkProcess v
     case eiProcHandler of
       Right procHandler -> do
-        let
-          procSpec = procHandler
-            { Proc.std_out = Proc.CreatePipe
-            , Proc.std_err = Proc.CreatePipe
-            }
-        runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, procSpec)
-        procMonitor procSpec
-        threadDelay' 10
+        case jsonErrorLogsHandler of
+          Nothing -> startProcMonitor procHandler []
+          Just handler -> bracket Proc.createPipe (\(h1, h2) -> hClose h1 >> hClose h2) $ \(readHandle, writeHandle) -> do
+            writeFD <- handleToFd writeHandle
+            handlerThreadId <- forkIO $ handler readHandle
+            let
+              -- Logging env variables below are set based on the logging documentation from
+              -- https://tezos.gitlab.io/user/logging.html#file-descriptor-sinks
+              tezosLogEnv = [("TEZOS_EVENTS_CONFIG", "file-descriptor-path:///dev/fd/" <> show writeFD <> "?format=one-per-line&level-at-least=error")]
+            startProcMonitor procHandler tezosLogEnv `finally` killThread handlerThreadId
+
       Left errMsg -> inDb $ update
         [ ProcessData_errorLogField =. Just errMsg
         , ProcessData_stateField =. ProcessState_Stopped
@@ -132,6 +139,19 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
     updated_ = ProcessData_updatedField
     backend_ = ProcessData_backendField
     control_ = ProcessData_controlField
+
+    startProcMonitor :: CreateProcess -> [(String, String)] -> IO ()
+    startProcMonitor procHandler env = do
+      currentEnv <- getEnvironment
+      let proc' = procHandler
+              { Proc.std_out = Proc.CreatePipe
+              , Proc.std_err = Proc.CreatePipe
+              , Proc.env = Just $ currentEnv <> env
+              }
+      runLoggingEnv logger $ $(logInfoSH) ("processWorker: running process" :: Text, proc')
+      procMonitor proc'
+      threadDelay' 10
+
     waitUntilShouldRun = do
       canRun <- runLoggingEnv logger $ runDb (Identity db) $ do
         isStopped <- all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
@@ -215,9 +235,10 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
                 timeoutInSec = 60 :: Int
                 delayInSec = 1 :: NominalDiffTime
                 rawPh = streamingProcessHandleRaw ph
-              liftIO $ when stop $ if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
-                then terminateProcess rawPh
-                else Proc.getPid rawPh >>= traverse_ (signalProcess sigKILL)
+              liftIO $ when stop $ do
+                if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
+                  then terminateProcess rawPh
+                  else Proc.getPid rawPh >>= traverse_ (signalProcess sigKILL)
               threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing) buffer ph
             Just _ -> case procControl of
               ProcessControl_Stop -> do
