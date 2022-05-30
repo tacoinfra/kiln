@@ -45,7 +45,7 @@ currentCyclePosition :: Amendment -> ProtoInfo -> Cycle
 currentCyclePosition a info = fromIntegral $ _amendment_position a `div` _protoInfo_blocksPerCycle info + 1
 
 cyclesPerPeriod :: ProtoInfo -> Cycle
-cyclesPerPeriod info = fromIntegral $ _protoInfo_blocksPerVotingPeriod info `div` _protoInfo_blocksPerCycle info
+cyclesPerPeriod info = fromIntegral $ getCyclesPerVotingPeriod info
 
 textBallot :: Ballot -> Text
 textBallot = \case
@@ -85,7 +85,7 @@ calcAmendmentPeriodBounds amendment selectedPeriod protoInfo latestHead =
     headCyclePos = latestHead ^. branchInfo_cyclePosition
 
     blocksPerCycle        = fromIntegral $ protoInfo ^. protoInfo_blocksPerCycle
-    blocksPerVotingPeriod = fromIntegral $ protoInfo ^. protoInfo_blocksPerVotingPeriod
+    blocksPerVotingPeriod = fromIntegral $ getBlocksPerVotingPeriod protoInfo
 
     calcCycle periodDiff' =
       let

@@ -74,7 +74,7 @@ getStartTimeForPeriod p a as proto
   | Just a' <- Map.lookup p as = (_amendment_start a', False)
   | otherwise = (estimate, True)
   where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
-        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
+        blocksPerPeriod = fromIntegral $ getBlocksPerVotingPeriod proto
         timeBetweenBlocks = getTimeBetweenBlocks proto
         periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a)
 
@@ -84,7 +84,7 @@ getEndTimeForPeriod p a as proto
   | Just p' <- safeSucc p, Just a' <- Map.lookup p' as = (_amendment_start a', False)
   | otherwise = (estimate, True)
   where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
-        blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
+        blocksPerPeriod = fromIntegral $ getBlocksPerVotingPeriod proto
         timeBetweenBlocks = getTimeBetweenBlocks proto
         periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a) + 1
 
