@@ -75,7 +75,7 @@ getStartTimeForPeriod p a as proto
   | otherwise = (estimate, True)
   where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
         blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
-        timeBetweenBlocks = calcTimeBetweenBlocks proto
+        timeBetweenBlocks = getTimeBetweenBlocks proto
         periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a)
 
 -- | Get or estimate the end time of a period. Return 'Bool' indicates if the date is estimated
@@ -85,7 +85,7 @@ getEndTimeForPeriod p a as proto
   | otherwise = (estimate, True)
   where estimate = Time.addUTCTime (timeBetweenBlocks * blocksPerPeriod * periodDiff) (_amendment_start a)
         blocksPerPeriod = fromIntegral $ _protoInfo_blocksPerVotingPeriod proto
-        timeBetweenBlocks = calcTimeBetweenBlocks proto
+        timeBetweenBlocks = getTimeBetweenBlocks proto
         periodDiff = fromIntegral $ fromEnum p - fromEnum (_amendment_period a) + 1
 
 calculatePeriodProgress :: UTCTime -> UTCTime -> UTCTime -> (Double, Time.NominalDiffTime)
