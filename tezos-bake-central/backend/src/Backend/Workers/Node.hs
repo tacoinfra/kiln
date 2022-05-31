@@ -532,7 +532,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     (nodeQueryDataSourceSafe $ NodeQuery_Block (latestHead ^. hash))
     (getProtocolConstants $ Left $ latestHead ^. hash)
   let
-    blocksPerVotingPeriod = _protoInfo_blocksPerVotingPeriod protoInfo
+    blocksPerVotingPeriod = getBlocksPerVotingPeriod protoInfo
     chainId = _nodeDataSource_chain nds
 
     -- The RPCs under /votes/ return the information for the *next block*, not the current block.
@@ -845,7 +845,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinal
         Nothing -> do
           let votingPeriodPosition = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
           protoConstants <- runNodeQueryT $ getProtocolConstants $ Right currentProtocol
-          return $ protoConstants ^. protoInfo_blocksPerVotingPeriod - votingPeriodPosition - 1
+          return $ getBlocksPerVotingPeriod protoConstants - votingPeriodPosition - 1
       -- This will trigger daemons for the upcoming protocol to start, so we start them
       -- on the last voting period 100 blocks prior to the protocol upgrade.
       tp <- if vp == VotingPeriodKind_Adoption && remainingBlocksInVotingPeriod < 100

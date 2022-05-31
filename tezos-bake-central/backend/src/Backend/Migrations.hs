@@ -121,6 +121,7 @@ preMigrate chainId =
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerAccused") "op#hash" "opHash"
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerAccused") "op#blockHash" "blockHash"
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "Accusation")
+  >=> migrateProtocolIndexV013
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -829,6 +830,20 @@ removeUnusedProtocolIndexColumns ta = do
   forM_ columns $ \column -> do
     dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") column ta
   getTableAnalysis
+
+migrateProtocolIndexV013 :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateProtocolIndexV013 ta = do
+  let table = (Nothing, "ProtocolIndex")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "constants#timeBetweenBlocks") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "ProtocolIndex" DROP COLUMN "constants#timeBetweenBlocks";
+        ALTER TABLE "ProtocolIndex" ADD COLUMN "constants#cyclesPerVotingPeriod" INT NULL;
+        ALTER TABLE "ProtocolIndex" ALTER COLUMN "constants#blocksPerVotingPeriod" DROP NOT NULL;
+        ALTER TABLE "ProtocolIndex" ALTER COLUMN "constants#minimalBlockDelay" SET NOT NULL;
+      |]
+      getTableAnalysis
+    _ -> pure ta
 
 removeNodeSavePointInfo :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 removeNodeSavePointInfo ta = do

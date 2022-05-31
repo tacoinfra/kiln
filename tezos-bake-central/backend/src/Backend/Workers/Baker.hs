@@ -53,7 +53,7 @@ import Rhyolite.Schema (Json(..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
-import qualified Tezos.V012.Types as V012
+import qualified Tezos.V013.Types as V013
 import Tezos.CrossCompat.Account
 import Tezos.CrossCompat.Block
 import Tezos.Unsafe (unsafeEstimatePastTimestamp)
@@ -358,7 +358,7 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
         blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
         mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer
         endorserDelegates = blockCrossData
-            (^..V012.block_operations . traverse . traverse . V012.operation_contents . traverse . V012._OperationContents_Endorsement . V012.operationContentsEndorsement_metadata . V012.endorsementMetadata_delegate)
+            (^..V013.block_operations . traverse . traverse . V013.operation_contents . traverse . V013._OperationContents_Endorsement . V013.operationContentsEndorsement_metadata . V013.endorsementMetadata_delegate)
             thisBlock
         successfulEndorsementCondition = _baker_publicKeyHash baker `elem` endorserDelegates
 

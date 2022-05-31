@@ -23,6 +23,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Builder as Builder
 import Data.Dependent.Map (DSum (..))
+import Data.Either.Combinators (maybeToRight)
 import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
 import Data.List (find, isInfixOf)
@@ -276,21 +277,19 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
     bpid2 = _bakerDaemonInternalData_altBakerProcessData bdid
     epid2 = _bakerDaemonInternalData_altEndorserProcessData bdid
     alias = T.unpack aliasT
-    bakerArgs = [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig
-                , "--base-dir", tezosClientDataDir appConfig
-                , "run", "with", "local", "node", nodeDataDir appConfig
-                , alias
-                ] <> maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
     endorserArgs = [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
                    , "--base-dir", tezosClientDataDir appConfig
                    , "run"
                    , alias]
 
-    mkProcess proto pathF args daemonName =
-      case proc <$> pathF proto <*> pure args of
-        Just cp -> Right cp
-        Nothing -> Left $ daemonName <> " is not available for the given protocol: "
-          <> maybe "<unknown protocol>" toBase58Text proto
+    mkProcess mbProto getBinaryPath getBinaryArgs daemonName = do
+      let
+        prettyProtoHash = maybe "<unknown protocol>" toBase58Text mbProto
+        eiBinaryPath = flip maybeToRight (getBinaryPath mbProto) $
+          daemonName <> " is not available for the given protocol: " <> prettyProtoHash
+      binaryPath <- eiBinaryPath
+      binaryArgs <- getBinaryArgs mbProto
+      pure $ proc binaryPath binaryArgs
 
     -- tezos-node needs some time before it becomes able to respond to RPC queries.
     -- Due to this, daemons may fail with connection timeout. So we check that node
@@ -300,18 +299,18 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
       runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
         runLoggingEnv logger $ nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
 
-    pw (pathF, args, daemonName) pid = processWorker
+    pw (pathF, getArgs, daemonName) pid = processWorker
       (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
       ! #db db
       ! #config appConfig
-      ! #mkProcess (\proto -> return $ mkProcess proto pathF args daemonName)
+      ! #mkProcess (\proto -> return $ mkProcess proto pathF getArgs daemonName)
       ! #pid pid
       ! #prestartCheck checkKilnNodeAvailability
       ! #mkNotify Nothing
 
-    bakerPw = pw (bakerPath paths, bakerArgs, "tezos-baker") ! #logNamespace "kiln-baker"
-    endorserPw = pw (endorserPath paths, endorserArgs, "tezos-endorser") ! #logNamespace "kiln-endorser"
+    bakerPw = pw (bakerPath paths, getBakerArgs appConfig alias, "tezos-baker") ! #logNamespace "kiln-baker"
+    endorserPw = pw (endorserPath paths, const (Right endorserArgs), "tezos-endorser") ! #logNamespace "kiln-endorser"
     paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
@@ -340,6 +339,22 @@ fetchProtocol pid =
       in if pid == tbpid || pid == tepid
         then return $ _bakerDaemonInternalData_altProtocol bdid
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
+
+getBakerArgs :: AppConfig -> String -> Maybe ProtocolHash -> Either Text [String]
+getBakerArgs appConfig alias = \case
+  Just "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" ->
+    Right protocolAgnosticArgs
+  Just "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" ->
+    Right $ protocolAgnosticArgs <> ["--liquidity-baking-toggle-vote", "pass"]
+  mbProtoHash ->
+    Left $ "'getBakerArgs': unknown protocol " <> maybe "<unknown protocol>" toBase58Text mbProtoHash
+  where
+    protocolAgnosticArgs =
+      [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig
+      , "--base-dir", tezosClientDataDir appConfig
+      , "run", "with", "local", "node", nodeDataDir appConfig
+      , alias
+      ] <> maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
 
 handleExportLogs :: MonadSnap m => NodeDataSource -> DSum ExportLog Identity -> m ()
 handleExportLogs nds lType = do
