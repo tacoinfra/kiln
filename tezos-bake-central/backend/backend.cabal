@@ -43,6 +43,7 @@ library
     , errors
     , exceptions
     , filepath
+    , fmt
     , formatting
     , frontend
     , functor-infix
@@ -141,6 +142,7 @@ library
     Backend.Migrations
     Backend.NodeCmd
     Backend.NotifyHandler
+    Backend.Process.Errors
     Backend.RequestHandler
     Backend.Schema
     Backend.Snapshot
