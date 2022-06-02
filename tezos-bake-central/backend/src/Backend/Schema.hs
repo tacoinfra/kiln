@@ -491,6 +491,19 @@ instance FromField AccusationType where
 instance ToField AccusationType where
   toField v = toField (show v)
 
+instance PrimitivePersistField ProtoAgnosticVotingPower where
+  toPrimitivePersistValue p (ProtoAgnosticVotingPower x) = toPrimitivePersistValue p x
+  fromPrimitivePersistValue p v = ProtoAgnosticVotingPower $ fromPrimitivePersistValue p v
+
+deriving instance ToField ProtoAgnosticVotingPower
+deriving instance FromField ProtoAgnosticVotingPower
+
+instance PersistField ProtoAgnosticVotingPower where
+  persistName _ = "VotingPower"
+  toPersistValues = primToPersistValue
+  fromPersistValues = primFromPersistValue
+  dbType p (ProtoAgnosticVotingPower x) = dbType p x
+
 instance NeverNull (HashedValue a)
 -- instance NeverNull (Json BlockInfo)
 instance NeverNull Cycle
@@ -751,7 +764,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
 
   - primitive: VotingPeriodKind
   - primitive: Ballot
-  - embedded: Ballots
+  - embedded: ProtoAgnosticBallots
   - entity: Amendment
     autoKey: null
     constructors:

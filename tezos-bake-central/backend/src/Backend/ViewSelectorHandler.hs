@@ -208,7 +208,7 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
 
   periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> do
     results <- [queryQ|
-      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalRolls"
+      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower"
       FROM "PeriodTestingVote" v
       JOIN "PeriodProposal" p ON p.id = v.proposal
       WHERE p."chainId" = ?chainId
@@ -217,13 +217,13 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
     pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodTestingVote
       { _periodTestingVote_proposal = p
       , _periodTestingVote_periodVote = PeriodVote
-        { _periodVote_ballots = Ballots
-          { _ballots_yay = by
-          , _ballots_nay = bn
-          , _ballots_pass = bp
+        { _periodVote_ballots = ProtoAgnosticBallots
+          { _protoAgnosticBallots_yay = by
+          , _protoAgnosticBallots_nay = bn
+          , _protoAgnosticBallots_pass = bp
           }
         , _periodVote_quorum = q
-        , _periodVote_totalRolls = t
+        , _periodVote_totalVotingPower = t
         }
       }
 
@@ -240,7 +240,7 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
 
   periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$> do
     results <- [queryQ|
-      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalRolls"
+      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower"
       FROM "PeriodPromotionVote" v
       JOIN "PeriodProposal" p ON p.id = v.proposal
       WHERE p."chainId" = ?chainId
@@ -249,19 +249,19 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
     pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodPromotionVote
       { _periodPromotionVote_proposal = p
       , _periodPromotionVote_periodVote = PeriodVote
-        { _periodVote_ballots = Ballots
-          { _ballots_yay = by
-          , _ballots_nay = bn
-          , _ballots_pass = bp
+        { _periodVote_ballots = ProtoAgnosticBallots
+          { _protoAgnosticBallots_yay = by
+          , _protoAgnosticBallots_nay = bn
+          , _protoAgnosticBallots_pass = bp
           }
         , _periodVote_quorum = q
-        , _periodVote_totalRolls = t
+        , _periodVote_totalVotingPower = t
         }
       }
 
   periodAdoption <- maybeViewHandler _bakeViewSelector_periodAdoption $ Just <$> do
     results <- [queryQ|
-      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalRolls"
+      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower"
       FROM "PeriodAdoption" v
       JOIN "PeriodProposal" p ON p.id = v.proposal
       WHERE p."chainId" = ?chainId
@@ -270,13 +270,13 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
     pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodAdoption
       { _periodAdoption_proposal = p
       , _periodAdoption_periodVote = PeriodVote
-        { _periodVote_ballots = Ballots
-          { _ballots_yay = by
-          , _ballots_nay = bn
-          , _ballots_pass = bp
+        { _periodVote_ballots = ProtoAgnosticBallots
+          { _protoAgnosticBallots_yay = by
+          , _protoAgnosticBallots_nay = bn
+          , _protoAgnosticBallots_pass = bp
           }
         , _periodVote_quorum = q
-        , _periodVote_totalRolls = t
+        , _periodVote_totalVotingPower = t
         }
       }
 

@@ -236,26 +236,26 @@ periodVote promote vote = el "dl" $ do
     copyButton $ current proposalHash
     dynText proposalHash
   el "dt" $ text $ "Promote to " <> promote <> " Vote Breakdown"
-  el "dd" $ el "table" $ el "tbody" $ el "tr" $ do
-    el "td" $ do
-      dynText $ textWithCommas . _ballots_yay . _periodVote_ballots . snd <$> vote
+  el "dd" $ el "table" $ el "tbody" $ do
+    el "tr" $ el "td" $ do
+      dynText $ textWithCommas . _protoAgnosticBallots_yay . _periodVote_ballots . snd <$> vote
       text " Yea"
-    el "td" $ do
-      dynText $ textWithCommas . _ballots_nay . _periodVote_ballots . snd <$> vote
+    el "tr" $ el "td" $ do
+      dynText $ textWithCommas . _protoAgnosticBallots_nay . _periodVote_ballots . snd <$> vote
       text " Nay"
-    el "td" $ do
-      dynText $ textWithCommas . _ballots_pass . _periodVote_ballots . snd <$> vote
+    el "tr" $ el "td" $ do
+      dynText $ textWithCommas . _protoAgnosticBallots_pass . _periodVote_ballots . snd <$> vote
       text " Pass"
   el "dt" $ text "Supermajority Needed | Current"
   let indicator dv dx = elDynAttr "span" (ffor2 dv dx $ \v x -> "class" =: (if v >= x then "positive" else "negative"))
   el "dd" $ do
     let required = 8000
-    text $ intPercentage required
+    text $ intPercentage @Int required
     text " | "
     let supermajority = ffor vote $ \(_, pv) ->
           let v = _periodVote_ballots pv
-              total = _ballots_yay v + _ballots_nay v
-          in if total <= 0 then 0 else (10000 * _ballots_yay v) `div` total
+              total = _protoAgnosticBallots_yay v + _protoAgnosticBallots_nay v
+          in if total <= 0 then 0 else (10000 * _protoAgnosticBallots_yay v) `div` total
     indicator supermajority (pure required) $ dynText $ intPercentage <$> supermajority
   el "dt" $ text "Quorum Needed | Current"
   el "dd" $ do
@@ -264,11 +264,11 @@ periodVote promote vote = el "dl" $ do
     text " | "
     let participation = ffor vote $ \(_, pv) ->
           let v = _periodVote_ballots pv
-          in if _periodVote_totalRolls pv <= 0 then 0 else (10000 * (_ballots_yay v + _ballots_nay v + _ballots_pass v)) `div` _periodVote_totalRolls pv
+          in if _periodVote_totalVotingPower pv <= 0 then 0 else (10000 * (_protoAgnosticBallots_yay v + _protoAgnosticBallots_nay v + _protoAgnosticBallots_pass v)) `div` _periodVote_totalVotingPower pv
     indicator participation quorum $ dynText $ intPercentage <$> participation
 
 -- | Display tezos style 'Int' percentages (e.g. 5500) as percentages (55.00%)
-intPercentage :: Int -> Text
+intPercentage :: (Num a, Show a, Integral a) => a -> Text
 intPercentage i = tshow wholes <> "." <> T.drop 1 (tshow $ 100 + decimals) <> "%"
   where (wholes, decimals) = i `divMod` 100
 

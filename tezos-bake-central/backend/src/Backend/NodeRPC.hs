@@ -137,11 +137,11 @@ data NodeQuery a where
   NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
   NodeQuery_EndorsingRights   :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
   NodeQuery_Account           :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
-  NodeQuery_Ballots           :: BlockHash -> NodeQuery Ballots
+  NodeQuery_Ballots           :: BlockHash -> NodeQuery BallotsCrossCompat
   NodeQuery_Ballot            :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
   NodeQuery_ProposalVote      :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
-  NodeQuery_Listings          :: BlockHash -> NodeQuery (Seq VoterDelegate)
-  NodeQuery_Proposals         :: BlockHash -> NodeQuery (Seq ProposalVotes)
+  NodeQuery_Listings          :: BlockHash -> NodeQuery VoterListingsCrossCompat
+  NodeQuery_Proposals         :: BlockHash -> NodeQuery ProposalVotesListCrossCompat
   NodeQuery_CurrentProposal   :: BlockHash -> NodeQuery (Maybe ProtocolHash)
   NodeQuery_CurrentQuorum     :: BlockHash -> NodeQuery Int
   NodeQuery_Block             :: BlockHash -> NodeQuery BlockCrossCompat

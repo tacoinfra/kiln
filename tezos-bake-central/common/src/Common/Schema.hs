@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -474,14 +475,34 @@ data PeriodProposal = PeriodProposal
   { _periodProposal_hash :: ProtocolHash
   , _periodProposal_chainId :: ChainId
   , _periodProposal_votingPeriod :: RawLevel
-  , _periodProposal_votes :: Int
+  , _periodProposal_votes :: ProtoAgnosticVotingPower
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId PeriodProposal
 
+-- | Datatype used to represent voting power.
+-- Voting power is rolls on Ithaca protocol and Mutez on Jakarta.
+-- However, this doesn't affect the calculations that use this voting power,
+-- so we use a dedicated wrapper to represent both.
+newtype ProtoAgnosticVotingPower = ProtoAgnosticVotingPower Int64
+  deriving newtype (Eq, Ord, Show, Enum, Num, Integral, Real, Aeson.FromJSON, Aeson.ToJSON)
+
+rollsToProtoAgnosticVotingPower :: Int -> ProtoAgnosticVotingPower
+rollsToProtoAgnosticVotingPower = fromIntegral
+
+tezToProtoAgnosticVotingPower :: Tez -> ProtoAgnosticVotingPower
+tezToProtoAgnosticVotingPower = ProtoAgnosticVotingPower . getMicroTez
+
+data ProtoAgnosticBallots = ProtoAgnosticBallots
+  { _protoAgnosticBallots_yay :: ProtoAgnosticVotingPower
+  , _protoAgnosticBallots_nay :: ProtoAgnosticVotingPower
+  , _protoAgnosticBallots_pass :: ProtoAgnosticVotingPower
+  }
+  deriving (Eq, Ord, Show)
+
 data PeriodVote = PeriodVote
-  { _periodVote_ballots :: Ballots
+  { _periodVote_ballots :: ProtoAgnosticBallots
   , _periodVote_quorum :: Int -- Percent * 100, e.g. 80.02% would be 8002
-  , _periodVote_totalRolls :: Int -- Total number of rolls of delegates who are eligible to vote
+  , _periodVote_totalVotingPower :: ProtoAgnosticVotingPower
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodTestingVote = PeriodTestingVote
@@ -1047,6 +1068,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessControl
   , ''ProcessData
   , ''ProcessState
+  , ''ProtoAgnosticBallots
   , ''RightKind
   , ''RightNotificationLimit
   , ''RightNotificationSettings
@@ -1101,6 +1123,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'PeriodTestingVote
   , 'PeriodVote
   , 'ProcessData
+  , 'ProtoAgnosticBallots
   , 'ProtocolIndex
   , 'RightNotificationLimit
   , 'RightNotificationSettings
