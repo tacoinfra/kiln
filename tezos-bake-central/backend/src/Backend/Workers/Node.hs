@@ -108,12 +108,8 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
       newStateRsp :: Either KilnRpcError (BlockCrossCompat, BlockCrossCompat) <- runExceptT $ do
           flip runReaderT nds { _nodeDataSource_nodeForQuery = Just nodeAddr } $ do
             latestHead <- nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
-            -- TODO: remove this 'case' once Tenderbake is used on mainnet
-            (latestHead,) <$> case latestHead ^. protocolHash of
-              -- The latest final block within node is head~2 since Ithaca
-              "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" -> do
-                nodeQueryDataSourceImmediate $ NodeQuery_BlockPred (headBlockInfo ^. hash) 2
-              _ -> pure latestHead
+            latestFinalHead <- nodeQueryDataSourceImmediate $ NodeQuery_BlockPred (headBlockInfo ^. hash) 2
+            pure (latestHead, latestFinalHead)
       case newStateRsp of
         Left e -> logKilnRpcError "Handle new node head" e
         Right (headBlock, headFinalBlock) -> do
