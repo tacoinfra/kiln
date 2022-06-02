@@ -63,9 +63,10 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.NodeRPC
-import Tezos.Common.Vote
 import Tezos.Types hiding (toBlockHeader)
 import qualified Tezos.Unsafe as Unsafe
+import qualified Tezos.V012.Vote as V012
+import qualified Tezos.V013.Vote as V013
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -605,7 +606,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                   proposalVotesWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_Proposals lastAttempt
                   let
                     proposalHashes = S.fromList $ toList $ (^. _2 . _1 . periodProposal_hash) <$> proposals
-                    proposalHashesWhenLastVoting = S.fromList $ toList $ fst . unProposalVotes <$> proposalVotesWhenLastVoting
+                    proposalHashesWhenLastVoting = S.fromList $ toList $ getProposalVotesListCrossCompatProtocolHashes proposalVotesWhenLastVoting
                     unseenProposalHashes = proposalHashes S.\\ proposalHashesWhenLastVoting
                   pure $ if null unseenProposalHashes then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
@@ -763,12 +764,17 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                 RETURNING id
               |]
               for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
+              let (protoAgnosticProposals :: [(ProtocolHash, ProtoAgnosticVotingPower)]) = toList $ case proposals of
+                    ProposalVotesListV012 l -> fmap (\(V012.ProposalVotes (pHash, rolls)) ->
+                      (pHash, rollsToProtoAgnosticVotingPower rolls)) l
+                    ProposalVotesListV013 l -> fmap (\(V013.ProposalVotes (pHash, votingPower)) ->
+                      (pHash, tezToProtoAgnosticVotingPower votingPower)) l
               inserted <- returning [sql|
                 INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT (hash, "chainId", "votingPeriod") DO UPDATE SET votes = EXCLUDED.votes
                 RETURNING id, hash, "chainId", "votingPeriod", votes, (SELECT bp.pkh FROM "BakerProposal" bp WHERE bp.proposal = id), (SELECT bp.included FROM "BakerProposal" bp WHERE bp.proposal = id)
-              |] $ (\(ProposalVotes (phash, votes)) -> (phash, chainId, votingPeriod, votes)) <$> toList proposals
+              |] $ (\(pHash, votes) -> (pHash, chainId, votingPeriod, votes)) <$> protoAgnosticProposals
               for_ inserted $ \(pid, phash, chain, vp, votes, includedPkh :: Maybe PublicKeyHash, includedBlock :: Maybe BlockHash) ->
                 notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
         VotingPeriodKind_Exploration -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
@@ -792,16 +798,24 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash)
         ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
         quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
-        totalRolls <- foldl' (\x d -> _voterDelegate_rolls d + x) 0 <$> nodeQueryDataSource (NodeQuery_Listings (blk ^. hash))
-        pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalRolls)
+        listings <- nodeQueryDataSource $ NodeQuery_Listings (blk ^. hash)
+        let totalVotingPower = case listings of
+              VoterListingsV012 l -> rollsToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap V012._voterDelegate_rolls l
+              VoterListingsV013 l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap V013._voterDelegate_votingPower l
+        pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalVotingPower)
 
-      for_ mpv $ \(proposal, ballots, quorum, totalRolls) -> runDb (Identity db) $ do
+      for_ mpv $ \(proposal, ballots, quorum, totalVotingPower) -> runDb (Identity db) $ do
+        let protoAgnosticBallots = case ballots of
+              BallotsV012 (V012.Ballots yay nay pass) ->
+                ProtoAgnosticBallots (rollsToProtoAgnosticVotingPower yay) (rollsToProtoAgnosticVotingPower nay) (rollsToProtoAgnosticVotingPower pass)
+              BallotsV013 (V013.Ballots yay nay pass) ->
+                ProtoAgnosticBallots (tezToProtoAgnosticVotingPower yay) (tezToProtoAgnosticVotingPower nay) (tezToProtoAgnosticVotingPower pass)
         mPid <- (fmap . fmap) toId $ project1 AutoKeyField $ PeriodProposal_hashField ==. proposal
         for_ mPid $ \pid -> do
           let pv = PeriodVote
-                { _periodVote_ballots = ballots
+                { _periodVote_ballots = protoAgnosticBallots
                 , _periodVote_quorum = quorum
-                , _periodVote_totalRolls = totalRolls
+                , _periodVote_totalVotingPower = totalVotingPower
                 }
           insert_ $ f pid pv
           notify n $ Just $ f pid pv

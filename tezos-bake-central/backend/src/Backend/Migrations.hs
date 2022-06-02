@@ -122,6 +122,7 @@ preMigrate chainId =
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "ErrorLogBakerAccused") "op#blockHash" "blockHash"
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "Accusation")
   >=> migrateProtocolIndexV013
+  >=> migrateAmendmentPeriodsTables
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -935,3 +936,10 @@ removeErrorLogBakerAccusedForeignKey ta = do
         |]
       getTableAnalysis
     _ -> pure ta
+
+migrateAmendmentPeriodsTables :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateAmendmentPeriodsTables ta = do
+  let tables = ["PeriodAdoption", "PeriodPromotionVote", "PeriodTestingVote"]
+  forM_ tables $ \table ->
+    renameColumnIfExists (QualifiedIdentifier Nothing table) "periodVote#totalRolls" "periodVote#totalVotingPower" ta
+  getTableAnalysis

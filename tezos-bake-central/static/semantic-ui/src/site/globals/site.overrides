@@ -283,7 +283,7 @@ h6.ui.header {
 }
 
 .amendment-popup {
-  width: unit(528 / @emSize, rem);
+  width: unit(558 / @emSize, rem);
   padding: @20px 0;
   margin: -0.833em calc(1px ~"-" 1em); // Reverse the padding of the surrounding semui popup
   display: flex;
@@ -342,7 +342,7 @@ h6.ui.header {
   }
   > .detail {
     position: relative;
-    width: unit(288 / @emSize, rem);
+    width: unit(318 / @emSize, rem);
     border-left: solid @2px #f5f5f5;
     padding: 0 @20px;
     > .period {
