@@ -48,11 +48,13 @@ import Common.App
 import Common.Schema
 import ExtraPrelude
 import Frontend.Common
+import Frontend.Settings
 import Frontend.Watch
 
 data LSS a where
   LSS_ConnectLedger :: LSS ()
   LSS_SelectAddress :: LSS LedgerIdentifier
+  LSS_SetLiquidityBakingToggle :: LSS (SecretKey, PublicKeyHash)
   LSS_ImportAddress :: LSS (SecretKey, PublicKeyHash)
   LSS_AuthorizeLedger :: LSS (SecretKey, PublicKeyHash)
   LSS_RegisterDelegate :: LSS (SecretKey, PublicKeyHash)
@@ -65,6 +67,7 @@ toLSSText :: LSS a -> Text
 toLSSText = \case
   LSS_ConnectLedger -> "Connect Ledger"
   LSS_SelectAddress -> "Select Address"
+  LSS_SetLiquidityBakingToggle -> "Set liquidity baking toggle"
   LSS_ImportAddress -> "Import Address"
   LSS_AuthorizeLedger -> "Authorize Ledger"
   LSS_RegisterDelegate -> "Register Delegate"
@@ -96,7 +99,13 @@ instance GCompare (PromptResult m) where
   gcompare PromptResult_Success PromptResult_Success = GEQ
   gcompare PromptResult_Success _ = GGT
 
-ledgerSetupSteps :: forall t m js. (MonadAppWidget js t m, MonadJSM (Performable m), MonadJSM m) => m (Event t (Either ClientError ()))
+ledgerSetupSteps
+  :: forall t m js.
+  ( MonadAppWidget js t m
+  , MonadJSM (Performable m)
+  , MonadJSM m
+  )
+  => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedgerForced
   ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
@@ -105,7 +114,15 @@ ledgerSetupSteps = mdo
     elClass "h4" "ui header" $ do
       kilnLogo
       text "Start Baking"
-    let steps = [Some LSS_ConnectLedger, Some LSS_SelectAddress, Some LSS_ImportAddress, Some LSS_AuthorizeLedger, Some LSS_RegisterDelegate]
+    let
+      steps =
+        [ Some LSS_ConnectLedger
+        , Some LSS_SelectAddress
+        , Some LSS_SetLiquidityBakingToggle
+        , Some LSS_ImportAddress
+        , Some LSS_AuthorizeLedger
+        , Some LSS_RegisterDelegate
+        ]
     el "ol" $ for_ steps $ \step -> do
       let attrs = ffor currentStep $ \(s :=> _) -> "class" =: case compare step (Some s) of
             LT -> "done"
@@ -127,7 +144,8 @@ ledgerSetupSteps = mdo
   currentStep <- holdDyn (LSS_ConnectLedger :=> Identity ()) updateStep
   quitOrUpdate <- divClass "workflow" $ switchHold never <=< dyn $ ffor currentStep $ \case
     LSS_ConnectLedger :=> _ -> (fmap . fmap) (Right . (LSS_SelectAddress ==>)) (connectLedger connectedLedger)
-    LSS_SelectAddress :=> Identity l -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (selectAddress l)
+    LSS_SelectAddress :=> Identity l -> (fmap . fmap) (Right . (LSS_SetLiquidityBakingToggle ==>)) (selectAddress l)
+    LSS_SetLiquidityBakingToggle :=> Identity sk -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (setLiquidityBakingToggle sk)
     LSS_ImportAddress :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_AuthorizeLedger ==> sk) (importSecretKey sk)
     LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (bimap Left id) (authorizeLedger sk)
     LSS_RegisterDelegate :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_Complete ==> sk) (registerDelegate sk)
@@ -393,6 +411,66 @@ selectAddress ledger = divClass "select-address" $ mdo
     ]
   let register = fmapMaybe id $ tag (current selection) submitted
   pure register
+
+setLiquidityBakingToggle
+  :: forall t m js.
+  ( MonadAppWidget js t m
+  , MonadJSM (Performable m)
+  , MonadJSM m
+  )
+  => (SecretKey, PublicKeyHash)
+  -> m (Event t (SecretKey, PublicKeyHash))
+setLiquidityBakingToggle (sk, pkh) = divClass "central" $ mdo
+  elClass "h5" "ui header" $ text "Set up liquidity baking toggle"
+  divClass "explanation" $ do
+    let docsUri = "https://tezos.gitlab.io/jakarta/liquidity_baking.html#toggle-vote"
+    el "p" $ do
+      text "At every block, the baker producing the block includes a flag that requests ending the subsidy "
+      text "or on the contrary continuing or restarting it. The context maintains an exponential moving "
+      text "average of that flag. You can read more about this "
+      hrefLink docsUri $ text "in the docs. "
+      text "The baker has three options for this flag:"
+
+  let
+    radioItems =
+      [ usePassEv
+      , useOnEv
+      , useOffEv
+      ]
+
+    liquidityBakingToggleRadioItem ev optionName optionDesc =
+      fmap fst $ fakeRadioItem ev $ el "div" $ do
+        elAttr "div" ("style" =: "text-align: left;") $ text optionName
+        divClass "explanation" $ do
+          el "p" $ text optionDesc
+
+  usePass <- isRadioItemSelected radioItems usePassEv True
+  useOn   <- isRadioItemSelected radioItems useOnEv   False
+  useOff  <- isRadioItemSelected radioItems useOffEv  False
+
+  (usePassEv, useOnEv, useOffEv) <- divClass "column" $ do
+    usePassEv' <- liquidityBakingToggleRadioItem usePass "Pass" "Abstain from choosing"
+    useOnEv'   <- liquidityBakingToggleRadioItem useOn   "On"   "Request continuing or restarting the subsidy"
+    useOffEv'  <- liquidityBakingToggleRadioItem useOff  "Off"  "Request the end of subsidy"
+    pure (usePassEv', useOnEv', useOffEv')
+
+  let
+    selectedOptionDyn :: Dynamic t LiquidityBakingToggleVote
+    selectedOptionDyn = do
+      usePass' <- usePass
+      useOn'   <- useOn
+      if usePass'
+      then pure LiquidityBakingToggleVote_Pass
+      else if useOn'
+      then pure LiquidityBakingToggleVote_On
+      else pure LiquidityBakingToggleVote_Off
+
+    selectedOptionEv = tag (current selectedOptionDyn) continueEvent
+
+  continueEvent <- uiButton "primary" "Continue"
+  _ <- requestingIdentity $ public . PublicRequest_SetLiquidityBakingToggle pkh <$> selectedOptionEv
+  pure $ continueEvent $> (sk, pkh)
+
 
 validateBIP32 :: Validator.Validator t m Text
 validateBIP32 = Validator.Validator isValidBIP32 id

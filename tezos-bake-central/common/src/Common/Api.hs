@@ -24,7 +24,7 @@ import Text.URI (URI)
 
 import Tezos.Types
 
-import Common.App (AlertNotificationMethod, MailServerView, WorkerType)
+import Common.App (AlertNotificationMethod, LiquidityBakingToggleVote, MailServerView, WorkerType)
 import Common.Schema
 
 data PublicRequest a where
@@ -57,6 +57,7 @@ data PublicRequest a where
   PublicRequest_PollLedgerDevice :: PublicRequest ()
   PublicRequest_ShowLedgerBatch :: [SecretKey] -> PublicRequest ()
   PublicRequest_ShowLedger :: SecretKey -> PublicRequest ()
+  PublicRequest_SetLiquidityBakingToggle :: PublicKeyHash -> LiquidityBakingToggleVote -> PublicRequest ()
   PublicRequest_ImportSecretKey :: SecretKey -> PublicRequest ()
   PublicRequest_SetupLedgerToBake :: SecretKey -> PublicRequest ()
   PublicRequest_RegisterKeyAsDelegate :: SecretKey -> PublicRequest ()

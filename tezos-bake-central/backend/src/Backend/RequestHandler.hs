@@ -236,6 +236,8 @@ requestHandler appConfig emailFromAddr nds =
             , _ledgerAccount_shouldDoVoteProtocol = Nothing
             , _ledgerAccount_shouldDoVoteBallot = Nothing
             }
+      PublicRequest_SetLiquidityBakingToggle _pkh lqdtyToggle -> do
+        liftIO $ putStrLn $ "lqdtyToggle = " <> show lqdtyToggle
       PublicRequest_ImportSecretKey sk -> inDb $ do
         update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_SetupLedgerToBake sk -> inDb $ do

@@ -198,6 +198,14 @@ nodeDataIdentification = \case
     e
   Right _ -> ("Kiln Node", Nothing)
 
+data LiquidityBakingToggleVote
+  = LiquidityBakingToggleVote_Pass
+  | LiquidityBakingToggleVote_On
+  | LiquidityBakingToggleVote_Off
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON LiquidityBakingToggleVote
+instance ToJSON LiquidityBakingToggleVote
+
 data SetupState = SetupState
   { _setupState_import :: Maybe (First ImportSecretKeyStep)
   , _setupState_setup :: Maybe (First SetupLedgerToBakeStep)
