@@ -636,6 +636,16 @@ data BakerRight = BakerRight
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerRight
 
+-- | This data type represents additional arguments for 'tezos-baker'
+-- binary provided by user via Kiln UI (e.g 'liquidity-baking-toggle-vote').
+data BakerExtraArgs = BakerExtraArgs
+  { _bakerExtraArgs_publicKeyHash :: PublicKeyHash
+  , _bakerExtraArgs_chainId :: ChainId
+  , _bakerExtraArgs_option :: Text
+  , _bakerExtraArgs_value :: Maybe Text
+  } deriving (Eq, Ord, Show, Generic, Typeable)
+instance HasId BakerExtraArgs where
+  type IdData BakerExtraArgs = PublicKeyHash
 
 data BakeEfficiency = BakeEfficiency
   { _bakeEfficiency_bakedBlocks :: Word64

@@ -1,4 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
@@ -9,9 +11,10 @@ import Data.List.NonEmpty (nonEmpty)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
-import Tezos.Types (PublicKeyHash)
+import Tezos.Types (ChainId, PublicKeyHash)
 
 import Backend.Schema
+import Common.App
 import Common.Schema
 import ExtraPrelude
 
@@ -35,3 +38,20 @@ addBakerImpl pkh alias = do
              ]
              (BakerKey ==. fromId bId)
   notify NotifyTag_Baker (Id pkh, Just newVal)
+
+class IsBakerExtraArgs a where
+  toBakerExtraArgs :: a -> PublicKeyHash -> ChainId -> BakerExtraArgs
+
+-- TODO [#136]: create 'option' based on chain id or make it protocol dependent in another way
+instance IsBakerExtraArgs LiquidityBakingToggleVote where
+  toBakerExtraArgs lqdtyToggle pkh chainId = BakerExtraArgs
+    { _bakerExtraArgs_publicKeyHash = pkh
+    , _bakerExtraArgs_chainId = chainId
+    , _bakerExtraArgs_option = "--liquidity-baking-toggle-vote"
+    , _bakerExtraArgs_value = Just optionValue
+    }
+    where
+      optionValue = case lqdtyToggle of
+        LiquidityBakingToggleVote_On   -> "on"
+        LiquidityBakingToggleVote_Off  -> "off"
+        LiquidityBakingToggleVote_Pass -> "pass"

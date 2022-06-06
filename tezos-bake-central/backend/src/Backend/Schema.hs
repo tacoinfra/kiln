@@ -950,6 +950,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
         - name: BakerDetailsKey
           type: primary
           fields: [_bakerDetails_publicKeyHash]
+  - entity: BakerExtraArgs
+    autoKey: null
+    keys:
+     - name: BakerExtraArgsKey
+       default: true
+    constructors:
+     - name: BakerExtraArgs
+       uniques:
+        - name: BakerExtraArgsKey
+          type: primary
+          fields: [_bakerExtraArgs_publicKeyHash, _bakerExtraArgs_chainId, _bakerExtraArgs_option]
   - entity: BakerRightsProgress
     constructors:
       - name: BakerRightsProgress
