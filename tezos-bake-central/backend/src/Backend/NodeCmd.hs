@@ -54,6 +54,7 @@ import qualified Data.Text.Encoding as T
 import Tezos.NodeRPC (NodeRPCContext(..), QueryNode(rIsBootstrapped), RpcError, nodeRPC)
 import Tezos.Types (LedgerIdentifier, ProtocolHash, toBase58Text)
 
+import Backend.Common.Baker
 import Backend.Config (AppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir, BinaryPaths(..), BakerEndorserPaths(..))
 import Backend.NodeRPC
 import Backend.Process.Errors (ErrorEvent(..), ErrorTrace(..))
@@ -70,11 +71,11 @@ needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 nixNodePath :: FilePath
 nixNodePath = $(staticWhich "tezos-node")
 
-bakerPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
-bakerPath= getPath _bakerEndorserPaths_bakerPath
+getBakerPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
+getBakerPath = getPath _bakerEndorserPaths_bakerPath
 
-endorserPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
-endorserPath = getPath _bakerEndorserPaths_endorserPath
+getEndorserPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
+getEndorserPath = getPath _bakerEndorserPaths_endorserPath
 
 getPath
   :: (BakerEndorserPaths -> Maybe FilePath)
@@ -305,12 +306,14 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
       runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
         runLoggingEnv logger $ nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
 
-    pw (pathF, getArgs, daemonName) pid = processWorker
+    -- TODO [#135] separate baker and endorser process workers creation becasue of
+    -- major difference in their creation
+    pw mkProcessF pid  = processWorker
       (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
       ! #db db
       ! #config appConfig
-      ! #mkProcess (\proto -> return $ mkProcess proto pathF getArgs daemonName)
+      ! #mkProcess mkProcessF
       ! #pid pid
       ! #prestartCheck checkKilnNodeAvailability
       ! #mkNotify Nothing
@@ -347,8 +350,12 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
             ] CondEmpty
           notify NotifyTag_ConnectedLedger $ Just $ connectedLedger { _connectedLedger_ledgerIdentifier = Nothing }
 
-    bakerPw = pw (bakerPath paths, getBakerArgs appConfig alias, "tezos-baker") ! #logNamespace "kiln-baker" ! #jsonErrorLogsHandler (Just jsonLogsConsumer)
-    endorserPw = pw (endorserPath paths, const (Right endorserArgs), "tezos-endorser") ! #logNamespace "kiln-endorser" ! #jsonErrorLogsHandler Nothing
+    bakerMkProcessF = createBakerProcess appConfig logger db maybePaths
+    endorserMkProcessF proto =
+      return $ mkProcess proto (getEndorserPath paths) (const (Right endorserArgs)) "tezos-endorser"
+
+    bakerPw = pw bakerMkProcessF ! #logNamespace "kiln-baker" ! #jsonErrorLogsHandler (Just jsonLogsConsumer)
+    endorserPw = pw endorserMkProcessF ! #logNamespace "kiln-endorser" ! #jsonErrorLogsHandler Nothing
     paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
@@ -378,16 +385,61 @@ fetchProtocol pid =
         then return $ _bakerDaemonInternalData_altProtocol bdid
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
 
-getBakerArgs :: AppConfig -> String -> Maybe ProtocolHash -> Either Text [String]
-getBakerArgs appConfig alias = \case
-  Just "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" ->
-    Right protocolAgnosticArgs
-  Just "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" ->
-    Right $ protocolAgnosticArgs <> ["--liquidity-baking-toggle-vote", "pass"]
-  mbProtoHash ->
-    Left $ "'getBakerArgs': unknown protocol " <> maybe "<unknown protocol>" toBase58Text mbProtoHash
+createBakerProcess
+  :: AppConfig
+  -> LoggingEnv
+  -> Pool Postgresql
+  -> Maybe BinaryPaths -- ^ Custom binary paths provided by user
+  -> Maybe ProtocolHash
+  -> IO (Either Text CreateProcess)
+createBakerProcess appConfig logger db mbCustomPaths mbProto = do
+  let
+    paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths mbCustomPaths
+    bakerPath = getBakerPath paths mbProto
+  bakerArgs <- getBakerArgs appConfig logger db mbProto
+  putStrLn $ "'createBakerProcess': extra args = " <> show bakerArgs
+  pure $ mkBakerProcess bakerPath bakerArgs "tezos-baker"
   where
-    protocolAgnosticArgs =
+    mkBakerProcess path args daemonName = do
+      let
+        prettyProtoHash = maybe "<unknown protocol>" toBase58Text mbProto
+        eiBinaryPath = flip maybeToRight path $
+          daemonName <> " is not available for the given protocol: " <> prettyProtoHash
+      binaryPath <- eiBinaryPath
+      binaryArgs <- args
+      pure $ proc binaryPath binaryArgs
+
+getBakerArgs
+  :: AppConfig
+  -> LoggingEnv
+  -> Pool Postgresql
+  -> Maybe ProtocolHash
+  -> IO (Either Text [String])
+getBakerArgs appConfig logger db mbProtoHash = do
+  mbBakerData <- runLoggingEnv logger $ runDb (Identity db) $ project1
+    (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+  let
+    bakerData = case mbBakerData of
+      Nothing -> error "'getBakerArgs': 'BakerDaemonInternalData' is 'Nothing'."
+      Just bd -> bd
+    pkh = flip fromMaybe (_bakerDaemonInternalData_publicKeyHash bakerData) $
+        error "'getBakerArgs': baker public key hash is 'Nothing'."
+    chainId = _appConfig_chainId appConfig
+    alias = T.unpack $ _bakerDaemonInternalData_alias bakerData
+  case mbProtoHash of
+    Just "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" ->
+      pure $ Right $ protocolAgnosticArgs alias
+    Just "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" -> do
+      extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
+        BakerExtraArgs_publicKeyHashField ==. pkh &&.
+        BakerExtraArgs_chainIdField ==. chainId
+      let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
+      pure $ Right $ protocolAgnosticArgs alias <> extraArgsCmd
+    _ ->
+      pure $ Left $ "'getBakerArgs': unknown protocol "
+      <> maybe "<unknown protocol>" toBase58Text mbProtoHash
+  where
+    protocolAgnosticArgs alias =
       [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig
       , "--base-dir", tezosClientDataDir appConfig
       , "run", "with", "local", "node", nodeDataDir appConfig

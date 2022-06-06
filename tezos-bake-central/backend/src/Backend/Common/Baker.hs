@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-
+{-# LANGUAGE RecordWildCards #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
@@ -8,6 +8,7 @@
 module Backend.Common.Baker where
 
 import Data.List.NonEmpty (nonEmpty)
+import Data.Maybe (maybeToList)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
@@ -55,3 +56,6 @@ instance IsBakerExtraArgs LiquidityBakingToggleVote where
         LiquidityBakingToggleVote_On   -> "on"
         LiquidityBakingToggleVote_Off  -> "off"
         LiquidityBakingToggleVote_Pass -> "pass"
+
+toCmdArg :: BakerExtraArgs -> [Text]
+toCmdArg BakerExtraArgs{..} = _bakerExtraArgs_option : maybeToList _bakerExtraArgs_value

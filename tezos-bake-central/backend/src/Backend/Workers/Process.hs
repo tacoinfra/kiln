@@ -99,6 +99,7 @@ processWorker
 processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg prestartCheck) (Arg makeNotify)
   (Arg jsonErrorLogsHandler) = worker' "processWorker" $ do
   waitUntilShouldRun
+  threadDelay' 1
   bracket obtainLock freeLock $ \_ -> do
     inDb $ updateState ProcessState_Initializing
     let
