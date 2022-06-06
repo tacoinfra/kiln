@@ -108,23 +108,29 @@ ledgerSetupSteps
   => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedgerForced
+  protoHashDyn <- watchLatestProtocolHash
   ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
   let disconnect = ffilter isNothing $ updated ledgerIdentifier
-  divClass "progress" $ do
+  dyn_ $ ffor protoHashDyn $ \protoHash -> divClass "progress" $ do
     elClass "h4" "ui header" $ do
       kilnLogo
       text "Start Baking"
     let
+      -- TODO: remove when Jakarta is activated on mainnet
+      mbLqdtyToggleStep = case protoHash of
+        Just "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" ->
+          [Some LSS_SetLiquidityBakingToggle]
+        _ -> []
       steps =
         [ Some LSS_ConnectLedger
         , Some LSS_SelectAddress
-        , Some LSS_SetLiquidityBakingToggle
-        , Some LSS_ImportAddress
+        ] <> mbLqdtyToggleStep <>
+        [ Some LSS_ImportAddress
         , Some LSS_AuthorizeLedger
         , Some LSS_RegisterDelegate
         ]
     el "ol" $ for_ steps $ \step -> do
-      let attrs = ffor currentStep $ \(s :=> _) -> "class" =: case compare step (Some s) of
+      let attrs = ffor currentStepDyn $ \(s :=> _) -> "class" =: case compare step (Some s) of
             LT -> "done"
             EQ -> "current"
             GT -> ""
@@ -134,22 +140,29 @@ ledgerSetupSteps = mdo
           elAttr "img" ("src" =: static @"images/ledger.svg") blank
           text $ unLedgerIdentifier li
         when (step == Some LSS_SelectAddress) $ divClass "extra" $ do
-          dynText $ ffor currentStep $ maybe "" toPublicKeyHashText . \case
+          dynText $ ffor currentStepDyn $ maybe "" toPublicKeyHashText . \case
             LSS_ImportAddress :=> Identity (_, pkh) -> Just pkh
             LSS_AuthorizeLedger :=> Identity (_, pkh) -> Just pkh
             LSS_RegisterDelegate :=> Identity (_, pkh) -> Just pkh
             LSS_Complete :=> Identity (_, pkh) -> Just pkh
             _ -> Nothing
 
-  currentStep <- holdDyn (LSS_ConnectLedger :=> Identity ()) updateStep
-  quitOrUpdate <- divClass "workflow" $ switchHold never <=< dyn $ ffor currentStep $ \case
-    LSS_ConnectLedger :=> _ -> (fmap . fmap) (Right . (LSS_SelectAddress ==>)) (connectLedger connectedLedger)
-    LSS_SelectAddress :=> Identity l -> (fmap . fmap) (Right . (LSS_SetLiquidityBakingToggle ==>)) (selectAddress l)
-    LSS_SetLiquidityBakingToggle :=> Identity sk -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (setLiquidityBakingToggle sk)
-    LSS_ImportAddress :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_AuthorizeLedger ==> sk) (importSecretKey sk)
-    LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (bimap Left id) (authorizeLedger sk)
-    LSS_RegisterDelegate :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_Complete ==> sk) (registerDelegate sk)
-    LSS_Complete :=> Identity sk -> (fmap . fmap) (Left . Right) (setupComplete sk)
+  currentStepDyn <- holdDyn (LSS_ConnectLedger :=> Identity ()) updateStep
+  quitOrUpdate <- divClass "workflow" $ switchHold never <=< dyn $ ffor currentStepDyn $ \case
+      LSS_ConnectLedger :=> _ -> (fmap . fmap) (Right . (LSS_SelectAddress ==>)) (connectLedger connectedLedger)
+      LSS_SelectAddress :=> Identity l -> switchHold never <=< dyn $ ffor protoHashDyn $ \protoHash ->
+        let
+          -- TODO: remove when Jakarta is activated on mainnet
+          nextStep = case protoHash of
+            Just "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" -> LSS_SetLiquidityBakingToggle
+            _ -> LSS_ImportAddress
+        in
+          (fmap . fmap) (Right . (nextStep ==>)) (selectAddress l)
+      LSS_SetLiquidityBakingToggle :=> Identity sk -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (setLiquidityBakingToggle sk)
+      LSS_ImportAddress :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_AuthorizeLedger ==> sk) (importSecretKey sk)
+      LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (bimap Left id) (authorizeLedger sk)
+      LSS_RegisterDelegate :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_Complete ==> sk) (registerDelegate sk)
+      LSS_Complete :=> Identity sk -> (fmap . fmap) (Left . Right) (setupComplete sk)
   let (quit :: Event t (Either ClientError ()), updateStep) = fanEither quitOrUpdate
 
   pure $ leftmost

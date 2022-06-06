@@ -86,6 +86,12 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
+watchLatestProtocolHash :: MonadAppWidget js t m => m (Dynamic t (Maybe ProtocolHash))
+watchLatestProtocolHash = do
+  latestHeadDyn <- watchLatestHead
+  let protoHashDyn = (fmap . fmap) (_withProtocolHash_protocolHash . _branchInfo_block) latestHeadDyn
+  return protoHashDyn
+
 watchInternalBaker :: MonadAppWidget js t m => m (Dynamic t (Maybe (PublicKeyHash, BakerInternalData)))
 watchInternalBaker = do
   theView <- watchViewSelector . pure $ mempty
