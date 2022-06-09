@@ -140,9 +140,10 @@ library
     Backend.Http
     Backend.IndexQueries
     Backend.Migrations
-    Backend.NodeCmd
     Backend.NotifyHandler
+    Backend.Process.Baker
     Backend.Process.Errors
+    Backend.Process.Node
     Backend.RequestHandler
     Backend.Schema
     Backend.Snapshot

@@ -54,8 +54,8 @@ import Tezos.Types
 
 import Backend.Common
 import Backend.Config
-import Backend.NodeCmd
 import Backend.NodeRPC
+import Backend.Process.Node (nixNodePath)
 import Backend.Schema
 import Backend.Workers.Process
 import Common.Schema
