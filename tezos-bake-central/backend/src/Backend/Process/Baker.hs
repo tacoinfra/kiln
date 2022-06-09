@@ -15,7 +15,7 @@
 module Backend.Process.Baker where
 
 import Conduit (runConduit, sourceHandle, (.|))
-import Control.Monad.Logger (LoggingT, logError)
+import Control.Monad.Logger (LoggingT, logDebug, logError)
 import qualified Data.Aeson as Aeson
 import qualified Data.Conduit.List as CL
 import Data.Either.Combinators (maybeToRight)
@@ -125,25 +125,10 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
           }
         return bdid
   let
-    aliasT = _bakerDaemonInternalData_alias bdid
     bpid1 = _bakerDaemonInternalData_bakerProcessData bdid
     epid1 = _bakerDaemonInternalData_endorserProcessData bdid
     bpid2 = _bakerDaemonInternalData_altBakerProcessData bdid
     epid2 = _bakerDaemonInternalData_altEndorserProcessData bdid
-    alias = T.unpack aliasT
-    endorserArgs = [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
-                   , "--base-dir", tezosClientDataDir appConfig
-                   , "run"
-                   , alias]
-
-    mkProcess mbProto getBinaryPath getBinaryArgs daemonName = do
-      let
-        prettyProtoHash = maybe "<unknown protocol>" toBase58Text mbProto
-        eiBinaryPath = flip maybeToRight (getBinaryPath mbProto) $
-          daemonName <> " is not available for the given protocol: " <> prettyProtoHash
-      binaryPath <- eiBinaryPath
-      binaryArgs <- getBinaryArgs mbProto
-      pure $ proc binaryPath binaryArgs
 
     -- tezos-node needs some time before it becomes able to respond to RPC queries.
     -- Due to this, daemons may fail with connection timeout. So we check that node
@@ -153,14 +138,12 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
       runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
         runLoggingEnv logger $ nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
 
-    -- TODO [#135] separate baker and endorser process workers creation becasue of
-    -- major difference in their creation
-    pw mkProcessF pid  = processWorker
+    pw mkProcess pid  = processWorker
       (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
       ! #db db
       ! #config appConfig
-      ! #mkProcess mkProcessF
+      ! #mkProcess mkProcess
       ! #pid pid
       ! #prestartCheck checkKilnNodeAvailability
       ! #mkNotify Nothing
@@ -197,13 +180,13 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
             ] CondEmpty
           notify NotifyTag_ConnectedLedger $ Just $ connectedLedger { _connectedLedger_ledgerIdentifier = Nothing }
 
-    bakerMkProcessF = createBakerProcess appConfig logger db maybePaths
-    endorserMkProcessF proto =
-      return $ mkProcess proto (getEndorserPath paths) (const (Right endorserArgs)) "tezos-endorser"
-
-    bakerPw = pw bakerMkProcessF ! #logNamespace "kiln-baker" ! #jsonErrorLogsHandler (Just jsonLogsConsumer)
-    endorserPw = pw endorserMkProcessF ! #logNamespace "kiln-endorser" ! #jsonErrorLogsHandler Nothing
     paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
+
+    mkBakerProcess = createBakerProcess appConfig logger db paths
+    mkEndorserProcess = createEndorserProcess appConfig paths bdid
+
+    bakerPw = pw mkBakerProcess ! #logNamespace "kiln-baker" ! #jsonErrorLogsHandler (Just jsonLogsConsumer)
+    endorserPw = pw mkEndorserProcess ! #logNamespace "kiln-endorser" ! #jsonErrorLogsHandler Nothing
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.
@@ -236,25 +219,49 @@ createBakerProcess
   :: AppConfig
   -> LoggingEnv
   -> Pool Postgresql
-  -> Maybe BinaryPaths -- ^ Custom binary paths provided by user
+  -> NonEmpty BakerEndorserPaths
   -> Maybe ProtocolHash
   -> IO (Either Text CreateProcess)
-createBakerProcess appConfig logger db mbCustomPaths mbProto = do
-  let
-    paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths mbCustomPaths
-    bakerPath = getBakerPath paths mbProto
+createBakerProcess appConfig logger db paths mbProto = do
+  let bakerPath = getBakerPath paths mbProto
   bakerArgs <- getBakerArgs appConfig logger db mbProto
-  putStrLn $ "'createBakerProcess': extra args = " <> show bakerArgs
-  pure $ mkBakerProcess bakerPath bakerArgs "tezos-baker"
+  pure $ createDaemonProcess bakerPath bakerArgs "tezos-baker" mbProto
+
+createEndorserProcess
+  :: AppConfig
+  -> NonEmpty BakerEndorserPaths
+  -> BakerDaemonInternalData
+  -> Maybe ProtocolHash
+  -> IO (Either Text CreateProcess)
+createEndorserProcess appConfig paths bakerData mbProto = do
+  let endorserPath = getEndorserPath paths mbProto
+  pure $ createDaemonProcess endorserPath (Right endorserArgs) "tezos-endorser" mbProto
   where
-    mkBakerProcess path args daemonName = do
-      let
-        prettyProtoHash = maybe "<unknown protocol>" toBase58Text mbProto
-        eiBinaryPath = flip maybeToRight path $
-          daemonName <> " is not available for the given protocol: " <> prettyProtoHash
-      binaryPath <- eiBinaryPath
-      binaryArgs <- args
-      pure $ proc binaryPath binaryArgs
+    alias = T.unpack $ _bakerDaemonInternalData_alias bakerData
+    endorserArgs =
+      [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
+      , "--base-dir", tezosClientDataDir appConfig
+      , "run"
+      , alias
+      ]
+
+-- | Creates daemon process from the binary path and arguments.
+-- Returns either 'CreateProcess' or error message if path or arguments
+-- are not specified.
+createDaemonProcess
+ :: Maybe FilePath
+ -> Either Text [String]
+ -> Text
+ -> Maybe ProtocolHash
+ -> Either Text CreateProcess
+createDaemonProcess path args daemonName mbProto = do
+  let
+    prettyProtoHash = maybe "<unknown protocol>" toBase58Text mbProto
+    eiBinaryPath = flip maybeToRight path $
+      daemonName <> " is not available for the given protocol: " <> prettyProtoHash
+  binaryPath <- eiBinaryPath
+  binaryArgs <- args
+  pure $ proc binaryPath binaryArgs
 
 getBakerArgs
   :: AppConfig
@@ -280,6 +287,8 @@ getBakerArgs appConfig logger db mbProtoHash = do
       extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
         BakerExtraArgs_publicKeyHashField ==. pkh &&.
         BakerExtraArgs_chainIdField ==. chainId
+      runLoggingEnv logger $
+        $(logDebug) $ "Baker extra args: " <> tshow extraArgs
       let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
       pure $ Right $ protocolAgnosticArgs alias <> extraArgsCmd
     _ ->
