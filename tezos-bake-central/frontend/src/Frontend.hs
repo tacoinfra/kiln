@@ -1502,16 +1502,9 @@ startNodeWorkflow backWF close = Workflow $ do
         , useSnapshotFilePathEv
         ]
 
-      isRadioItemSelected :: Event t () -> Bool -> m (Dynamic t Bool)
-      isRadioItemSelected option selectedByDefault =
-        holdDyn selectedByDefault $ leftmost $ curOption : otherOptions
-        where
-          curOption    = True <$ option
-          otherOptions = map (\opt -> False <$ opt) radioItems
-
-    useSnapshotURI      <- isRadioItemSelected useSnapshotUriEv True
-    useSnapshotFile     <- isRadioItemSelected useSnapshotFileEv False
-    useSnapshotFilePath <- isRadioItemSelected useSnapshotFilePathEv False
+    useSnapshotURI      <- isRadioItemSelected radioItems useSnapshotUriEv True
+    useSnapshotFile     <- isRadioItemSelected radioItems useSnapshotFileEv False
+    useSnapshotFilePath <- isRadioItemSelected radioItems useSnapshotFilePathEv False
 
     ((useSnapshotUriEv, mSnapshotURI), (useSnapshotFileEv, mSelectedSnapshot)) <- divClass "column" $ do
       (useSnapshotUriEv', mSnapshotURI') <- fakeRadioItem useSnapshotURI $ el "div" $ do

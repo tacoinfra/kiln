@@ -236,6 +236,20 @@ requestHandler appConfig emailFromAddr nds =
             , _ledgerAccount_shouldDoVoteProtocol = Nothing
             , _ledgerAccount_shouldDoVoteBallot = Nothing
             }
+      PublicRequest_SetLiquidityBakingToggle pkh lqdtyToggle -> inDb $ do
+        let
+          chainId = _appConfig_chainId appConfig
+          lqdtyBakingExtraArg = toBakerExtraArgs lqdtyToggle pkh chainId
+          cond =
+            BakerExtraArgs_publicKeyHashField ==. pkh &&.
+            BakerExtraArgs_chainIdField ==. chainId &&.
+            BakerExtraArgs_optionField ==. _bakerExtraArgs_option lqdtyBakingExtraArg
+        existingArg <- selectSingle cond
+        case existingArg of
+          Nothing -> insert lqdtyBakingExtraArg
+          Just _ -> update
+            [ BakerExtraArgs_valueField =. _bakerExtraArgs_value lqdtyBakingExtraArg
+            ] cond
       PublicRequest_ImportSecretKey sk -> inDb $ do
         update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
       PublicRequest_SetupLedgerToBake sk -> inDb $ do

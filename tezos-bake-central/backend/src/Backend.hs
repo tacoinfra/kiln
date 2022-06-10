@@ -82,9 +82,10 @@ import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, 
                       , _nodeConfigFile_network, validateNodeConfigFile)
 import Backend.Http (runHttpT)
 import Backend.Migrations (migrateKiln)
-import Backend.NodeCmd (bakerDaemonProcess, handleExportLogs, internalNodeWorker)
 import Backend.NodeRPC (NodeDataSource (..))
 import Backend.NotifyHandler (notifyHandler)
+import Backend.Process.Baker (bakerDaemonProcess)
+import Backend.Process.Node (internalNodeWorker, handleExportLogs)
 import Backend.RequestHandler (getDefaultMailServer, requestHandler)
 import Backend.Schema
 import Backend.Snapshot

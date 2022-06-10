@@ -710,3 +710,17 @@ backButton = do
     icon "icon-angle-left blue"
     el "span" $ text "Back"
   pure $ domEvent Click e
+
+isRadioItemSelected
+  :: ( Reflex t
+     , MonadHold t m
+     )
+  => [Event t ()]
+  -> Event t ()
+  -> Bool
+  -> m (Dynamic t Bool)
+isRadioItemSelected radioItems option selectedByDefault =
+  holdDyn selectedByDefault $ leftmost $ curOption : otherOptions
+  where
+    curOption    = True <$ option
+    otherOptions = map (\opt -> False <$ opt) radioItems
