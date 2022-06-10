@@ -15,6 +15,7 @@
 module Backend.Process.Baker where
 
 import Conduit (runConduit, sourceHandle, (.|))
+import Control.Monad (liftM2)
 import Control.Monad.Logger (LoggingT, logDebug, logError)
 import qualified Data.Aeson as Aeson
 import qualified Data.Conduit.List as CL
@@ -139,6 +140,19 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
       runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
         runLoggingEnv logger $ nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
 
+    -- to initialize baker process we need to get its extra arguments from the database
+    -- for this we need to make sure that its public key hash presents in 'BakerDaemonInternal' table
+    checkBakerPkhPresence :: IO Bool
+    checkBakerPkhPresence = isJust . join <$> do
+      runLoggingEnv logger $ runDb (Identity db) $ project1
+        (  BakerDaemonInternal_dataField
+        ~> DeletableRow_dataSelector
+        ~> BakerDaemonInternalData_publicKeyHashSelector
+        ) CondEmpty
+
+    bakerPrestartCheck :: IO Bool
+    bakerPrestartCheck = liftM2 (&&) checkKilnNodeAvailability checkBakerPkhPresence
+
     pw mkProcess pid  = processWorker
       (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
       ! #logger logger
@@ -146,7 +160,7 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
       ! #config appConfig
       ! #mkProcess mkProcess
       ! #pid pid
-      ! #prestartCheck checkKilnNodeAvailability
+      ! #prestartCheck bakerPrestartCheck
       ! #mkNotify Nothing
 
     jsonLogsConsumer :: Handle -> IO ()
