@@ -45,6 +45,7 @@ import Backend.Process.Errors (ErrorEvent(..), ErrorTrace(..))
 import Backend.Schema
 import Backend.Workers.Process
 import Backend.Workers.TezosClient (reportLedgerDisconnection)
+import Common.App
 import Common.Schema
 import ExtraPrelude
 
@@ -72,12 +73,12 @@ tezosBinaryPaths :: NonEmpty BakerEndorserPaths
 tezosBinaryPaths = NonEmpty.fromList [ithacaPaths, jakartaPaths]
   where
     ithacaPaths = BakerEndorserPaths
-      { _bakerEndorserPaths_proto = "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A"
+      { _bakerEndorserPaths_proto = IthacaProtocolHash
       , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-012-Psithaca")
       , _bakerEndorserPaths_endorserPath = Nothing
       }
     jakartaPaths = BakerEndorserPaths
-      { _bakerEndorserPaths_proto = "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY"
+      { _bakerEndorserPaths_proto = JakartaProtocolHash
       , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-013-PtJakart")
       , _bakerEndorserPaths_endorserPath = Nothing
       }
@@ -281,9 +282,9 @@ getBakerArgs appConfig logger db mbProtoHash = do
     chainId = _appConfig_chainId appConfig
     alias = T.unpack $ _bakerDaemonInternalData_alias bakerData
   case mbProtoHash of
-    Just "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" ->
+    Just IthacaProtocolHash ->
       pure $ Right $ protocolAgnosticArgs alias
-    Just "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" -> do
+    Just JakartaProtocolHash -> do
       extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
         BakerExtraArgs_publicKeyHashField ==. pkh &&.
         BakerExtraArgs_chainIdField ==. chainId

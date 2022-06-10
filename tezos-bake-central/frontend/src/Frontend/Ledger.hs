@@ -118,7 +118,7 @@ ledgerSetupSteps = mdo
     let
       -- TODO: remove when Jakarta is activated on mainnet
       mbLqdtyToggleStep = case protoHash of
-        Just "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" ->
+        Just JakartaProtocolHash ->
           [Some LSS_SetLiquidityBakingToggle]
         _ -> []
       steps =
@@ -154,7 +154,7 @@ ledgerSetupSteps = mdo
         let
           -- TODO: remove when Jakarta is activated on mainnet
           nextStep = case protoHash of
-            Just "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" -> LSS_SetLiquidityBakingToggle
+            Just JakartaProtocolHash -> LSS_SetLiquidityBakingToggle
             _ -> LSS_ImportAddress
         in
           (fmap . fmap) (Right . (nextStep ==>)) (selectAddress l)

@@ -21,6 +21,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -102,7 +103,11 @@ type Deletable' e a = Validation (First e) a
 instance FromJSON e => FromJSON a => FromJSON (Validation e a)
 instance ToJSON e => ToJSON a => ToJSON (Validation e a)
 
--- data BakerSummary = Baker Baker' AlertCount
+pattern IthacaProtocolHash :: ProtocolHash
+pattern IthacaProtocolHash = "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A"
+
+pattern JakartaProtocolHash :: ProtocolHash
+pattern JakartaProtocolHash = "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY"
 
 data WorkerType
   = WorkerType_Node
