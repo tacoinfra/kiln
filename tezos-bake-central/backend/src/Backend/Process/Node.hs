@@ -27,8 +27,7 @@ import Data.List (isInfixOf)
 import Data.Version
 import Database.Groundhog.Postgresql
 import Named
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb, project1)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removePathForcibly)

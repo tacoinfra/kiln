@@ -1,6 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
@@ -9,9 +10,11 @@ module Backend.Common.Baker where
 
 import Data.List.NonEmpty (nonEmpty)
 import Data.Maybe (maybeToList)
+import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
+import Rhyolite.Backend.DB (project1)
 import Tezos.Types (ChainId, PublicKeyHash)
 
 import Backend.Schema
@@ -59,3 +62,43 @@ instance IsBakerExtraArgs LiquidityBakingToggleVote where
 
 toCmdArg :: BakerExtraArgs -> [Text]
 toCmdArg BakerExtraArgs{..} = _bakerExtraArgs_option : maybeToList _bakerExtraArgs_value
+
+startBakerDaemon
+  :: ( Monad m
+     , PersistBackend m
+     , SqlDb (PhantomDb m)
+     )
+  => m ()
+startBakerDaemon = updateBakerDaemon ProcessControl_Run
+
+stopBakerDaemon
+  :: ( Monad m
+     , PersistBackend m
+     , SqlDb (PhantomDb m)
+     )
+  => m ()
+stopBakerDaemon = updateBakerDaemon ProcessControl_Stop
+
+restartBakerDaemon
+  :: ( Monad m
+     , PersistBackend m
+     , SqlDb (PhantomDb m)
+     )
+  => m ()
+restartBakerDaemon = updateBakerDaemon ProcessControl_Restart
+
+updateBakerDaemon
+  :: ( Monad m
+     , PersistBackend m
+     , SqlDb (PhantomDb m)
+     )
+  => ProcessControl -> m ()
+updateBakerDaemon control = do
+  project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+    >>= traverse_ (\bdid -> do
+      let bPid = _bakerDaemonInternalData_bakerProcessData bdid
+          ePid = _bakerDaemonInternalData_endorserProcessData bdid
+      update
+        [ ProcessData_controlField =. control
+        , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+        ] (AutoKeyField `in_` map fromId [bPid, ePid]))

@@ -27,8 +27,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Database.Groundhog.Postgresql
 import Fmt (pretty)
 import Named
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (getTime, runDb, project1)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime, runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Process as Proc
 import System.IO (Handle)

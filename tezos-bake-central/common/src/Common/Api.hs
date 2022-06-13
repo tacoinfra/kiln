@@ -57,7 +57,11 @@ data PublicRequest a where
   PublicRequest_PollLedgerDevice :: PublicRequest ()
   PublicRequest_ShowLedgerBatch :: [SecretKey] -> PublicRequest ()
   PublicRequest_ShowLedger :: SecretKey -> PublicRequest ()
-  PublicRequest_SetLiquidityBakingToggle :: PublicKeyHash -> LiquidityBakingToggleVote -> PublicRequest ()
+  PublicRequest_SetLiquidityBakingToggle
+    :: PublicKeyHash
+    -> Bool
+    -> LiquidityBakingToggleVote
+    -> PublicRequest ()
   PublicRequest_ImportSecretKey :: SecretKey -> PublicRequest ()
   PublicRequest_SetupLedgerToBake :: SecretKey -> PublicRequest ()
   PublicRequest_RegisterKeyAsDelegate :: SecretKey -> PublicRequest ()
