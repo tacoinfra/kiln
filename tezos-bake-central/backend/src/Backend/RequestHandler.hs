@@ -135,7 +135,7 @@ requestHandler appConfig emailFromAddr nds =
 
             insertOrUpdateAccounts f sks' = do
               res <- runExceptT $ for sks' $ \sk -> do
-                  mPkh <- withExceptT ((,) sk . Right) $ ExceptT $ runNoLoggingT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
+                  mPkh <- withExceptT ((,) sk . Right) $ ExceptT $ runNoLoggingT $ showLedger appConfig sk
                   case mPkh of
                       Nothing -> do
                         notify NotifyTag_ShowLedger (sk, Left $ "tezosClientWorker:showLedger: public key hash unavailable")

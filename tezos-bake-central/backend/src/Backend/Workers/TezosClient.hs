@@ -83,9 +83,8 @@ tezosClientWorker
   -> NodeDataSource
   -> AppConfig
   -> Pool Postgresql
-  -> Maybe BinaryPaths
   -> IO (IO ())
-tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = runLoggingEnv logger $ do
+tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db = runLoggingEnv logger $ do
   workerWithDelay "tezosClientWorker" (pure delay) $ const $ runLoggingEnv logger $ do
     liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
 
@@ -99,7 +98,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
           inDb (selectSingle $ LedgerAccount_shouldImportField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
             inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting })
-            importSecretKey appConfig maybePaths sk >>= \i -> inDb $ do
+            importSecretKey appConfig sk >>= \i -> inDb $ do
               update [LedgerAccount_importedField =. False] (LedgerAccount_importedField ==. True)
               update
                 [LedgerAccount_importedField =. (i == ImportSecretKeyStep_Done), LedgerAccount_shouldImportField =. False]
@@ -110,7 +109,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
           inDb (selectSingle $ LedgerAccount_shouldSetupToBakeField ==. True &&. LedgerAccount_importedField ==. True) >>= \mla -> for_ mla $ \la -> do
             let sk = _ledgerAccount_secretKey la
             inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
-            setupLedgerToBake appConfig maybePaths >>= \i -> do
+            setupLedgerToBake appConfig >>= \i -> do
               isReg <- if i == SetupLedgerToBakeStep_Done
                 then (fromMaybe False <$>) $ traverse (checkIfRegistered logger db nds) $ _ledgerAccount_publicKeyHash la
                 else pure False
@@ -130,7 +129,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
             Just pkh -> do
               let sk = _ledgerAccount_secretKey la
               inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First RegisterStep_Prompting })
-              registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths >>= \result -> inDb $ do
+              registerKeyAsDelegate logger db nds sk pkh appConfig >>= \result -> inDb $ do
                 update
                   [LedgerAccount_shouldRegisterField =. False]
                   (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
@@ -140,7 +139,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
           -- run appropriate 'show ledger' commands, but only do one at a time
           -- to allow other commands to take precedence
           inDb (project1 LedgerAccount_secretKeyField (isFieldNothing LedgerAccount_publicKeyHashField)) >>= \msk -> for_ msk $ \sk -> do
-            showLedger appConfig maybePaths sk >>= \case
+            showLedger appConfig sk >>= \case
               Left ClientError_LedgerDisconnected -> inDb $ do
                 now <- getTime
                 -- Mark ledger as disconnected
@@ -157,7 +156,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
               Right mPkh -> do
                 case mPkh of
                   Nothing -> inDb $ notify NotifyTag_ShowLedger (sk, Left $ "tezosClientWorker:showLedger: public key hash unavailable")
-                  Just pkh -> getBalanceFor appConfig maybePaths pkh >>= \case
+                  Just pkh -> getBalanceFor appConfig pkh >>= \case
                     -- In case of error, give another try in the code further down
                     Left err -> $(logError) (T.pack (show err))
                     Right Nothing -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh
@@ -170,7 +169,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
           -- get any missing balances
           las <- inDb $ select $ LedgerAccount_publicKeyHashField /=. (Nothing :: Maybe PublicKeyHash) &&. isFieldNothing LedgerAccount_balanceField
           let las' = mapMaybe (\la -> (,) (_ledgerAccount_secretKey la) <$> _ledgerAccount_publicKeyHash la) las
-          for_ las' $ \(sk, pkh) -> getBalanceFor appConfig maybePaths pkh >>= \case
+          for_ las' $ \(sk, pkh) -> getBalanceFor appConfig pkh >>= \case
             Left (ClientError_Timeout)-> do
               $(logError) ("Client Timout: getBalanceFor: " <> toPublicKeyHashText pkh)
               inDb $ do
@@ -189,7 +188,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
               Just hwm -> do
                 let sk = _ledgerAccount_secretKey la
                 inDb $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First SetHWMStep_Prompting })
-                setHighWaterMark appConfig maybePaths sk hwm >>= \i -> inDb $ do
+                setHighWaterMark appConfig sk hwm >>= \i -> inDb $ do
                   update [LedgerAccount_shouldSetHWMField =. (Nothing :: Maybe RawLevel)] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
                   notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_setHWM = Just $ First i })
 
@@ -208,7 +207,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
               inDb $ notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
               vs <- case shouldDoVoteBallot of
                 Nothing -> do
-                  vs <- submitProposals appConfig maybePaths [proposalHash]
+                  vs <- submitProposals appConfig [proposalHash]
                   when (vs == VoteStep_Done) $ inDb $ do
                     _ <- [executeQ|
                       INSERT INTO "BakerProposal" (pkh, proposal, included, attempted)
@@ -219,7 +218,7 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
                     for_ mpp $ \pp -> notify NotifyTag_Proposals (proposalId, Just (pp, Just False))
                   pure vs
                 Just ballot -> do
-                  vs <- submitBallot appConfig maybePaths proposalHash ballot
+                  vs <- submitBallot appConfig proposalHash ballot
                   when (vs == VoteStep_Done) $ inDb $ do
                     let bv = BakerVote
                           { _bakerVote_pkh = pkh
@@ -241,10 +240,10 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
 
         if _connectedLedger_forceConnectivityCheck cl
           -- If we want to immediately do the connectivity check
-          then updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
+          then updateConnectedLedgerViaGetConnectedLedger appConfig db
           -- Otherwise, we might want to do the connectivity check because some time has passed
           else case (ledgerCheckDelay, _connectedLedger_updated cl) of
-            (_,Nothing) -> updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
+            (_,Nothing) -> updateConnectedLedgerViaGetConnectedLedger appConfig db
             (ledgerBackgroundUpdateInterval, Just upd) ->
               when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
                 doSensibleLedgerCheck (isJust $ _connectedLedger_ledgerIdentifier cl)
@@ -286,14 +285,14 @@ tezosClientWorker delay !ledgerCheckDelay logger nds appConfig db maybePaths = r
               -- If we have no rights, we still check that we've seen all rights up to current block
               Just progressLvl -> pure $ progressLvl >= blk ^. level
               Nothing -> pure False
-        when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths
+        when (doCheck == Just True) $ updateConnectedLedgerViaGetConnectedLedger appConfig db
 
 withDbAndConfig :: Pool Postgresql -> AppConfig -> AppSerializable a -> LoggingT IO a
 withDbAndConfig db appConfig = runDb (Identity db) . flip runReaderT appConfig
 
-updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> Maybe BinaryPaths -> LoggingT IO ()
-updateConnectedLedgerViaGetConnectedLedger appConfig db maybePaths = do
-  getConnectedLedger appConfig maybePaths >>= \case
+updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> LoggingT IO ()
+updateConnectedLedgerViaGetConnectedLedger appConfig db = do
+  getConnectedLedger appConfig >>= \case
     Left err -> do
       $(logError) (tshow err)
       reportLedgerDisconnection db appConfig False
@@ -384,9 +383,9 @@ resetLedgerQueue logger db =  liftIO $ runLoggingEnv logger $ runDb (Identity db
   ]
   CondEmpty
 
-getConnectedLedger :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
-getConnectedLedger appConfig maybePaths = runExceptT $ do
-  stdout <- runClientCommand appConfig maybePaths defaultTimeout ["list", "connected", "ledgers"] $ \_warnings errors -> if
+getConnectedLedger :: (MonadLoggerIO m) => AppConfig -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
+getConnectedLedger appConfig = runExceptT $ do
+  stdout <- runClientCommand appConfig defaultTimeout ["list", "connected", "ledgers"] $ \_warnings errors -> if
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
   getKungFuName (T.lines stdout)
@@ -418,9 +417,9 @@ getConnectedLedger appConfig maybePaths = runExceptT $ do
         $(logWarn) $ "getConnectedLedger: failed to find kung fu name of ledger from: " <> T.unlines xs
         pure $ Nothing
 
-getBalanceFor :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> PublicKeyHash -> m (Either ClientError (Maybe Tez))
-getBalanceFor appConfig maybePaths pkh = runExceptT $ do
-  stdout <- runClientCommand appConfig maybePaths defaultTimeout ["get", "balance", "for", T.unpack $ toPublicKeyHashText pkh] $ \warnings errors -> if
+getBalanceFor :: (MonadLoggerIO m) => AppConfig -> PublicKeyHash -> m (Either ClientError (Maybe Tez))
+getBalanceFor appConfig pkh = runExceptT $ do
+  stdout <- runClientCommand appConfig defaultTimeout ["get", "balance", "for", T.unpack $ toPublicKeyHashText pkh] $ \warnings errors -> if
     | "Failed to acquire the protocol version from the node" : _ <- warnings
     , "Unrecognized command." : _ <- errors -> Left ClientError_NodeNotReady
     | otherwise -> Left $ ClientError_Other $ T.unlines errors
@@ -434,9 +433,9 @@ Tezos address at this path/curve: tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
 Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM
 -}
 
-showLedger :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> SecretKey -> m (Either ClientError (Maybe PublicKeyHash))
-showLedger appConfig maybePaths sk = runExceptT $ do
-  stdout <- runClientCommand appConfig maybePaths defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
+showLedger :: (MonadLoggerIO m) => AppConfig -> SecretKey -> m (Either ClientError (Maybe PublicKeyHash))
+showLedger appConfig sk = runExceptT $ do
+  stdout <- runClientCommand appConfig defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
     | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
     | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
     | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
@@ -464,9 +463,9 @@ showLedger appConfig maybePaths sk = runExceptT $ do
         -> Just pkh
       xs -> getPublicKeyHashZeronet xs
 
-importSecretKey :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> SecretKey -> m ImportSecretKeyStep
-importSecretKey appConfig maybePaths sk = do
-  e <- runExceptT $ runClientCommand appConfig maybePaths noTimeout ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \_warnings errors -> if
+importSecretKey :: (MonadLoggerIO m) => AppConfig -> SecretKey -> m ImportSecretKeyStep
+importSecretKey appConfig sk = do
+  e <- runExceptT $ runClientCommand appConfig noTimeout ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \_warnings errors -> if
     | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ImportSecretKeyStep_Declined
     | "Ledger Transport level error:" : _ <- errors -> Left ImportSecretKeyStep_Disconnected
     | otherwise -> Left $ ImportSecretKeyStep_Failed $ T.unlines errors
@@ -509,12 +508,11 @@ runClientCommand' nodeRpcURI clientDataDir maybePaths mTimeout args handleError 
 runClientCommand
   :: (MonadLoggerIO m, Show e)
   => AppConfig
-  -> Maybe BinaryPaths
   -> Maybe (NominalDiffTime, e)
   -> [String]
   -> ([Text] -> [Text] -> Either e Text)
   -> ExceptT e m Text
-runClientCommand appConfig = runClientCommand' (kilnNodeRpcURI appConfig) (tezosClientDataDir appConfig)
+runClientCommand appConfig = runClientCommand' (kilnNodeRpcURI appConfig) (tezosClientDataDir appConfig) (_appConfig_binaryPaths appConfig)
 
 computeChainId :: (MonadLoggerIO m) => Port -> FilePath -> Maybe BinaryPaths -> Aeson.Value -> m (Either Text ChainId)
 computeChainId port kilnDataDir maybePaths json = do
@@ -530,9 +528,9 @@ computeChainId port kilnDataDir maybePaths json = do
     eCommand =
       liftA2 (\p gb -> words $ printf "--protocol %s compute chain id from block hash %s" p gb) protocol genesisBlock
 
-setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> m SetupLedgerToBakeStep
-setupLedgerToBake appConfig maybePaths = do
-  e <- runExceptT $ runClientCommand appConfig maybePaths noTimeout ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \_warnings errors -> if
+setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> m SetupLedgerToBakeStep
+setupLedgerToBake appConfig = do
+  e <- runExceptT $ runClientCommand appConfig noTimeout ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \_warnings errors -> if
     | "Ledger Application level error (setup): Conditions of use not satisfied" : _ <- errors -> Left SetupLedgerToBakeStep_Declined
     | "Ledger Transport level error:" : _ <- errors -> Left SetupLedgerToBakeStep_Disconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetupLedgerToBakeStep_Disconnected
@@ -562,13 +560,13 @@ checkIfRegistered logger db nds pkh = do
 -- get up-to-date. We detect that case and just return an error.
 registerKeyAsDelegate
   :: (MonadIO m, MonadLogger m)
-  => LoggingEnv -> Pool Postgresql -> NodeDataSource -> SecretKey -> PublicKeyHash -> AppConfig -> Maybe BinaryPaths -> m RegisterStep
-registerKeyAsDelegate logger db nds sk pkh appConfig maybePaths = checkIfRegistered logger db nds pkh >>= \case
+  => LoggingEnv -> Pool Postgresql -> NodeDataSource -> SecretKey -> PublicKeyHash -> AppConfig -> m RegisterStep
+registerKeyAsDelegate logger db nds sk pkh appConfig = checkIfRegistered logger db nds pkh >>= \case
     True -> pure RegisterStep_AlreadyRegistered
     False -> do
       -- withCreateProcess will close these automatically
       (readPipe, writePipe) <- liftIO Process.createPipe
-      let p = (Process.proc (clientPath maybePaths) ["--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig, "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate"])
+      let p = (Process.proc (clientPath $ _appConfig_binaryPaths appConfig) ["--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig, "--base-dir", tezosClientDataDir appConfig, "register", "key", T.unpack kilnLedgerAlias, "as", "delegate"])
             { Process.std_err = Process.UseHandle writePipe
             , Process.std_out = Process.UseHandle writePipe
             }
@@ -609,18 +607,18 @@ parseRegisterStep (T.strip -> err)
   = Just RegisterStep_NodeNotReady
   | otherwise = Nothing
 
-setHighWaterMark :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> SecretKey -> RawLevel -> m SetHWMStep
-setHighWaterMark appConfig maybePaths sk bl = do
-  e <- runExceptT $ runClientCommand appConfig maybePaths noTimeout ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \_warnings errors -> if
+setHighWaterMark :: (MonadLoggerIO m) => AppConfig -> SecretKey -> RawLevel -> m SetHWMStep
+setHighWaterMark appConfig sk bl = do
+  e <- runExceptT $ runClientCommand appConfig noTimeout ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \_warnings errors -> if
     | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left SetHWMStep_Declined
     | "Ledger Transport level error:" : _ <- errors -> Left SetHWMStep_Disconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetHWMStep_Disconnected
     | otherwise -> Left $ SetHWMStep_Failed $ T.unlines errors
   pure $ either id (const SetHWMStep_Done) e
 
-submitProposals :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> [ProtocolHash] -> m VoteStep
-submitProposals appConfig maybePaths proposals = do
-  e <- runExceptT $ runClientCommand appConfig maybePaths noTimeout (["submit", "proposals", "for", "ledger_kiln"] ++ map (T.unpack . toBase58Text) proposals) $ \_warnings errors -> if
+submitProposals :: (MonadLoggerIO m) => AppConfig -> [ProtocolHash] -> m VoteStep
+submitProposals appConfig proposals = do
+  e <- runExceptT $ runClientCommand appConfig noTimeout (["submit", "proposals", "for", "ledger_kiln"] ++ map (T.unpack . toBase58Text) proposals) $ \_warnings errors -> if
     | "Submission failed because of invalid proposals." : _ <- errors -> Left $ VoteStep_Failed "Invalid proposals"
     | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
     | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
@@ -631,9 +629,9 @@ submitProposals appConfig maybePaths proposals = do
     | otherwise -> Left $ VoteStep_Failed $ T.unlines errors
   pure $ either id (const VoteStep_Done) e
 
-submitBallot :: (MonadLoggerIO m) => AppConfig -> Maybe BinaryPaths -> ProtocolHash -> Ballot -> m VoteStep
-submitBallot appConfig maybePaths proposal ballot = do
-  e <- runExceptT $ runClientCommand appConfig maybePaths noTimeout ["submit", "ballot", "for", "ledger_kiln", T.unpack (toBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
+submitBallot :: (MonadLoggerIO m) => AppConfig -> ProtocolHash -> Ballot -> m VoteStep
+submitBallot appConfig proposal ballot = do
+  e <- runExceptT $ runClientCommand appConfig noTimeout ["submit", "ballot", "for", "ledger_kiln", T.unpack (toBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
     | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
     | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
     | "Unauthorized ballot" : _ <- errors -> Left $ VoteStep_Failed "Unauthorized ballot"

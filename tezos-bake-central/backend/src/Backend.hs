@@ -431,7 +431,7 @@ backendImpl cfg serve = do
       addFinalizer =<< internalNodeWorker appConfig logger db binaryPaths
       addFinalizer =<< protocolMonitorWorker dataSrc db
       addFinalizer =<< bakerDaemonProcess appConfig dataSrc logger db binaryPaths
-      addFinalizer =<< tezosClientWorker 1.3 ledgerCheckDelay logger dataSrc appConfig db binaryPaths
+      addFinalizer =<< tezosClientWorker 1.3 ledgerCheckDelay logger dataSrc appConfig db
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case
