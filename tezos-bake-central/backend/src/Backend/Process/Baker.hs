@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Backend.Process.Baker where
 
@@ -24,6 +25,7 @@ import Data.Pool (Pool)
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Maybe (fromJust)
 import Database.Groundhog.Postgresql
 import Fmt (pretty)
 import Named
@@ -39,7 +41,7 @@ import Tezos.NodeRPC (NodeRPCContext(..), QueryNode(rIsBootstrapped), RpcError, 
 import Tezos.Types (LedgerIdentifier, ProtocolHash, toBase58Text)
 
 import Backend.Common.Baker
-import Backend.Config (AppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir, BinaryPaths(..), BakerEndorserPaths(..))
+import Backend.Config (AppConfig (..),  BinaryPaths(..), BakerEndorserPaths(..), Votefile(..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir)
 import Backend.NodeRPC
 import Backend.Process.Errors (ErrorEvent(..), ErrorTrace(..))
 import Backend.Schema
@@ -296,15 +298,36 @@ getBakerArgs appConfig logger db mbProtoHash = do
     alias = T.unpack $ _bakerDaemonInternalData_alias bakerData
   case mbProtoHash of
     Just IthacaProtocolHash ->
-      pure $ Right $ protocolAgnosticArgs alias
+      pure $ Right $ protocolAgnosticArgs alias <> bakerCustomArgs
     Just JakartaProtocolHash -> do
-      extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
+      -- TODO uncomment lines below when Jakarta is activated on mainnet.
+
+      -- extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
+      --   BakerExtraArgs_publicKeyHashField ==. pkh &&.
+      --   BakerExtraArgs_chainIdField ==. chainId
+      -- runLoggingEnv logger $
+      --   $(logDebug) $ "Baker extra args: " <> tshow extraArgs
+      -- let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
+      -- pure $ Right $ protocolAgnosticArgs alias <> extraArgsCmd
+
+      existingExtraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
         BakerExtraArgs_publicKeyHashField ==. pkh &&.
         BakerExtraArgs_chainIdField ==. chainId
       runLoggingEnv logger $
-        $(logDebug) $ "Baker extra args: " <> tshow extraArgs
-      let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
-      pure $ Right $ protocolAgnosticArgs alias <> extraArgsCmd
+        $(logDebug) $ "Existing Baker extra args: " <> tshow existingExtraArgs
+
+      let mbLqdtyToggle = bakerExtraArgsToLqdtyToggle existingExtraArgs
+      (lqdtyToggle, customArgs) <- migrateBakerCustomArgs mbLqdtyToggle bakerCustomArgs
+      let newExtraArg = toBakerExtraArgs lqdtyToggle pkh chainId
+      runLoggingEnv logger $ runDb (Identity db) $ case existingExtraArgs of
+        [] -> insert newExtraArg
+        _ -> update [BakerExtraArgs_valueField =. _bakerExtraArgs_value newExtraArg] $
+          BakerExtraArgs_publicKeyHashField ==. pkh &&.
+          BakerExtraArgs_chainIdField ==. chainId &&.
+          BakerExtraArgs_optionField ==. _bakerExtraArgs_option newExtraArg
+      let extraArgsCmd = fmap T.unpack $ toCmdArg newExtraArg
+      pure $ Right $ protocolAgnosticArgs alias <> extraArgsCmd <> customArgs
+
     _ ->
       pure $ Left $ "'getBakerArgs': unknown protocol "
       <> maybe "<unknown protocol>" toBase58Text mbProtoHash
@@ -314,4 +337,111 @@ getBakerArgs appConfig logger db mbProtoHash = do
       , "--base-dir", tezosClientDataDir appConfig
       , "run", "with", "local", "node", nodeDataDir appConfig
       , alias
-      ] <> maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
+      ]
+    bakerCustomArgs = maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
+
+-- TODO: remove when Jakarta is activated on mainnet.
+bakerExtraArgsToLqdtyToggle :: [BakerExtraArgs] -> Maybe LiquidityBakingToggleVote
+bakerExtraArgsToLqdtyToggle extraArgs = case listToMaybe extraArgs of
+  Just extraArg -> case _bakerExtraArgs_option extraArg of
+    "--liquidity-baking-toggle-vote" -> case _bakerExtraArgs_value extraArg of
+      Just "on"   -> Just LiquidityBakingToggleVote_On
+      Just "off"  -> Just LiquidityBakingToggleVote_Off
+      Just "pass" -> Just LiquidityBakingToggleVote_Pass
+      _ -> Nothing
+    _ -> Nothing
+  Nothing -> Nothing
+
+-- | This function takes '--liquidity-baking-toggle-vote' option which may have been set by
+-- user via Kiln UI and list of arguments provided by '--kiln-baker-custom-args' and does the
+-- necessary migrations with these options.
+-- Returns processed list of kiln baker custom args with '--liquidity-baking-toggle-vote' option
+-- which will be appended to the list of args.
+-- TODO: remove when Jakarta is activated on mainnet.
+migrateBakerCustomArgs
+  :: Maybe LiquidityBakingToggleVote -- ^ Option provided by user via Kiln UI that is stored in db.
+  -> [String] -- ^ Kiln baker custom args
+  -> IO (LiquidityBakingToggleVote, [String])
+migrateBakerCustomArgs uiLqdtyToggle fullBakerCustomArgs = do
+  let
+    (fullBakerCustomArgs', mbVotefilePath) = extractVotefilePath fullBakerCustomArgs
+    (fullBakerCustomArgs'', mbLqdtyToggleArg) = extractLiquidityBakingToggleOption fullBakerCustomArgs'
+    (bakerCustomArgs, lqdtyEscapeArg) = extractLiquidityBakingEscapeOption fullBakerCustomArgs''
+    mbLqdtyArg = unifyLqdtyOptions mbLqdtyToggleArg lqdtyEscapeArg
+  mbVotefile <- maybe (pure Nothing) (Aeson.decodeFileStrict @Votefile) mbVotefilePath
+
+  case (uiLqdtyToggle, mbLqdtyArg, mbVotefile) of
+    -- If user already selected '--liquidity-baking-toggle-vote' option on UI and provided
+    -- votefile for Jakarta, we pass both arguments to baker binary.
+    (Just lqdtyToggle, _, Just (JakartaVotefile _)) -> pure (lqdtyToggle, bakerCustomArgs ++ ["--votefile", fromJust mbVotefilePath])
+    -- If user already selected '--liquidity-baking-toggle-vote' option on UI but didn't
+    -- provide votefile, we pass just selected option to baker binary.
+    (Just lqdtyToggle, _, Nothing) -> pure (lqdtyToggle, bakerCustomArgs)
+    -- If user already selected '--liquidity-baking-toggle-vote' option in UI and provided
+    -- votefile for Ithaca, we ignore that votefile
+    (Just lqdtyToggle, _, Just (IthacaVotefile _)) -> pure (lqdtyToggle, bakerCustomArgs)
+
+    -- If user didn't select '--liquidity-baking-toggle-vote' option on UI but provided it
+    -- via '--kiln-baker-custom-args' along with votefile, we pass both arguments to baker binary
+    (Nothing, Just lqdtyToggle, Just (JakartaVotefile _)) -> pure (lqdtyToggle, bakerCustomArgs ++ ["--votefile", fromJust mbVotefilePath])
+    -- If user didn't select '--liquidity-baking-toggle-vote' option on UI but provided it
+    -- via '--kiln-baker-custom-args' without votefile, we pass only this option to baker binary.
+    (Nothing, Just lqdtyToggle, Nothing) -> pure (lqdtyToggle, bakerCustomArgs)
+    -- If user didn't select '--liquidity-baking-toggle-vote' option on UI but provided it
+    -- via '--kiln-baker-custom-args' with votefile for Ithaca, we ignore that votefile
+    (Nothing, Just lqdtyToggle, Just (IthacaVotefile _)) -> pure (lqdtyToggle, bakerCustomArgs)
+
+    -- If user didn't provide '--liquidity-baking-toggle-vote' option neither on UI nor in
+    -- '--kiln-baker-custom-args' but provided votefile for Ithaca, we use the value corresponding
+    -- to this file
+    (Nothing, Nothing, Just (IthacaVotefile lqdtyEscape)) -> pure (lqdtyEscapeToLqdtyToggle lqdtyEscape, bakerCustomArgs)
+
+    -- If user didn't provide '--liquidity-baking-toggle-vote' option neither on UI nor in
+    -- '--kiln-baker-custom-args' but provided votefile for Jakarta, we use the value corresponding
+    -- to this file
+    (Nothing, Nothing, Just (JakartaVotefile _)) -> pure (LiquidityBakingToggleVote_Pass, bakerCustomArgs ++ ["--votefile", fromJust mbVotefilePath])
+
+    -- If user didn't provide anything to specifty '--liquidity-baking-toggle-vote' option, we use 'pass'
+    -- as a default value.
+    (Nothing, Nothing, Nothing) -> pure (LiquidityBakingToggleVote_Pass, bakerCustomArgs)
+  where
+    lqdtyEscapeToLqdtyToggle :: Bool -> LiquidityBakingToggleVote
+    lqdtyEscapeToLqdtyToggle = bool LiquidityBakingToggleVote_Pass LiquidityBakingToggleVote_Off
+
+    unifyLqdtyOptions :: Maybe LiquidityBakingToggleVote -> Bool -> Maybe LiquidityBakingToggleVote
+    unifyLqdtyOptions mbToggle escape = case (mbToggle, escape) of
+      (Just _, True)    -> error "Both '--liquidity-baking-escape-vote' and '--liquidity-baking-toggle-vote' options are present."
+      (Just tgl, False) -> Just tgl
+      (Nothing, True)   -> Just LiquidityBakingToggleVote_Off
+      (Nothing, False)  -> Nothing
+
+    extractVotefilePath :: [String] -> ([String], Maybe FilePath)
+    extractVotefilePath args =
+      let
+        (xs, ys) = span (/= "--votefile") args
+        (votefilePath, restArgs) = case ys of
+          [] -> (Nothing, [])
+          _ : path : rest -> (Just path, rest)
+          _ -> error "'--votefile' option presents, but file path does not specified."
+      in (xs ++ restArgs, votefilePath)
+
+    extractLiquidityBakingToggleOption :: [String] -> ([String], Maybe LiquidityBakingToggleVote)
+    extractLiquidityBakingToggleOption args =
+      let
+        (xs, ys) = span (/= "--liquidity-baking-toggle-vote") args
+        (lqdtyToggle, restArgs) = case ys of
+          [] -> (Nothing, [])
+          _ : "on" : rest   -> (Just LiquidityBakingToggleVote_On, rest)
+          _ : "off" : rest  -> (Just LiquidityBakingToggleVote_Off, rest)
+          _ : "pass" : rest -> (Just LiquidityBakingToggleVote_Pass, rest)
+          _ -> error "Invalid '--liquidity-baking-toggle-vote' option value."
+        in (xs ++ restArgs, lqdtyToggle)
+
+    extractLiquidityBakingEscapeOption :: [String] -> ([String], Bool)
+    extractLiquidityBakingEscapeOption args =
+      let
+        (xs, ys) = span (/= "--liquidity-baking-escape-vote") args
+        (lqdtyEscape, restArgs) = case ys of
+          [] -> (False, [])
+          _ : rest -> (True, rest)
+      in (xs ++ restArgs, lqdtyEscape)
