@@ -123,6 +123,7 @@ library
 
   exposed-modules:
     Backend
+    Backend.Process.Baker
     Backend.Workers.Block
 
   other-modules:
@@ -141,7 +142,6 @@ library
     Backend.IndexQueries
     Backend.Migrations
     Backend.NotifyHandler
-    Backend.Process.Baker
     Backend.Process.Errors
     Backend.Process.Node
     Backend.RequestHandler
@@ -187,11 +187,13 @@ test-suite test
   main-is: Main.hs
   other-modules:
     Accusation
+    MigrateLiquidityBakingConfiguration
   build-depends:
       aeson
     , base >= 4 && < 5
     , backend
     , bytestring
+    , common
     , tasty
     , tasty-hunit
     , tezos-bake-monitor-lib
