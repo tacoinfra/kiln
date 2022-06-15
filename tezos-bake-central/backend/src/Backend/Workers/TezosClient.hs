@@ -276,13 +276,7 @@ showLedger appConfig db sk = do
               { _ledgerAccount_secretKey = sk
               , _ledgerAccount_publicKeyHash = Nothing
               , _ledgerAccount_balance = Nothing
-              , _ledgerAccount_shouldImport = False
               , _ledgerAccount_imported = False
-              , _ledgerAccount_shouldSetupToBake = False
-              , _ledgerAccount_shouldRegister = False
-              , _ledgerAccount_shouldSetHWM = Nothing
-              , _ledgerAccount_shouldDoVoteProtocol = Nothing
-              , _ledgerAccount_shouldDoVoteBallot = Nothing
               }
         insert la
         pure la
