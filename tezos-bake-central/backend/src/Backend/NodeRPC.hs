@@ -196,6 +196,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_latestFinalHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_logger :: LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
+  , _nodeDataSource_ledgerIOQueue :: TQueue (IO ())
   , _nodeDataSource_kilnNodeUri :: URI
   , _nodeDataSource_nodeForQuery :: Maybe URI -- Override the node selection algo, and do RPC using this node
   } deriving (Typeable, Generic)

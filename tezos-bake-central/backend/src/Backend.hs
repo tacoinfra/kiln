@@ -97,7 +97,7 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
-import Backend.Workers.TezosClient (resetLedgerQueue, tezosClientWorker, computeChainId)
+import Backend.Workers.TezosClient (computeChainId, ledgerConnectivityCheckWorker)
 import Backend.Workers.TezosRelease
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
@@ -329,8 +329,6 @@ backendImpl cfg serve = do
       -- Clean error log for all processes to restart them automatically after restarting Kiln
       update [ ProcessData_errorLogField =. (Nothing :: Maybe Text)] CondEmpty
 
-    resetLedgerQueue logger db
-
     tezosNodeEnvVar <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
 
     let
@@ -360,6 +358,7 @@ backendImpl cfg serve = do
       latestHead <- newTVarIO Nothing
       latestFinalHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
+      ledgerIOQueue <- newTQueueIO
       return NodeDataSource
         { _nodeDataSource_chain = chainId
         , _nodeDataSource_httpMgr = httpMgr
@@ -368,6 +367,7 @@ backendImpl cfg serve = do
         , _nodeDataSource_latestFinalHead = latestFinalHead
         , _nodeDataSource_logger = logger
         , _nodeDataSource_ioQueue = ioQueue
+        , _nodeDataSource_ledgerIOQueue = ledgerIOQueue
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
         , _nodeDataSource_nodeForQuery = Nothing
         }
@@ -378,6 +378,7 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
       addFinalizer <=< worker' "readNodeDataSourceIOQueue" $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
+      addFinalizer <=< worker' "readLedgerIOQueue" $ join $ atomically $ readTQueue $ _nodeDataSource_ledgerIOQueue dataSrc
 
       let
         frontendConfig = Config.FrontendConfig
@@ -431,7 +432,7 @@ backendImpl cfg serve = do
       addFinalizer =<< internalNodeWorker appConfig logger db binaryPaths
       addFinalizer =<< protocolMonitorWorker dataSrc db
       addFinalizer =<< bakerDaemonProcess appConfig dataSrc logger db binaryPaths
-      addFinalizer =<< tezosClientWorker 1.3 ledgerCheckDelay logger dataSrc appConfig db
+      addFinalizer =<< ledgerConnectivityCheckWorker 1.3 ledgerCheckDelay logger dataSrc appConfig db
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case
