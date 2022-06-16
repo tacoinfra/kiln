@@ -10,7 +10,7 @@ The easiest way to get a database running is with Docker. The following command 
 <!-- The `DOCKER_CONTENT_TRUST=1` tells Docker to verify the signature of this image to ensure it's from the original creator. -->
 
 ```shell
-docker run --name kiln-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres
+docker run --name kiln-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres:9.6.15
 ```
 
 (For anything serious you'll want to pick a better password than `mysecretpassword`.)
@@ -24,13 +24,13 @@ Now you can download and run the monitor like this:
 On Linux and macOS (Docker Toolbox):
 
 ```shell
-docker run  --tmpfs /tmp --network host --rm registry.gitlab.com/tezos-kiln/kiln:0.8.2 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
+docker run  --tmpfs /tmp --network host --rm registry.gitlab.com/tezos-kiln/kiln:0.13.0 --pg-connection="host=localhost port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 On macOS (Docker Desktop for Mac):
 
 ```shell
-docker run  --tmpfs /tmp -p 8000:8000 registry.gitlab.com/tezos-kiln/kiln:0.8.2 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
+docker run  --tmpfs /tmp -p 8000:8000 registry.gitlab.com/tezos-kiln/kiln:0.13.0 --pg-connection="host=host.docker.internal port=5432 dbname=postgres user=postgres password=mysecretpassword"
 ```
 
 Replace `mysecretpassword` with your *actually secret* password.
@@ -38,7 +38,7 @@ Replace `mysecretpassword` with your *actually secret* password.
 Now open a browser and navigate to `http://localhost:8000` to start configuring your monitor! Instructions can be found in
 [Initial Setup](../../README.md#initial-setup).
 
-Check out `docker run --rm registry.gitlab.com/tezos-kiln/kiln:0.8.2 --help` for more command-line options. For example, you can run the monitor on babylonnet by passing `--network=babylonnet`.
+Check out `docker run --rm registry.gitlab.com/tezos-kiln/kiln:0.13.0 --help` for more command-line options. For example, you can run the monitor on babylonnet by passing `--network=babylonnet`.
 
 ## Updating an older Docker container
 
@@ -69,7 +69,7 @@ Refer to [Running a Pre-Built Monitor](#running-a-pre-built-monitor-docker-image
 for instructions, replacing version numbers where necessary. For example, when you see
 
 ```shell
-docker run  --tmpfs /tmp --network host --rm registry.gitlab.com/tezos-kiln/kiln:0.8.2 ...
+docker run  --tmpfs /tmp --network host --rm registry.gitlab.com/tezos-kiln/kiln:0.13.0 ...
 ```
 
 <!-- you can replace `0.8.1` with another available version. -->
