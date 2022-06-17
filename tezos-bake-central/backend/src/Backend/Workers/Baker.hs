@@ -53,6 +53,7 @@ import Rhyolite.Schema (Json(..))
 import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
+import qualified Tezos.Genesis.Block as Genesis
 import qualified Tezos.V013.Types as V013
 import Tezos.CrossCompat.Account
 import Tezos.CrossCompat.Block
@@ -358,6 +359,7 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
         blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
         mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer
         endorserDelegates = blockCrossData
+            (^..Genesis.block_operations . traverse . traverse . V013.operation_contents . traverse . V013._OperationContents_Endorsement . V013.operationContentsEndorsement_metadata . V013.endorsementMetadata_delegate)
             (^..V013.block_operations . traverse . traverse . V013.operation_contents . traverse . V013._OperationContents_Endorsement . V013.operationContentsEndorsement_metadata . V013.endorsementMetadata_delegate)
             thisBlock
         successfulEndorsementCondition = _baker_publicKeyHash baker `elem` endorserDelegates

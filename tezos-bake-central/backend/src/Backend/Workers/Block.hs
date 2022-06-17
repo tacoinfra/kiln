@@ -32,6 +32,7 @@ import Rhyolite.Backend.DB.Serializable (Serializable)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Safe (headMay)
 
+import Tezos.CrossCompat.Block (BlockCrossCompat(..))
 import Tezos.NodeRPC
 import Tezos.Types
 
@@ -141,7 +142,10 @@ parseAndReportAccusations
 parseAndReportAccusations appConfig blockHash block = do
   let
     blockLevel = block ^. level
-    blockCycle = block ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
+    blockCycle = case block of
+      -- Genesis block doesn't have 'level_info' in metadata
+      BlockGenesis _ -> 0
+      BlockV013 b -> b ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
     accusations = getAccusations block
   for_ accusations $ \(AccusationInfo aType aLevel aHash aBalanceUpdates) -> do
     let accusedBaker = getAccusedBaker aBalanceUpdates
