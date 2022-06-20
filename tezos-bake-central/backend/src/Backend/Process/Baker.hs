@@ -300,7 +300,7 @@ getBakerArgs appConfig logger db mbProtoHash = do
     Just IthacaProtocolHash ->
       pure $ Right $ protocolAgnosticArgs alias <> bakerCustomArgs
     Just JakartaProtocolHash -> do
-      -- TODO uncomment lines below when Jakarta is activated on mainnet.
+      -- TODO [#147]: uncomment lines below when Jakarta is activated on mainnet.
 
       -- extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
       --   BakerExtraArgs_publicKeyHashField ==. pkh &&.
@@ -340,7 +340,7 @@ getBakerArgs appConfig logger db mbProtoHash = do
       ]
     bakerCustomArgs = maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
 
--- TODO: remove when Jakarta is activated on mainnet.
+-- TODO [#147]: remove when Jakarta is activated on mainnet.
 bakerExtraArgsToLqdtyToggle :: [BakerExtraArgs] -> Maybe LiquidityBakingToggleVote
 bakerExtraArgsToLqdtyToggle extraArgs = case listToMaybe extraArgs of
   Just extraArg -> case _bakerExtraArgs_option extraArg of
@@ -357,7 +357,7 @@ bakerExtraArgsToLqdtyToggle extraArgs = case listToMaybe extraArgs of
 -- necessary migrations with these options.
 -- Returns processed list of kiln baker custom args with '--liquidity-baking-toggle-vote' option
 -- which will be appended to the list of args.
--- TODO: remove when Jakarta is activated on mainnet.
+-- TODO [#147]: remove when Jakarta is activated on mainnet.
 migrateBakerCustomArgs
   :: Maybe LiquidityBakingToggleVote -- ^ Option provided by user via Kiln UI that is stored in db.
   -> [String] -- ^ Kiln baker custom args

@@ -2663,7 +2663,7 @@ bakersTab =
                 Nothing -> pure () -- no head to set high water mark
                 Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (view level <$> bl) sk pkh
               dyn_ $ ffor protoHashDyn $ \case
-                -- TODO: remove this after Jakarta is activated on mainnet.
+                -- TODO [#147]: remove this after Jakarta is activated on mainnet.
                 Just JakartaProtocolHash ->
                   tileMenuEntryModal "Set Liquidity Baking" $ cancelableModalWithClasses $ setLiquidityBakingToggleModal (sk, pkh)
                 _ -> pure ()

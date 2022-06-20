@@ -119,7 +119,7 @@ ledgerSetupSteps = mdo
       kilnLogo
       text "Start Baking"
     let
-      -- TODO: remove when Jakarta is activated on mainnet
+      -- TODO [#147]: remove when Jakarta is activated on mainnet
       mbLqdtyToggleStep = case protoHash of
         Just JakartaProtocolHash ->
           [Some LSS_SetLiquidityBakingToggle]
@@ -155,7 +155,7 @@ ledgerSetupSteps = mdo
       LSS_ConnectLedger :=> _ -> (fmap . fmap) (Right . (LSS_SelectAddress ==>)) (connectLedger connectedLedger)
       LSS_SelectAddress :=> Identity l -> switchHold never <=< dyn $ ffor protoHashDyn $ \protoHash ->
         let
-          -- TODO: remove when Jakarta is activated on mainnet
+          -- TODO [#147]: remove when Jakarta is activated on mainnet
           nextStep = case protoHash of
             Just JakartaProtocolHash -> LSS_SetLiquidityBakingToggle
             _ -> LSS_ImportAddress
