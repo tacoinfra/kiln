@@ -19,7 +19,10 @@
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
-module Frontend.Ledger (ledgerSetupSteps) where
+module Frontend.Ledger
+  ( ledgerSetupSteps
+  , setLiquidityBakingToggle
+  ) where
 
 import Data.Bifunctor (bimap)
 import Data.Char (isDigit)
@@ -116,7 +119,7 @@ ledgerSetupSteps = mdo
       kilnLogo
       text "Start Baking"
     let
-      -- TODO: remove when Jakarta is activated on mainnet
+      -- TODO [#147]: remove when Jakarta is activated on mainnet
       mbLqdtyToggleStep = case protoHash of
         Just JakartaProtocolHash ->
           [Some LSS_SetLiquidityBakingToggle]
@@ -152,13 +155,13 @@ ledgerSetupSteps = mdo
       LSS_ConnectLedger :=> _ -> (fmap . fmap) (Right . (LSS_SelectAddress ==>)) (connectLedger connectedLedger)
       LSS_SelectAddress :=> Identity l -> switchHold never <=< dyn $ ffor protoHashDyn $ \protoHash ->
         let
-          -- TODO: remove when Jakarta is activated on mainnet
+          -- TODO [#147]: remove when Jakarta is activated on mainnet
           nextStep = case protoHash of
             Just JakartaProtocolHash -> LSS_SetLiquidityBakingToggle
             _ -> LSS_ImportAddress
         in
           (fmap . fmap) (Right . (nextStep ==>)) (selectAddress l)
-      LSS_SetLiquidityBakingToggle :=> Identity sk -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (setLiquidityBakingToggle sk)
+      LSS_SetLiquidityBakingToggle :=> Identity sk -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (setLiquidityBakingToggle sk False)
       LSS_ImportAddress :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_AuthorizeLedger ==> sk) (importSecretKey sk)
       LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (bimap Left id) (authorizeLedger sk)
       LSS_RegisterDelegate :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_Complete ==> sk) (registerDelegate sk)
@@ -426,14 +429,11 @@ selectAddress ledger = divClass "select-address" $ mdo
   pure register
 
 setLiquidityBakingToggle
-  :: forall t m js.
-  ( MonadAppWidget js t m
-  , MonadJSM (Performable m)
-  , MonadJSM m
-  )
+  :: forall t m js. MonadAppWidget js t m
   => (SecretKey, PublicKeyHash)
+  -> Bool
   -> m (Event t (SecretKey, PublicKeyHash))
-setLiquidityBakingToggle (sk, pkh) = divClass "central" $ mdo
+setLiquidityBakingToggle (sk, pkh) shouldRestartBaker = divClass "central" $ mdo
   elClass "h5" "ui header" $ text "Set up liquidity baking toggle"
   divClass "explanation" $ do
     let docsUri = "https://tezos.gitlab.io/jakarta/liquidity_baking.html#toggle-vote"
@@ -443,6 +443,10 @@ setLiquidityBakingToggle (sk, pkh) = divClass "central" $ mdo
       text "average of that flag. You can read more about this "
       hrefLink docsUri $ text "in the docs. "
       text "The baker has three options for this flag:"
+    case shouldRestartBaker of
+      False -> blank
+      True -> elAttr "p" ("style" =: "font-weight: bold; color: black;") $
+          text "Please note that baker daemon will be restarted and it may cause opportunities misses."
 
   let
     radioItems =
@@ -481,7 +485,7 @@ setLiquidityBakingToggle (sk, pkh) = divClass "central" $ mdo
     selectedOptionEv = tag (current selectedOptionDyn) continueEvent
 
   continueEvent <- uiButton "primary" "Continue"
-  _ <- requestingIdentity $ public . PublicRequest_SetLiquidityBakingToggle pkh <$> selectedOptionEv
+  _ <- requestingIdentity $ public . PublicRequest_SetLiquidityBakingToggle pkh shouldRestartBaker <$> selectedOptionEv
   pure $ continueEvent $> (sk, pkh)
 
 

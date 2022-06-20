@@ -81,7 +81,7 @@ requestHandler appConfig emailFromAddr nds =
         queryLedger $ updateConnectedLedgerViaGetConnectedLedger appConfig db
       PublicRequest_ShowLedgerBatch sks -> for_ (reverse sks) $ \sk -> queryLedger $ showLedger appConfig db nds sk
       PublicRequest_ShowLedger sk -> queryLedger $ showLedger appConfig db nds sk
-      PublicRequest_SetLiquidityBakingToggle pkh lqdtyToggle -> inDb $ do
+      PublicRequest_SetLiquidityBakingToggle pkh shouldRestartBaker lqdtyToggle -> inDb $ do
         let
           chainId = _appConfig_chainId appConfig
           lqdtyBakingExtraArg = toBakerExtraArgs lqdtyToggle pkh chainId
@@ -95,6 +95,7 @@ requestHandler appConfig emailFromAddr nds =
           Just _ -> update
             [ BakerExtraArgs_valueField =. _bakerExtraArgs_value lqdtyBakingExtraArg
             ] cond
+        when shouldRestartBaker restartBakerDaemon
       PublicRequest_ImportSecretKey sk ->
         queryLedger $ importSecretKey appConfig db sk
       PublicRequest_SetupLedgerToBake sk ->
@@ -204,37 +205,15 @@ requestHandler appConfig emailFromAddr nds =
 
       PublicRequest_UpdateInternalWorker workerType shouldRun -> inDb $ case workerType of
         WorkerType_Node
-          | shouldRun -> updateNode -- Only start node
+          | shouldRun -> startNodeDaemon -- Only start node
           | otherwise -> do -- On stopping node, stop the baker also (if running)
-              updateBakerDaemon
-              updateNode
+              stopBakerDaemon
+              stopNodeDaemon
         WorkerType_Baker
-          | not shouldRun -> updateBakerDaemon -- Only stop baker
+          | not shouldRun -> stopBakerDaemon -- Only stop baker
           | otherwise -> do -- On starting baker, start the node also (if stopped)
-              updateNode
-              updateBakerDaemon
-        where
-          c = if shouldRun then ProcessControl_Run else ProcessControl_Stop
-          updateBakerDaemon = do
-            project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
-              >>= traverse_ (\bdid -> do
-                let bPid = _bakerDaemonInternalData_bakerProcessData bdid
-                    ePid = _bakerDaemonInternalData_endorserProcessData bdid
-                update
-                  [ ProcessData_controlField =. c
-                  , ProcessData_errorLogField =. (Nothing :: Maybe Text)
-                  ] (AutoKeyField `in_` map fromId [bPid, ePid]))
-
-          updateNode = do
-            (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
-              let pid = _deletableRow_data nodeData
-              update
-                [ ProcessData_controlField =. c
-                , ProcessData_errorLogField =. (Nothing :: Maybe Text)
-                ] (AutoKeyField ==. fromId pid)
-              processData <- getId $ _deletableRow_data nodeData
-              notify NotifyTag_NodeInternal (nid, processData)
-
+              startNodeDaemon
+              startBakerDaemon
       PublicRequest_RemoveNode node -> do
         inDb $ removeNodeDbImpl node
         when (isRight node) $

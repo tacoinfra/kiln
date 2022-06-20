@@ -4,6 +4,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Accusation (testAccusations)
+import MigrateLiquidityBakingConfiguration (testMigrateLiquidityBakingConfigurations)
 
 main :: IO ()
 main = defaultMain tests
@@ -11,4 +12,5 @@ main = defaultMain tests
 tests :: TestTree
 tests = testGroup "Backend tests"
   [ testAccusations
+  , testMigrateLiquidityBakingConfigurations
   ]

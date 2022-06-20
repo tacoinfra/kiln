@@ -85,3 +85,20 @@ removeNodeDbImpl = \case
 
       now <- getTime
       update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId (nodeLogIds <> internalNodeLogIds))
+
+startNodeDaemon :: PersistBackend m => m ()
+startNodeDaemon = updateNodeDaemon ProcessControl_Run
+
+stopNodeDaemon :: PersistBackend m => m ()
+stopNodeDaemon = updateNodeDaemon ProcessControl_Stop
+
+updateNodeDaemon :: PersistBackend m => ProcessControl -> m ()
+updateNodeDaemon control = do
+  (getInternalNode >>=) $ traverse_ $ \(nid, nodeData) -> do
+    let pid = _deletableRow_data nodeData
+    update
+      [ ProcessData_controlField =. control
+      , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+      ] (AutoKeyField ==. fromId pid)
+    processData <- getId $ _deletableRow_data nodeData
+    notify NotifyTag_NodeInternal (nid, processData)

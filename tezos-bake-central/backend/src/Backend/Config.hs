@@ -8,6 +8,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -15,7 +16,7 @@ module Backend.Config where
 
 import Control.Lens (Lens', view)
 import Control.Monad.Reader (MonadReader, asks)
-import Data.Aeson (FromJSON(..), Value(..), withObject, (.:))
+import Data.Aeson (FromJSON(..), Value(..), withObject, (.:), (.:?))
 import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
 import Data.Validation
@@ -31,6 +32,7 @@ import qualified Language.Haskell.TH.Quote as QQ
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
 
+import Common.App (LiquidityBakingToggleVote(..))
 import Common.Config (defaultKilnNodeRpcPort)
 import Common.URI (Port)
 import ExtraPrelude
@@ -242,6 +244,24 @@ instance FromJSON BakerEndorserPaths where
       bakerPath    <- o .: "baker-path"
       endorserPath <- o .: "endorser-path"
       pure $ BakerEndorserPaths proto bakerPath endorserPath
+
+data Votefile
+  = IthacaVotefile Bool
+  | JakartaVotefile LiquidityBakingToggleVote
+  deriving (Show)
+
+instance FromJSON Votefile where
+  parseJSON = withObject "Votefile" $ \o -> do
+    lqdtyEscapeVote :: Maybe Bool <- o .:? "liquidity_baking_escape_vote"
+    lqdtyToggleStr  :: Maybe Text <- o .:? "liquidity_baking_toggle_vote"
+    case (lqdtyEscapeVote, lqdtyToggleStr) of
+      (Just b, Nothing) -> pure $ IthacaVotefile b
+      (Nothing, Just tgl) -> case tgl of
+        "on"   -> pure $ JakartaVotefile LiquidityBakingToggleVote_On
+        "off"  -> pure $ JakartaVotefile LiquidityBakingToggleVote_Off
+        "pass" -> pure $ JakartaVotefile LiquidityBakingToggleVote_Pass
+        _ -> fail "Invalid value for 'liquidity_baking_toggle_vote'."
+      _ -> fail "Invalid votefile format."
 
 concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   { Aeson.fieldLabelModifier
