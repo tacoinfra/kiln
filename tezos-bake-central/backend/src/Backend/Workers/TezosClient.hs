@@ -263,8 +263,8 @@ Tezos address at this path/curve: tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
 Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM
 -}
 
-showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> SecretKey -> m ()
-showLedger appConfig db sk = do
+showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> m ()
+showLedger appConfig db nds sk = do
   la <- withDbAndConfig db appConfig $ do
     existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
     case existing of
@@ -302,6 +302,16 @@ showLedger appConfig db sk = do
     Right (Just pkh) -> do
       withDbAndConfig db appConfig $
         update [LedgerAccount_publicKeyHashField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      balanceOrErr <- flip runReaderT nds . runExceptT @KilnRpcError $ do
+        mbHeadBlock <- ask >>= liftIO . atomically . dataSourceFinalHead
+        case mbHeadBlock of
+          Nothing -> ExceptT $ pure $ Left KilnRpcError_NoKnownHeads
+          Just headBlock -> nodeQueryDataSource $ NodeQuery_Balance (headBlock ^. hash) (headBlock ^. level) pkh
+      case balanceOrErr of
+        Left err -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh <> " due to: " <> prettyKilnRpcError err
+        Right balance -> withDbAndConfig db appConfig $ do
+          update [LedgerAccount_balanceField =. Just balance] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+          notify NotifyTag_ShowLedger (sk, Right (pkh, balance))
   where
     getPublicKeyHashZeronet = \case
       foundApp : _manufacturer: _product: _application: _curve: _path: _pk : pkh' : _
@@ -317,25 +327,6 @@ showLedger appConfig db sk = do
         , Right pkh <- tryReadPublicKeyHashText pkht
         -> Just pkh
       xs -> getPublicKeyHashZeronet xs
-
--- Fetch balances for given @SecretKey@s. At this point public keys for them are expected to be known and stored in the DB.
-fetchBalances :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> [SecretKey] -> m ()
-fetchBalances appConfig db nds sks = withDbAndConfig db appConfig $ for_ sks $ \sk -> do
-  mla <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-  for_ mla $ \la ->
-    case _ledgerAccount_publicKeyHash la of
-      Nothing -> pure ()
-      Just pkh -> do
-        balanceOrErr <- flip runReaderT nds . runExceptT @KilnRpcError $ do
-          mbHeadBlock <- ask >>= liftIO . atomically . dataSourceFinalHead
-          case mbHeadBlock of
-            Nothing -> ExceptT $ pure $ Left KilnRpcError_NoKnownHeads
-            Just headBlock -> nodeQueryDataSource $ NodeQuery_Balance (headBlock ^. hash) (headBlock ^. level) pkh
-        case balanceOrErr of
-          Left err -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh <> " due to: " <> prettyKilnRpcError err
-          Right balance -> do
-            update [LedgerAccount_balanceField =. Just balance] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-            notify NotifyTag_ShowLedger (sk, Right (pkh, balance))
 
 importSecretKey :: MonadLoggerIO m => AppConfig -> Pool Postgresql -> SecretKey -> m ()
 importSecretKey appConfig db sk = ledgerSetupStep appConfig db sk (mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting })

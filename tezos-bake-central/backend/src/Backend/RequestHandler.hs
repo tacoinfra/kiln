@@ -60,7 +60,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Process (updateProcessState)
 import Backend.Workers.TezosClient
-  (fetchBalances, importSecretKey, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake, showLedger,
+  (importSecretKey, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake, showLedger,
   submitVote, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -79,12 +79,8 @@ requestHandler appConfig emailFromAddr nds =
 
       PublicRequest_PollLedgerDevice ->
         queryLedger $ updateConnectedLedgerViaGetConnectedLedger appConfig db
-      PublicRequest_ShowLedgerBatch sks -> do
-        for_ (reverse sks) $ \sk -> queryLedger $ showLedger appConfig db sk
-        fetchBalances appConfig db nds sks
-      PublicRequest_ShowLedger sk -> do
-        queryLedger $ showLedger appConfig db sk
-        fetchBalances appConfig db nds [sk]
+      PublicRequest_ShowLedgerBatch sks -> for_ (reverse sks) $ \sk -> queryLedger $ showLedger appConfig db nds sk
+      PublicRequest_ShowLedger sk -> queryLedger $ showLedger appConfig db nds sk
       PublicRequest_SetLiquidityBakingToggle pkh lqdtyToggle -> inDb $ do
         let
           chainId = _appConfig_chainId appConfig
