@@ -859,7 +859,15 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinal
       -- This will trigger daemons for the upcoming protocol to start, so we start them
       -- on the last voting period 100 blocks prior to the protocol upgrade.
       tp <- if vp == VotingPeriodKind_Adoption && remainingBlocksInVotingPeriod < 100
-        then fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (NodeQuery_CurrentProposal (latestHead ^. hash))
+        then
+          let
+            queryBlockHash
+              -- For some reason since Ithaca, the last block in adoption period doesn't contain
+              -- information about proposals. So in this case we fetch the proposal hash from its
+              -- predecessor.
+              | remainingBlocksInVotingPeriod == 1 = latestHead ^. predecessor
+              | otherwise = latestHead ^. hash
+          in fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (NodeQuery_CurrentProposal queryBlockHash)
         else return Nothing
       return (blk ^. blockMetadata . blockMetadata_protocol, tp)
 
