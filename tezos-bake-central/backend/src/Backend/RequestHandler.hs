@@ -19,30 +19,23 @@
 module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
+import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM.TQueue (writeTQueue)
 import Control.Exception.Safe (MonadMask, SomeException, try)
-import Control.Monad.Logger (NoLoggingT(..), MonadLoggerIO, MonadLogger, logError, logInfo, logDebug, logDebugNS, logErrorNS)
-import Control.Monad.Trans.Except
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logError, logInfo, logDebug)
 import Control.Monad.Trans.Resource (MonadUnliftIO)
-import Control.Retry
-import Data.Aeson
-import qualified Data.ByteString.Lazy as LB
 import Data.Foldable (toList)
-import Data.Functor.Compose
 import Data.Functor.Infix hiding ((<&>))
-import Data.List (partition, dropWhileEnd)
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
 import Data.Some (Some(..))
-import qualified Data.Text as T
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
 import Network.Mail.Mime (Address (..), simpleMail')
-import qualified Network.HTTP.Client as Http
-import qualified Network.HTTP.Simple as Http
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -54,9 +47,7 @@ import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Schema (Email)
 import Safe
 import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
-import Text.Printf
-import Text.URI (render)
-import Tezos.Types (Tez, PublicKeyHash, LedgerIdentifier, toPublicKeyHashText)
+import Tezos.Types (PublicKeyHash)
 
 import Backend.Alerts (resolveAlert, resolveAlerts)
 import Backend.Common
@@ -68,7 +59,9 @@ import Backend.Snapshot (handleSnapshotDownload, handleSnapshotFilePathImport, v
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Process (updateProcessState)
-import Backend.Workers.TezosClient (showLedger)
+import Backend.Workers.TezosClient
+  (fetchBalances, importSecretKey, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake, showLedger,
+  submitVote, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -84,158 +77,14 @@ requestHandler appConfig emailFromAddr nds =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
-      PublicRequest_PollLedgerDevice -> inDb $ do
-        deleteAll' @ConnectedLedger Proxy
-        -- Deliberately don't notify here: let the worker pick it up and notify
-        -- as required
-        insert $ ConnectedLedger
-          { _connectedLedger_bakingAppVersion = Nothing
-          , _connectedLedger_ledgerIdentifier = Nothing
-          , _connectedLedger_updated = Nothing
-          , _connectedLedger_forceConnectivityCheck = True
-          , _connectedLedger_walletAppVersion = Nothing
-          }
-      PublicRequest_ShowLedgerBatch sks -> inDb $ do
-
-        existent <- select (foldr1 Or (map (embeddedSecretKeyEquals LedgerAccount_secretKeyField) sks))
-
-        let insertAccount (sk, pkh, tez) = insert $ LedgerAccount
-                { _ledgerAccount_secretKey = sk
-                , _ledgerAccount_publicKeyHash = Just pkh
-                , _ledgerAccount_balance = Just tez
-                , _ledgerAccount_shouldImport = False
-                , _ledgerAccount_imported = False
-                , _ledgerAccount_shouldSetupToBake = False
-                , _ledgerAccount_shouldRegister = False
-                , _ledgerAccount_shouldSetHWM = Nothing
-                , _ledgerAccount_shouldDoVoteProtocol = Nothing
-                , _ledgerAccount_shouldDoVoteBallot = Nothing
-                }
-
-            updateAccount (sk, pkh, tez) =
-                update
-                    [LedgerAccount_balanceField =. Just tez, LedgerAccount_publicKeyHashField =. Just pkh]
-                    $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-
-            internalURI = T.unpack $ render $ _nodeDataSource_kilnNodeUri nds
-
-            balancePath pkh = printf "/chains/main/blocks/head/context/contracts/%s/balance" (T.unpack $ toPublicKeyHashText pkh)
-
-            balanceUrl pkh = dropWhileEnd (== '/') internalURI <> balancePath pkh
-
-            fastGetBalanceFor pkh = do
-                let mgr = _nodeDataSource_httpMgr nds
-
-                tezResp :: Either Http.HttpException (Http.Response LB.ByteString) <-
-                        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager mgr <$> Http.parseRequest (balanceUrl pkh))
-
-                pure $ case tezResp of
-                    Left err -> Left err
-                    Right resp -> Right $ decode' @Tez $ Http.getResponseBody $ resp
-
-            insertOrUpdateAccounts f sks' = do
-              res <- runExceptT $ for sks' $ \sk -> do
-                  mPkh <- withExceptT ((,) sk . Right) $ ExceptT $ runNoLoggingT $ showLedger appConfig (_appConfig_binaryPaths appConfig) sk
-                  case mPkh of
-                      Nothing -> do
-                        notify NotifyTag_ShowLedger (sk, Left $ "tezosClientWorker:showLedger: public key hash unavailable")
-                        return Nothing
-                      Just pkh -> do
-
-                          mTez <- withExceptT ((,) sk . Left) $ ExceptT $ do
-                              let oneSecond :: Int
-                                  oneSecond = 1e6
-                                  defaultPolicy = limitRetriesByCumulativeDelay (5 * oneSecond) $ exponentialBackoff oneSecond
-
-                                  toRetry mcd rs rr = do
-
-                                    let doRetry =
-                                          case rr of
-                                            Left (Http.InvalidUrlException _ _) -> False
-                                            Left (Http.HttpExceptionRequest _ hc) -> case hc of
-                                                 Http.StatusCodeException _ _ -> True
-                                                 Http.ResponseTimeout -> True
-
-                                                 Http.ConnectionTimeout -> True
-                                                 _ -> False
-                                            _ -> False
-
-                                    if not doRetry
-                                        then logDebugNS "kiln-node" $ fold
-                                         ["RPC call ("
-                                         , T.pack $ balanceUrl pkh
-                                         ,") succeeded after "
-                                         , tshow (succ $ rsIterNumber rs)
-                                         , " retries!"
-                                         ]
-                                        else do
-                                            let isFinal = mcd <= rsCumulativeDelay rs + 2 * fromMaybe 0 (rsPreviousDelay rs)
-
-                                            if isFinal
-                                              then logDebugNS "kiln-node" $ fold
-                                                   [ "For RPC call ("
-                                                   , T.pack $ balanceUrl pkh
-                                                   , ") this will be the final retry after "
-                                                   , tshow (succ $ rsIterNumber rs)
-                                                   , " retries."
-                                                    ]
-                                              else logDebugNS "kiln-node" $ fold
-                                                   [ "Retrying rpc call ("
-                                                    , T.pack $ balanceUrl pkh
-                                                    , "). Attempt number: {"
-                                                    , tshow (succ $ rsIterNumber rs)
-                                                    , "}."
-                                                   ]
-
-                                    return doRetry
-
-                              retrying defaultPolicy (toRetry (5 * oneSecond)) (const $ fastGetBalanceFor pkh)
-
-                          case mTez of
-                              Nothing -> do
-                                logErrorNS "kiln-node" $ "Failed to get balance of account " <> toPublicKeyHashText pkh
-                                return Nothing
-                              Just tez -> do
-                                  notify NotifyTag_ShowLedger (sk, Right (pkh, tez))
-                                  return $ Just (sk, pkh, tez)
-              case res of
-                  Right rs -> mapM_ f (Compose rs)
-                  Left (_, Right ClientError_LedgerDisconnected) -> do
-                      now <- getTime
-                      -- Mark ledger as disconnected
-                      update
-                          [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
-                          , ConnectedLedger_bakingAppVersionField =. (Nothing :: Maybe Text)
-                          , ConnectedLedger_updatedField =. Just now
-                          ] CondEmpty
-                  Left (sk, err) -> do
-                      delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-                      notify NotifyTag_ShowLedger (sk, Left $ T.pack $ show err)
-                      $(logError) (either tshow tshow err)
-
-        case existent of
-          [] -> insertOrUpdateAccounts insertAccount sks
-          found ->  case partition (`elem` (_ledgerAccount_secretKey <$> found)) sks of
-            (alreadyFound, notInDb) -> do
-                insertOrUpdateAccounts updateAccount alreadyFound
-                insertOrUpdateAccounts insertAccount notInDb
-
-      PublicRequest_ShowLedger sk -> inDb $ do
-        existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-        case existing of
-          Just _ -> update [LedgerAccount_balanceField =. (Nothing :: Maybe Tez)] $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-          Nothing -> insert $ LedgerAccount
-            { _ledgerAccount_secretKey = sk
-            , _ledgerAccount_publicKeyHash = Nothing
-            , _ledgerAccount_balance = Nothing
-            , _ledgerAccount_shouldImport = False
-            , _ledgerAccount_imported = False
-            , _ledgerAccount_shouldSetupToBake = False
-            , _ledgerAccount_shouldRegister = False
-            , _ledgerAccount_shouldSetHWM = Nothing
-            , _ledgerAccount_shouldDoVoteProtocol = Nothing
-            , _ledgerAccount_shouldDoVoteBallot = Nothing
-            }
+      PublicRequest_PollLedgerDevice ->
+        queryLedger $ updateConnectedLedgerViaGetConnectedLedger appConfig db
+      PublicRequest_ShowLedgerBatch sks -> do
+        for_ (reverse sks) $ \sk -> queryLedger $ showLedger appConfig db sk
+        fetchBalances appConfig db nds sks
+      PublicRequest_ShowLedger sk -> do
+        queryLedger $ showLedger appConfig db sk
+        fetchBalances appConfig db nds [sk]
       PublicRequest_SetLiquidityBakingToggle pkh lqdtyToggle -> inDb $ do
         let
           chainId = _appConfig_chainId appConfig
@@ -250,14 +99,14 @@ requestHandler appConfig emailFromAddr nds =
           Just _ -> update
             [ BakerExtraArgs_valueField =. _bakerExtraArgs_value lqdtyBakingExtraArg
             ] cond
-      PublicRequest_ImportSecretKey sk -> inDb $ do
-        update [LedgerAccount_shouldImportField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-      PublicRequest_SetupLedgerToBake sk -> inDb $ do
-        update [LedgerAccount_shouldSetupToBakeField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-      PublicRequest_RegisterKeyAsDelegate sk -> inDb $ do
-        update [LedgerAccount_shouldRegisterField =. True] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-      PublicRequest_SetHWM sk bl -> inDb $ do
-        update [LedgerAccount_shouldSetHWMField =. Just bl] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_ImportSecretKey sk ->
+        queryLedger $ importSecretKey appConfig db sk
+      PublicRequest_SetupLedgerToBake sk ->
+        queryLedger $ setupLedgerToBake appConfig db nds sk
+      PublicRequest_RegisterKeyAsDelegate sk ->
+        queryLedger $ registerKeyAsDelegate db nds sk appConfig
+      PublicRequest_SetHWM sk bl ->
+        queryLedger $ setHighWaterMark appConfig db sk bl
 
       req@(PublicRequest_AddInternalNode mNodeProcessState) -> validateAddInternalNodeRequest req appConfig $ do
         inDb $ do
@@ -647,17 +496,18 @@ requestHandler appConfig emailFromAddr nds =
             Just _ -> update [RightNotificationSettings_limitField =. limit] pk
         notify NotifyTag_RightNotificationSettings (rk, mLimit)
 
-      PublicRequest_DoVote sk p b -> inDb $
-        update
-          [ LedgerAccount_shouldDoVoteProtocolField =. Just p
-          , LedgerAccount_shouldDoVoteBallotField =. b
-          ]
-          (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      PublicRequest_DoVote sk p b ->
+        liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger $ submitVote appConfig db nds sk p b
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
 
   where
+    ledgerIOQueue = _nodeDataSource_ledgerIOQueue nds
+    db = _nodeDataSource_pool nds
+    logger = _nodeDataSource_logger nds
+    queryLedger :: LoggingT IO () -> LoggingT m ()
+    queryLedger action = liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger action
     inDb :: forall m' a. (MonadLoggerIO m', MonadLogger m', MonadIO m', MonadBaseNoPureAborts IO m') => Serializable a -> m' a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
 

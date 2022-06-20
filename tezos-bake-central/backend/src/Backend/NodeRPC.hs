@@ -149,6 +149,7 @@ data NodeQuery a where
   NodeQuery_BlockHeader       :: BlockHash -> NodeQuery BlockHeader
   NodeQuery_DelegateInfo      :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_ParticipationInfo :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
+  NodeQuery_Balance           :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery Tez
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
   NodeQuery_Round             :: BlockHash -> NodeQuery Int32
 deriving instance Show (NodeQuery a)
@@ -195,6 +196,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_latestFinalHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_logger :: LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
+  , _nodeDataSource_ledgerIOQueue :: TQueue (IO ())
   , _nodeDataSource_kilnNodeUri :: URI
   , _nodeDataSource_nodeForQuery :: Maybe URI -- Override the node selection algo, and do RPC using this node
   } deriving (Typeable, Generic)
@@ -601,6 +603,7 @@ getContext = \case
   NodeQuery_CurrentQuorum ctx -> pure ctx
   NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
   NodeQuery_ParticipationInfo ctx _lvl _pkh -> pure ctx
+  NodeQuery_Balance ctx _lvl _pkh -> pure ctx
   NodeQuery_Blocks ctx _ -> pure ctx
   NodeQuery_Round ctx -> pure ctx
 
@@ -793,6 +796,7 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_ParticipationInfo branch _lvl pkh -> nodeRPC' $ rParticipationInfo pkh chainId branch
+  NodeQuery_Balance branch _lvl pkh -> nodeRPC' $ rBalance pkh chainId branch
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)

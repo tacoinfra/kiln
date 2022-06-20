@@ -179,13 +179,7 @@ data LedgerAccount = LedgerAccount
   { _ledgerAccount_publicKeyHash :: Maybe PublicKeyHash
   , _ledgerAccount_secretKey :: SecretKey
   , _ledgerAccount_balance :: Maybe Tez
-  , _ledgerAccount_shouldImport :: Bool
   , _ledgerAccount_imported :: Bool
-  , _ledgerAccount_shouldSetupToBake :: Bool
-  , _ledgerAccount_shouldRegister :: Bool
-  , _ledgerAccount_shouldSetHWM :: Maybe RawLevel -- ^ Contains the block level if we need to set the HWM
-  , _ledgerAccount_shouldDoVoteProtocol :: Maybe (Id PeriodProposal) -- ^ Proposal to vote for
-  , _ledgerAccount_shouldDoVoteBallot :: Maybe Ballot -- ^ If present along with the protocol field, vote with given ballot. If missing, upvote the proposal.
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one

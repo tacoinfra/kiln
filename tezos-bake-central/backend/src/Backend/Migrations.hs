@@ -123,6 +123,12 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "Accusation")
   >=> migrateProtocolIndexV013
   >=> migrateAmendmentPeriodsTables
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldImport"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldSetupToBake"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldRegister"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldSetHWM"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldDoVoteProtocol"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldDoVoteBallot"
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
