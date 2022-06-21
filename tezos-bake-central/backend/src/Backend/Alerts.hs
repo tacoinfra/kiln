@@ -856,8 +856,8 @@ accusedBakeLog pkh chainId opHash blkHash =
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerAccused" elbm
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
-      AND elbm."op#hash" = ?opHash
-      AND elbm."op#blockHash" = ?blkHash
+      AND elbm."opHash" = ?opHash
+      AND elbm."blockHash" = ?blkHash
      LEFT OUTER JOIN "ErrorLog" el
        ON el.id = elbm.log
       AND el."chainId" = ?chainId
