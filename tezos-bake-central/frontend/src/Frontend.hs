@@ -2617,8 +2617,8 @@ bakersTab =
                 else case Map.size $ Map.filter (isJust . snd) proposals of
                   0 -> notVoted
                   n -> hasUpvoted n
-              VotingPeriodKind_Cooldown -> Nothing
-              _ -> Just $ maybe notVoted hasVoted mBakerVote
+              vp | isVotingPeriod vp -> Just $ maybe notVoted hasVoted mBakerVote
+              _ -> Nothing
 
         tileMenu $ do
           let
