@@ -865,7 +865,8 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinal
               -- For some reason since Ithaca, the last block in adoption period doesn't contain
               -- information about proposals. So in this case we fetch the proposal hash from its
               -- predecessor.
-              | remainingBlocksInVotingPeriod == 1 = latestHead ^. predecessor
+              -- TODO: re-check this condition later and make it more strict.
+              | remainingBlocksInVotingPeriod <= 1 = latestHead ^. predecessor
               | otherwise = latestHead ^. hash
           in fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (NodeQuery_CurrentProposal queryBlockHash)
         else return Nothing
