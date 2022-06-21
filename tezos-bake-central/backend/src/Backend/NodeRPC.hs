@@ -1136,9 +1136,8 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) = do
               (lastBlockInPreviousProtocol, firstBlockInProtocol) <- case currentProtocol == firstBlockInVotingPeriod ^. protocolHash of
                 True -> pure (lastBlockInPreviousVotingPeriod, firstBlockInVotingPeriod)
                 False -> do
-                  $(logDebug) [i|Entering binary search for ${currentProtocol}|]
-                  maybe (nqThrowError $ KilnRpcError_UnknownProtocol currentProtocol) pure =<<
-                      binarySearch firstBlockInVotingPeriod currentBlock
+                  $(logError) [i|Couldn't build ProtocolIndex for the protocol ${currentProtocol}|]
+                  nqThrowError $ KilnRpcError_UnknownProtocol currentProtocol
 
               let protocolFirstBlocksHistory' = Map.insert currentProtocol firstBlockInProtocol protocolFirstBlocksHistory
                   protocolLastBlocksHistory' = Map.insert (lastBlockInPreviousProtocol ^. protocolHash) lastBlockInPreviousProtocol protocolLastBlocksHistory
@@ -1148,24 +1147,6 @@ buildProtocolHistoryUntil (Arg predicate) (Arg branch) = do
                             ! #currentProtocol (lastBlockInPreviousProtocol ^. protocolHash)
                             ! #protocolFirstBlocksHistory protocolFirstBlocksHistory'
                             ! #protocolLastBlocksHistory protocolLastBlocksHistory'
-
-    binarySearch :: BlockCrossCompat -> BlockCrossCompat -> NodeQueryT m (Maybe (BlockCrossCompat, BlockCrossCompat))
-    binarySearch low high = do
-      $(logDebug) [i|Protocol binary search between levels ${low ^. level} and ${high ^. level}|]
-      binarySearch' low high
-
-    binarySearch' :: BlockCrossCompat -> BlockCrossCompat -> NodeQueryT m (Maybe (BlockCrossCompat, BlockCrossCompat))
-    binarySearch' low high
-      | low ^. level >= high ^. level = pure Nothing
-      | low ^. level == high ^. level - 1 =
-          pure $ if low ^. protocolHash == high ^. protocolHash then Nothing else Just (low, high)
-      | otherwise = do
-        let halfwayLevel = high ^. level - ((high ^. level - low ^. level) `div` 2)
-        halfway <- nodeQueryDataSourceSafe $ NodeQuery_BlockPred branch halfwayLevel
-        case halfway of
-          x | x ^. protocolHash == low ^. protocolHash -> binarySearch halfway high
-            | x ^. protocolHash == high ^. protocolHash -> binarySearch low halfway
-            | otherwise -> pure Nothing
 
 fetchProtocolForBlock
   :: forall m
