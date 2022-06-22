@@ -776,7 +776,8 @@ reportMissedBake
   => UTCTime -> Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
 reportMissedBake bakeTime f right pkh lvl = when' (bakerNotDeleted pkh) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
-  (missedBakeLog right pkh lvl >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  missedBakes <- missedBakeLog right pkh lvl
+  for_ (Map.toList missedBakes) $ \(bid, eids) -> case nonEmpty eids of
     Nothing -> do
       (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
         { _errorLogBakerMissed_log = eid
@@ -825,7 +826,8 @@ reportMissedEndorsementBonus
   => UTCTime -> PublicKeyHash -> RawLevel -> m ()
 reportMissedEndorsementBonus bakeTime pkh lvl = when' (bakerNotDeleted pkh) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
-  (missedEndorsementBonusLog pkh lvl chainId >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  missedEndorsemementBonuses <- missedEndorsementBonusLog pkh lvl chainId
+  for_ (Map.toList missedEndorsemementBonuses) $ \(bid, eids) -> case nonEmpty eids of
     Nothing -> do
       (eid, _) <- insertErrorLog $ \eid ->
         ErrorLogBakerMissedEndorsementBonus
@@ -874,7 +876,8 @@ reportAccusation
   => OperationHash -> BlockHash -> AccusationType -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
 reportAccusation opHash blkHash accusationType pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
-  (accusedBakeLog pkh chainId opHash blkHash >>=) $ itraverse_ $ \bid eids -> case nonEmpty eids of
+  accusedLog <- accusedBakeLog pkh chainId opHash blkHash
+  for_ (Map.toList accusedLog) $ \(bid, eids) -> case nonEmpty eids of
     Just _ -> pure ()
     Nothing -> do
       (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerAccused
