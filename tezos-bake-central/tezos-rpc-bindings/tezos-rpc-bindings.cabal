@@ -1,0 +1,50 @@
+name: tezos-rpc-bindings
+version: 0.1
+license: BSD3
+copyright: (c) 2018 Obsidian Systems LLC, 2020-2021 TQ Tezos
+author: Obsidian Systems LLC
+maintainer: Tezos Kiln <maintainer@tezos-kiln.org>
+stability: Experimental
+build-type: Simple
+cabal-version: >=1.8
+
+flag docker
+  description: Is being built for docker
+  default: False
+
+flag linux-package
+  description: Is being built for a Linux package (Debian, Redhat, etc.)
+  default: False
+
+library
+  hs-source-dirs: src
+
+  exposed-modules:
+    Tezos.NodeRPC
+    Tezos.NodeRPC.Class
+    Tezos.NodeRPC.Network
+  other-modules:
+    Paths_tezos_rpc_bindings
+  build-depends:
+      base >=4.11 && <5
+    , aeson
+    , bytestring
+    , common
+    , containers
+    , deepseq
+    , http-client
+    , http-types
+    , lens
+    , monad-logger
+    , mtl
+    , safe-exceptions
+    , text
+    , time
+  ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
+
+  if flag(docker)
+    cpp-options: -DDISTRO_DOCKER
+  else
+    if flag(linux-package)
+      cpp-options: -DDISTRO_LINUX_PACKAGE
+  default-extensions: StrictData

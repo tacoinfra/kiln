@@ -61,8 +61,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
       named = hackGet dep/named; # TODO: Drop once package set includes 0.3.0.0
       reflex-dom-forms = hackGet dep/reflex-dom-forms;
       semantic-reflex = hackGet dep/semantic-reflex + "/semantic-reflex";
-      tezos-bake-monitor-lib = hackGet dep/tezos-bake-monitor-lib + "/tezos-bake-monitor-lib";
-      tezos-noderpc = hackGet dep/tezos-bake-monitor-lib + "/tezos-noderpc";
+      tezos-rpc-bindings = ./tezos-rpc-bindings;
     };
 
     overrides =
@@ -84,8 +83,6 @@ obelisk.project ./. ({ pkgs, ... }@args:
           semantic-reflex = dontHaddock (dontCheck super.semantic-reflex);
           silently = pkgs.haskell.lib.dontCheck super.silently;
           terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
-          tezos-bake-monitor-lib = test-runner (haddock-build super.tezos-bake-monitor-lib);
-          tezos-noderpc = checkHlint (haddock-build super.tezos-noderpc);
           };
 
         postgresql-override = pkgs.postgresql.overrideAttrs (oldAttrs:
