@@ -59,7 +59,7 @@ import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.Except (catchError)
 import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logWarnSH)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logWarnSH)
 import Control.Monad.Logger (monadLoggerLog)
 import Control.Monad.Reader (local)
 import Control.Monad.Reader (reader)
@@ -115,7 +115,7 @@ import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
 import qualified Tezos.V013.Types as V013
 
-import Backend.Common (timeout')
+import Backend.Common (LedgerQuery, timeout')
 import Backend.Schema
 import Backend.STM (MonadSTM (liftSTM), newTVar', readTVar', writeTVar')
 import Common.Schema
@@ -196,7 +196,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_latestFinalHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_logger :: LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
-  , _nodeDataSource_ledgerIOQueue :: TQueue (IO ())
+  , _nodeDataSource_ledgerIOQueue :: TQueue (LedgerQuery (LoggingT IO))
   , _nodeDataSource_kilnNodeUri :: URI
   , _nodeDataSource_nodeForQuery :: Maybe URI -- Override the node selection algo, and do RPC using this node
   } deriving (Typeable, Generic)

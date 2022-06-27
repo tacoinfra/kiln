@@ -53,7 +53,9 @@ import qualified System.Process as Process
 import Tezos.Types
 
 import Backend.Alerts
-import Backend.Common (AppSerializable, addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout', withDbAndConfig)
+import Backend.Common
+  (AppSerializable, LedgerQuery(..), LedgerQueryType(..), addBakerImpl, workerWithDelay,
+  readCreateProcessWithExitCodeWithLogging, timeout', withDbAndConfig)
 import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI', kilnNodeRpcURI, BinaryPaths(..))
 import Backend.NodeRPC
 import Backend.Schema
@@ -95,7 +97,7 @@ ledgerConnectivityCheckWorker delay !ledgerCheckDelay logger nds appConfig db = 
         -- We might want to do the connectivity check because some time has passed
         case (ledgerCheckDelay, _connectedLedger_updated cl) of
           -- Check if it wasn't updated previously
-          (_, Nothing) -> liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger $
+          (_, Nothing) -> liftIO $ atomically $ writeTQueue ledgerIOQueue $
             updateConnectedLedgerViaGetConnectedLedger appConfig db
           (ledgerBackgroundUpdateInterval, Just upd) ->
             -- Attempt to check if sufficient amout of time has passed
@@ -141,11 +143,11 @@ ledgerConnectivityCheckWorker delay !ledgerCheckDelay logger nds appConfig db = 
               -- If we have no rights, we still check that we've seen all rights up to current block
               Just progressLvl -> pure $ progressLvl >= blk ^. level
               Nothing -> pure False
-        when (doCheck == Just True) $ liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger $
+        when (doCheck == Just True) $ liftIO $ atomically $ writeTQueue ledgerIOQueue $
           updateConnectedLedgerViaGetConnectedLedger appConfig db
 
-updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> LoggingT IO ()
-updateConnectedLedgerViaGetConnectedLedger appConfig db = do
+updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> LedgerQuery (LoggingT IO)
+updateConnectedLedgerViaGetConnectedLedger appConfig db = LedgerQuery LedgerQueryType_PollLedger $ do
   getConnectedLedger appConfig >>= \case
     Left err -> do
       $(logError) (tshow err)
@@ -303,8 +305,8 @@ fetchBalances appConfig db nds sks = withDbAndConfig db appConfig $ for_ sks $ \
           update [LedgerAccount_balanceField =. Just balance] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
           notify NotifyTag_ShowLedger (sk, Right (pkh, Just balance))
 
-showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> m ()
-showLedger appConfig db _nds sk = do
+showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> LedgerQuery m
+showLedger appConfig db _nds sk = LedgerQuery LedgerQueryType_ShowLedger $ do
   pkhOrErr <- runExceptT $ do
     stdout <- runClientCommand appConfig defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
       | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
@@ -344,8 +346,9 @@ showLedger appConfig db _nds sk = do
         -> Just pkh
       xs -> getPublicKeyHashZeronet xs
 
-importSecretKey :: MonadLoggerIO m => AppConfig -> Pool Postgresql -> SecretKey -> m ()
-importSecretKey appConfig db sk = ledgerSetupStep appConfig db sk (mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting })
+importSecretKey :: MonadLoggerIO m => AppConfig -> Pool Postgresql -> SecretKey -> LedgerQuery m
+importSecretKey appConfig db sk = LedgerQuery LedgerQueryType_ImportKey $
+  ledgerSetupStep appConfig db sk (mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting })
   (\res -> mempty { _setupState_import = Just $ First res }) $ do
     e <- runExceptT $ runClientCommand appConfig noTimeout ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \_warnings errors -> if
       | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ImportSecretKeyStep_Declined
@@ -411,8 +414,8 @@ computeChainId port kilnDataDir maybePaths json = do
     eCommand =
       liftA2 (\p gb -> words $ printf "--protocol %s compute chain id from block hash %s" p gb) protocol genesisBlock
 
-setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> m ()
-setupLedgerToBake appConfig db nds sk = do
+setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> LedgerQuery m
+setupLedgerToBake appConfig db nds sk = LedgerQuery LedgerQueryType_SetupToBake $ do
   mla <- withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
   for_ mla $ \la -> ledgerSetupStep appConfig db sk (mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
     (\(isReg, res) -> mempty { _setupState_setup = Just $ First $ bool res SetupLedgerToBakeStep_DoneAndRegistered isReg }) $ do
@@ -450,8 +453,8 @@ checkIfRegistered db nds pkh = do
 -- get up-to-date. We detect that case and just return an error.
 registerKeyAsDelegate
   :: (MonadLoggerIO m)
-  => Pool Postgresql -> NodeDataSource -> SecretKey -> AppConfig -> m ()
-registerKeyAsDelegate db nds sk appConfig = do
+  => Pool Postgresql -> NodeDataSource -> SecretKey -> AppConfig -> LedgerQuery m
+registerKeyAsDelegate db nds sk appConfig = LedgerQuery LedgerQueryType_ImportKey $ do
   mla <- withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
   for_ mla $ \la -> do
     let mbPkh = _ledgerAccount_publicKeyHash la
@@ -519,8 +522,8 @@ parseRegisterStep (T.strip -> err)
   = Just RegisterStep_NodeNotReady
   | otherwise = Nothing
 
-setHighWaterMark :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> SecretKey -> RawLevel -> m ()
-setHighWaterMark appConfig db sk bl =
+setHighWaterMark :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> SecretKey -> RawLevel -> LedgerQuery m
+setHighWaterMark appConfig db sk bl = LedgerQuery LedgerQueryType_SetHWM $
   ledgerSetupStep appConfig db sk (mempty { _setupState_setHWM = Just $ First SetHWMStep_Prompting }) (\res -> mempty { _setupState_setHWM = Just $ First res }) $ do
     e <- runExceptT $ runClientCommand appConfig noTimeout ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \_warnings errors -> if
       | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left SetHWMStep_Declined
@@ -529,8 +532,8 @@ setHighWaterMark appConfig db sk bl =
       | otherwise -> Left $ SetHWMStep_Failed $ T.unlines errors
     pure $ fromLeft SetHWMStep_Done e
 
-submitVote :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> Id PeriodProposal -> Maybe Ballot -> m ()
-submitVote appConfig db nds sk p b = do
+submitVote :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> Id PeriodProposal -> Maybe Ballot -> LedgerQuery m
+submitVote appConfig db nds sk p b = LedgerQuery LedgerQueryType_Vote $ do
   withDbAndConfig db appConfig $
     notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
   dsh <- liftIO $ atomically $ dataSourceFinalHead nds

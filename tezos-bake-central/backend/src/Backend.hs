@@ -77,7 +77,7 @@ import qualified Text.URI as URI
 import Tezos.Common.Chain (identifyChain)
 import Tezos.Types
 
-import Backend.Common (worker', workerWithDelay)
+import Backend.Common (LedgerQuery(..), worker', workerWithDelay)
 import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
                       , _nodeConfigFile_network, validateNodeConfigFile)
 import Backend.Http (runHttpT)
@@ -378,7 +378,8 @@ backendImpl cfg serve = do
         runLoggingEnv logger $ clearMailQueueWithDynamicEmailEnv $ Identity db
 
       addFinalizer <=< worker' "readNodeDataSourceIOQueue" $ join $ atomically $ readTQueue $ _nodeDataSource_ioQueue dataSrc
-      addFinalizer <=< worker' "readLedgerIOQueue" $ join $ atomically $ readTQueue $ _nodeDataSource_ledgerIOQueue dataSrc
+      addFinalizer <=< worker' "readLedgerIOQueue" $ do
+        atomically (readTQueue $ _nodeDataSource_ledgerIOQueue dataSrc) >>= runLoggingEnv logger . _ledgerQuery_action
 
       let
         frontendConfig = Config.FrontendConfig
