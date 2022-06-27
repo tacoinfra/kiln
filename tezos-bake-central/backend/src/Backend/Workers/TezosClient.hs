@@ -61,6 +61,7 @@ import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterS
 import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
+import Tezos.Common.PublicKeyHash (PublicKeyHash)
 
 startBaking :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m ()
 startBaking pkh = do
@@ -263,45 +264,34 @@ Tezos address at this path/curve: tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
 Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM
 -}
 
-showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> m ()
-showLedger appConfig db nds sk = do
-  la <- withDbAndConfig db appConfig $ do
+-- | Checks whether @PublicKeyHash@ of a given @SecretKey@ is already known or was previously already requested
+-- and expected to be fetched in future
+isKnownLedgerPkh :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> SecretKey -> m Bool
+isKnownLedgerPkh appConfig db sk = do
+  withDbAndConfig db appConfig $ do
     existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
     case existing of
       Just la -> do
         update [LedgerAccount_balanceField =. (Nothing :: Maybe Tez)] $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-        pure $ la { _ledgerAccount_balance = Nothing }
+        pure $ isJust (_ledgerAccount_publicKeyHash la) || _ledgerAccount_requested la
       Nothing -> do
         let la = LedgerAccount
               { _ledgerAccount_secretKey = sk
               , _ledgerAccount_publicKeyHash = Nothing
               , _ledgerAccount_balance = Nothing
               , _ledgerAccount_imported = False
+              , _ledgerAccount_requested = True
               }
         insert la
-        pure la
-  pkhOrErr <- case _ledgerAccount_publicKeyHash la of
-    Nothing -> runExceptT $ do
-      stdout <- runClientCommand appConfig defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
-        | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
-        | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
-        | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
-        | otherwise -> Left $ ClientError_Other $ T.unlines errors
-      let pkh = getPublicKeyHash (T.lines stdout)
-      when (isNothing pkh) $ $(logWarn) $ "showLedger: failed to find public key hash from: " <> stdout
-      pure pkh
-    Just pkh -> pure $ Right $ Just pkh
-  case pkhOrErr of
-    Left err -> do
-      withDbAndConfig db appConfig $ do
-        delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-        notify NotifyTag_ShowLedger (sk, Left (T.pack $ show err))
-      $(logError) (T.pack (show err))
-    Right Nothing -> withDbAndConfig db appConfig $
-      notify NotifyTag_ShowLedger (sk, Left "tezosClientWorker:showLedger: public key hash unavailable")
-    Right (Just pkh) -> do
-      withDbAndConfig db appConfig $
-        update [LedgerAccount_publicKeyHashField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+        pure False
+
+fetchBalances :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> [SecretKey] -> m ()
+fetchBalances appConfig db nds sks = withDbAndConfig db appConfig $ for_ sks $ \sk -> do
+  mla <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+  for_ mla $ \la -> case _ledgerAccount_publicKeyHash la of
+    -- pkh is not yet known, balance will be fetched later
+    Nothing -> pure ()
+    Just pkh -> do
       balanceOrErr <- flip runReaderT nds . runExceptT @KilnRpcError $ do
         mbHeadBlock <- ask >>= liftIO . atomically . dataSourceFinalHead
         case mbHeadBlock of
@@ -309,9 +299,34 @@ showLedger appConfig db nds sk = do
           Just headBlock -> nodeQueryDataSource $ NodeQuery_Balance (headBlock ^. hash) (headBlock ^. level) pkh
       case balanceOrErr of
         Left err -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh <> " due to: " <> prettyKilnRpcError err
-        Right balance -> withDbAndConfig db appConfig $ do
+        Right balance -> do
           update [LedgerAccount_balanceField =. Just balance] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
           notify NotifyTag_ShowLedger (sk, Right (pkh, balance))
+
+showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> m ()
+showLedger appConfig db _nds sk = do
+  pkhOrErr <- runExceptT $ do
+    stdout <- runClientCommand appConfig defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
+      | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
+      | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
+      | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
+      | otherwise -> Left $ ClientError_Other $ T.unlines errors
+    let pkh = getPublicKeyHash (T.lines stdout)
+    when (isNothing pkh) $ $(logWarn) $ "showLedger: failed to find public key hash from: " <> stdout
+    pure pkh
+  case pkhOrErr of
+    Left err -> do
+      withDbAndConfig db appConfig $ do
+        delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+        notify NotifyTag_ShowLedger (sk, Left (T.pack $ show err))
+      $(logError) (T.pack (show err))
+    Right Nothing -> withDbAndConfig db appConfig $ do
+      -- If we failed to fetch pkh, we'll attempt once again on the next iteration
+      update [LedgerAccount_requestedField =. False] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      notify NotifyTag_ShowLedger (sk, Left "tezosClientWorker:showLedger: public key hash unavailable")
+    Right (Just pkh) -> do
+      withDbAndConfig db appConfig $ do
+        update [LedgerAccount_publicKeyHashField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
   where
     getPublicKeyHashZeronet = \case
       foundApp : _manufacturer: _product: _application: _curve: _path: _pk : pkh' : _

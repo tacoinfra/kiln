@@ -60,8 +60,8 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Process (updateProcessState)
 import Backend.Workers.TezosClient
-  (importSecretKey, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake, showLedger,
-  submitVote, updateConnectedLedgerViaGetConnectedLedger)
+  (importSecretKey, isKnownLedgerPkh, fetchBalances, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
+  showLedger, submitVote, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -79,8 +79,8 @@ requestHandler appConfig emailFromAddr nds =
 
       PublicRequest_PollLedgerDevice ->
         queryLedger $ updateConnectedLedgerViaGetConnectedLedger appConfig db
-      PublicRequest_ShowLedgerBatch sks -> for_ (reverse sks) $ \sk -> queryLedger $ showLedger appConfig db nds sk
-      PublicRequest_ShowLedger sk -> queryLedger $ showLedger appConfig db nds sk
+      PublicRequest_ShowLedgerBatch sks -> showLedgers sks
+      PublicRequest_ShowLedger sk -> showLedgers [sk]
       PublicRequest_SetLiquidityBakingToggle pkh shouldRestartBaker lqdtyToggle -> inDb $ do
         let
           chainId = _appConfig_chainId appConfig
@@ -485,6 +485,11 @@ requestHandler appConfig emailFromAddr nds =
     queryLedger action = liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger action
     inDb :: forall m' a. (MonadLoggerIO m', MonadLogger m', MonadIO m', MonadBaseNoPureAborts IO m') => Serializable a -> m' a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
+    showLedgers sks = do
+      for_ (reverse sks) $ \sk -> do
+        isKnown <- isKnownLedgerPkh appConfig db sk
+        unless isKnown $ queryLedger $ showLedger appConfig db nds sk
+      fetchBalances appConfig db nds (reverse sks)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =

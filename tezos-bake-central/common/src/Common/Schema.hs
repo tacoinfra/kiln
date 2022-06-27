@@ -180,6 +180,7 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_secretKey :: SecretKey
   , _ledgerAccount_balance :: Maybe Tez
   , _ledgerAccount_imported :: Bool
+  , _ledgerAccount_requested :: Bool
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one
