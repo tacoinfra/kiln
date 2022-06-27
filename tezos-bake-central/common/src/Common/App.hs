@@ -331,7 +331,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_alertCount :: MaybeSelector (DMap LogTag (Const Int)) a
   , _bakeViewSelector_snapshotMeta :: MaybeSelector SnapshotMeta a
   , _bakeViewSelector_connectedLedger :: MaybeSelector (Maybe ConnectedLedger) a
-  , _bakeViewSelector_showLedger :: RangeSelector SecretKey (Deletable' Text (PublicKeyHash, Tez)) a
+  , _bakeViewSelector_showLedger :: RangeSelector SecretKey (Deletable' Text (PublicKeyHash, Maybe Tez)) a
   , _bakeViewSelector_prompting :: RangeSelector SecretKey (Deletable SetupState) a
   , _bakeViewSelector_votePrompting :: RangeSelector SecretKey (Deletable VoteState) a
   , _bakeViewSelector_rightNotificationSettings :: RangeSelector RightKind (Deletable RightNotificationLimit) a
@@ -377,7 +377,7 @@ data BakeView a = BakeView
   -- , _bakeView_graphs       :: AppendMap (Id BakerDaemon) (First (Maybe (Micro, Text)), a)
   -- , _bakeView_summaryGraph :: Single (Maybe (Micro, Text)) a
   , _bakeView_connectedLedger :: MaybeView (Maybe ConnectedLedger) a
-  , _bakeView_showLedger :: RangeView SecretKey (Deletable' Text (PublicKeyHash, Tez)) a
+  , _bakeView_showLedger :: RangeView SecretKey (Deletable' Text (PublicKeyHash, Maybe Tez)) a
   , _bakeView_prompting :: RangeView SecretKey (Deletable SetupState) a
   , _bakeView_votePrompting :: RangeView SecretKey (Deletable VoteState) a
   , _bakeView_rightNotificationSettings :: RangeView RightKind (Deletable RightNotificationLimit) a

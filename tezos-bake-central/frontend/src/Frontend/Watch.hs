@@ -322,7 +322,7 @@ watchConnectedLedgerForced = do
   _ <- requestingIdentity $ public PublicRequest_PollLedgerDevice <$ poll
   watchConnectedLedger
 
-watchLedgerAccounts :: MonadAppWidget js t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (Either Text (PublicKeyHash, Tez))))
+watchLedgerAccounts :: MonadAppWidget js t m => Dynamic t [SecretKey] -> m (Dynamic t (MonoidalMap SecretKey (Either Text (PublicKeyHash, Maybe Tez))))
 watchLedgerAccounts dkeys =
   -- (fmap . fmap) (fmapMaybe getFirst . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty
   (fmap . fmap) (fmap (bimap getFirst id . toEither) . getRangeView . _bakeView_showLedger) $ watchViewSelector $ ffor dkeys $ \keys -> mempty

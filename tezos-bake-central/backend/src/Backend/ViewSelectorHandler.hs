@@ -287,7 +287,7 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
     las <- select CondEmpty -- Expect very few records here, so just select them all
     let rangeView = toRangeView showLedgerVS $ flip fmap las $ \la ->
           ( _ledgerAccount_secretKey la
-          , fromEither $ liftA2 (,) (maybe (Left (First "")) Right $ _ledgerAccount_publicKeyHash la) (maybe (Left (First "")) Right $ _ledgerAccount_balance la)
+          , fromEither $ liftA2 (,) (maybe (Left (First "Importing PKH...")) Right $ _ledgerAccount_publicKeyHash la) (Right $ _ledgerAccount_balance la)
           )
     pure rangeView
 

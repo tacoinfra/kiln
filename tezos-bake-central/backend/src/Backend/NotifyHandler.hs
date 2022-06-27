@@ -112,7 +112,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       | otherwise = pure mempty
 
     showLedgerVS = _bakeViewSelector_showLedger aggVS
-    handleShowLedger :: Applicative m' => SecretKey -> Either Text (PublicKeyHash, Tez) -> m' (BakeView a)
+    handleShowLedger :: Applicative m' => SecretKey -> Either Text (PublicKeyHash, Maybe Tez) -> m' (BakeView a)
     handleShowLedger sk epkh
       | viewSelects sk showLedgerVS = pure $ mempty
         { _bakeView_showLedger = toRangeView1 showLedgerVS sk $ Just $ liftError First epkh

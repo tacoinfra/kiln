@@ -301,7 +301,7 @@ fetchBalances appConfig db nds sks = withDbAndConfig db appConfig $ for_ sks $ \
         Left err -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh <> " due to: " <> prettyKilnRpcError err
         Right balance -> do
           update [LedgerAccount_balanceField =. Just balance] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-          notify NotifyTag_ShowLedger (sk, Right (pkh, balance))
+          notify NotifyTag_ShowLedger (sk, Right (pkh, Just balance))
 
 showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> m ()
 showLedger appConfig db _nds sk = do
@@ -327,6 +327,7 @@ showLedger appConfig db _nds sk = do
     Right (Just pkh) -> do
       withDbAndConfig db appConfig $ do
         update [LedgerAccount_publicKeyHashField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+        notify NotifyTag_ShowLedger (sk, Right (pkh, Nothing))
   where
     getPublicKeyHashZeronet = \case
       foundApp : _manufacturer: _product: _application: _curve: _path: _pk : pkh' : _
