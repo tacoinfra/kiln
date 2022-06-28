@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -6,9 +5,6 @@ module Tezos.Common.Contract where
 
 import Control.DeepSeq (NFData)
 import Data.Aeson
-#if !(MIN_VERSION_base(4,11,0))
-import Data.Semigroup
-#endif
 import Data.Hashable (Hashable)
 import Data.String
 import qualified Data.ByteString as BS

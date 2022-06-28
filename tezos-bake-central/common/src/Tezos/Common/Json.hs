@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -14,9 +13,6 @@ import Data.List (uncons)
 import Data.Map (Map)
 import Data.Proxy (Proxy (..))
 import Data.Scientific (Scientific)
-#if !(MIN_VERSION_base(4,11,0))
-import Data.Semigroup
-#endif
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.ByteString.Lazy as LBS

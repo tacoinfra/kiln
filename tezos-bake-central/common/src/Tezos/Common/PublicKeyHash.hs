@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
@@ -8,9 +7,6 @@ module Tezos.Common.PublicKeyHash where
 
 import Control.DeepSeq (NFData)
 import Data.Aeson
-#if !(MIN_VERSION_base(4,11,0))
-import Data.Semigroup
-#endif
 import qualified Data.ByteString as BS
 import Data.Word (Word8)
 import Tezos.Common.ShortByteString (fromShort)

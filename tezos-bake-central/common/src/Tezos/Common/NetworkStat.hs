@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -14,9 +13,6 @@ there are non-breaking and are just additive.
 
 import Control.Lens.TH (makeLenses)
 import Data.Int (Int32)
-#if !(MIN_VERSION_base(4,9,0))
-import Data.Semigroup
-#endif
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 

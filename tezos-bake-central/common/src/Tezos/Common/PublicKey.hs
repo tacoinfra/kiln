@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
@@ -7,9 +6,6 @@ module Tezos.Common.PublicKey where
 
 import Control.DeepSeq (NFData)
 import Data.Aeson
-#if !(MIN_VERSION_base(4,11,0))
-import Data.Semigroup
-#endif
 import Data.Hashable (Hashable)
 import Data.String
 import Data.Text (Text)

@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -10,9 +9,6 @@ import Data.Aeson
 import qualified Data.Aeson as Aeson
 import qualified Data.HashSet as HashSet
 import Data.HashSet (HashSet)
-#if !(MIN_VERSION_base(4,11,0))
-import Data.Semigroup
-#endif
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)

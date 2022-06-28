@@ -29,11 +29,6 @@ import GHC.Generics (Generic)
 import qualified Text.ParserCombinators.ReadPrec as Read
 import qualified Text.Read as Read
 
-
-#if !(MIN_VERSION_base(4,11,0))
-import Data.Semigroup
-#endif
-
 #if defined(ghcjs_HOST_OS)
 import qualified "hashing" Crypto.Hash as CryptoHash
 import qualified Data.ByteString.Base16 as BS16

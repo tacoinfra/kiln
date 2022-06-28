@@ -1,11 +1,6 @@
-{-# LANGUAGE CPP #-}
-
 module Tezos.Common.NodeRPC.Types where
 
 import Control.Lens (Prism', re, (^.))
-#if !(MIN_VERSION_base(4,9,0))
-import Data.Semigroup
-#endif
 import Control.Exception.Safe (Exception)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
