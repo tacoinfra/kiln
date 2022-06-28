@@ -847,6 +847,7 @@ migrateProtocolIndexV013 ta = do
         ALTER TABLE "ProtocolIndex" DROP COLUMN "constants#timeBetweenBlocks";
         ALTER TABLE "ProtocolIndex" ADD COLUMN "constants#cyclesPerVotingPeriod" INT NULL;
         ALTER TABLE "ProtocolIndex" ALTER COLUMN "constants#blocksPerVotingPeriod" DROP NOT NULL;
+        ALTER TABLE "ProtocolIndex" ALTER COLUMN "constants#minimalBlockDelay" SET DEFAULT 30;
         ALTER TABLE "ProtocolIndex" ALTER COLUMN "constants#minimalBlockDelay" SET NOT NULL;
       |]
       getTableAnalysis
