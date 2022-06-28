@@ -350,7 +350,7 @@ selectAddress ledger = divClass "select-address" $ mdo
   requesting_ (public (PublicRequest_ShowLedgerBatch (reverse secretKeys)) <$ pb)
 
   (formEl, selection) <- elDynAttrWithModifyEvent' preventDefault Submit "form" ((\e -> "class" =: ("ui form" <> if e then " error" else "")) <$> hasError) $ mdo
-    let accountItem :: SecretKey -> Dynamic t (Maybe (Either Text (PublicKeyHash, Tez))) -> m (Event t (SecretKey, PublicKeyHash))
+    let accountItem :: SecretKey -> Dynamic t (Maybe (Either Text (PublicKeyHash, Maybe Tez))) -> m (Event t (SecretKey, PublicKeyHash))
         accountItem (SecretKey _ sc dp) dynPkhTez = do
           let selected = demuxed selectionDemux $ Just $ SecretKey ledger sc dp
               loaded = isJust <$> dynPkhTez
@@ -375,7 +375,7 @@ selectAddress ledger = divClass "select-address" $ mdo
                 in tooltipped TooltipPos_TopCenter tooltipContent $ do
                   SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
                   text $ toPublicKeyHashText pkh
-                  fancyTez tz
+                  maybe (pure ()) fancyTez tz
           let f mepkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) (either (const Nothing) Just =<< mepkh)
           pure $ attachWithMaybe f (current dynPkhTez) (domEvent Click e)
 

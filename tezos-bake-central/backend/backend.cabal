@@ -133,6 +133,7 @@ library
     Backend.NodeRPC
     Backend.Common
     Backend.Common.Baker
+    Backend.Common.Ledger
     Backend.Common.Node
     Backend.Common.TezosRelease
     Backend.Common.Worker

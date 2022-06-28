@@ -20,7 +20,7 @@ module Backend.RequestHandler where
 
 import Control.Concurrent.Async (async)
 import Control.Concurrent.STM (atomically)
-import Control.Concurrent.STM.TQueue (writeTQueue)
+import Control.Concurrent.STM.TQueue (tryPeekTQueue, writeTQueue)
 import Control.Exception.Safe (MonadMask, SomeException, try)
 import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logError, logInfo, logDebug)
 import Control.Monad.Trans.Resource (MonadUnliftIO)
@@ -60,8 +60,8 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Process (updateProcessState)
 import Backend.Workers.TezosClient
-  (importSecretKey, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake, showLedger,
-  submitVote, updateConnectedLedgerViaGetConnectedLedger)
+  (importSecretKey, isKnownLedgerPkh, fetchBalances, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
+  showLedger, submitVote, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -78,9 +78,14 @@ requestHandler appConfig emailFromAddr nds =
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
       PublicRequest_PollLedgerDevice ->
-        queryLedger $ updateConnectedLedgerViaGetConnectedLedger appConfig db
-      PublicRequest_ShowLedgerBatch sks -> for_ (reverse sks) $ \sk -> queryLedger $ showLedger appConfig db nds sk
-      PublicRequest_ShowLedger sk -> queryLedger $ showLedger appConfig db nds sk
+        liftIO $ atomically $ do
+          nextQuery <- tryPeekTQueue ledgerIOQueue
+          -- If the next query is ledger connectivity, avoid adding another check to the queue
+          case nextQuery of
+            Just (LedgerQuery LedgerQueryType_PollLedger _) -> pure ()
+            _ -> writeTQueue ledgerIOQueue $ updateConnectedLedgerViaGetConnectedLedger appConfig db
+      PublicRequest_ShowLedgerBatch sks -> showLedgers sks
+      PublicRequest_ShowLedger sk -> showLedgers [sk]
       PublicRequest_SetLiquidityBakingToggle pkh shouldRestartBaker lqdtyToggle -> inDb $ do
         let
           chainId = _appConfig_chainId appConfig
@@ -472,7 +477,7 @@ requestHandler appConfig emailFromAddr nds =
         notify NotifyTag_RightNotificationSettings (rk, mLimit)
 
       PublicRequest_DoVote sk p b ->
-        liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger $ submitVote appConfig db nds sk p b
+        queryLedger $ submitVote appConfig db nds sk p b
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
@@ -480,11 +485,15 @@ requestHandler appConfig emailFromAddr nds =
   where
     ledgerIOQueue = _nodeDataSource_ledgerIOQueue nds
     db = _nodeDataSource_pool nds
-    logger = _nodeDataSource_logger nds
-    queryLedger :: LoggingT IO () -> LoggingT m ()
-    queryLedger action = liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger action
+    queryLedger :: LedgerQuery (LoggingT IO) -> LoggingT m ()
+    queryLedger action = liftIO $ atomically $ writeTQueue ledgerIOQueue action
     inDb :: forall m' a. (MonadLoggerIO m', MonadLogger m', MonadIO m', MonadBaseNoPureAborts IO m') => Serializable a -> m' a
     inDb = runDb (Identity $ _nodeDataSource_pool nds)
+    showLedgers sks = do
+      for_ (reverse sks) $ \sk -> do
+        isKnown <- isKnownLedgerPkh appConfig db sk
+        unless isKnown $ queryLedger $ showLedger appConfig db nds sk
+      fetchBalances appConfig db nds (reverse sks)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =

@@ -53,7 +53,9 @@ import qualified System.Process as Process
 import Tezos.Types
 
 import Backend.Alerts
-import Backend.Common (AppSerializable, addBakerImpl, workerWithDelay, readCreateProcessWithExitCodeWithLogging, timeout', withDbAndConfig)
+import Backend.Common
+  (AppSerializable, LedgerQuery(..), LedgerQueryType(..), addBakerImpl, workerWithDelay,
+  readCreateProcessWithExitCodeWithLogging, timeout', withDbAndConfig)
 import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI', kilnNodeRpcURI, BinaryPaths(..))
 import Backend.NodeRPC
 import Backend.Schema
@@ -61,6 +63,7 @@ import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterS
 import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
+import Tezos.Common.PublicKeyHash (PublicKeyHash)
 
 startBaking :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m ()
 startBaking pkh = do
@@ -94,7 +97,7 @@ ledgerConnectivityCheckWorker delay !ledgerCheckDelay logger nds appConfig db = 
         -- We might want to do the connectivity check because some time has passed
         case (ledgerCheckDelay, _connectedLedger_updated cl) of
           -- Check if it wasn't updated previously
-          (_, Nothing) -> liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger $
+          (_, Nothing) -> liftIO $ atomically $ writeTQueue ledgerIOQueue $
             updateConnectedLedgerViaGetConnectedLedger appConfig db
           (ledgerBackgroundUpdateInterval, Just upd) ->
             -- Attempt to check if sufficient amout of time has passed
@@ -140,11 +143,11 @@ ledgerConnectivityCheckWorker delay !ledgerCheckDelay logger nds appConfig db = 
               -- If we have no rights, we still check that we've seen all rights up to current block
               Just progressLvl -> pure $ progressLvl >= blk ^. level
               Nothing -> pure False
-        when (doCheck == Just True) $ liftIO $ atomically $ writeTQueue ledgerIOQueue $ runLoggingEnv logger $
+        when (doCheck == Just True) $ liftIO $ atomically $ writeTQueue ledgerIOQueue $
           updateConnectedLedgerViaGetConnectedLedger appConfig db
 
-updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> LoggingT IO ()
-updateConnectedLedgerViaGetConnectedLedger appConfig db = do
+updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> LedgerQuery (LoggingT IO)
+updateConnectedLedgerViaGetConnectedLedger appConfig db = LedgerQuery LedgerQueryType_PollLedger $ do
   getConnectedLedger appConfig >>= \case
     Left err -> do
       $(logError) (tshow err)
@@ -263,45 +266,34 @@ Tezos address at this path/curve: tz1NXDWqwMv1Zi7Jo9za7YN9orap94XQmFSv
 Corresponding full public key: edpkuSWMVjedhmQHarHMxvzdLV69cRWERM9yk4H8FAAfuexz3L9bCM
 -}
 
-showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> m ()
-showLedger appConfig db nds sk = do
-  la <- withDbAndConfig db appConfig $ do
+-- | Checks whether @PublicKeyHash@ of a given @SecretKey@ is already known or was previously already requested
+-- and expected to be fetched in future
+isKnownLedgerPkh :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> SecretKey -> m Bool
+isKnownLedgerPkh appConfig db sk = do
+  withDbAndConfig db appConfig $ do
     existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
     case existing of
       Just la -> do
         update [LedgerAccount_balanceField =. (Nothing :: Maybe Tez)] $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-        pure $ la { _ledgerAccount_balance = Nothing }
+        pure $ isJust (_ledgerAccount_publicKeyHash la) || _ledgerAccount_requested la
       Nothing -> do
         let la = LedgerAccount
               { _ledgerAccount_secretKey = sk
               , _ledgerAccount_publicKeyHash = Nothing
               , _ledgerAccount_balance = Nothing
               , _ledgerAccount_imported = False
+              , _ledgerAccount_requested = True
               }
         insert la
-        pure la
-  pkhOrErr <- case _ledgerAccount_publicKeyHash la of
-    Nothing -> runExceptT $ do
-      stdout <- runClientCommand appConfig defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
-        | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
-        | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
-        | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
-        | otherwise -> Left $ ClientError_Other $ T.unlines errors
-      let pkh = getPublicKeyHash (T.lines stdout)
-      when (isNothing pkh) $ $(logWarn) $ "showLedger: failed to find public key hash from: " <> stdout
-      pure pkh
-    Just pkh -> pure $ Right $ Just pkh
-  case pkhOrErr of
-    Left err -> do
-      withDbAndConfig db appConfig $ do
-        delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-        notify NotifyTag_ShowLedger (sk, Left (T.pack $ show err))
-      $(logError) (T.pack (show err))
-    Right Nothing -> withDbAndConfig db appConfig $
-      notify NotifyTag_ShowLedger (sk, Left "tezosClientWorker:showLedger: public key hash unavailable")
-    Right (Just pkh) -> do
-      withDbAndConfig db appConfig $
-        update [LedgerAccount_publicKeyHashField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+        pure False
+
+fetchBalances :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> [SecretKey] -> m ()
+fetchBalances appConfig db nds sks = withDbAndConfig db appConfig $ for_ sks $ \sk -> do
+  mla <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+  for_ mla $ \la -> case _ledgerAccount_publicKeyHash la of
+    -- pkh is not yet known, balance will be fetched later
+    Nothing -> pure ()
+    Just pkh -> do
       balanceOrErr <- flip runReaderT nds . runExceptT @KilnRpcError $ do
         mbHeadBlock <- ask >>= liftIO . atomically . dataSourceFinalHead
         case mbHeadBlock of
@@ -309,9 +301,35 @@ showLedger appConfig db nds sk = do
           Just headBlock -> nodeQueryDataSource $ NodeQuery_Balance (headBlock ^. hash) (headBlock ^. level) pkh
       case balanceOrErr of
         Left err -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh <> " due to: " <> prettyKilnRpcError err
-        Right balance -> withDbAndConfig db appConfig $ do
+        Right balance -> do
           update [LedgerAccount_balanceField =. Just balance] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-          notify NotifyTag_ShowLedger (sk, Right (pkh, balance))
+          notify NotifyTag_ShowLedger (sk, Right (pkh, Just balance))
+
+showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> LedgerQuery m
+showLedger appConfig db _nds sk = LedgerQuery LedgerQueryType_ShowLedger $ do
+  pkhOrErr <- runExceptT $ do
+    stdout <- runClientCommand appConfig defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
+      | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
+      | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
+      | "(Invalid_argument int32_of_path_element_exn)" : _ <- errors -> Right ""
+      | otherwise -> Left $ ClientError_Other $ T.unlines errors
+    let pkh = getPublicKeyHash (T.lines stdout)
+    when (isNothing pkh) $ $(logWarn) $ "showLedger: failed to find public key hash from: " <> stdout
+    pure pkh
+  case pkhOrErr of
+    Left err -> do
+      withDbAndConfig db appConfig $ do
+        delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+        notify NotifyTag_ShowLedger (sk, Left (T.pack $ show err))
+      $(logError) (T.pack (show err))
+    Right Nothing -> withDbAndConfig db appConfig $ do
+      -- If we failed to fetch pkh, we'll attempt once again on the next iteration
+      update [LedgerAccount_requestedField =. False] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      notify NotifyTag_ShowLedger (sk, Left "tezosClientWorker:showLedger: public key hash unavailable")
+    Right (Just pkh) -> do
+      withDbAndConfig db appConfig $ do
+        update [LedgerAccount_publicKeyHashField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+        notify NotifyTag_ShowLedger (sk, Right (pkh, Nothing))
   where
     getPublicKeyHashZeronet = \case
       foundApp : _manufacturer: _product: _application: _curve: _path: _pk : pkh' : _
@@ -328,8 +346,9 @@ showLedger appConfig db nds sk = do
         -> Just pkh
       xs -> getPublicKeyHashZeronet xs
 
-importSecretKey :: MonadLoggerIO m => AppConfig -> Pool Postgresql -> SecretKey -> m ()
-importSecretKey appConfig db sk = ledgerSetupStep appConfig db sk (mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting })
+importSecretKey :: MonadLoggerIO m => AppConfig -> Pool Postgresql -> SecretKey -> LedgerQuery m
+importSecretKey appConfig db sk = LedgerQuery LedgerQueryType_ImportKey $
+  ledgerSetupStep appConfig db sk (mempty { _setupState_import = Just $ First ImportSecretKeyStep_Prompting })
   (\res -> mempty { _setupState_import = Just $ First res }) $ do
     e <- runExceptT $ runClientCommand appConfig noTimeout ["import", "secret", "key", T.unpack kilnLedgerAlias, T.unpack $ toSecretKeyText sk, "--force"] $ \_warnings errors -> if
       | "Ledger Application level error (get_public_key): Conditions of use not satisfied" : _ <- errors -> Left ImportSecretKeyStep_Declined
@@ -395,8 +414,8 @@ computeChainId port kilnDataDir maybePaths json = do
     eCommand =
       liftA2 (\p gb -> words $ printf "--protocol %s compute chain id from block hash %s" p gb) protocol genesisBlock
 
-setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> m ()
-setupLedgerToBake appConfig db nds sk = do
+setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> LedgerQuery m
+setupLedgerToBake appConfig db nds sk = LedgerQuery LedgerQueryType_SetupToBake $ do
   mla <- withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
   for_ mla $ \la -> ledgerSetupStep appConfig db sk (mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
     (\(isReg, res) -> mempty { _setupState_setup = Just $ First $ bool res SetupLedgerToBakeStep_DoneAndRegistered isReg }) $ do
@@ -434,8 +453,8 @@ checkIfRegistered db nds pkh = do
 -- get up-to-date. We detect that case and just return an error.
 registerKeyAsDelegate
   :: (MonadLoggerIO m)
-  => Pool Postgresql -> NodeDataSource -> SecretKey -> AppConfig -> m ()
-registerKeyAsDelegate db nds sk appConfig = do
+  => Pool Postgresql -> NodeDataSource -> SecretKey -> AppConfig -> LedgerQuery m
+registerKeyAsDelegate db nds sk appConfig = LedgerQuery LedgerQueryType_ImportKey $ do
   mla <- withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
   for_ mla $ \la -> do
     let mbPkh = _ledgerAccount_publicKeyHash la
@@ -503,8 +522,8 @@ parseRegisterStep (T.strip -> err)
   = Just RegisterStep_NodeNotReady
   | otherwise = Nothing
 
-setHighWaterMark :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> SecretKey -> RawLevel -> m ()
-setHighWaterMark appConfig db sk bl =
+setHighWaterMark :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> SecretKey -> RawLevel -> LedgerQuery m
+setHighWaterMark appConfig db sk bl = LedgerQuery LedgerQueryType_SetHWM $
   ledgerSetupStep appConfig db sk (mempty { _setupState_setHWM = Just $ First SetHWMStep_Prompting }) (\res -> mempty { _setupState_setHWM = Just $ First res }) $ do
     e <- runExceptT $ runClientCommand appConfig noTimeout ["set", "ledger", "high", "watermark", "for", T.unpack (toSecretKeyText sk), "to", show (unRawLevel bl)] $ \_warnings errors -> if
       | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left SetHWMStep_Declined
@@ -513,8 +532,8 @@ setHighWaterMark appConfig db sk bl =
       | otherwise -> Left $ SetHWMStep_Failed $ T.unlines errors
     pure $ fromLeft SetHWMStep_Done e
 
-submitVote :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> Id PeriodProposal -> Maybe Ballot -> m ()
-submitVote appConfig db nds sk p b = do
+submitVote :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> Id PeriodProposal -> Maybe Ballot -> LedgerQuery m
+submitVote appConfig db nds sk p b = LedgerQuery LedgerQueryType_Vote $ do
   withDbAndConfig db appConfig $
     notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
   dsh <- liftIO $ atomically $ dataSourceFinalHead nds
