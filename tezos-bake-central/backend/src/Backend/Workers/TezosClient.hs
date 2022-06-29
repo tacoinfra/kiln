@@ -18,7 +18,7 @@
 
 module Backend.Workers.TezosClient where
 
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM (atomically, flushTQueue)
 import Control.Concurrent.STM.TQueue (writeTQueue)
 import Control.Exception (catchJust)
 import Control.Monad.Except
@@ -65,8 +65,11 @@ import Common.URI (Port)
 import ExtraPrelude
 import Tezos.Common.PublicKeyHash (PublicKeyHash)
 
-startBaking :: (PersistBackend m, SqlDb (PhantomDb m)) => PublicKeyHash -> m ()
-startBaking pkh = do
+startBaking :: (PersistBackend m, SqlDb (PhantomDb m), MonadIO m) => NodeDataSource -> PublicKeyHash -> m ()
+startBaking nds pkh = do
+  -- At the moment when baker starts all possible remaining ledger queries are connectivity checks. We're
+  -- dropping them in order to avoid clashing baker daemon with 'tezos-client list connected ledgers'
+  void $ liftIO $ atomically $ flushTQueue $ _nodeDataSource_ledgerIOQueue nds
   addBakerImpl pkh (Just "Kiln Baker")
   bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
   let processes = fmap fromId $ flip concatMap bdis $ \bdi ->
@@ -432,7 +435,7 @@ setupLedgerToBake appConfig db nds sk = LedgerQuery LedgerQueryType_SetupToBake 
       isReg <- if res == SetupLedgerToBakeStep_Done
         then (fromMaybe False <$>) $ traverse (checkIfRegistered db nds) $ _ledgerAccount_publicKeyHash la
         else pure False
-      when isReg $ withDbAndConfig db appConfig $ traverse_ startBaking $ _ledgerAccount_publicKeyHash la
+      when isReg $ withDbAndConfig db appConfig $ traverse_ (startBaking nds) $ _ledgerAccount_publicKeyHash la
       pure (isReg, res)
 
 checkIfRegistered :: MonadIO m => Pool Postgresql -> NodeDataSource -> PublicKeyHash -> m Bool
@@ -490,7 +493,7 @@ registerKeyAsDelegate db nds sk appConfig = LedgerQuery LedgerQueryType_ImportKe
         pure result
     withDbAndConfig db appConfig $ do
       notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First result })
-      when (result == RegisterStep_Registered) $ traverse_ startBaking mbPkh
+      when (result == RegisterStep_Registered) $ traverse_ (startBaking nds) mbPkh
 
 
 -- Most of the steps that require interaction with ledger are similar. At first, they prompt user
