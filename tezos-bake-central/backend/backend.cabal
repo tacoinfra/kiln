@@ -106,8 +106,7 @@ library
     , template-haskell
     , temporary
     , text
-    , tezos-bake-monitor-lib
-    , tezos-noderpc
+    , tezos-rpc-bindings
     , these
     , time
     , transformers
@@ -197,5 +196,4 @@ test-suite test
     , common
     , tasty
     , tasty-hunit
-    , tezos-bake-monitor-lib
-    , tezos-noderpc
+    , tezos-rpc-bindings

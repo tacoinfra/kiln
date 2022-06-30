@@ -12,7 +12,7 @@ let
     root = import ./. { inherit system; };
   in {
     ghc = {
-      inherit (root.ghc) frontend backend common;
+      inherit (root.ghc) frontend backend common tezos-rpc-bindings;
     };
     ghcjs = {
       inherit (root.ghcjs) frontend common;

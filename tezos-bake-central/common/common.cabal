@@ -26,6 +26,7 @@ library
     , base
     , base16-bytestring
     , base58-bytestring
+    , binary
     , bytestring
     , cases
     , constraints
@@ -34,6 +35,7 @@ library
     , cryptonite
     , data-default
     , database-id-class
+    , deepseq
     , dependent-map
     , dependent-sum
     , dependent-sum-aeson-orphans
@@ -41,7 +43,9 @@ library
     , either
     , file-embed
     , functor-infix
+    , hashable
     , hashing
+    , http-types
     , lens
     , memory
     , modern-uri
@@ -55,13 +59,14 @@ library
     , rhyolite-common
     , rhyolite-datastructures
     , rhyolite-frontend
+    , safe
     , safe-exceptions
     , semialign
     , scientific
     , split
+    , tagged
     , template-haskell
     , text
-    , tezos-bake-monitor-lib
     , these
     , time
     , transformers-compat
@@ -72,6 +77,8 @@ library
     , uri-encode
     , witherable
     , validation
+    , vector
+    , vector-instances
     , writer-cps-mtl
 
   exposed-modules:
@@ -89,6 +96,57 @@ library
     Common.Vassal
     Common.WrappedShow1
     ExtraPrelude
+
+    Tezos.Types
+    Tezos.Unsafe
+
+    Tezos.Common.Accusation
+    Tezos.Common.BalanceUpdate
+    Tezos.Common.Ballot
+    Tezos.Common.Base16ByteString
+    Tezos.Common.Base58Check
+    Tezos.Common.Binary
+    Tezos.Common.Block
+    Tezos.Common.BlockHeader
+    Tezos.Common.Chain
+    Tezos.Common.Contract
+    Tezos.Common.Fitness
+    Tezos.Common.IsBootstrapped
+    Tezos.Common.Json
+    Tezos.Common.Ledger
+    Tezos.Common.Level
+    Tezos.Common.NetworkStat
+    Tezos.Common.NodeConfig
+    Tezos.Common.NodeRPC.Types
+    Tezos.Common.PeriodSequence
+    Tezos.Common.PublicKey
+    Tezos.Common.PublicKeyHash
+    Tezos.Common.ShortByteString
+    Tezos.Common.Tez
+
+    Tezos.CrossCompat.Account
+    Tezos.CrossCompat.Block
+    Tezos.CrossCompat.Vote
+
+    Tezos.Genesis.Block
+
+    Tezos.V012.Account
+    Tezos.V012.Block
+    Tezos.V012.Level
+    Tezos.V012.Operation
+    Tezos.V012.ProtocolConstants
+    Tezos.V012.Types
+    Tezos.V012.Unsafe
+    Tezos.V012.Vote
+
+    Tezos.V013.Account
+    Tezos.V013.Block
+    Tezos.V013.Level
+    Tezos.V013.Operation
+    Tezos.V013.ProtocolConstants
+    Tezos.V013.Types
+    Tezos.V013.Unsafe
+    Tezos.V013.Vote
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
 
