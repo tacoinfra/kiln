@@ -294,7 +294,7 @@ requestHandler appConfig emailFromAddr nds =
                 BakerLogTag_InsufficientFunds -> deleteLogsId tag ErrorLogInsufficientFunds_bakerField
                 BakerLogTag_VotingReminder -> deleteLogsId tag ErrorLogVotingReminder_bakerField
                 BakerLogTag_MissedEndorsementBonus -> deleteLogsId tag ErrorLogBakerMissedEndorsementBonus_bakerField
-
+                BakerLogTag_NeedToResetHWM -> deleteLogsId tag ErrorLogBakerNeedToResetHWM_bakerField
             ids <- fmap concat $ for universe onTag
             now <- getTime
             update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)

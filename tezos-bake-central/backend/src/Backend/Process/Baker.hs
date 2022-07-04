@@ -40,13 +40,13 @@ import qualified Data.Text as T
 import Tezos.NodeRPC (NodeRPCContext(..), QueryNode(rIsBootstrapped), RpcError, nodeRPC)
 import Tezos.Types (LedgerIdentifier, ProtocolHash, toBase58Text)
 
+import Backend.Alerts (reportLedgerDisconnection, reportLedgerNeedToResetHWM)
 import Backend.Common.Baker
 import Backend.Config (AppConfig (..),  BinaryPaths(..), BakerEndorserPaths(..), Votefile(..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir)
 import Backend.NodeRPC
 import Backend.Process.Errors (ErrorEvent(..), ErrorTrace(..))
 import Backend.Schema
 import Backend.Workers.Process
-import Backend.Workers.TezosClient (reportLedgerDisconnection)
 import Common.App
 import Common.Schema
 import ExtraPrelude
@@ -183,8 +183,12 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
           isWrongApp = \case
             ErrorTrace_LedgerError msg | "Application level error (sign-with-hash): Parse error" `T.isPrefixOf` msg -> True
             _ -> False
+          isWrongHWM = \case
+            ErrorTrace_LedgerError msg | "Application level error (sign-with-hash): Incorrect data" `T.isPrefixOf` msg -> True
+            _ -> False
           hasLedgerDisconnection = any isLedgerNotFound trace
           hasWrongApp = any isWrongApp trace
+          needToResetHWM = any isWrongHWM trace
       when (hasLedgerDisconnection || hasWrongApp) $ reportLedgerDisconnection db appConfig hasWrongApp
       when hasLedgerDisconnection $ runDb (Identity db) $ do
         mbConnectedLedger :: Maybe ConnectedLedger <- fmap listToMaybe $ select CondEmpty
@@ -195,6 +199,7 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
             , ConnectedLedger_updatedField =. Just now
             ] CondEmpty
           notify NotifyTag_ConnectedLedger $ Just $ connectedLedger { _connectedLedger_ledgerIdentifier = Nothing }
+      when needToResetHWM $ reportLedgerNeedToResetHWM db appConfig
 
     paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
 

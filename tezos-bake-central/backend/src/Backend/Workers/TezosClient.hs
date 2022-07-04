@@ -188,20 +188,6 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db = LedgerQuery LedgerQuer
         insert connectedLedger
         notify NotifyTag_ConnectedLedger $ Just connectedLedger
 
-reportLedgerDisconnection :: Pool Postgresql -> AppConfig -> Bool -> LoggingT IO ()
-reportLedgerDisconnection db appConfig isWrongApp = withDbAndConfig db appConfig $ do
-  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
-  for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
-      reportBakerLedgerDisconnected pkh isWrongApp
-
-clearLedgerDisconnection :: Pool Postgresql -> AppConfig -> LoggingT IO ()
-clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
-  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
-  for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
-      clearBakerLedgerDisconnected pkh
-
 -- THIS IS SOUND! Either the binary is present in the nix closure
 -- or the user provides them (via BinaryPaths).
 clientPath :: Maybe BinaryPaths -> FilePath
@@ -533,6 +519,7 @@ setHighWaterMark appConfig db sk bl = LedgerQuery LedgerQueryType_SetHWM $
       | "Ledger Transport level error:" : _ <- errors -> Left SetHWMStep_Disconnected
       | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetHWMStep_Disconnected
       | otherwise -> Left $ SetHWMStep_Failed $ T.unlines errors
+    clearLedgerNeedToResetHWM db appConfig
     pure $ fromLeft SetHWMStep_Done e
 
 submitVote :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> Id PeriodProposal -> Maybe Ballot -> LedgerQuery m
