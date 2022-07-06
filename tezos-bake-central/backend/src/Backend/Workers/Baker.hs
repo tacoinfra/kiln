@@ -261,7 +261,7 @@ bakerWorker appConfig nds rightsHistoryWindow = worker' "bakerWorker" $ (<* wait
           cutoffLevel :: RawLevel = max (headLvl - fromIntegral rightsHistoryWindow) $
             maybe (headLvl - 1) (view level . _bakerDetails_branch) details
       for_ [headLvl, headLvl - 1 .. cutoffLevel + 1] $ \lvl -> do
-        checkRes <- (Right <$> checkMissedOpportunities protoInfo headBlock baker isInternal lvl) `catchError` (pure . Left)
+        checkRes <- (Right <$> checkMissedOpportunities nds appConfig protoInfo headBlock baker isInternal lvl) `catchError` (pure . Left)
         case checkRes of
           Right transaction -> runDb (Identity db) $ runReaderT transaction appConfig
           Left err -> $(logErrorSH) $ "bakerWorker failed to check opportunities on level " <> tshow lvl <> " :" <> tshow err
@@ -282,12 +282,14 @@ checkMissedOpportunities
   :: ( BlockLike blk
      , MonadIO m, MonadReader rP m, HasNodeDataSource rP, MonadLogger m
      , MonadBaseNoPureAborts IO m, MonadMask m, MonadLoggerIO m)
-  => ProtoInfo -> blk -> Baker -> Bool -> RawLevel -> ExceptT KilnRpcError m (AppSerializable ())
-checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
+  => NodeDataSource -> AppConfig -> ProtoInfo -> blk -> Baker -> Bool -> RawLevel -> ExceptT KilnRpcError m (AppSerializable ())
+checkMissedOpportunities nds appConfig protoInfo headBlock baker isInternal lvl =  do
   let
     headHash = headBlock ^. hash
     headLvl = headBlock ^. level
     pkh = _baker_publicKeyHash baker
+    db = _nodeDataSource_pool nds
+    logger = _nodeDataSource_logger nds
 
     -- TODO use different counters for missed bakes and endorsements instead of weighted one
     incMissedRightsInRow :: Int -> PublicKeyHash -> ReaderT AppConfig Serializable ()
@@ -332,6 +334,10 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
            LIMIT 1
           |]
         whenJust mbLedgerDisconnectionError $ \_ -> clearBakerLedgerDisconnected bakerPkh
+
+    resetHWMAction :: Bool -> ReaderT AppConfig Serializable ()
+    resetHWMAction = bool (pure ()) (runLoggingEnv logger $ clearLedgerNeedToResetHWM db appConfig)
+
   -- Check baking opportunities for the current block and endorsing opprotunities for the
   -- previous block
   thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
@@ -350,7 +356,13 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
             lvl
       -- Increment 'missedAlertsInRow' counter in db if baker missed an endorsement, or set it to zero otherwise
       missedRightsInRowAction = bool (incMissedRightsInRow 5) clearMissedRightsInRow successfulBakeCondition (baker ^. baker_publicKeyHash)
-    return $ pure $ missedBakeAction *> missedRightsInRowAction
+      -- Successful bake is an evidence that high-watermark value is valid, so we clear that alert.
+      needToResetHWMAction = resetHWMAction successfulBakeCondition
+    return $ pure $ sequence_
+      [ missedBakeAction
+      , missedRightsInRowAction
+      , needToResetHWMAction
+      ]
   -- endorsements *on* this block are *of* the previous block
   endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
   endorsingAlerts :: [AppSerializable ()]
@@ -380,7 +392,15 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
         -- Increment 'missedAlertsInRow' counter in db if baker missed an endorsement, or set it to zero otherwise
         missedRightsInRowAction = bool (incMissedRightsInRow 1) clearMissedRightsInRow successfulEndorsementCondition (_baker_publicKeyHash baker)
 
-      return $ pure $ missedEndorsementAction *> missedBonusAction *> missedRightsInRowAction
+        -- Successful endorsement is an evidence that high-watermark value is valid, so we clear that alert.
+        needToResetHWMAction = resetHWMAction successfulEndorsementCondition
+
+      return $ pure $ sequence_
+        [ missedEndorsementAction
+        , missedBonusAction
+        , missedRightsInRowAction
+        , needToResetHWMAction
+        ]
 
   return $ sequence_ $ bakingAlerts <> endorsingAlerts
 
