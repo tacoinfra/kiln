@@ -262,19 +262,22 @@ bakerMissedEndorsementBonusDescriptions elog =
   where
     lvl = tshow $ unRawLevel $ _errorLogBakerMissedEndorsementBonus_level elog
 
-bakerNeedToResetHWMDescriptions :: BakerErrorDescriptions
-bakerNeedToResetHWMDescriptions =
+bakerNeedToResetHWMDescriptions :: ErrorLogBakerNeedToResetHWM -> BakerErrorDescriptions
+bakerNeedToResetHWMDescriptions elog =
   BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker needs to reset high-watermark"
   , _bakerErrorDescriptions_tile = "Needs to reset high-watermark"
   , _bakerErrorDescriptions_notification = "This baker may miss some opportunities due to incorrect value of ledger high-watermark."
   , _bakerErrorDescriptions_problem = [
-      "The ledger high-watermark is higher than latest head level, which can lead to opportunities misses."
+      "The ledger high-watermark is set to " <> errorEmphasis hwm <> " but latest head level is " <> errorEmphasis nodeHead <> ", which can lead to opportunities misses."
     ]
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Click on 'Set High-Water mark' menu item on baker tile and set the correct value of high-watermark."
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
   }
+  where
+    hwm = tshow $ unRawLevel $ _errorLogBakerNeedToResetHWM_ledgerHWM elog
+    nodeHead = maybe "<unknown>" (tshow . unRawLevel) (_errorLogBakerNeedToResetHWM_level elog)
 
 bakerMissedDescriptions :: ErrorLogBakerMissed -> BakerErrorDescriptions
 bakerMissedDescriptions elog = BakerErrorDescriptions

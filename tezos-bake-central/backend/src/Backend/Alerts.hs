@@ -269,18 +269,25 @@ clearBakerLedgerDisconnected pkh = do
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
     queueAlert Nothing $ resolvedBakerAlert (bakerLedgerDisconnectedDescriptions log) baker
 
-reportLedgerNeedToResetHWM :: (MonadLoggerIO m) => Pool Postgresql -> AppConfig -> m ()
-reportLedgerNeedToResetHWM db appConfig = withDbAndConfig db appConfig $ do
+reportLedgerNeedToResetHWM
+  :: (MonadLoggerIO m)
+  => Pool Postgresql
+  -> AppConfig
+  -> Maybe RawLevel
+  -> RawLevel -> m ()
+reportLedgerNeedToResetHWM db appConfig headLevel hwm = withDbAndConfig db appConfig $ do
   bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
   for_ bdis $ \bdi -> do
     for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
-      reportBakerNeedToResetHWM pkh
+      reportBakerNeedToResetHWM pkh headLevel hwm
 
 clearLedgerNeedToResetHWM :: (MonadLoggerIO m) => Pool Postgresql -> AppConfig -> m ()
 clearLedgerNeedToResetHWM db appConfig = withDbAndConfig db appConfig $ do
   bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
   for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh -> do
+      -- We need to clear cached high-watermark value when alert has become resolved.
+      update [LedgerAccount_highWatermarkField =. (Nothing :: Maybe RawLevel)] (LedgerAccount_publicKeyHashField ==. Just pkh)
       clearBakerNeedToResetHWM pkh
 
 reportBakerNeedToResetHWM
@@ -288,8 +295,8 @@ reportBakerNeedToResetHWM
      PersistBackend m, PostgresLargeObject m, HasAppConfig a,
      MonadBase Serializable m
      )
-  => PublicKeyHash -> m ()
-reportBakerNeedToResetHWM pkh = do
+  => PublicKeyHash -> Maybe RawLevel -> RawLevel -> m ()
+reportBakerNeedToResetHWM pkh headLevel hwm = do
   chainId <- _appConfig_chainId <$> askAppConfig
   existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNeedToResetHWM) <- listToMaybe <$> [queryQ|
     SELECT el.id, t.log
@@ -303,11 +310,14 @@ reportBakerNeedToResetHWM pkh = do
      LIMIT 1
   |]
   case existingLog of
-    Just (logId, specificLogId) -> updateErrorLog logId specificLogId
+    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogBakerNeedToResetHWM_logField
+      [ ErrorLogBakerNeedToResetHWM_levelField =. headLevel
+      , ErrorLogBakerNeedToResetHWM_ledgerHWMField =. hwm
+      ]
     Nothing -> do
-      (logId, _log) <- insertErrorLog $ \logId ->
-        ErrorLogBakerNeedToResetHWM logId (Id pkh)
-      queueAlert (Just logId) $ unresolvedBakerAlert bakerNeedToResetHWMDescriptions
+      (logId, log) <- insertErrorLog $ \logId ->
+        ErrorLogBakerNeedToResetHWM logId (Id pkh) headLevel hwm
+      queueAlert (Just logId) $ unresolvedBakerAlert $ bakerNeedToResetHWMDescriptions log
 
 clearBakerNeedToResetHWM
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
@@ -328,8 +338,8 @@ clearBakerNeedToResetHWM pkh = do
   for_ lids notifyDefault
   baker' <- getBaker pkh
   log' <- for (listToMaybe lids) $ getBy . fromId
-  for_ (liftA2 (,) baker' (join log')) $ \(baker, _log) ->
-    queueAlert Nothing $ resolvedBakerAlert bakerNeedToResetHWMDescriptions baker
+  for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
+    queueAlert Nothing $ resolvedBakerAlert (bakerNeedToResetHWMDescriptions log) baker
 
 reportInsufficientFunds
   :: ( Monad m, MonadIO m, MonadReader a m

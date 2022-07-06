@@ -181,6 +181,7 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_balance :: Maybe Tez
   , _ledgerAccount_imported :: Bool
   , _ledgerAccount_requested :: Bool
+  , _ledgerAccount_highWatermark :: Maybe RawLevel
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one
@@ -728,6 +729,8 @@ instance HasId ErrorLogBakerLedgerDisconnected where
 data ErrorLogBakerNeedToResetHWM = ErrorLogBakerNeedToResetHWM
   { _errorLogBakerNeedToResetHWM_log :: Id ErrorLog
   , _errorLogBakerNeedToResetHWM_baker :: Id Baker
+  , _errorLogBakerNeedToResetHWM_level :: Maybe RawLevel
+  , _errorLogBakerNeedToResetHWM_ledgerHWM :: RawLevel
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerNeedToResetHWM where
   type IdData ErrorLogBakerNeedToResetHWM = Id ErrorLog

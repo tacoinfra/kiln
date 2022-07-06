@@ -1008,7 +1008,7 @@ liveErrorsWidget = void $ do
             (bakerMissedEndorsementBonusDescriptions log)
             pkh
           BakerLogTag_NeedToResetHWM -> renderBakerError
-            bakerNeedToResetHWMDescriptions
+            (bakerNeedToResetHWMDescriptions log)
             pkh
           BakerLogTag_InsufficientFunds -> do
               dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
@@ -2370,7 +2370,7 @@ bakersTab =
                           RightKind_Baking -> "a bake"
                           RightKind_Endorsing -> "an endorsement"
                     BakerLogTag_MissedEndorsementBonus -> Just $ text "Missed endorsement bonus."
-                    BakerLogTag_NeedToResetHWM -> Just $ renderBakerError $ bakerNeedToResetHWMDescriptions
+                    BakerLogTag_NeedToResetHWM -> Just $ renderBakerError $ bakerNeedToResetHWMDescriptions log
                     BakerLogTag_BakerLedgerDisconnected -> Just $ renderBakerError $ bakerLedgerDisconnectedDescriptions log
                     BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
                     BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
@@ -2473,7 +2473,7 @@ bakersTab =
           BakerLogTag_BakerLedgerDisconnected -> renderBakerError ev (pure $ bakerLedgerDisconnectedDescriptions log) pkh
           BakerLogTag_BakerMissed -> renderBakerError ev (pure $ bakerMissedDescriptions log) pkh
           BakerLogTag_MissedEndorsementBonus -> renderBakerError ev (pure $ bakerMissedEndorsementBonusDescriptions log) pkh
-          BakerLogTag_NeedToResetHWM -> renderBakerError ev (pure bakerNeedToResetHWMDescriptions) pkh
+          BakerLogTag_NeedToResetHWM -> renderBakerError ev (pure $ bakerNeedToResetHWMDescriptions log) pkh
           BakerLogTag_BakerDeactivated -> renderBakerError ev (pure $ bakerDeactivatedDescriptions log) pkh
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh
           BakerLogTag_BakerAccused -> renderBakerError ev (pure $ bakerAccusedDescriptions log) pkh

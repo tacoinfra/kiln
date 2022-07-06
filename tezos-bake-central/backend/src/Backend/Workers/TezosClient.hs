@@ -25,6 +25,7 @@ import Control.Monad.Except
 import Control.Monad.Logger
 import Data.Aeson.Lens
 import Data.Either (fromLeft)
+import Data.Int (Int32)
 import Data.List (sortOn)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
@@ -35,6 +36,7 @@ import Database.Id.Groundhog
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Backend.DB.Serializable (Serializable)
 import Safe
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
@@ -215,6 +217,58 @@ defaultTimeout = Just (5, ClientError_Timeout)
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
 
+getLedgerHighWatermark :: (MonadLoggerIO m) => AppConfig -> NodeDataSource -> m (Either ClientError (Maybe RawLevel))
+getLedgerHighWatermark appConfig nds = runExceptT $ do
+  let
+    db = _nodeDataSource_pool nds
+    logger = _nodeDataSource_logger nds
+    inDb :: (MonadIO m) => Serializable a -> m a
+    inDb = runLoggingEnv logger . runDb (Identity db)
+  mbIntBakerPkh <- fmap join $ inDb $ project1
+    (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
+    (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  fmap join $ for mbIntBakerPkh $ \intBakerPkh ->  do
+    cachedHWM <- fmap join $ inDb $
+      project1 LedgerAccount_highWatermarkField $ LedgerAccount_publicKeyHashField ==. Just intBakerPkh
+    case cachedHWM of
+      Nothing -> do
+        mbSecretKey <- inDb $ project1 LedgerAccount_secretKeyField (LedgerAccount_publicKeyHashField ==. Just intBakerPkh)
+        case mbSecretKey of
+          Nothing -> error "Ledger secret key not found in db while fetching ledger high-watermark."
+          Just sk -> do
+            let
+              args =
+                [ "get"
+                , "ledger"
+                , "high"
+                , "watermark"
+                , "for"
+                , T.unpack (toSecretKeyText sk)
+                ]
+            stdout <- runClientCommand appConfig defaultTimeout args $ \_warnings errors -> if
+              | e : _ <- errors, Just _sk' <- T.stripPrefix "Found no ledger corresponding to " e -> Left ClientError_LedgerDisconnected
+              | otherwise -> Left $ ClientError_Other $ T.unlines errors
+            let hwm = getHWMFromStdout stdout (_appConfig_chainId appConfig)
+            inDb $ update [LedgerAccount_highWatermarkField =. hwm] (LedgerAccount_publicKeyHashField ==. Just intBakerPkh)
+            pure hwm
+      _ -> pure cachedHWM
+  where
+    -- The example 'tezos-client get ledger high watermark for ...' output:
+    {-
+      The high water mark values for
+      <ledger_url> are
+      380000 for the main-chain (NetXLH1uAxK7CCh) and
+      380000 for the test-chain.
+    -}
+    getHWMFromStdout :: Text -> ChainId -> Maybe RawLevel
+    getHWMFromStdout stdout chainId =
+      let
+        prettyChainId = toBase58Text chainId
+        line = find (T.isInfixOf prettyChainId) (T.lines stdout)
+      in case T.words <$> line of
+        Just (hwmStr : _ )-> fmap fromIntegral $ readMaybe @Int32 $ T.unpack hwmStr
+        _ -> Nothing
+
 getConnectedLedger :: (MonadLoggerIO m) => AppConfig -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
 getConnectedLedger appConfig = runExceptT $ do
   stdout <- runClientCommand appConfig defaultTimeout ["list", "connected", "ledgers"] $ \_warnings errors -> if
@@ -272,6 +326,7 @@ isKnownLedgerPkh appConfig db sk = do
               , _ledgerAccount_balance = Nothing
               , _ledgerAccount_imported = False
               , _ledgerAccount_requested = True
+              , _ledgerAccount_highWatermark = Nothing
               }
         insert la
         pure False

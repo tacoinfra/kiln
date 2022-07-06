@@ -16,6 +16,8 @@
 module Backend.Process.Baker where
 
 import Conduit (runConduit, sourceHandle, (.|))
+import Control.Concurrent.STM (readTVarIO)
+import Control.Lens ((^?))
 import Control.Monad (liftM2)
 import Control.Monad.Logger (LoggingT, logDebug, logError)
 import qualified Data.Aeson as Aeson
@@ -38,7 +40,7 @@ import Text.URI (render)
 import qualified Data.Text as T
 
 import Tezos.NodeRPC (NodeRPCContext(..), QueryNode(rIsBootstrapped), RpcError, nodeRPC)
-import Tezos.Types (LedgerIdentifier, ProtocolHash, toBase58Text)
+import Tezos.Types
 
 import Backend.Alerts (reportLedgerDisconnection, reportLedgerNeedToResetHWM)
 import Backend.Common.Baker
@@ -47,6 +49,7 @@ import Backend.NodeRPC
 import Backend.Process.Errors (ErrorEvent(..), ErrorTrace(..))
 import Backend.Schema
 import Backend.Workers.Process
+import Backend.Workers.TezosClient (getLedgerHighWatermark)
 import Common.App
 import Common.Schema
 import ExtraPrelude
@@ -199,7 +202,16 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
             , ConnectedLedger_updatedField =. Just now
             ] CondEmpty
           notify NotifyTag_ConnectedLedger $ Just $ connectedLedger { _connectedLedger_ledgerIdentifier = Nothing }
-      when needToResetHWM $ reportLedgerNeedToResetHWM db appConfig
+      when needToResetHWM $ do
+        eiHwm <-  getLedgerHighWatermark appConfig nds
+        case eiHwm of
+          Right (Just hwm) -> do
+            mbLatestHead <- liftIO $ readTVarIO $ nds ^. nodeDataSource_latestHead
+            let mbLatestHeadLevel = mbLatestHead ^? _Just . level
+            reportLedgerNeedToResetHWM db appConfig mbLatestHeadLevel hwm
+          -- If we couldn't get high-witermark, then most likely ledger has been disconnected
+          -- and it was already reported in the cases above.
+          _ -> pure ()
 
     paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
 
