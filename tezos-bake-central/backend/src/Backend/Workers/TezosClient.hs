@@ -420,9 +420,23 @@ computeChainId port kilnDataDir maybePaths json = do
 setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> LedgerQuery m
 setupLedgerToBake appConfig db nds sk = LedgerQuery LedgerQueryType_SetupToBake $ do
   mla <- withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+  mbLatestHead <- liftIO $ atomically $ dataSourceHead nds
+  let
+    mbLatestHeadLevel = mbLatestHead ^? _Just . level
+    RawLevel latestHeadLevel = mbLatestHeadLevel ?: error "Latest head is 'Nothing' during setting up ledger to bake."
+    args =
+      [ "setup"
+      , "ledger"
+      , "to"
+      , "bake"
+      , "for"
+      , T.unpack kilnLedgerAlias
+      , "--main-hwm"
+      , show latestHeadLevel
+      ]
   for_ mla $ \la -> ledgerSetupStep appConfig db sk (mempty { _setupState_setup = Just $ First SetupLedgerToBakeStep_Prompting })
     (\(isReg, res) -> mempty { _setupState_setup = Just $ First $ bool res SetupLedgerToBakeStep_DoneAndRegistered isReg }) $ do
-      e <- runExceptT $ runClientCommand appConfig noTimeout ["setup", "ledger", "to", "bake", "for", T.unpack kilnLedgerAlias] $ \_warnings errors -> if
+      e <- runExceptT $ runClientCommand appConfig noTimeout args $ \_warnings errors -> if
         | "Ledger Application level error (setup): Conditions of use not satisfied" : _ <- errors -> Left SetupLedgerToBakeStep_Declined
         | "Ledger Transport level error:" : _ <- errors -> Left SetupLedgerToBakeStep_Disconnected
         | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetupLedgerToBakeStep_Disconnected
