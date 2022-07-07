@@ -18,7 +18,7 @@
 
 module Backend.Workers.TezosClient where
 
-import Control.Concurrent.STM (atomically, flushTQueue)
+import Control.Concurrent.STM (atomically, flushTQueue, readTVarIO)
 import Control.Concurrent.STM.TQueue (writeTQueue)
 import Control.Exception (catchJust)
 import Control.Monad.Except
@@ -216,6 +216,19 @@ defaultTimeout = Just (5, ClientError_Timeout)
 
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
+
+checkLedgerHighWatermark :: (Monad m, MonadLoggerIO m) => AppConfig -> NodeDataSource -> LedgerQuery m
+checkLedgerHighWatermark appConfig nds = LedgerQuery LedgerQueryType_CheckHWM $ do
+  let db = _nodeDataSource_pool nds
+  eiHwm <- getLedgerHighWatermark appConfig nds
+  case eiHwm of
+    Right (Just hwm) -> do
+      mbLatestHead <- liftIO $ readTVarIO $ nds ^. nodeDataSource_latestHead
+      let mbLatestHeadLevel = mbLatestHead ^? _Just . level
+      reportLedgerNeedToResetHWM db appConfig mbLatestHeadLevel hwm
+    -- If we couldn't get high-witermark, then most likely ledger has been disconnected
+    -- and it will be reported in another function.
+    _ -> pure ()
 
 getLedgerHighWatermark :: (MonadLoggerIO m) => AppConfig -> NodeDataSource -> m (Either ClientError (Maybe RawLevel))
 getLedgerHighWatermark appConfig nds = runExceptT $ do
