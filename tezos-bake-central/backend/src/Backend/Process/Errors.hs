@@ -5,7 +5,8 @@
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 module Backend.Process.Errors
-  ( ErrorEvent (..)
+  ( DaemonBootstrapError (..)
+  , ErrorEvent (..)
   , ErrorEventType (..)
   , ErrorTrace (..)
   ) where
@@ -18,7 +19,19 @@ import Data.Text (Text, isPrefixOf, unpack)
 import Data.Text.Encoding (decodeUtf8)
 import Fmt (Buildable(..), blockListF, (+|), (|+))
 
-import Tezos.Common.PublicKeyHash (PublicKeyHash, toPublicKeyHashText)
+import Tezos.Types
+
+data DaemonBootstrapError
+  = DaemonBootstrapError_NoBinary Text (Maybe ProtocolHash)
+  | DaemonBootstrapError_UnknownProtocol (Maybe ProtocolHash)
+
+instance Buildable DaemonBootstrapError where
+  build = \case
+    DaemonBootstrapError_NoBinary daemonName mbProto ->
+      daemonName |+ " is not available for the given protocol: " +| build (maybe "<unknown protocol>" toBase58Text mbProto)
+    DaemonBootstrapError_UnknownProtocol mbProto -> case mbProto of
+      Nothing -> "Unknown protocol"
+      Just proto -> "Unknown protocol: " +| build (toBase58Text proto) +| ""
 
 data ErrorTrace
   = ErrorTrace_LedgerNotFound

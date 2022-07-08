@@ -46,7 +46,7 @@ import Backend.Alerts (reportLedgerDisconnection)
 import Backend.Common.Baker
 import Backend.Config (AppConfig (..),  BinaryPaths(..), BakerEndorserPaths(..), Votefile(..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir)
 import Backend.NodeRPC
-import Backend.Process.Errors (ErrorEvent(..), ErrorTrace(..))
+import Backend.Process.Errors
 import Backend.Schema
 import Backend.Workers.Process
 import Backend.Workers.TezosClient (checkLedgerHighWatermark)
@@ -247,7 +247,7 @@ createBakerProcess
   -> Pool Postgresql
   -> NonEmpty BakerEndorserPaths
   -> Maybe ProtocolHash
-  -> IO (Either Text CreateProcess)
+  -> IO (Either DaemonBootstrapError CreateProcess)
 createBakerProcess appConfig logger db paths mbProto = do
   let bakerPath = getBakerPath paths mbProto
   bakerArgs <- getBakerArgs appConfig logger db mbProto
@@ -258,7 +258,7 @@ createEndorserProcess
   -> NonEmpty BakerEndorserPaths
   -> BakerDaemonInternalData
   -> Maybe ProtocolHash
-  -> IO (Either Text CreateProcess)
+  -> IO (Either DaemonBootstrapError CreateProcess)
 createEndorserProcess appConfig paths bakerData mbProto = do
   let endorserPath = getEndorserPath paths mbProto
   pure $ createDaemonProcess endorserPath (Right endorserArgs) "tezos-endorser" mbProto
@@ -276,15 +276,13 @@ createEndorserProcess appConfig paths bakerData mbProto = do
 -- are not specified.
 createDaemonProcess
  :: Maybe FilePath
- -> Either Text [String]
+ -> Either DaemonBootstrapError [String]
  -> Text
  -> Maybe ProtocolHash
- -> Either Text CreateProcess
+ -> Either DaemonBootstrapError CreateProcess
 createDaemonProcess path args daemonName mbProto = do
   let
-    prettyProtoHash = maybe "<unknown protocol>" toBase58Text mbProto
-    eiBinaryPath = flip maybeToRight path $
-      daemonName <> " is not available for the given protocol: " <> prettyProtoHash
+    eiBinaryPath = maybeToRight (DaemonBootstrapError_NoBinary daemonName mbProto) path
   binaryPath <- eiBinaryPath
   binaryArgs <- args
   pure $ proc binaryPath binaryArgs
@@ -294,7 +292,7 @@ getBakerArgs
   -> LoggingEnv
   -> Pool Postgresql
   -> Maybe ProtocolHash
-  -> IO (Either Text [String])
+  -> IO (Either DaemonBootstrapError [String])
 getBakerArgs appConfig logger db mbProtoHash = do
   mbBakerData <- runLoggingEnv logger $ runDb (Identity db) $ project1
     (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
@@ -339,8 +337,7 @@ getBakerArgs appConfig logger db mbProtoHash = do
       pure $ Right $ protocolAgnosticArgs alias <> extraArgsCmd <> customArgs
 
     _ ->
-      pure $ Left $ "'getBakerArgs': unknown protocol "
-      <> maybe "<unknown protocol>" toBase58Text mbProtoHash
+      pure $ Left $ DaemonBootstrapError_UnknownProtocol mbProtoHash
   where
     protocolAgnosticArgs alias =
       [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig
