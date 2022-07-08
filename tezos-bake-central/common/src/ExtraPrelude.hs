@@ -89,6 +89,7 @@ module ExtraPrelude
   , (>>>)
   , ($>)
   , (<<$>>)
+  , (?:)
 
   , safeSucc
   , tshow
@@ -149,3 +150,6 @@ when' x true = x >>= \v -> if v then true else pure mempty
 
 (<<$>>) :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
 (<<$>>) = fmap . fmap
+
+(?:) :: Maybe a -> a -> a
+(?:) = flip fromMaybe
