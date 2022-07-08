@@ -212,6 +212,7 @@ instance HasDefaultNotify (Id ErrorLogNodeInvalidPeerCount)
 instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogVotingReminder)
 instance HasDefaultNotify (Id ErrorLogBakerMissedEndorsementBonus)
+instance HasDefaultNotify (Id ErrorLogBakerNeedToResetHWM)
 instance HasDefaultNotify (Id ProtocolIndex)
 
 instance HasNotification NotifyTag ProtocolIndex where
@@ -244,6 +245,8 @@ instance HasNotification NotifyTag ErrorLogVotingReminder where
   notification _ = mkBakerNotify BakerLogTag_VotingReminder
 instance HasNotification NotifyTag ErrorLogBakerMissedEndorsementBonus where
   notification _ = mkBakerNotify BakerLogTag_MissedEndorsementBonus
+instance HasNotification NotifyTag ErrorLogBakerNeedToResetHWM where
+  notification _ = mkBakerNotify BakerLogTag_NeedToResetHWM
 
 instance HasNotification NotifyTag ErrorLogNetworkUpdate where
   notification _ = NotifyTag_ErrorLog LogTag_NetworkUpdate
@@ -1160,6 +1163,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogBakerMissedEndorsementBonusId
             type: primary
             fields: [_errorLogBakerMissedEndorsementBonus_log]
+  - entity: ErrorLogBakerNeedToResetHWM
+    autoKey: null
+    keys:
+      - name: ErrorLogBakerNeedToResetHWMId
+        default: true
+    constructors:
+      - name: ErrorLogBakerNeedToResetHWM
+        uniques:
+          - name: ErrorLogBakerNeedToResetHWMId
+            type: primary
+            fields: [_errorLogBakerNeedToResetHWM_log]
   - entity: ErrorLogVotingReminder
     autoKey: null
     keys:
@@ -1284,6 +1298,9 @@ instance DefaultKeyId ErrorLogBakerDeactivationRisk where
 instance DefaultKeyId ErrorLogBakerMissedEndorsementBonus where
   toIdData _ (ErrorLogBakerMissedEndorsementBonusIdKey eid) = eid
   fromIdData _ = ErrorLogBakerMissedEndorsementBonusIdKey
+instance DefaultKeyId ErrorLogBakerNeedToResetHWM where
+  toIdData _ (ErrorLogBakerNeedToResetHWMIdKey eid) = eid
+  fromIdData _ = ErrorLogBakerNeedToResetHWMIdKey
 instance DefaultKeyId ErrorLogInsufficientFunds where
   toIdData _ (ErrorLogInsufficientFundsIdKey eid) = eid
   fromIdData _ = ErrorLogInsufficientFundsIdKey
@@ -1355,6 +1372,7 @@ bakerLogAssume = \case
   BakerLogTag_BakerLedgerDisconnected -> id
   BakerLogTag_BakerMissed -> id
   BakerLogTag_MissedEndorsementBonus -> id
+  BakerLogTag_NeedToResetHWM -> id
   BakerLogTag_BakerDeactivated -> id
   BakerLogTag_BakerDeactivationRisk -> id
   BakerLogTag_BakerAccused -> id
@@ -1412,6 +1430,7 @@ bakerLogDep = \case
   BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
   BakerLogTag_VotingReminder -> depBakerAlert' ErrorLogVotingReminder_bakerField
   BakerLogTag_MissedEndorsementBonus -> depBakerAlert' ErrorLogBakerMissedEndorsementBonus_bakerField
+  BakerLogTag_NeedToResetHWM -> depBakerAlert' ErrorLogBakerNeedToResetHWM_bakerField
   where
     depBakerAlert' f = Related f ForeignKey_UniqueId
     depBakerAlert f = Related f $ ForeignKey_Field Baker_publicKeyHashField
@@ -1436,6 +1455,7 @@ instance ArgDict c NotifyTag where
     , c (Id ErrorLogBakerLedgerDisconnected)
     , c (Id ErrorLogBakerMissed)
     , c (Id ErrorLogBakerMissedEndorsementBonus)
+    , c (Id ErrorLogBakerNeedToResetHWM)
     , c (Id ErrorLogBakerNoHeartbeat)
     , c (Id ErrorLogInaccessibleNode)
     , c (Id ErrorLogInsufficientFunds)
@@ -1495,6 +1515,7 @@ instance ArgDict c NotifyTag where
         BakerLogTag_InsufficientFunds -> Dict
         BakerLogTag_VotingReminder -> Dict
         BakerLogTag_MissedEndorsementBonus -> Dict
+        BakerLogTag_NeedToResetHWM -> Dict
     NotifyTag_ProtocolIndex -> Dict
     NotifyTag_UpstreamVersion -> Dict
     NotifyTag_MailServerConfig -> Dict

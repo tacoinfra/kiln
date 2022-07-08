@@ -18,13 +18,14 @@
 
 module Backend.Workers.TezosClient where
 
-import Control.Concurrent.STM (atomically, flushTQueue)
+import Control.Concurrent.STM (atomically, flushTQueue, readTVarIO)
 import Control.Concurrent.STM.TQueue (writeTQueue)
 import Control.Exception (catchJust)
 import Control.Monad.Except
 import Control.Monad.Logger
 import Data.Aeson.Lens
 import Data.Either (fromLeft)
+import Data.Int (Int32)
 import Data.List (sortOn)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
@@ -35,6 +36,7 @@ import Database.Id.Groundhog
 import Rhyolite.Backend.DB
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Backend.DB.Serializable (Serializable)
 import Safe
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
@@ -188,20 +190,6 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db = LedgerQuery LedgerQuer
         insert connectedLedger
         notify NotifyTag_ConnectedLedger $ Just connectedLedger
 
-reportLedgerDisconnection :: Pool Postgresql -> AppConfig -> Bool -> LoggingT IO ()
-reportLedgerDisconnection db appConfig isWrongApp = withDbAndConfig db appConfig $ do
-  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
-  for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
-      reportBakerLedgerDisconnected pkh isWrongApp
-
-clearLedgerDisconnection :: Pool Postgresql -> AppConfig -> LoggingT IO ()
-clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
-  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
-  for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
-      clearBakerLedgerDisconnected pkh
-
 -- THIS IS SOUND! Either the binary is present in the nix closure
 -- or the user provides them (via BinaryPaths).
 clientPath :: Maybe BinaryPaths -> FilePath
@@ -228,6 +216,71 @@ defaultTimeout = Just (5, ClientError_Timeout)
 
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
+
+checkLedgerHighWatermark :: (Monad m, MonadLoggerIO m) => AppConfig -> NodeDataSource -> LedgerQuery m
+checkLedgerHighWatermark appConfig nds = LedgerQuery LedgerQueryType_CheckHWM $ do
+  let db = _nodeDataSource_pool nds
+  eiHwm <- getLedgerHighWatermark appConfig nds
+  case eiHwm of
+    Right (Just hwm) -> do
+      mbLatestHead <- liftIO $ readTVarIO $ nds ^. nodeDataSource_latestHead
+      let mbLatestHeadLevel = mbLatestHead ^? _Just . level
+      reportLedgerNeedToResetHWM db appConfig mbLatestHeadLevel hwm
+    -- If we couldn't get high-witermark, then most likely ledger has been disconnected
+    -- and it will be reported in another function.
+    _ -> pure ()
+
+getLedgerHighWatermark :: (MonadLoggerIO m) => AppConfig -> NodeDataSource -> m (Either ClientError (Maybe RawLevel))
+getLedgerHighWatermark appConfig nds = runExceptT $ do
+  let
+    db = _nodeDataSource_pool nds
+    logger = _nodeDataSource_logger nds
+    inDb :: (MonadIO m) => Serializable a -> m a
+    inDb = runLoggingEnv logger . runDb (Identity db)
+  mbIntBakerPkh <- fmap join $ inDb $ project1
+    (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
+    (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  fmap join $ for mbIntBakerPkh $ \intBakerPkh ->  do
+    cachedHWM <- fmap join $ inDb $
+      project1 LedgerAccount_highWatermarkField $ LedgerAccount_publicKeyHashField ==. Just intBakerPkh
+    case cachedHWM of
+      Nothing -> do
+        mbSecretKey <- inDb $ project1 LedgerAccount_secretKeyField (LedgerAccount_publicKeyHashField ==. Just intBakerPkh)
+        case mbSecretKey of
+          Nothing -> error "Ledger secret key not found in db while fetching ledger high-watermark."
+          Just sk -> do
+            let
+              args =
+                [ "get"
+                , "ledger"
+                , "high"
+                , "watermark"
+                , "for"
+                , T.unpack (toSecretKeyText sk)
+                ]
+            stdout <- runClientCommand appConfig defaultTimeout args $ \_warnings errors -> if
+              | e : _ <- errors, Just _sk' <- T.stripPrefix "Found no ledger corresponding to " e -> Left ClientError_LedgerDisconnected
+              | otherwise -> Left $ ClientError_Other $ T.unlines errors
+            let hwm = getHWMFromStdout stdout (_appConfig_chainId appConfig)
+            inDb $ update [LedgerAccount_highWatermarkField =. hwm] (LedgerAccount_publicKeyHashField ==. Just intBakerPkh)
+            pure hwm
+      _ -> pure cachedHWM
+  where
+    -- The example 'tezos-client get ledger high watermark for ...' output:
+    {-
+      The high water mark values for
+      <ledger_url> are
+      380000 for the main-chain (NetXLH1uAxK7CCh) and
+      380000 for the test-chain.
+    -}
+    getHWMFromStdout :: Text -> ChainId -> Maybe RawLevel
+    getHWMFromStdout stdout chainId =
+      let
+        prettyChainId = toBase58Text chainId
+        line = find (T.isInfixOf prettyChainId) (T.lines stdout)
+      in case T.words <$> line of
+        Just (hwmStr : _ )-> fmap fromIntegral $ readMaybe @Int32 $ T.unpack hwmStr
+        _ -> Nothing
 
 getConnectedLedger :: (MonadLoggerIO m) => AppConfig -> m (Either ClientError (Maybe (LedgerIdentifier, LedgerApp, Text)))
 getConnectedLedger appConfig = runExceptT $ do
@@ -286,6 +339,7 @@ isKnownLedgerPkh appConfig db sk = do
               , _ledgerAccount_balance = Nothing
               , _ledgerAccount_imported = False
               , _ledgerAccount_requested = True
+              , _ledgerAccount_highWatermark = Nothing
               }
         insert la
         pure False
@@ -533,6 +587,7 @@ setHighWaterMark appConfig db sk bl = LedgerQuery LedgerQueryType_SetHWM $
       | "Ledger Transport level error:" : _ <- errors -> Left SetHWMStep_Disconnected
       | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetHWMStep_Disconnected
       | otherwise -> Left $ SetHWMStep_Failed $ T.unlines errors
+    clearLedgerNeedToResetHWM db appConfig
     pure $ fromLeft SetHWMStep_Done e
 
 submitVote :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> Id PeriodProposal -> Maybe Ballot -> LedgerQuery m

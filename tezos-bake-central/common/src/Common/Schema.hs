@@ -181,6 +181,7 @@ data LedgerAccount = LedgerAccount
   , _ledgerAccount_balance :: Maybe Tez
   , _ledgerAccount_imported :: Bool
   , _ledgerAccount_requested :: Bool
+  , _ledgerAccount_highWatermark :: Maybe RawLevel
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- This can be lifted into 'LedgerAccount' if we need to support more than one
@@ -725,6 +726,15 @@ data ErrorLogBakerLedgerDisconnected = ErrorLogBakerLedgerDisconnected
 instance HasId ErrorLogBakerLedgerDisconnected where
   type IdData ErrorLogBakerLedgerDisconnected = Id ErrorLog
 
+data ErrorLogBakerNeedToResetHWM = ErrorLogBakerNeedToResetHWM
+  { _errorLogBakerNeedToResetHWM_log :: Id ErrorLog
+  , _errorLogBakerNeedToResetHWM_baker :: Id Baker
+  , _errorLogBakerNeedToResetHWM_level :: Maybe RawLevel
+  , _errorLogBakerNeedToResetHWM_ledgerHWM :: RawLevel
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogBakerNeedToResetHWM where
+  type IdData ErrorLogBakerNeedToResetHWM = Id ErrorLog
+
 data ErrorLogInaccessibleNode = ErrorLogInaccessibleNode
   { _errorLogInaccessibleNode_log :: Id ErrorLog
   , _errorLogInaccessibleNode_node :: Id Node
@@ -1015,6 +1025,7 @@ data BakerLogTag a where
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
   BakerLogTag_InsufficientFunds :: BakerLogTag ErrorLogInsufficientFunds
   BakerLogTag_VotingReminder :: BakerLogTag ErrorLogVotingReminder
+  BakerLogTag_NeedToResetHWM :: BakerLogTag ErrorLogBakerNeedToResetHWM
 
 deriving instance Eq (BakerLogTag a)
 deriving instance Ord (BakerLogTag a)
@@ -1046,6 +1057,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerMissedEndorsementBonus
+  , ''ErrorLogBakerNeedToResetHWM
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
@@ -1172,6 +1184,7 @@ instance UniverseSome BakerLogTag where
   universeSome =
     [ Some BakerLogTag_BakerMissed
     , Some BakerLogTag_MissedEndorsementBonus
+    , Some BakerLogTag_NeedToResetHWM
     , Some BakerLogTag_BakerDeactivated
     , Some BakerLogTag_BakerDeactivationRisk
     , Some BakerLogTag_BakerAccused
@@ -1210,6 +1223,7 @@ errorLogNames =
   , ''ErrorLogBakerLedgerDisconnected
   , ''ErrorLogBakerMissed
   , ''ErrorLogBakerMissedEndorsementBonus
+  , ''ErrorLogBakerNeedToResetHWM
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds

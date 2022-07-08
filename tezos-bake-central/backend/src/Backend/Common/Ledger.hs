@@ -10,6 +10,7 @@ data LedgerQueryType
   | LedgerQueryType_SetupToBake
   | LedgerQueryType_RegisterDelegate
   | LedgerQueryType_SetHWM
+  | LedgerQueryType_CheckHWM
   | LedgerQueryType_Vote
 
 data LedgerQuery m = LedgerQuery

@@ -20,16 +20,17 @@ import Prelude hiding (log, cycle)
 import Data.Dependent.Sum
 import Control.Lens ((<&>))
 import Control.Monad.Base (MonadBase)
-import Control.Monad.Logger (MonadLogger)
+import Control.Monad.Logger (MonadLogger, MonadLoggerIO)
 import Data.Map (Map())
 import qualified Data.Map as Map
 import Data.List.NonEmpty (nonEmpty)
+import Data.Pool (Pool)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Data.Word
 import Database.Groundhog
 import Database.Groundhog.Core
-import Database.Groundhog.Postgresql (PersistBackend, SqlDb, in_)
+import Database.Groundhog.Postgresql (PersistBackend, Postgresql, SqlDb, in_)
 import Database.Id.Class
 import Database.Id.Groundhog
 import Database.PostgreSQL.Simple.Types (Identifier(..))
@@ -43,6 +44,7 @@ import qualified Text.URI as Uri
 import Tezos.Types
 
 import Backend.Alerts.Common (Alert (..), queueAlert, AlertType(..))
+import Backend.Common (withDbAndConfig)
 import Backend.Config (AppConfig(..), HasAppConfig, askAppConfig)
 import Backend.Schema
 import Common.Alerts (
@@ -53,6 +55,7 @@ import Common.Alerts (
     bakerDeactivationRiskDescriptions,
     bakerLedgerDisconnectedDescriptions,
     bakerVotingReminderDescriptions,
+    bakerNeedToResetHWMDescriptions,
     plaintextErrorDescription,
   )
 import Common.App (errorLogIdForErrorLogView)
@@ -203,6 +206,20 @@ clearBakerDeactivationRisk pkh newFit = do
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
     queueAlert Nothing $ resolvedBakerAlert (bakerDeactivationRiskDescriptions log) baker
 
+reportLedgerDisconnection :: (MonadLoggerIO m) => Pool Postgresql -> AppConfig -> Bool -> m ()
+reportLedgerDisconnection db appConfig isWrongApp = withDbAndConfig db appConfig $ do
+  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ bdis $ \bdi -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+      reportBakerLedgerDisconnected pkh isWrongApp
+
+clearLedgerDisconnection :: (MonadLoggerIO m) => Pool Postgresql -> AppConfig -> m ()
+clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
+  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ bdis $ \bdi -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+      clearBakerLedgerDisconnected pkh
+
 reportBakerLedgerDisconnected
   :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m,
      PersistBackend m, PostgresLargeObject m, HasAppConfig a,
@@ -251,6 +268,78 @@ clearBakerLedgerDisconnected pkh = do
   log' <- for (listToMaybe lids) $ getBy . fromId
   for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
     queueAlert Nothing $ resolvedBakerAlert (bakerLedgerDisconnectedDescriptions log) baker
+
+reportLedgerNeedToResetHWM
+  :: (MonadLoggerIO m)
+  => Pool Postgresql
+  -> AppConfig
+  -> Maybe RawLevel
+  -> RawLevel -> m ()
+reportLedgerNeedToResetHWM db appConfig headLevel hwm = withDbAndConfig db appConfig $ do
+  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ bdis $ \bdi -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+      reportBakerNeedToResetHWM pkh headLevel hwm
+
+clearLedgerNeedToResetHWM :: (MonadLoggerIO m) => Pool Postgresql -> AppConfig -> m ()
+clearLedgerNeedToResetHWM db appConfig = withDbAndConfig db appConfig $ do
+  bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
+  for_ bdis $ \bdi -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh -> do
+      -- We need to clear cached high-watermark value when alert has become resolved.
+      update [LedgerAccount_highWatermarkField =. (Nothing :: Maybe RawLevel)] (LedgerAccount_publicKeyHashField ==. Just pkh)
+      clearBakerNeedToResetHWM pkh
+
+reportBakerNeedToResetHWM
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m,
+     PersistBackend m, PostgresLargeObject m, HasAppConfig a,
+     MonadBase Serializable m
+     )
+  => PublicKeyHash -> Maybe RawLevel -> RawLevel -> m ()
+reportBakerNeedToResetHWM pkh headLevel hwm = do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogBakerNeedToResetHWM) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.log
+      FROM "ErrorLog" el
+      JOIN "ErrorLogBakerNeedToResetHWM" t ON t.log = el.id
+      JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
+     WHERE NOT b."data#deleted"
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+  |]
+  case existingLog of
+    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogBakerNeedToResetHWM_logField
+      [ ErrorLogBakerNeedToResetHWM_levelField =. headLevel
+      , ErrorLogBakerNeedToResetHWM_ledgerHWMField =. hwm
+      ]
+    Nothing -> do
+      (logId, log) <- insertErrorLog $ \logId ->
+        ErrorLogBakerNeedToResetHWM logId (Id pkh) headLevel hwm
+      queueAlert (Just logId) $ unresolvedBakerAlert $ bakerNeedToResetHWMDescriptions log
+
+clearBakerNeedToResetHWM
+  :: ( Monad m, MonadIO m, MonadReader a m, MonadLogger m, SqlDb (PhantomDb m)
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a,
+       MonadBase Serializable m
+     )
+  => PublicKeyHash -> m ()
+clearBakerNeedToResetHWM pkh = do
+  chainId <- _appConfig_chainId <$> askAppConfig
+  lids  :: [Id ErrorLogBakerNeedToResetHWM] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogBakerNeedToResetHWM" t
+      WHERE t.log = el.id
+      AND t."baker#publicKeyHash" = ?pkh
+      AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
+    RETURNING t.log |]
+  for_ lids notifyDefault
+  baker' <- getBaker pkh
+  log' <- for (listToMaybe lids) $ getBy . fromId
+  for_ (liftA2 (,) baker' (join log')) $ \(baker, log) ->
+    queueAlert Nothing $ resolvedBakerAlert (bakerNeedToResetHWMDescriptions log) baker
 
 reportInsufficientFunds
   :: ( Monad m, MonadIO m, MonadReader a m
