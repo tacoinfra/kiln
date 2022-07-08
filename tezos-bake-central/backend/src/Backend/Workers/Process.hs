@@ -41,6 +41,7 @@ import Data.Time (getCurrentTime, addUTCTime, NominalDiffTime)
 import Data.Void (Void)
 import Database.Id.Groundhog
 import Database.Groundhog.Postgresql
+import Fmt (pretty)
 import GHC.IO.Handle.FD (handleToFd)
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
@@ -58,6 +59,7 @@ import System.IO (Handle, IOMode(..), hClose, hFlush, withFile)
 import Backend.Alerts (reportInternalNodeFailed)
 import Backend.Common
 import Backend.Config
+import Backend.Process.Errors
 import Backend.Schema
 import Common.Schema
 import ExtraPrelude
@@ -90,7 +92,7 @@ processWorker
   -> "db" :! Pool Postgresql
   -> "config" :! AppConfig
   -> "logNamespace" :! Text
-  -> "mkProcess" :! (a -> IO (Either Text CreateProcess))
+  -> "mkProcess" :! (a -> IO (Either DaemonBootstrapError CreateProcess))
   -> "pid" :! Id ProcessData
   -> "prestartCheck" :! IO Bool
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
@@ -126,10 +128,19 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
               tezosLogEnv = [("TEZOS_EVENTS_CONFIG", "file-descriptor-path:///dev/fd/" <> show writeFD <> "?format=one-per-line&level-at-least=error")]
             startProcMonitor procHandler tezosLogEnv `finally` killThread handlerThreadId
 
-      Left errMsg -> inDb $ update
-        [ ProcessData_errorLogField =. Just errMsg
-        , ProcessData_stateField =. ProcessState_Stopped
-        ] $ AutoKeyField ==. fromId pid
+      Left err ->
+        let
+          updatesList =
+            [ ProcessData_errorLogField =. Just (T.pack $ pretty err)
+            , ProcessData_stateField =. ProcessState_Stopped
+            ]
+          -- In case of some errors (e.g when the daemon doesn't exist for this protocol)
+          -- we don't want to try to restart the binary.
+          stopControl = [ProcessData_controlField =. ProcessControl_Stop]
+          cond = AutoKeyField ==. fromId pid
+        in inDb $ case err of
+          DaemonBootstrapError_NoBinary {} -> update (updatesList <> stopControl) cond
+          DaemonBootstrapError_UnknownProtocol {} -> update (updatesList <> stopControl) cond
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m) => Serializable a -> m a
     inDb = runLoggingEnv logger . runDb (Identity db)
