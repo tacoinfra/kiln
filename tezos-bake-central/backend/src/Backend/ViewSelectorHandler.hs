@@ -87,6 +87,7 @@ import Text.URI (render, URI)
 
 import Tezos.Types
 
+import Backend.IndexQueries (endOfPreservedCycles)
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.Workers.TezosRelease (getLatestTezosRelease)
@@ -790,9 +791,7 @@ getBakerAddresses nds bid = do
           ProtocolIndex_chainIdField ==. chainId)
       case mbProtoInfo of
         Nothing -> throwError $ KilnRpcError_UnknownProtocol protocol
-        Just protoInfo -> do
-          let blocksPerCycle = protoInfo ^. protoInfo_blocksPerCycle
-          pure $ latestHeadInfo ^. level + (blocksPerCycle - latestHeadInfo ^. branchInfo_cyclePosition) - 1
+        Just protoInfo -> pure $ endOfPreservedCycles latestHeadInfo protoInfo
 
   let
     maxProgress = maxProgress_rightsInfo ^? _Right . _Just
