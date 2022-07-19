@@ -2664,15 +2664,10 @@ bakersTab =
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh
               latestHead <- maybeDyn =<< watchLatestHead
-              protoHashDyn <- watchLatestProtocolHash
               dyn_ $ ffor latestHead $ \case
                 Nothing -> pure () -- no head to set high water mark
                 Just bl -> tileMenuEntryModal "Set High-Water Mark" $ cancelableModalWithClasses $ setHighWaterMark (view level <$> bl) sk pkh
-              dyn_ $ ffor protoHashDyn $ \case
-                -- TODO [#147]: remove this after Jakarta is activated on mainnet.
-                Just JakartaProtocolHash ->
-                  tileMenuEntryModal "Set Liquidity Baking" $ cancelableModalWithClasses $ setLiquidityBakingToggleModal (sk, pkh)
-                _ -> pure ()
+              tileMenuEntryModal "Set Liquidity Baking" $ cancelableModalWithClasses $ setLiquidityBakingToggleModal (sk, pkh)
               if isBakerRunning bid
               then do
                 let stopModal = warningModal "Stop Baker?"
