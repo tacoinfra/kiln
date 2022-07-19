@@ -482,9 +482,6 @@ instance HasId PeriodProposal
 newtype ProtoAgnosticVotingPower = ProtoAgnosticVotingPower Int64
   deriving newtype (Eq, Ord, Show, Enum, Num, Integral, Real, Aeson.FromJSON, Aeson.ToJSON)
 
-rollsToProtoAgnosticVotingPower :: Int -> ProtoAgnosticVotingPower
-rollsToProtoAgnosticVotingPower = fromIntegral
-
 tezToProtoAgnosticVotingPower :: Tez -> ProtoAgnosticVotingPower
 tezToProtoAgnosticVotingPower = ProtoAgnosticVotingPower . getMicroTez
 

@@ -74,13 +74,8 @@ getPath getter paths = \case
 -- binary expects a .tezos-node/<chain_id>/protocol dir
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
 tezosBinaryPaths :: NonEmpty BakerEndorserPaths
-tezosBinaryPaths = NonEmpty.fromList [ithacaPaths, jakartaPaths]
+tezosBinaryPaths = NonEmpty.fromList [jakartaPaths]
   where
-    ithacaPaths = BakerEndorserPaths
-      { _bakerEndorserPaths_proto = IthacaProtocolHash
-      , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-012-Psithaca")
-      , _bakerEndorserPaths_endorserPath = Nothing
-      }
     jakartaPaths = BakerEndorserPaths
       { _bakerEndorserPaths_proto = JakartaProtocolHash
       , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-013-PtJakart")
@@ -249,7 +244,7 @@ createBakerProcess
   -> IO (Either DaemonBootstrapError CreateProcess)
 createBakerProcess appConfig logger db paths mbProto = do
   let bakerPath = getBakerPath paths mbProto
-  bakerArgs <- getBakerArgs appConfig logger db mbProto
+  bakerArgs <- getBakerArgs appConfig logger db
   pure $ createDaemonProcess bakerPath bakerArgs "tezos-baker" mbProto
 
 createEndorserProcess
@@ -290,9 +285,8 @@ getBakerArgs
   :: AppConfig
   -> LoggingEnv
   -> Pool Postgresql
-  -> Maybe ProtocolHash
   -> IO (Either DaemonBootstrapError [String])
-getBakerArgs appConfig logger db mbProtoHash = do
+getBakerArgs appConfig logger db = do
   mbBakerData <- runLoggingEnv logger $ runDb (Identity db) $ project1
     (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
   let
@@ -303,19 +297,13 @@ getBakerArgs appConfig logger db mbProtoHash = do
         error "'getBakerArgs': baker public key hash is 'Nothing'."
     chainId = _appConfig_chainId appConfig
     alias = T.unpack $ _bakerDaemonInternalData_alias bakerData
-  case mbProtoHash of
-    Just IthacaProtocolHash ->
-      pure $ Right $ protocolAgnosticArgs alias <> bakerCustomArgs
-    Just JakartaProtocolHash -> do
-      extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
-        BakerExtraArgs_publicKeyHashField ==. pkh &&.
-        BakerExtraArgs_chainIdField ==. chainId
-      runLoggingEnv logger $
-        $(logDebug) $ "Baker extra args: " <> tshow extraArgs
-      let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
-      pure $ Right $ protocolAgnosticArgs alias <> bakerCustomArgs <> extraArgsCmd
-    _ ->
-      pure $ Left $ DaemonBootstrapError_UnknownProtocol mbProtoHash
+  extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
+    BakerExtraArgs_publicKeyHashField ==. pkh &&.
+    BakerExtraArgs_chainIdField ==. chainId
+  runLoggingEnv logger $
+    $(logDebug) $ "Baker extra args: " <> tshow extraArgs
+  let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
+  pure $ Right $ protocolAgnosticArgs alias <> bakerCustomArgs <> extraArgsCmd
   where
     protocolAgnosticArgs alias =
       [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig

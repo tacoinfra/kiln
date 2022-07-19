@@ -16,7 +16,7 @@ module Backend.Config where
 
 import Control.Lens (Lens', view)
 import Control.Monad.Reader (MonadReader, asks)
-import Data.Aeson (FromJSON(..), Value(..), withObject, (.:), (.:?))
+import Data.Aeson (FromJSON(..), Value(..), withObject, (.:))
 import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
 import Data.Validation
@@ -245,23 +245,17 @@ instance FromJSON BakerEndorserPaths where
       endorserPath <- o .: "endorser-path"
       pure $ BakerEndorserPaths proto bakerPath endorserPath
 
-data Votefile
-  = IthacaVotefile Bool
-  | JakartaVotefile LiquidityBakingToggleVote
+data Votefile = Votefile LiquidityBakingToggleVote
   deriving (Show)
 
 instance FromJSON Votefile where
   parseJSON = withObject "Votefile" $ \o -> do
-    lqdtyEscapeVote :: Maybe Bool <- o .:? "liquidity_baking_escape_vote"
-    lqdtyToggleStr  :: Maybe Text <- o .:? "liquidity_baking_toggle_vote"
-    case (lqdtyEscapeVote, lqdtyToggleStr) of
-      (Just b, Nothing) -> pure $ IthacaVotefile b
-      (Nothing, Just tgl) -> case tgl of
-        "on"   -> pure $ JakartaVotefile LiquidityBakingToggleVote_On
-        "off"  -> pure $ JakartaVotefile LiquidityBakingToggleVote_Off
-        "pass" -> pure $ JakartaVotefile LiquidityBakingToggleVote_Pass
-        _ -> fail "Invalid value for 'liquidity_baking_toggle_vote'."
-      _ -> fail "Invalid votefile format."
+    lqdtyToggleStr :: Text <- o .: "liquidity_baking_toggle_vote"
+    case lqdtyToggleStr of
+      "on"   -> pure $ Votefile LiquidityBakingToggleVote_On
+      "off"  -> pure $ Votefile LiquidityBakingToggleVote_Off
+      "pass" -> pure $ Votefile LiquidityBakingToggleVote_Pass
+      _ -> fail "Invalid value for 'liquidity_baking_toggle_vote'."
 
 concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   { Aeson.fieldLabelModifier
