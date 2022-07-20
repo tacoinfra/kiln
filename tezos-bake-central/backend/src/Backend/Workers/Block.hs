@@ -101,7 +101,7 @@ blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) 
         loopResult <- try $ flip runReaderT nds $
           for_ (Seq.reverse blocks) $ \blockHash -> do
             blockOrErr <- runExceptT @KilnRpcError $ runNodeQueryT $ do
-              block <- nodeQueryDataSourceSafe $ NodeQuery_Block blockHash
+              block <- nodeQueryDataSourceSafe $ nodeQuery_Block blockHash
               parseAndReportAccusations appConfig blockHash block
               return block
             case blockOrErr of

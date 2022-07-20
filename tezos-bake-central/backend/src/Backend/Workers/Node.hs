@@ -107,8 +107,8 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
     when (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness) $ do
       newStateRsp :: Either KilnRpcError (BlockCrossCompat, BlockCrossCompat) <- runExceptT $ do
           flip runReaderT nds { _nodeDataSource_nodeForQuery = Just nodeAddr } $ do
-            latestHead <- nodeQueryDataSourceImmediate $ NodeQuery_Block $ headBlockInfo ^. hash
-            latestFinalHead <- nodeQueryDataSourceImmediate $ NodeQuery_BlockPred (headBlockInfo ^. hash) 2
+            latestHead <- nodeQueryDataSourceImmediate $ nodeQuery_Block $ headBlockInfo ^. hash
+            latestFinalHead <- nodeQueryDataSourceImmediate $ nodeQuery_Block $ (headBlockInfo ^. hash) ~~ 2
             pure (latestHead, latestFinalHead)
       case newStateRsp of
         Left e -> logKilnRpcError "Handle new node head" e
@@ -525,7 +525,7 @@ amendmentProcessWorker
   -> IO (IO ())
 amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ waitForNewFinalHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   (latestBlock, protoInfo) <- throwing $ runNodeQueryT $ liftA2 (,)
-    (nodeQueryDataSourceSafe $ NodeQuery_Block (latestHead ^. hash))
+    (nodeQueryDataSourceSafe $ nodeQuery_Block (latestHead ^. hash))
     (getProtocolConstants $ Left $ latestHead ^. hash)
   let
     blocksPerVotingPeriod = getBlocksPerVotingPeriod protoInfo
@@ -544,7 +544,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
 
     singleVotePeriod pkh periodKindOffset mkVotingState = do
       let blk = latestHead ^.hash
-      mBallot <- runMaybe $ nodeQueryDataSource $ NodeQuery_Ballot blk pkh
+      mBallot <- runMaybe $ nodeQueryDataSource $ nodeQuery_Ballot blk pkh
       -- The voting period of the last proposal period
       let amendmentPeriod = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo .
             votingPeriodInfo_votingPeriod . votingPeriod_index - periodKindOffset
@@ -578,7 +578,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     votingState <- case currentPeriodKind of
       VotingPeriodKind_Proposal -> throwing $ runNodeQueryT $ do
         let blk = latestHead ^. hash
-        bakerProposals <- nodeQueryDataSourceSafe $ NodeQuery_ProposalVote blk pkh
+        bakerProposals <- nodeQueryDataSourceSafe $ nodeQuery_ProposalVote blk pkh
 
         pps <- let inBakerProposals = In $ S.toList bakerProposals in [queryQ|
           UPDATE "BakerProposal" SET included = ?blk
@@ -602,7 +602,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
               | otherwise -> case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
                 Nothing -> pure ProposalVotingState_NoPreviousVote
                 Just lastAttempt -> do
-                  proposalVotesWhenLastVoting <- nodeQueryDataSourceSafe $ NodeQuery_Proposals lastAttempt
+                  proposalVotesWhenLastVoting <- nodeQueryDataSourceSafe $ nodeQuery_Proposals lastAttempt
                   let
                     proposalHashes = S.fromList $ toList $ (^. _2 . _1 . periodProposal_hash) <$> proposals
                     proposalHashesWhenLastVoting = S.fromList $ toList $ getProposalVotesListCrossCompatProtocolHashes proposalVotesWhenLastVoting
@@ -694,8 +694,8 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Adoption -> notify NotifyTag_PeriodAdoption Nothing
 
   where
-    getBlockHeader hash' = nodeQueryDataSource $ NodeQuery_BlockHeader hash'
-    getBlockLevelAncestor lvl hash' = nodeQueryDataSource $ NodeQuery_BlockPred hash' lvl
+    getBlockHeader hash' = nodeQueryDataSource $ nodeQuery_BlockHeader hash'
+    getBlockLevelAncestor lvl hash' = nodeQueryDataSource $ nodeQuery_Block $ hash' ~~ lvl
 
     throwing :: (Monad m, MonadLogger m) => ExceptT KilnRpcError (ReaderT NodeDataSource m) a -> m a
     throwing = (>>= either logThenThrow pure) . flip runReaderT nds . runExceptT @KilnRpcError
@@ -752,7 +752,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         notify NotifyTag_Amendment (p, Just amendment)
       case p of
         VotingPeriodKind_Proposal -> do
-          mbProposals <- catchUnsuitableNode $ nodeQueryDataSource $ NodeQuery_Proposals (predBlk ^. hash)
+          mbProposals <- catchUnsuitableNode $ nodeQueryDataSource $ nodeQuery_Proposals (predBlk ^. hash)
           whenJust mbProposals $ \proposals -> do
             runDb (Identity db) $ do
               deletedIds <- [queryQ|
@@ -776,7 +776,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                 notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
         VotingPeriodKind_Exploration -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
         VotingPeriodKind_Cooldown -> do
-          mProposal <- runMaybe $ nodeQueryDataSource $ NodeQuery_CurrentProposal (predBlk ^. hash)
+          mProposal <- runMaybe $ nodeQueryDataSource $ nodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
             runDb (Identity db) $ do
               ts <- (fmap . fmap) fromOnly [queryQ|
@@ -792,10 +792,10 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     handleVotingPeriod :: (PersistEntity a, BlockLike blk) => blk -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
     handleVotingPeriod blk f n = do
       mpv <- runMaybe $ do
-        mProposal <- nodeQueryDataSource $ NodeQuery_CurrentProposal (blk ^. hash)
-        ballots <- nodeQueryDataSource $ NodeQuery_Ballots (blk ^. hash)
-        quorum <- nodeQueryDataSource $ NodeQuery_CurrentQuorum (blk ^. hash)
-        listings <- nodeQueryDataSource $ NodeQuery_Listings (blk ^. hash)
+        mProposal <- nodeQueryDataSource $ nodeQuery_CurrentProposal (blk ^. hash)
+        ballots <- nodeQueryDataSource $ nodeQuery_Ballots (blk ^. hash)
+        quorum <- nodeQueryDataSource $ nodeQuery_CurrentQuorum (blk ^. hash)
+        listings <- nodeQueryDataSource $ nodeQuery_Listings (blk ^. hash)
         let totalVotingPower = case listings of
               VoterListingsV014 l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap V014._voterDelegate_votingPower l
         pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalVotingPower)
@@ -841,7 +841,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinal
     hangzhouHax ph = ph
 
     getProtocol' = flip runReaderT nds $ runExceptT @KilnRpcError $ do
-      blk <- nodeQueryDataSource $ NodeQuery_Block (latestHead ^. hash)
+      blk <- nodeQueryDataSource $ nodeQuery_Block (latestHead ^. hash)
       let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
           currentProtocol = blk ^. blockMetadata . blockMetadata_protocol
       remainingBlocksInVotingPeriod <- case blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_remaining of
@@ -862,7 +862,7 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinal
               -- TODO: re-check this condition later and make it more strict.
               | remainingBlocksInVotingPeriod <= 1 = latestHead ^. predecessor
               | otherwise = latestHead ^. hash
-          in fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (NodeQuery_CurrentProposal queryBlockHash)
+          in fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (nodeQuery_CurrentProposal queryBlockHash)
         else return Nothing
       return (blk ^. blockMetadata . blockMetadata_protocol, tp)
 

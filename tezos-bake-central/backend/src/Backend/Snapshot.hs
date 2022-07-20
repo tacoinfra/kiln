@@ -215,11 +215,6 @@ handleSnapshotDownload appConfig nds snapshotURI = void $ liftIO $ forkIO $ runL
     storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
     storePath = storeLocation <> snapshotFileName
 
-data BlockLikeData where
-  BlockPrefixHash :: Text -> BlockLikeData
-  BlockHash :: BlockHash -> BlockLikeData
-  BlockLike :: BlockLike blk => blk -> BlockLikeData
-
 importSnapshotData
   :: (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
   => AppConfig
@@ -313,12 +308,12 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
                         let (_, _, _, matches) = source =~ regex :: (String, String, String, [String]) in
                           parse =<< listToMaybe matches
 
-                      mBlkHash  = extractFromSnapshotInfo infoStdout blockHashRegex
+                      mBlkHash = BlockHash <$> extractFromSnapshotInfo infoStdout blockHashRegex
                         ((either (const Nothing) Just) . fromBase58 . fromString)
                       mLevel = extractFromSnapshotInfo infoStdout levelRegex (fmap fromIntegral . readMaybe @Int32)
                     whenJust mBlkHash $ \blkHash -> void $ do
                       mBlk <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ do
-                        nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
+                        nodeQueryDataSourceSafe $ nodeQuery_BlockHeader blkHash
                       inDb $ do
                         updateSnapshotMeta mBlkHash mLevel (mBlk ^? _Right . timestamp) smId
                   inDb $ updateState NodeProcessState_ImportComplete

@@ -1695,7 +1695,7 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
   whenJust (smd ^. snapshotMeta_headBlock) $ \headBlock -> do
     divClass "field" $ do
       divClass "detail" $ text "Snapshot's Highest Block Hash:"
-      let hashText = toBase58Text headBlock
+      let hashText = blockHashToBase58Text headBlock
       divClass "proposal-hash" $ do
         copyButton $ pure hashText
         text hashText

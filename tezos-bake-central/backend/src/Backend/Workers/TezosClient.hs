@@ -358,7 +358,7 @@ fetchBalances appConfig db nds sks = withDbAndConfig db appConfig $ for_ sks $ \
         mbHeadBlock <- ask >>= liftIO . atomically . dataSourceFinalHead
         case mbHeadBlock of
           Nothing -> ExceptT $ pure $ Left KilnRpcError_NoKnownHeads
-          Just headBlock -> nodeQueryDataSource $ NodeQuery_Balance (headBlock ^. hash) (headBlock ^. level) pkh
+          Just headBlock -> nodeQueryDataSource $ nodeQuery_Balance (headBlock ^. hash) (headBlock ^. level) pkh
       case balanceOrErr of
         Left err -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh <> " due to: " <> prettyKilnRpcError err
         Right balance -> do
@@ -515,7 +515,7 @@ checkIfRegistered db nds pkh = do
     mbHeadBlock <- ask >>= liftIO . atomically . dataSourceFinalHead
     case mbHeadBlock of
       Nothing -> ExceptT $ pure $ Left KilnRpcError_NoKnownHeads
-      Just headBlock -> nodeQueryDataSource $ NodeQuery_DelegateInfo (headBlock ^. hash) (headBlock ^. level) pkh
+      Just headBlock -> nodeQueryDataSource $ nodeQuery_DelegateInfo (headBlock ^. hash) (headBlock ^. level) pkh
   let isReg = case delegateInfoOrErr of
         Right delegateInfo -> not (_cacheDelegateInfo_deactivated delegateInfo)
         _ -> False
