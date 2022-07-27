@@ -27,8 +27,6 @@ instance FromJSON BlockCrossCompat where
     pv :: String <- o .: "protocol"
     case pv of
       "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY" -> BlockV013 <$> parseJSON jv
-      -- There is no difference between V012 and V013 blocks, so we treat both as V013
-      "Psithaca2MLRFYargivpo7YvUr7wUDqyxrdhC5CQq78mRvimz6A" -> BlockV013 <$> parseJSON jv
       _ -> BlockGenesis <$> parseJSON jv
   parseJSON _ = mzero
 

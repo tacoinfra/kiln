@@ -111,24 +111,18 @@ ledgerSetupSteps
   => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedgerForced
-  protoHashDyn <- watchLatestProtocolHash
   ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
   let disconnect = ffilter isNothing $ updated ledgerIdentifier
-  dyn_ $ ffor protoHashDyn $ \protoHash -> divClass "progress" $ do
+  divClass "progress" $ do
     elClass "h4" "ui header" $ do
       kilnLogo
       text "Start Baking"
     let
-      -- TODO [#147]: remove when Jakarta is activated on mainnet
-      mbLqdtyToggleStep = case protoHash of
-        Just JakartaProtocolHash ->
-          [Some LSS_SetLiquidityBakingToggle]
-        _ -> []
       steps =
         [ Some LSS_ConnectLedger
         , Some LSS_SelectAddress
-        ] <> mbLqdtyToggleStep <>
-        [ Some LSS_ImportAddress
+        , Some LSS_SetLiquidityBakingToggle
+        , Some LSS_ImportAddress
         , Some LSS_AuthorizeLedger
         , Some LSS_RegisterDelegate
         ]
@@ -153,14 +147,7 @@ ledgerSetupSteps = mdo
   currentStepDyn <- holdDyn (LSS_ConnectLedger :=> Identity ()) updateStep
   quitOrUpdate <- divClass "workflow" $ switchHold never <=< dyn $ ffor currentStepDyn $ \case
       LSS_ConnectLedger :=> _ -> (fmap . fmap) (Right . (LSS_SelectAddress ==>)) (connectLedger connectedLedger)
-      LSS_SelectAddress :=> Identity l -> switchHold never <=< dyn $ ffor protoHashDyn $ \protoHash ->
-        let
-          -- TODO [#147]: remove when Jakarta is activated on mainnet
-          nextStep = case protoHash of
-            Just JakartaProtocolHash -> LSS_SetLiquidityBakingToggle
-            _ -> LSS_ImportAddress
-        in
-          (fmap . fmap) (Right . (nextStep ==>)) (selectAddress l)
+      LSS_SelectAddress :=> Identity l -> (fmap . fmap) (Right . (LSS_SetLiquidityBakingToggle ==>)) (selectAddress l)
       LSS_SetLiquidityBakingToggle :=> Identity sk -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (setLiquidityBakingToggle sk False)
       LSS_ImportAddress :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_AuthorizeLedger ==> sk) (importSecretKey sk)
       LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (bimap Left id) (authorizeLedger sk)
