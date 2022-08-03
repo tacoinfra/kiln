@@ -138,7 +138,6 @@ backendImpl cfg serve = do
         , ("kiln", "SQL", RhyoliteLogLevel_Error)
         , ("kiln-node", "kiln-node", RhyoliteLogLevel_Info)
         , ("kiln-baker", "kiln-baker", RhyoliteLogLevel_Info)
-        , ("kiln-endorser", "kiln-endorser", RhyoliteLogLevel_Info)
         ]
 #else
       Distribution_LinuxPackage -> defaultLoggingConfig

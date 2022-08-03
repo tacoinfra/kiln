@@ -2326,21 +2326,16 @@ bakersTab =
               Right () -> \cond -> BakersBanner_Gathering <$ guard cond
           dyn_ $ ffor bakersBanner mkBakersBanner
 
-          -- Show alert banner if baker/endorser process is failed.
+          -- Show alert banner if baker process has failed.
           -- We don't unify it with other baker alerts to not make logic too polymorphic.
           dyn_ $ ffor tilesDyn $ \bakerSummaryMap ->
             for_ bakerSummaryMap $ \bakerSummary -> case _bakerSummary_baker bakerSummary of
               Left _ -> pure ()
               Right bid ->
-                let
-                  pds = [ _bakerInternalData_processData bid
-                        , _bakerInternalData_endorserProcessData bid
-                        ]
-                in
-                  case map _processData_state pds of
-                    [ProcessState_Failed, _] -> mkFailedBakerBanner "Baker"
-                    [_, ProcessState_Failed] -> mkFailedBakerBanner "Endorser"
-                    _ -> pure ()
+                let bakerProcessData = _bakerInternalData_processData bid
+                in case _processData_state bakerProcessData of
+                  ProcessState_Failed -> failedBakerBanner
+                  _ -> pure ()
 
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
               notifications = Map.fromList . fmap (\k -> (Down k, ())) . foldMap toList . MMap.elems . fmap NEL.toList <$> dEbb
@@ -2418,13 +2413,10 @@ bakersTab =
                 False -> standardBakerTile
                 True -> do
                   bid <- watchInternalBaker
-                  -- show 'failedBakerTile' if either baker or endorser has failed process state
-                  dyn_ $ ffor bid $ \bid' -> case bid'
-                    <&> snd
-                    <&> (\b -> [_bakerInternalData_processData b, _bakerInternalData_endorserProcessData b]) of
-                    Just pds@[bakerPd, endorserPd]
-                      | any ((== ProcessState_Failed) . _processData_state) pds ->
-                      failedBakerTile (dynText titleUniq) bakerPd endorserPd (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
+                  -- show 'failedBakerTile' if baker has failed process state
+                  dyn_ $ ffor bid $ \bid' -> case fmap (_bakerInternalData_processData . snd) bid' of
+                    Just bakerPd | _processData_state bakerPd == ProcessState_Failed ->
+                      failedBakerTile (dynText titleUniq) bakerPd (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
                     _ -> standardBakerTile
 
               pure details
@@ -2452,14 +2444,14 @@ bakersTab =
                text " "
                ensureHealthyNodes)
 
-    mkFailedBakerBanner :: Text -> m ()
-    mkFailedBakerBanner daemonName =
+    failedBakerBanner :: m ()
+    failedBakerBanner =
       SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
         let
           i = icon "icon-warning big red"
-          title = text $ "Kiln " <> daemonName <> " failed."
+          title = text $ "Kiln Baker failed."
           desc = do
-            el "p" $ text $ "Kiln " <> daemonName <> " failed during work. Check 'kiln-baker-custom-args' Kiln argument."
+            el "p" $ text $ "Kiln baker failed during work. Check 'kiln-baker-custom-args' Kiln argument."
             el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Baker tile and select “Show error log”."
         renderSplashAlert i title Nothing desc
 
@@ -2526,30 +2518,24 @@ bakersTab =
     failedBakerTile
       :: m () -- ^ Title
       -> ProcessData -- ^ Baker process data
-      -> ProcessData -- ^ Endorser process data
       -> (Event t () -> Event t (PublicRequest ())) -- ^ Construct an API request with an 'Event' to remove this baker.
       -> m ()
-    failedBakerTile title bakerProcessData endorserProcessData mkRemoveReq = do
+    failedBakerTile title bakerProcessData mkRemoveReq = do
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
         tileMenu $ do
           let
             showLogMenu errorLog = do
-                restart <- tileMenuEntry "Restart Baker"
-                void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ restart
-                tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln baker error log" errorLog
+              restart <- tileMenuEntry "Restart Baker"
+              void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ restart
+              tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln baker error log" errorLog
 
             removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
             removeInternalBakerModal = warningModal "Remove Baker?"
               ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]
               "Remove Baker"
 
-          let
-            mbAnyErrLog = case map _processData_errorLog [bakerProcessData, endorserProcessData] of
-              [Just bakerErrLog, _] -> Just bakerErrLog
-              [_, Just endorserErrLog] -> Just endorserErrLog
-              _ -> Nothing
-
-          traverse_ showLogMenu mbAnyErrLog
+          let mbErrorLog = _processData_errorLog bakerProcessData
+          traverse_ showLogMenu mbErrorLog
           removeEntry removeInternalBakerModal
 
         divClass "title" $ do
@@ -2657,9 +2643,6 @@ bakersTab =
                 mBakerUri <- getBackendPath (BackendRoute_ExportLogs :/ ExportLog_Baker :/ ()) False
                 for_ mBakerUri $ \uri -> elAttr "a" ("download" =: "KilnBaker.log" <> "href" =: Uri.render uri) $
                   SemUi.listItem' def $ text "Export Baker Logs"
-                mEndorserUri <- getBackendPath (BackendRoute_ExportLogs :/ ExportLog_Endorser :/ ()) False
-                for_ mEndorserUri $ \uri -> elAttr "a" ("download" =: "KilnEndorser.log" <> "href" =: Uri.render uri) $
-                  SemUi.listItem' def $ text "Export Endorser Logs"
 
               let sk = _bakerInternalData_secretKey bid
               tileMenuEntryModal "Authorize Ledger Device" $ cancelableModalWithClasses $ authorizeLedgerToBakeModal sk pkh

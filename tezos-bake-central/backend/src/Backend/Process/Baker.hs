@@ -56,9 +56,6 @@ import ExtraPrelude
 getBakerPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
 getBakerPath = getPath _bakerEndorserPaths_bakerPath
 
-getEndorserPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
-getEndorserPath = getPath _bakerEndorserPaths_endorserPath
-
 getPath
   :: (BakerEndorserPaths -> Maybe FilePath)
   -> NonEmpty BakerEndorserPaths
@@ -104,19 +101,15 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
               }
 
         bpid <- insert' processData
-        epid <- insert' processData
         tbpid <- insert' processData
-        tepid <- insert' processData
         nid <- insert' BakerDaemon
         let bdid = BakerDaemonInternalData
               { _bakerDaemonInternalData_alias = "ledger_kiln"
               , _bakerDaemonInternalData_publicKeyHash = Nothing
               , _bakerDaemonInternalData_protocol = psdd
               , _bakerDaemonInternalData_bakerProcessData = bpid
-              , _bakerDaemonInternalData_endorserProcessData = epid
               , _bakerDaemonInternalData_altProtocol = Nothing
               , _bakerDaemonInternalData_altBakerProcessData = tbpid
-              , _bakerDaemonInternalData_altEndorserProcessData = tepid
               }
             -- Add this as default protocol, we will anyways fix this in protocolMonitorWorker once the synced node is available
             psdd :: ProtocolHash
@@ -131,13 +124,11 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
         return bdid
   let
     bpid1 = _bakerDaemonInternalData_bakerProcessData bdid
-    epid1 = _bakerDaemonInternalData_endorserProcessData bdid
     bpid2 = _bakerDaemonInternalData_altBakerProcessData bdid
-    epid2 = _bakerDaemonInternalData_altEndorserProcessData bdid
 
     -- tezos-node needs some time before it becomes able to respond to RPC queries.
     -- Due to this, daemons may fail with connection timeout. So we check that node
-    -- is actually able to respond to requests before starting baker/endorser
+    -- is actually able to respond to requests before starting the baker.
     checkKilnNodeAvailability :: IO Bool
     checkKilnNodeAvailability = isRight <$> do
       runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
@@ -208,10 +199,7 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
     paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
 
     mkBakerProcess = createBakerProcess appConfig logger db paths
-    mkEndorserProcess = createEndorserProcess appConfig paths bdid
-
     bakerPw = pw mkBakerProcess ! #logNamespace "kiln-baker" ! #jsonErrorLogsHandler (Just jsonLogsConsumer)
-    endorserPw = pw mkEndorserProcess ! #logNamespace "kiln-endorser" ! #jsonErrorLogsHandler Nothing
 
   -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.
@@ -221,9 +209,7 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
   -- So bp2 process keeps on running but is now identified as 'main baker'
   bp1 <- bakerPw bpid1
   bp2 <- bakerPw bpid2
-  ep1 <- endorserPw epid1
-  ep2 <- endorserPw epid2
-  return (bp1 *> bp2 *> ep1 *> ep2)
+  return (bp1 *> bp2)
 
 -- protocol is a variable field, and therefore it is fetched everytime we restart process
 fetchProtocol
@@ -235,8 +221,7 @@ fetchProtocol pid =
     Just bdid ->
       let
         tbpid = _bakerDaemonInternalData_altBakerProcessData bdid
-        tepid = _bakerDaemonInternalData_altEndorserProcessData bdid
-      in if pid == tbpid || pid == tepid
+      in if pid == tbpid
         then return $ _bakerDaemonInternalData_altProtocol bdid
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
 
@@ -251,24 +236,6 @@ createBakerProcess appConfig logger db paths mbProto = do
   let bakerPath = getBakerPath paths mbProto
   bakerArgs <- getBakerArgs appConfig logger db
   pure $ createDaemonProcess bakerPath bakerArgs "tezos-baker" mbProto
-
-createEndorserProcess
-  :: AppConfig
-  -> NonEmpty BakerEndorserPaths
-  -> BakerDaemonInternalData
-  -> Maybe ProtocolHash
-  -> IO (Either DaemonBootstrapError CreateProcess)
-createEndorserProcess appConfig paths bakerData mbProto = do
-  let endorserPath = getEndorserPath paths mbProto
-  pure $ createDaemonProcess endorserPath (Right endorserArgs) "tezos-endorser" mbProto
-  where
-    alias = T.unpack $ _bakerDaemonInternalData_alias bakerData
-    endorserArgs =
-      [ "--endpoint", T.unpack $ render $  kilnNodeRpcURI appConfig
-      , "--base-dir", tezosClientDataDir appConfig
-      , "run"
-      , alias
-      ]
 
 -- | Creates daemon process from the binary path and arguments.
 -- Returns either 'CreateProcess' or error message if path or arguments

@@ -243,11 +243,10 @@ requestHandler appConfig emailFromAddr nds =
           selectSingle (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh) >>= \m -> for_ m $ \bdi -> do
             let bdid = _deletableRow_data $ _bakerDaemonInternal_data bdi
                 bakerProcess = fromId $ _bakerDaemonInternalData_bakerProcessData bdid
-                endorserProcess = fromId $ _bakerDaemonInternalData_endorserProcessData bdid
             update
               [ ProcessData_controlField =. ProcessControl_Stop
               , ProcessData_errorLogField =. (Nothing :: Maybe Text)
-              ] $ AutoKeyField `in_` [bakerProcess, endorserProcess]
+              ] $ AutoKeyField ==. bakerProcess
           update
             [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]
             (data' ~> BakerDaemonInternalData_publicKeyHashSelector ==. Just pkh)

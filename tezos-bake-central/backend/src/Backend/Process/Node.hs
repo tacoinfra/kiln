@@ -189,7 +189,6 @@ handleExportLogs nds lType = do
     logIdentifier :: String
     logIdentifier = "kiln-" <> case lType of
       ExportLog_Baker :=> _ -> "baker"
-      ExportLog_Endorser :=> _ -> "endorser"
       ExportLog_Node :=> _ -> "node"
     command = (shell $ unwords
       [ "journalctl"
