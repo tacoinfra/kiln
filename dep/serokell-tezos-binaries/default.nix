@@ -9,7 +9,7 @@ stdenv.mkDerivation rec {
       sha256 = "sha256-f4dZmFT0EC3XgehLQsJyjcwDrdp566wW0FS4C+XR600=";
       stripRoot = false;
       };
-  binaries = ["tezos-client" "tezos-node" "tezos-baker-*" "tezos-endorser-*" "tezos-admin-client"];
+  binaries = ["tezos-client" "tezos-node" "tezos-baker-*" "tezos-admin-client"];
   installPhase = ''
   mkdir -p $out/bin
   for bin in $binaries ; do
