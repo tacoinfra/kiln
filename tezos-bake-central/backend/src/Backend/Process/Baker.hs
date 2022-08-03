@@ -74,11 +74,16 @@ getPath getter paths = \case
 -- binary expects a .tezos-node/<chain_id>/protocol dir
 -- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
 tezosBinaryPaths :: NonEmpty BakerEndorserPaths
-tezosBinaryPaths = NonEmpty.fromList [jakartaPaths]
+tezosBinaryPaths = NonEmpty.fromList [jakartaPaths, kathmanduPaths]
   where
     jakartaPaths = BakerEndorserPaths
       { _bakerEndorserPaths_proto = JakartaProtocolHash
       , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-013-PtJakart")
+      , _bakerEndorserPaths_endorserPath = Nothing
+      }
+    kathmanduPaths = BakerEndorserPaths
+      { _bakerEndorserPaths_proto = KathmanduProtocolHash
+      , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-014-PtKathma")
       , _bakerEndorserPaths_endorserPath = Nothing
       }
 
