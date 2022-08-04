@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Tezos.V013.ProtocolConstants where
+module Tezos.V014.ProtocolConstants where
 
 import Control.DeepSeq (NFData)
 import Control.Lens ((^.))

@@ -145,7 +145,7 @@ parseAndReportAccusations appConfig blockHash block = do
     blockCycle = case block of
       -- Genesis block doesn't have 'level_info' in metadata
       BlockGenesis _ -> 0
-      BlockV013 b -> b ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
+      BlockV014 b -> b ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
     accusations = getAccusations block
   for_ accusations $ \(AccusationInfo aType aLevel aHash aBalanceUpdates) -> do
     let accusedBaker = getAccusedBaker aBalanceUpdates

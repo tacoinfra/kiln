@@ -7,7 +7,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Tezos.V013.Block where
+module Tezos.V014.Block where
 
 import Control.DeepSeq (NFData)
 import Control.Lens (Lens')
@@ -28,8 +28,8 @@ import Tezos.Common.Level
 import Tezos.Common.PublicKeyHash
 
 import Tezos.Common.BlockHeader
-import Tezos.V013.Level
-import Tezos.V013.Operation
+import Tezos.V014.Level
+import Tezos.V014.Operation
 
 -- | "description": "All the information about a block.",
 data Block = Block

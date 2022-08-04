@@ -11,91 +11,91 @@ import Data.Aeson
 import qualified Data.Sequence as Seq
 import Data.Time
 
-import qualified Tezos.V013.Account as V013
+import qualified Tezos.V014.Account as V014
 import Tezos.Common.Level
 import Tezos.Common.PublicKeyHash
 import Tezos.Common.Tez
 
 data AccountCrossCompat
-  = AccountV013 V013.Account
+  = AccountV014 V014.Account
 
 accountCrossCompat_delegatePkh :: Getter AccountCrossCompat (Maybe PublicKeyHash)
 accountCrossCompat_delegatePkh = to $ \case
-  AccountV013 a -> a ^. V013.account_delegate
+  AccountV014 a -> a ^. V014.account_delegate
 
 instance FromJSON AccountCrossCompat where
   parseJSON jv =
-    AccountV013 <$> parseJSON jv
+    AccountV014 <$> parseJSON jv
 
 data DelegateInfoCrossCompat
-  = DelegateInfoV013 V013.DelegateInfo
+  = DelegateInfoV014 V014.DelegateInfo
 
 instance FromJSON DelegateInfoCrossCompat where
   parseJSON jv =
-    DelegateInfoV013 <$> parseJSON jv
+    DelegateInfoV014 <$> parseJSON jv
 
 delegateInfoCrossCompat_balance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_balance = to $ \case
-  DelegateInfoV013 di -> di ^. V013.delegateInfo_fullBalance
+  DelegateInfoV014 di -> di ^. V014.delegateInfo_fullBalance
 
 delegateInfoCrossCompat_frozenBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_frozenBalance = to $ \case
-  DelegateInfoV013 di -> di ^. V013.delegateInfo_frozenDeposits
+  DelegateInfoV014 di -> di ^. V014.delegateInfo_frozenDeposits
 
 delegateInfoCrossCompat_stakingBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_stakingBalance = to $ \case
-  DelegateInfoV013 di -> di ^. V013.delegateInfo_stakingBalance
+  DelegateInfoV014 di -> di ^. V014.delegateInfo_stakingBalance
 
 delegateInfoCrossCompat_delegatedBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_delegatedBalance = to $ \case
-  DelegateInfoV013 di -> di ^. V013.delegateInfo_delegatedBalance
+  DelegateInfoV014 di -> di ^. V014.delegateInfo_delegatedBalance
 
 delegateInfoCrossCompat_gracePeriod :: Getter DelegateInfoCrossCompat Cycle
 delegateInfoCrossCompat_gracePeriod = to $ \case
-  DelegateInfoV013 di -> di ^. V013.delegateInfo_gracePeriod
+  DelegateInfoV014 di -> di ^. V014.delegateInfo_gracePeriod
 
 delegateInfoCrossCompat_deactivated :: Getter DelegateInfoCrossCompat Bool
 delegateInfoCrossCompat_deactivated = to $ \case
-  DelegateInfoV013 di -> di ^. V013.delegateInfo_deactivated
+  DelegateInfoV014 di -> di ^. V014.delegateInfo_deactivated
 
 data BakingRightsCrossCompat
-  = BakingRightsV013 V013.BakingRights
+  = BakingRightsV014 V014.BakingRights
 
 instance FromJSON BakingRightsCrossCompat where
   parseJSON jv =
-    BakingRightsV013 <$> parseJSON jv
+    BakingRightsV014 <$> parseJSON jv
 
 bakingRightsCrossCompat_level :: Getter BakingRightsCrossCompat RawLevel
 bakingRightsCrossCompat_level = to $ \case
-  BakingRightsV013 e -> e ^. V013.bakingRights_level
+  BakingRightsV014 e -> e ^. V014.bakingRights_level
 
 bakingRightsCrossCompat_delegate :: Getter BakingRightsCrossCompat PublicKeyHash
 bakingRightsCrossCompat_delegate = to $ \case
-  BakingRightsV013 e -> e ^. V013.bakingRights_delegate
+  BakingRightsV014 e -> e ^. V014.bakingRights_delegate
 
-bakingRightsCrossCompat_round :: Getter BakingRightsCrossCompat V013.Round
+bakingRightsCrossCompat_round :: Getter BakingRightsCrossCompat V014.Round
 bakingRightsCrossCompat_round = to $ \case
-  BakingRightsV013 e -> e ^. V013.bakingRights_round
+  BakingRightsV014 e -> e ^. V014.bakingRights_round
 
 bakingRightsCrossCompat_estimatedTime :: Getter BakingRightsCrossCompat (Maybe UTCTime)
 bakingRightsCrossCompat_estimatedTime = to $ \case
-  BakingRightsV013 e -> e ^. V013.bakingRights_estimatedTime
+  BakingRightsV014 e -> e ^. V014.bakingRights_estimatedTime
 
 data EndorsingRightsCrossCompat
-  = EndorsingRightsV013 V013.EndorsingRights
+  = EndorsingRightsV014 V014.EndorsingRights
 
 instance FromJSON EndorsingRightsCrossCompat where
   parseJSON jv =
-    EndorsingRightsV013 <$> parseJSON jv
+    EndorsingRightsV014 <$> parseJSON jv
 
 instance ToJSON EndorsingRightsCrossCompat where
   toJSON = \case
-    EndorsingRightsV013 er -> toJSON er
+    EndorsingRightsV014 er -> toJSON er
 
 endorsingRightsCrossCompat_level :: Getter EndorsingRightsCrossCompat RawLevel
 endorsingRightsCrossCompat_level = to $ \case
-  EndorsingRightsV013 e -> e ^. V013.endorsingRights_level
+  EndorsingRightsV014 e -> e ^. V014.endorsingRights_level
 
 endorsingRightsCrossCompat_delegates :: Getter EndorsingRightsCrossCompat (Seq.Seq PublicKeyHash)
 endorsingRightsCrossCompat_delegates = to $ \case
-  EndorsingRightsV013 e -> view V013.endorsingRightsDelegateInfo_delegate <$> e ^. V013.endorsingRights_delegates
+  EndorsingRightsV014 e -> view V014.endorsingRightsDelegateInfo_delegate <$> e ^. V014.endorsingRights_delegates
