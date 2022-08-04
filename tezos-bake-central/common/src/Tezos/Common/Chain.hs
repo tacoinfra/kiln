@@ -32,6 +32,7 @@ data NamedChain
   | NamedChain_Hangzhounet
   | NamedChain_Ithacanet
   | NamedChain_Jakartanet
+  | NamedChain_Ghostnet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
 instance FromJSON NamedChain
 instance ToJSON NamedChain
@@ -50,6 +51,7 @@ showNamedChain = \case
   NamedChain_Hangzhounet -> "hangzhounet"
   NamedChain_Ithacanet -> "ithacanet"
   NamedChain_Jakartanet -> "jakartanet"
+  NamedChain_Ghostnet -> "ghostnet"
 
 parseNamedChain :: Text -> Maybe NamedChain
 parseNamedChain x = find (\namedChain -> showNamedChain namedChain == T.toLower x)
@@ -77,6 +79,7 @@ getNamedChainId = \case
   NamedChain_Hangzhounet -> Just "NetXZSsxBpMQeAT"
   NamedChain_Ithacanet -> Just "NetXnHfVqm9iesp"
   NamedChain_Jakartanet -> Just "NetXLH1uAxK7CCh"
+  NamedChain_Ghostnet -> Just "NetXnHfVqm9iesp"
 
 identifyChain :: ChainId -> Maybe NamedChain
 identifyChain cid = lookup cid namedChainAssoc
