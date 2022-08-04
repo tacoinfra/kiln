@@ -106,6 +106,9 @@ instance ToJSON e => ToJSON a => ToJSON (Validation e a)
 pattern JakartaProtocolHash :: ProtocolHash
 pattern JakartaProtocolHash = "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY"
 
+pattern KathmanduProtocolHash :: ProtocolHash
+pattern KathmanduProtocolHash = "PtKathmankSpLLDALzWw7CGD2j2MtyveTwboEYokqUCP4a1LxMg"
+
 data WorkerType
   = WorkerType_Node
   | WorkerType_Baker

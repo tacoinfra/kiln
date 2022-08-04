@@ -2,14 +2,14 @@
 
 stdenv.mkDerivation rec {
   name = "tezos-${version}";
-  version = "13.0-1";
+  version = "14.0-1";
 
   src = fetchzip {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v${version}/binaries-${version}.tar.gz";
-      sha256 = "1x03qfz0vjvfbfnzby8bsnqsf8r1fg7y2mf0szaadngxz2sfwl95";
+      sha256 = "sha256-f4dZmFT0EC3XgehLQsJyjcwDrdp566wW0FS4C+XR600=";
       stripRoot = false;
       };
-  binaries = ["tezos-client" "tezos-node" "tezos-baker-*" "tezos-endorser-*" "tezos-admin-client"];
+  binaries = ["tezos-client" "tezos-node" "tezos-baker-*" "tezos-admin-client"];
   installPhase = ''
   mkdir -p $out/bin
   for bin in $binaries ; do
