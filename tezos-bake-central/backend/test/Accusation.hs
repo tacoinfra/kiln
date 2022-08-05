@@ -12,8 +12,8 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Backend.Workers.Block (getAccusedBaker)
-import Tezos.V013.Types
-import qualified Tezos.V013.Types as V013
+import Tezos.V014.Types
+import qualified Tezos.V014.Types as V014
 
 
 testAccusations :: TestTree
@@ -42,7 +42,7 @@ baseAccusationTest testName getBalanceUpdates path expected = testCase testName 
 testDoubleBakingEvidence013 :: TestTree
 testDoubleBakingEvidence013 = baseAccusationTest
   "Double baking evidence 013"
-  (toList . V013._doubleBakingEvidenceMetadata_balanceUpdates . V013._operationContentsDoubleBakingEvidence_metadata)
+  (toList . V014._doubleBakingEvidenceMetadata_balanceUpdates . V014._operationContentsDoubleBakingEvidence_metadata)
   -- https://ithacanet.tzkt.io/opX2JykJaQ96Mt8dK4sTcjVuRbNJTJrJVBy36Xj6cGFUBne4uBX
   "test/Accusations/013/double_baking_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"
@@ -50,7 +50,7 @@ testDoubleBakingEvidence013 = baseAccusationTest
 testDoublePreendorsementEvidence013 :: TestTree
 testDoublePreendorsementEvidence013 = baseAccusationTest
   "Double preendorsement evidence 013"
-  (toList . V013._doublePreendorsementEvidenceMetadata_balanceUpdates . V013._operationContentsDoublePreendorsementEvidence_metadata)
+  (toList . V014._doublePreendorsementEvidenceMetadata_balanceUpdates . V014._operationContentsDoublePreendorsementEvidence_metadata)
   -- https://ithacanet.tzkt.io/ooUXVJPkfZpMy3LQshGGoJTAJCkzTEozWCk5rJK9MUBTWzaRnhw
   "test/Accusations/013/double_preendorsement_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"

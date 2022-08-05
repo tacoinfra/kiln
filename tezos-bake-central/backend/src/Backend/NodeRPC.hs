@@ -113,7 +113,7 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
-import qualified Tezos.V013.Types as V013
+import qualified Tezos.V014.Types as V014
 
 import Backend.Common (LedgerQuery, timeout')
 import Backend.Schema
@@ -866,7 +866,7 @@ nodeQueryIx q = do
         |]
         for cachedRights $ \(lvl, delegate, round, estimatedTime) ->
           let
-            bakingRight = BakingRightsV013 $ V013.BakingRights
+            bakingRight = BakingRightsV014 $ V014.BakingRights
               { _bakingRights_level = lvl
               , _bakingRights_delegate = delegate
               , _bakingRights_round = round

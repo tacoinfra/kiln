@@ -31,7 +31,7 @@ import Tezos.Common.PublicKeyHash
 import Tezos.CrossCompat.Account
 import Tezos.CrossCompat.Block
 import Tezos.CrossCompat.Vote
-import Tezos.V013.Types
+import Tezos.V014.Types
 
 class QueryChain repr where
   rChain :: repr ChainId

@@ -54,7 +54,7 @@ import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
 import qualified Tezos.Genesis.Block as Genesis
-import qualified Tezos.V013.Types as V013
+import qualified Tezos.V014.Types as V014
 import Tezos.CrossCompat.Account
 import Tezos.CrossCompat.Block
 import Tezos.Unsafe (unsafeEstimatePastTimestamp)
@@ -370,8 +370,8 @@ checkMissedOpportunities nds appConfig protoInfo headBlock baker isInternal lvl 
         blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
         mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer
         endorserDelegates = blockCrossData
-            (^..Genesis.block_operations . traverse . traverse . V013.operation_contents . traverse . V013._OperationContents_Endorsement . V013.operationContentsEndorsement_metadata . V013.endorsementMetadata_delegate)
-            (^..V013.block_operations . traverse . traverse . V013.operation_contents . traverse . V013._OperationContents_Endorsement . V013.operationContentsEndorsement_metadata . V013.endorsementMetadata_delegate)
+            (^..Genesis.block_operations . traverse . traverse . V014.operation_contents . traverse . V014._OperationContents_Endorsement . V014.operationContentsEndorsement_metadata . V014.endorsementMetadata_delegate)
+            (^..V014.block_operations . traverse . traverse . V014.operation_contents . traverse . V014._OperationContents_Endorsement . V014.operationContentsEndorsement_metadata . V014.endorsementMetadata_delegate)
             thisBlock
         successfulEndorsementCondition = _baker_publicKeyHash baker `elem` endorserDelegates
 
