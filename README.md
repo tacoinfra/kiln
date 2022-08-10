@@ -309,7 +309,7 @@ In case you want to run the baker with some additional arguments, e.g.
 you want to run a baker with a vote for/against the liquidity baking subsidy,
 you should use `--kiln-baker-custom-args` option.
 
-### Configuring liquidity baking toggle vote on Jakarta
+### Configuring liquidity baking toggle vote
 
 Liquidity baking toggle vote option is set on Kiln UI during the creation of Kiln baker. The corresponding `--liquidity-baking-toggle-vote` custom argument will be ignored by Kiln.
 
@@ -319,16 +319,6 @@ There is also an opportunity to set this option using a file. You can create a
 { "liquidity_baking_toggle_vote": "on"/"off"/"pass" }
 ```
 And run Kiln with `--kiln-baker-custom-args="--votefile vote.json"` option. This way of setting the liquidity baking options takes precendence over the option which is set on Kiln UI. More details in the [documentation](https://tezos.gitlab.io/jakarta/liquidity_baking.html#toggle-vote).
-
-### Configuring liquidity baking escape vote on Ithaca
-
-To specify the liquidity baking escape vote you should create a file
-`vote.json` with the following contents:
-```
-{ "liquidity_baking_escape_vote": true/false }
-```
-
-And run Kiln with `--kiln-baker-custom-args="--votefile vote.json"` option. This way of configuring liquiding baking is also supported on Jakarta: this option will be converted to its corresponding `--liquidity-baking-toggle-vote` option. But please note that this is made only for backwards compatibility and will be deprecated in the future.
 
 ### Configuring Telegram notifications
 
