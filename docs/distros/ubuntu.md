@@ -1,6 +1,6 @@
 # Ubuntu Distribution
 
-Obsidian Systems packaged Kiln releases as a .deb file, which can be found at https://gitlab.com/obsidian.systems/kiln/-/releases beginning with v0.5.1. Those packages has been tested on Ubuntu only.
+Oxhead Alpha packaged Kiln releases as a .deb file, which can be found at https://gitlab.com/tezos-kiln/kiln/-/releases beginning with v0.5.1. Those packages has been tested on Ubuntu only.
 
 To get started:
 

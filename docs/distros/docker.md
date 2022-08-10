@@ -1,6 +1,6 @@
 # Running a Pre-Built Monitor (Docker Image)
 
-Obsidian Systems provides pre-built Docker images for each release on [Docker Hub](https://hub.docker.com/r/obsidiansystems/kiln/). These images allow anyone to run the software without building it themselves. It has been tested on Linux and macOS.
+Oxhead Alpha provides pre-built Docker images for each release on [GitLab container registry](https://gitlab.com/tezos-kiln/kiln/container_registry). These images allow anyone to run the software without building it themselves. It has been tested on Linux and macOS.
 
 To run the Docker image you need to have [Docker](https://www.docker.com/get-started) installed.
 

@@ -8,7 +8,7 @@ doesn't allow passing of command line arguments.
 
 ## loggers
 
-See [logging.md](https://gitlab.com/obsidian.systems/kiln/-/blob/develop/docs/logging.md)
+See [logging.md](https://gitlab.com/tezos-kiln/kiln/-/blob/develop/docs/logging.md)
 
 ## pg-connection CONNSTRING
 
