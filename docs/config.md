@@ -98,29 +98,15 @@ to the `backend` executable.
 {
     "node-path" : "<tezos-node-path>",
     "client-path" : "<tezos-client-path>",
-    "baker-endorser-paths" :
+    "baker-paths" :
     [
         { "proto" : "<protocol-hash>",
-          "baker-path" : "<tezos-baker-path>",
-          "endorser-path" : "<tezos-endorser-path>"
+          "baker-path" : "<tezos-baker-path>"
         }
     ]
 }
 ```
 
-You can also use the old format of `baker-endorser-paths`, which will
-be deprecated in one of the next versions.
-
-```json
-"baker-endorser-paths" :
-    [
-        ["<protocol-hash>", "<tezos-baker-path>", "<tezos-endorser-path>"]
-    ]
-```
-
 This configuration specifies the respective locations of these
-binaries: tezos-<node,client,baker,endorser>. Notice that the protocol
+binaries: tezos-<node,client,baker>. Notice that the protocol
 hash of the desired network must also be included.
-
-If one of the paths is missing (e.g there is no `tezos-endorser` for
-`Ithaca` protocol), set its value to `null`.
