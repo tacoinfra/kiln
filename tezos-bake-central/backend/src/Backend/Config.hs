@@ -223,27 +223,32 @@ data NodeConfigFile' = NodeConfigFile'
 data BinaryPaths = BinaryPaths
   { _binaryPaths_nodePath :: FilePath
   , _binaryPaths_clientPath :: FilePath
-  , _binaryPaths_bakerEndorserPaths :: NonEmpty BakerEndorserPaths
+  , _binaryPaths_bakerPaths :: NonEmpty BakerPath
   } deriving (Show)
 
-data BakerEndorserPaths = BakerEndorserPaths
-  { _bakerEndorserPaths_proto :: ProtocolHash
-  , _bakerEndorserPaths_bakerPath :: Maybe FilePath
-  , _bakerEndorserPaths_endorserPath :: Maybe FilePath
+instance FromJSON BinaryPaths where
+  parseJSON = withObject "BinaryPaths" $ \o -> do
+    nodePath <- o .: "node-path"
+    clientPath <- o .: "client-path"
+    -- note: `baker-endorser-paths` is here for retro-compatibility:
+    bakerPaths <- o .: "baker-paths" <|> o .: "baker-endorser-paths"
+    pure $ BinaryPaths nodePath clientPath bakerPaths
+
+data BakerPath = BakerPath
+  { _bakerPath_proto :: ProtocolHash
+  , _bakerPath_path :: Maybe FilePath
   } deriving (Show)
 
-instance FromJSON BakerEndorserPaths where
+instance FromJSON BakerPath where
   parseJSON = \case
     Aeson.Array arr -> do
       proto        <- parseJSON $ arr V.! 0
       bakerPath    <- parseJSON $ arr V.! 1
-      endorserPath <- parseJSON $ arr V.! 2
-      pure $ BakerEndorserPaths proto bakerPath endorserPath
-    v -> flip (withObject "BakerEndorserPaths") v $ \o -> do
+      pure $ BakerPath proto bakerPath
+    v -> flip (withObject "BakerPath") v $ \o -> do
       proto        <- o .: "proto"
       bakerPath    <- o .: "baker-path"
-      endorserPath <- o .: "endorser-path"
-      pure $ BakerEndorserPaths proto bakerPath endorserPath
+      pure $ BakerPath proto bakerPath
 
 data Votefile = Votefile LiquidityBakingToggleVote
   deriving (Show)
@@ -272,7 +277,6 @@ concat <$> traverse (Aeson.deriveJSON tezosJsonOptions
   , ''NodeConfigShellChainValidator
   , ''NodeConfigShellPeerValidator
   , ''NodeConfigShellPrevalidator
-  , ''BinaryPaths
   ]
 
 Aeson.deriveToJSON tezosJsonOptions
@@ -280,4 +284,4 @@ Aeson.deriveToJSON tezosJsonOptions
     = map (\case {'_' -> '-'; x -> x})
     . Aeson.fieldLabelModifier tezosJsonOptions
   , Aeson.omitNothingFields = True
-  } ''BakerEndorserPaths
+  } ''BakerPath

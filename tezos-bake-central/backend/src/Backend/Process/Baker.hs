@@ -43,7 +43,7 @@ import Tezos.Types
 
 import Backend.Alerts (reportLedgerDisconnection)
 import Backend.Common.Baker
-import Backend.Config (AppConfig (..),  BinaryPaths(..), BakerEndorserPaths(..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir)
+import Backend.Config (AppConfig (..),  BinaryPaths(..), BakerPath(..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir)
 import Backend.NodeRPC
 import Backend.Process.Errors
 import Backend.Schema
@@ -53,41 +53,29 @@ import Common.App
 import Common.Schema
 import ExtraPrelude
 
-getBakerPath :: NonEmpty BakerEndorserPaths -> Maybe ProtocolHash -> Maybe FilePath
-getBakerPath = getPath _bakerEndorserPaths_bakerPath
+getBakerPath :: NonEmpty BakerPath -> Maybe ProtocolHash -> Maybe FilePath
+getBakerPath paths = \case
+  Nothing -> _bakerPath_path $ NonEmpty.head paths
+  Just protoHash ->
+    let err = error ("tezos-baker is not available for the given protocol: " <> T.unpack (toBase58Text protoHash))
+    in maybe err _bakerPath_path $ find (\bp -> _bakerPath_proto bp == protoHash) paths
 
-getPath
-  :: (BakerEndorserPaths -> Maybe FilePath)
-  -> NonEmpty BakerEndorserPaths
-  -> Maybe ProtocolHash
-  -> Maybe FilePath
-getPath getter paths = \case
-  Nothing -> getter $ NonEmpty.head paths
-  Just p -> maybe e getter $ find (\bep -> _bakerEndorserPaths_proto bep == p) paths
-    where
-      e = error ("tezos-baker/endorser not available for the given protocol: " <> show p)
-
--- You cannot use a mainnet binary against a babylonnet node because the mainnet
--- binary expects a .tezos-node/<chain_id>/protocol dir
--- https://gitlab.com/tezos/tezos/compare/mainnet...babylonnet#a59616ef23c1f6b8d578e385e82f6c4d4dadedde_49_46
-tezosBinaryPaths :: NonEmpty BakerEndorserPaths
-tezosBinaryPaths = NonEmpty.fromList [jakartaPaths, kathmanduPaths]
+defaultBakerPaths :: NonEmpty BakerPath
+defaultBakerPaths = NonEmpty.fromList [jakartaPath, kathmanduPath]
   where
-    jakartaPaths = BakerEndorserPaths
-      { _bakerEndorserPaths_proto = JakartaProtocolHash
-      , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-013-PtJakart")
-      , _bakerEndorserPaths_endorserPath = Nothing
+    jakartaPath = BakerPath
+      { _bakerPath_proto = JakartaProtocolHash
+      , _bakerPath_path = Just $(staticWhich "tezos-baker-013-PtJakart")
       }
-    kathmanduPaths = BakerEndorserPaths
-      { _bakerEndorserPaths_proto = KathmanduProtocolHash
-      , _bakerEndorserPaths_bakerPath = Just $(staticWhich "tezos-baker-014-PtKathma")
-      , _bakerEndorserPaths_endorserPath = Nothing
+    kathmanduPath = BakerPath
+      { _bakerPath_proto = KathmanduProtocolHash
+      , _bakerPath_path = Just $(staticWhich "tezos-baker-014-PtKathma")
       }
 
 -- Start Baker and Endorser
 bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
   => AppConfig -> NodeDataSource -> LoggingEnv -> Pool Postgresql -> Maybe BinaryPaths -> m (IO ())
-bakerDaemonProcess appConfig nds logger db maybePaths = do
+bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
   bdid <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
       (Just bdid) -> return bdid
@@ -196,7 +184,7 @@ bakerDaemonProcess appConfig nds logger db maybePaths = do
         let ledgerIOQueue = _nodeDataSource_ledgerIOQueue nds
         liftIO $ atomically $ writeTQueue ledgerIOQueue $ checkLedgerHighWatermark appConfig nds
 
-    paths = maybe tezosBinaryPaths _binaryPaths_bakerEndorserPaths maybePaths
+    paths = maybe defaultBakerPaths _binaryPaths_bakerPaths mbCustomPaths
 
     mkBakerProcess = createBakerProcess appConfig logger db paths
     bakerPw = pw mkBakerProcess ! #logNamespace "kiln-baker" ! #jsonErrorLogsHandler (Just jsonLogsConsumer)
@@ -229,7 +217,7 @@ createBakerProcess
   :: AppConfig
   -> LoggingEnv
   -> Pool Postgresql
-  -> NonEmpty BakerEndorserPaths
+  -> NonEmpty BakerPath
   -> Maybe ProtocolHash
   -> IO (Either DaemonBootstrapError CreateProcess)
 createBakerProcess appConfig logger db paths mbProto = do
