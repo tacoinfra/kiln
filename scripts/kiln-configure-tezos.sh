@@ -5,13 +5,17 @@ write_paths_config() {
     mkdir -p $CONFIGDIR
     tee $CONFIGDIR/binary-paths > /dev/null << EOF
 {
-    "node-path" : "$TEZDIR/tezos-node"
-    , "client-path" : "$TEZDIR/tezos-client"
-    , "baker-endorser-paths" :
-        [
-    ["PsFLorenaUUuikDWvMDr6fGBRG8kt3e3D3fHoXK1j1BFRxeSH4i","$TEZDIR/tezos-baker-009-PsFLoren","$TEZDIR/tezos-endorser-009-PsFLoren"],
-    ["PtGRANADsDU8R9daYKAgWnQYAJ64omN1o3KMGVCykShA97vQbvV","$TEZDIR/tezos-baker-010-PtGRANAD","$TEZDIR/tezos-endorser-010-PtGRANAD"]
-        ]
+    "node-path": "$TEZDIR/tezos-node",
+    "client-path": "$TEZDIR/tezos-client",
+    "baker-paths":
+    [
+        { "proto": "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY",
+          "baker-path": "$TEZDIR/tezos-baker-013-PtJakart"
+        },
+        { "proto": "PtKathmankSpLLDALzWw7CGD2j2MtyveTwboEYokqUCP4a1LxMg",
+          "baker-path": "$TEZDIR/tezos-baker-014-PtKathma"
+        }
+    ]
 }
 EOF
 }
