@@ -190,6 +190,7 @@ let
     Files: *
     Copyright: 2019 obsidian.systems
     Copyright: 2020, 2021 TQ Tezos
+    Copyright: 2021, 2022 Oxhead Alpha
     License: MIT
       Permission is hereby granted, free of charge, to any person obtaining a copy
       of this software and associated documentation files (the "Software"), to deal
