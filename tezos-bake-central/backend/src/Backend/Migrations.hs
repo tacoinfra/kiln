@@ -129,6 +129,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldSetHWM"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldDoVoteProtocol"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldDoVoteBallot"
+  >=> migrateBakerDaemonInternalRemoveEndorser
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -950,3 +951,15 @@ migrateAmendmentPeriodsTables ta = do
   forM_ tables $ \table ->
     renameColumnIfExists (QualifiedIdentifier Nothing table) "periodVote#totalRolls" "periodVote#totalVotingPower" ta
   getTableAnalysis
+
+migrateBakerDaemonInternalRemoveEndorser :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateBakerDaemonInternalRemoveEndorser ta = do
+  let table = (Nothing, "BakerDaemonInternal")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "data#data#endorserProcessData") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "BakerDaemonInternal" DROP COLUMN "data#data#endorserProcessData";
+        ALTER TABLE "BakerDaemonInternal" DROP COLUMN "data#data#altEndorserProcessData";
+      |]
+      getTableAnalysis
+    _ -> pure ta
