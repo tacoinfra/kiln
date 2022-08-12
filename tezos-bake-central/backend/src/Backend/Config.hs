@@ -39,7 +39,7 @@ import ExtraPrelude
 import Tezos.Types (toBase58Text, ChainId, ProtocolHash, tezosJsonOptions)
 
 data AppConfig = AppConfig
-  { _appConfig_emailFromAddress :: Address
+  { _appConfig_emailFromAddress :: Maybe Address
   , _appConfig_kilnNodeRpcPort :: Port
   , _appConfig_kilnNodeNetPort :: Port
   , _appConfig_kilnDataDir :: FilePath
