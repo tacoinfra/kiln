@@ -97,8 +97,7 @@ updateBakerDaemon control = do
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
     >>= traverse_ (\bdid -> do
       let bPid = _bakerDaemonInternalData_bakerProcessData bdid
-          ePid = _bakerDaemonInternalData_endorserProcessData bdid
       update
         [ ProcessData_controlField =. control
         , ProcessData_errorLogField =. (Nothing :: Maybe Text)
-        ] (AutoKeyField `in_` map fromId [bPid, ePid]))
+        ] (AutoKeyField ==. fromId bPid))

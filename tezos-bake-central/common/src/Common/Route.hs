@@ -45,7 +45,6 @@ data BackendRoute :: * -> * where
 data ExportLog :: * -> * where
   ExportLog_Node :: ExportLog ()
   ExportLog_Baker :: ExportLog ()
-  ExportLog_Endorser :: ExportLog ()
 
 fullRouteEncoder
   :: Encoder (Either Text) Identity (R (FullRoute BackendRoute AppRoute)) PageName
@@ -55,7 +54,6 @@ fullRouteEncoder = mkFullRouteEncoder
       BackendRoute_ExportLogs -> PathSegment "export-logs" $ pathComponentEncoder $ \case
         ExportLog_Node -> PathSegment "node" $ unitEncoder mempty
         ExportLog_Baker -> PathSegment "baker" $ unitEncoder mempty
-        ExportLog_Endorser -> PathSegment "endorser" $ unitEncoder mempty
       BackendRoute_Listen -> PathSegment "listen" $ unitEncoder mempty
       BackendRoute_Missing -> PathSegment "missing" $ unitEncoder mempty
       BackendRoute_PublicCacheApi -> PathSegment "api" id

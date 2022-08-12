@@ -2,7 +2,7 @@
 
 Kiln is a tool for both baking and monitoring on the Tezos network. It
 provides a locally hosted graphical interface, binaries for
-tezos-client, tezos-node, tezos-baker, and tezos-endorser, and it
+tezos-client, tezos-node, tezos-baker, and it
 builds a cache of chain data from the nodes to which it connects.
 
 **For step-by-step instructions on how to get started, see the
@@ -113,7 +113,7 @@ Stopping and restarting Kiln typically resolves the issue.
 
 ### Missed bake/endorsement
 A typical reason for missing a bake or endorsement is unavailable
-Ledger device. Examine baker and endorser logs to verify if that's the
+Ledger device. Examine baker logs to verify if that's the
 case.
 
 Check logs (Ubuntu):
@@ -125,8 +125,8 @@ journalctl -u kiln
 # filter messages from baker
 journalctl -u kiln | grep baker
 
-# filter message from endorser within a time period
-journalctl -u kiln --since "5 days ago" --until "1 hour ago" | grep endorser
+# filter message from baker within a time period
+journalctl -u kiln --since "5 days ago" --until "1 hour ago" | grep baker
 ```
 
 Consult journalctl
@@ -191,7 +191,7 @@ Kiln bakes with a local node, which increases system requirements.
 which is currently ~70GB. **SSD is highly recommended over HHD.**
 
 **Memory:** Recommendated RAM for running a Tezos Node is 8GB. We
-recommend at least 10GB RAM to account for the node, baker, endorser,
+recommend at least 10GB RAM to account for the node, baker,
 and Kiln’s processes.
 
 **CPU**: Running with at least 2 cores is recommended.
@@ -200,7 +200,7 @@ and Kiln’s processes.
 
 Kiln, in conjunction with [Tezos Baking for the Ledger Nano
 S](https://github.com/obsidiansystems/ledger-app-tezos), can be used
-to bake. Kiln runs the node, baker, and endorser locally while
+to bake. Kiln runs the node, baker locally while
 monitoring them to notify the user of common issues and events.
 
 Baking requires the Kiln node to be fully synced with the Tezos

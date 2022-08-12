@@ -871,10 +871,10 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinal
   let
     inDb :: Serializable a -> LoggingT IO a
     inDb = runDb (Identity db)
-    setControl c ps = update
+    setControl c p = update
       [ ProcessData_controlField =. c
       , ProcessData_errorLogField =. (Nothing :: Maybe Text)
-      ] (AutoKeyField `in_` map fromId ps)
+      ] (AutoKeyField ==. fromId p)
 
   $(logDebugSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, altProto)
   let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
@@ -885,36 +885,32 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinal
         mp = _bakerDaemonInternalData_protocol bdid
         tp = _bakerDaemonInternalData_altProtocol bdid
         bpid = _bakerDaemonInternalData_bakerProcessData bdid
-        epid = _bakerDaemonInternalData_endorserProcessData bdid
         tbpid = _bakerDaemonInternalData_altBakerProcessData bdid
-        tepid = _bakerDaemonInternalData_altEndorserProcessData bdid
       isRunning <- (/= Just ProcessControl_Stop) <$> project1 ProcessData_controlField (AutoKeyField ==. fromId bpid)
       let
         setMainProto = unless (mp == mainProto) $ do
           update [ds ~> BakerDaemonInternalData_protocolSelector =. mainProto] CondEmpty
-          when isRunning $ setControl ProcessControl_Restart [bpid, epid]
+          when isRunning $ setControl ProcessControl_Restart bpid
         setAltProto p = do
           isAltRunning <- (/= Just ProcessControl_Stop) <$> project1 ProcessData_controlField (AutoKeyField ==. fromId tbpid)
           if tp == Just p
-            then when (isRunning && not isAltRunning) $ setControl ProcessControl_Restart [tbpid, tepid]
+            then when (isRunning && not isAltRunning) $ setControl ProcessControl_Restart tbpid
             else do
               update [ds ~> BakerDaemonInternalData_altProtocolSelector =. Just p] CondEmpty
-              when isRunning $ setControl ProcessControl_Restart [tbpid, tepid]
+              when isRunning $ setControl ProcessControl_Restart tbpid
         stopMain = do
-          $(logDebugSH) ("protocolMonitorWorker: stopping main protocol baker/endorser"::Text, mainProto)
-          setControl ProcessControl_Stop [bpid, epid]
+          $(logDebugSH) ("protocolMonitorWorker: stopping main protocol baker"::Text, mainProto)
+          setControl ProcessControl_Stop bpid
         stopAlt = do
-          $(logDebugSH) ("protocolMonitorWorker: stopping alternate protocol baker/endorser"::Text, mainProto)
-          setControl ProcessControl_Stop [tbpid, tepid]
+          $(logDebugSH) ("protocolMonitorWorker: stopping alternate protocol baker"::Text, mainProto)
+          setControl ProcessControl_Stop tbpid
         -- stop main and swap pids
         altToMain = do
           $(logDebugSH) ("protocolMonitorWorker: swapping processes"::Text, mainProto)
           stopMain
           update [ ds ~> BakerDaemonInternalData_protocolSelector =. mainProto
                  , ds ~> BakerDaemonInternalData_bakerProcessDataSelector =. tbpid
-                 , ds ~> BakerDaemonInternalData_endorserProcessDataSelector =. tepid
                  , ds ~> BakerDaemonInternalData_altBakerProcessDataSelector =. bpid
-                 , ds ~> BakerDaemonInternalData_altEndorserProcessDataSelector =. epid
                  ] CondEmpty
       unless isRunning stopAlt
       case altProto of

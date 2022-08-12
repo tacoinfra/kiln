@@ -27,9 +27,9 @@ in {
     tzMultiProto = (import dep/tbp-multi-protocol-mainnet {}).tezos.master;
 
     # CONFIGURATION
-    oldProtoHash = "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS";
-    oldSuffix = "005-${builtins.substring 0 8 oldProtoHash}";
-    newSuffix = "006-PsCARTHA";
+    oldProtoHash = "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY";
+    oldSuffix = "013-${builtins.substring 0 8 oldProtoHash}";
+    newSuffix = "014-PtKathma";
 
     proposalProtocolLib = tzMultiProto.tezos-src + "/src/proto_${builtins.replaceStrings ["-"] ["_"] newSuffix}/lib_protocol/TEZOS_PROTOCOL";
   in pkgs.writeScriptBin "protocol-test" ''
@@ -82,10 +82,8 @@ in {
       --tezos-node-binary ${tzMultiProto.kit + /bin/tezos-node} \
       --protocol-hash ${oldProtoHash} \
       --first-baker-alpha-binary     ${tzMultiProto.kit + /bin/tezos-baker- + oldSuffix} \
-      --first-endorser-alpha-binary  ${tzMultiProto.kit + /bin/tezos-endorser- + oldSuffix} \
       --first-accuser-alpha-binary   ${tzMultiProto.kit + /bin/tezos-accuser- + oldSuffix} \
       --second-baker-alpha-binary    ${tzMultiProto.kit + /bin/tezos-baker- + newSuffix} \
-      --second-endorser-alpha-binary ${tzMultiProto.kit + /bin/tezos-endorser- + newSuffix} \
       --second-accuser-alpha-binary  ${tzMultiProto.kit + /bin/tezos-accuser- + newSuffix} \
       --tezos-client-binary ${tzMultiProto.kit + /bin/tezos-client} \
       --tezos-admin-client-binary ${tzMultiProto.kit + /bin/tezos-admin-client}

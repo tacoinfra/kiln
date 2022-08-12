@@ -30,7 +30,7 @@ import Data.List (sortOn)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, diffUTCTime)
 import Database.Groundhog
-import Database.Groundhog.Postgresql (Postgresql(..), SqlDb, in_)
+import Database.Groundhog.Postgresql (Postgresql(..), SqlDb)
 import Database.Id.Class
 import Database.Id.Groundhog
 import Rhyolite.Backend.DB
@@ -73,15 +73,18 @@ startBaking nds pkh = do
   -- dropping them in order to avoid clashing baker daemon with 'tezos-client list connected ledgers'
   void $ liftIO $ atomically $ flushTQueue $ _nodeDataSource_ledgerIOQueue nds
   addBakerImpl pkh (Just "Kiln Baker")
-  bdis :: [BakerDaemonInternal] <- fmap snd <$> selectAll
-  let processes = fmap fromId $ flip concatMap bdis $ \bdi ->
-        [ _bakerDaemonInternalData_bakerProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
-        , _bakerDaemonInternalData_endorserProcessData $ _deletableRow_data $ _bakerDaemonInternal_data bdi
-        ]
-  update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
-        , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] $ CondEmpty
-  update [ ProcessData_controlField =. ProcessControl_Run
-         , ProcessData_errorLogField =. (Nothing :: Maybe Text)] $ AutoKeyField `in_` processes
+  mbBdi <- fmap listToMaybe $ fmap snd <$> selectAll
+  for_ mbBdi $ \bdi -> do
+    let
+      bakerProcess = bdi
+        & _bakerDaemonInternal_data
+        & _deletableRow_data
+        & _bakerDaemonInternalData_bakerProcessData
+        & fromId
+    update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
+           , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] CondEmpty
+    update [ ProcessData_controlField =. ProcessControl_Run
+           , ProcessData_errorLogField =. (Nothing :: Maybe Text)] $ AutoKeyField ==. bakerProcess
 
 ledgerConnectivityCheckWorker
   :: NominalDiffTime
