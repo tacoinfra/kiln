@@ -130,6 +130,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldDoVoteProtocol"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "LedgerAccount") "shouldDoVoteBallot"
   >=> migrateBakerDaemonInternalRemoveEndorser
+  >=> migrateLedgerAccountAddRequested
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -960,6 +961,17 @@ migrateBakerDaemonInternalRemoveEndorser ta = do
       void [traceExecuteQ|
         ALTER TABLE "BakerDaemonInternal" DROP COLUMN "data#data#endorserProcessData";
         ALTER TABLE "BakerDaemonInternal" DROP COLUMN "data#data#altEndorserProcessData";
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateLedgerAccountAddRequested :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateLedgerAccountAddRequested ta = do
+  let table = (Nothing, "LedgerAccount")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | all ((/= "requested") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "LedgerAccount" ADD COLUMN "requested" BOOLEAN NOT NULL DEFAULT true;
       |]
       getTableAnalysis
     _ -> pure ta
