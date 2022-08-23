@@ -13,6 +13,7 @@ doesn't handle blocks whose timestamp is older than 10 minutes from the current 
 
   1. Install Kiln to the `app` folder:
      ```shell
+     # This command should be run from the root of the repository
      $(nix-build --no-out-link -A installKiln --argstr closure-compiler-setting "BUNDLE")/bin/install-kiln app
      ```
   2. Plug in a Ledger and open the Tezos Baking app.
