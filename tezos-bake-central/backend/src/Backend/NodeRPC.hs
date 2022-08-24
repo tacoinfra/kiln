@@ -236,7 +236,6 @@ data NodeDataSource = NodeDataSource
   { _nodeDataSource_chain :: ChainId
   , _nodeDataSource_httpMgr :: Http.Manager
   , _nodeDataSource_pool :: Pool Postgresql
-  , _nodeDataSource_latestHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_latestFinalHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_logger :: LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
@@ -614,11 +613,9 @@ waitForNewFinalHead nds = do
     when (oldHead == Just (newHeadInfo ^. hash)) retry
     pure $ newHeadInfo ^.  branchInfo_block . withProtocolHash_value
 
--- | extracts the latest known head
-dataSourceHead
-  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> m (Maybe BranchInfo)
-dataSourceHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestHead)
+-- | Extracts the level of the latest seen head
+dataSourceHeadLevel :: (HasNodeDataSource nds, MonadSTM m) => nds -> m (Maybe RawLevel)
+dataSourceHeadLevel nds = ((+2) . view level) <<$>> readTVar' (nds ^. nodeDataSource . nodeDataSource_latestFinalHead)
 
 -- | extracts the latest known final head
 dataSourceFinalHead

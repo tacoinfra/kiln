@@ -67,6 +67,6 @@ lastLevelInCycle branch c = do
       lastLevelInCurrentCycle = levelInfo ^. levelInfo_level + (blocksPerCycle - levelInfo ^. levelInfo_cyclePosition) - 1
   return $ lastLevelInCurrentCycle + fromIntegral cycleDiff * blocksPerCycle
 
-endOfPreservedCycles :: BranchInfo -> ProtoInfo -> RawLevel
-endOfPreservedCycles blk protoInfo = blk ^. level - blk ^. branchInfo_cyclePosition +
+endOfPreservedCycles :: RawLevel -> RawLevel -> ProtoInfo -> RawLevel
+endOfPreservedCycles lvl cyclePosition protoInfo = lvl - cyclePosition +
   (protoInfo ^. protoInfo_blocksPerCycle) * fromIntegral (protoInfo ^. protoInfo_preservedCycles + 1) - 1

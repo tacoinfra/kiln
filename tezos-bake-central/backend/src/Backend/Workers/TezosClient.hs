@@ -18,7 +18,7 @@
 
 module Backend.Workers.TezosClient where
 
-import Control.Concurrent.STM (atomically, flushTQueue, readTVarIO)
+import Control.Concurrent.STM (atomically, flushTQueue)
 import Control.Concurrent.STM.TQueue (writeTQueue)
 import Control.Exception (catchJust)
 import Control.Monad.Except
@@ -129,27 +129,27 @@ ledgerConnectivityCheckWorker delay !ledgerCheckDelay logger nds appConfig db = 
       doSensibleLedgerCheck wasConnected = do
         -- Here we use latest head instead of latest final head to check whether we have baking/endorsement
         -- opportunities in upcoming blocks
-        dsh <- liftIO $ atomically $ dataSourceHead nds
-        doCheck <- for dsh $ \blk -> checkKilnBakerAndNextRights appConfig nds blk >>= \case
+        mbLatestHeadLevel <- liftIO $ atomically $ dataSourceHeadLevel nds
+        doCheck <- for mbLatestHeadLevel $ \latestHeadLevel -> checkKilnBakerAndNextRights appConfig nds latestHeadLevel >>= \case
           -- If we don't have an internal baker, don't bother checking
           (Nothing, _, _) -> pure False
           -- If we do and the ledger was previously disconnected, we need to check again
           (_, _, _) | not wasConnected -> pure True
           -- Avoid sending commands to the ledger within two blocks of baking rights
           (_, Just (_, lvl), progressMay) -> do
-            let doC = blk ^. level < lvl - 2 || blk ^. level > lvl + 2
+            let doC = latestHeadLevel < lvl - 2 || latestHeadLevel > lvl + 2
             -- This is pretty spammy. We probably don't want this without updating the updated flag...
             -- unless (doC || wasConnected) $ $(logWarn) ("Baking rights approaching at level " <> tshow lvl <> ". Kiln last saw that the ledger was disconnected!")
             case progressMay of
               -- If there are no rights we check that we actually seen all rights up to current block
               -- since there is a possibility that there are rights that we haven't seen yet
-              Just progressLvl -> pure $ doC && progressLvl >= blk ^. level
+              Just progressLvl -> pure $ doC && progressLvl >= latestHeadLevel
               -- This case shouldn't actually be possible
               Nothing -> pure False
           -- If we have no rights but a baker, we may as well check because the rights are coming
           (_, Nothing, progressMay) -> case progressMay of
               -- If we have no rights, we still check that we've seen all rights up to current block
-              Just progressLvl -> pure $ progressLvl >= blk ^. level
+              Just progressLvl -> pure $ progressLvl >= latestHeadLevel
               Nothing -> pure False
         when (doCheck == Just True) $ liftIO $ atomically $ writeTQueue ledgerIOQueue $
           updateConnectedLedgerViaGetConnectedLedger appConfig db
@@ -226,8 +226,7 @@ checkLedgerHighWatermark appConfig nds = LedgerQuery LedgerQueryType_CheckHWM $ 
   eiHwm <- getLedgerHighWatermark appConfig nds
   case eiHwm of
     Right (Just hwm) -> do
-      mbLatestHead <- liftIO $ readTVarIO $ nds ^. nodeDataSource_latestHead
-      let mbLatestHeadLevel = mbLatestHead ^? _Just . level
+      mbLatestHeadLevel <- liftIO $ atomically $ dataSourceHeadLevel nds
       reportLedgerNeedToResetHWM db appConfig mbLatestHeadLevel hwm
     -- If we couldn't get high-witermark, then most likely ledger has been disconnected
     -- and it will be reported in another function.
@@ -477,9 +476,8 @@ computeChainId port kilnDataDir maybePaths json = do
 setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> LedgerQuery m
 setupLedgerToBake appConfig db nds sk = LedgerQuery LedgerQueryType_SetupToBake $ do
   mla <- withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-  mbLatestHead <- liftIO $ atomically $ dataSourceHead nds
+  mbLatestHeadLevel <- liftIO $ atomically $ dataSourceHeadLevel nds
   let
-    mbLatestHeadLevel = mbLatestHead ^? _Just . level
     RawLevel latestHeadLevel = mbLatestHeadLevel ?: error "Latest head is 'Nothing' during setting up ledger to bake."
     args =
       [ "setup"
@@ -676,11 +674,10 @@ submitBallot appConfig proposal ballot = do
       Ballot_Pass -> "pass"
 
 -- Logic mostly copied from viewselector' next rights code
-checkKilnBakerAndNextRights :: (BlockLike blk) => AppConfig -> NodeDataSource -> blk -> LoggingT IO (Maybe PublicKeyHash, Maybe (RightKind, RawLevel), Maybe RawLevel)
-checkKilnBakerAndNextRights appConfig nds blk = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
+checkKilnBakerAndNextRights :: AppConfig -> NodeDataSource -> RawLevel -> LoggingT IO (Maybe PublicKeyHash, Maybe (RightKind, RawLevel), Maybe RawLevel)
+checkKilnBakerAndNextRights appConfig nds headLevel = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
   v <- flip runReaderT nds $ runExceptT @KilnRpcError $ tryNodeQueryT $ do
-    let headLevel = blk ^. level
-        chainId = _appConfig_chainId appConfig
+    let chainId = _appConfig_chainId appConfig
     bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
       (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
 

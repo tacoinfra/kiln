@@ -93,7 +93,8 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
       chainId = _nodeDataSource_chain nds
       headHash :: BlockHash = latestBranchInfo ^. hash
       headLevel = latestBranchInfo ^. level
-      endOfPreservedCyclesLvl = endOfPreservedCycles latestBranchInfo protocolConstants
+      endOfPreservedCyclesLvl =
+        endOfPreservedCycles (latestBranchInfo ^. level) (latestBranchInfo ^. branchInfo_cyclePosition) protocolConstants
 
     --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     --  * then actually obtain the rights for all bakers at the oldest cycle we still want.

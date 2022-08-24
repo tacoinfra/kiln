@@ -103,42 +103,22 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
   let maxTimeDiff = 600 -- 10 minutes
       blockTimeDiff = diffUTCTime now (headBlockInfo ^. timestamp)
   when (blockTimeDiff < maxTimeDiff) $ do
-    oldHead <- liftIO $ atomically (dataSourceHead nds)
-    when (Just (headBlockInfo ^. fitness) > oldHead ^? _Just . fitness) $ do
-      newStateRsp :: Either KilnRpcError (BlockCrossCompat, BlockCrossCompat) <- runExceptT $ do
-          flip runReaderT nds { _nodeDataSource_nodeForQuery = Just nodeAddr } $ do
-            latestHead <- nodeQueryDataSourceImmediate $ nodeQuery_Block $ headBlockInfo ^. hash
-            latestFinalHead <- nodeQueryDataSourceImmediate $ nodeQuery_Block $ (headBlockInfo ^. hash) ~~ 2
-            pure (latestHead, latestFinalHead)
-      case newStateRsp of
-        Left e -> logKilnRpcError "Handle new node head" e
-        Right (headBlock, headFinalBlock) -> do
-          updatedLevel <- liftIO $ atomically $ do
-            let latestHeadTVar = _nodeDataSource_latestHead nds
-                latestFinalHeadTVar = _nodeDataSource_latestFinalHead nds
-            latestHead <- readTVar latestHeadTVar
-            latestFinalHead <- readTVar latestFinalHeadTVar
-            if Just (headBlock ^. fitness) > latestHead ^? _Just . fitness
-              then do
-                let newHead = mkBranchInfo headBlock
-                writeTVar latestHeadTVar $ Just newHead
-                -- Final block should be the same within multiple nodes, so we're
-                -- doing this check to avoid redundant '_nodeDataSource_latestFinalHead' updates.
-                if Just (headFinalBlock ^. fitness) > latestFinalHead ^? _Just . fitness
-                  then do
-                    let newFinalHead = mkBranchInfo headFinalBlock
-                    writeTVar latestFinalHeadTVar $ Just newFinalHead
-                  else pure ()
-                pure $ Just $ headBlock ^. level
-              else
-                pure Nothing
-          for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
-  where
-    mkBranchInfo :: BlockCrossCompat -> BranchInfo
-    mkBranchInfo blk =
-      let levelInfo = blk ^. blockMetadata . blockMetadata_levelInfo in
-        BranchInfo (WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash))
-          (levelInfo ^. levelInfo_cycle) (levelInfo ^. levelInfo_cyclePosition)
+    newStateRsp :: Either KilnRpcError BlockCrossCompat <- runExceptT $
+        flip runReaderT nds { _nodeDataSource_nodeForQuery = Just nodeAddr } $
+          nodeQueryDataSourceImmediate $ nodeQuery_Block $ (headBlockInfo ^. hash) ~~ 2
+    case newStateRsp of
+      Left e -> logKilnRpcError "Handle new node head" e
+      Right headFinalBlock -> do
+        updatedLevel <- liftIO $ atomically $ do
+          let latestFinalHeadTVar = _nodeDataSource_latestFinalHead nds
+          latestFinalHead <- readTVar latestFinalHeadTVar
+          if Just (headFinalBlock ^. fitness) > latestFinalHead ^? _Just . fitness
+            then do
+              let newFinalHead = mkBranchInfo headFinalBlock
+              writeTVar latestFinalHeadTVar $ Just newFinalHead
+              pure $ Just $ headBlockInfo ^. level
+            else pure Nothing
+        for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
 nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
@@ -436,11 +416,13 @@ nodeAlertMonitor nds appConfig db nodeAddr nodeId nodeHead = runLoggingEnv (_nod
   let httpMgr = nds ^. nodeDataSource_httpMgr
       chainId = nds ^. nodeDataSource_chain
   mbNode <- headMay . toList <$> getNodes db (NodeDetails_idField ==. nodeId)
-  latestHead <- liftIO $ readTVarIO $ nds ^. nodeDataSource_latestHead
+  latestFinalHead <- liftIO $ readTVarIO $ nds ^. nodeDataSource_latestFinalHead
   for_ mbNode $ \(Node, _, nodeDetails) -> do
     isBootstrapped :: Either RpcError IsBootstrapped <-
       runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ nodeRPC $ rIsBootstrapped chainId
     action' :: Either KilnRpcError (ReaderT AppConfig Serializable ()) <- flip runReaderT nds $ runExceptT @KilnRpcError $ do
+      latestHead <- mkBranchInfo <<$>> maybe (return Nothing)
+        (\h -> fmap Just $ runNodeQueryT $ nodeQueryDataSourceSafe $ nodeQuery_Block $ h ^. level + 2) latestFinalHead
       case isBootstrapped of
         Left _ -> pure $ when (Just (nodeHead ^. level) < fmap (^. level) latestHead) $
           reportBadNodeHeadError nodeId latestHead nodeHead False SyncState_Unsynced
@@ -939,5 +921,5 @@ waitTillEndOfCycle nds blk = do
     lastLevelInCycle (blk ^. hash) c
   for_ lastLevel $ \lvl -> do
     liftIO $ atomically $ do
-      newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestHead nds)
-      when (newHead ^. level < lvl) retry
+      newHead <- maybe retry pure =<< readTVar (_nodeDataSource_latestFinalHead nds)
+      when (newHead ^. level + 2 < lvl) retry
