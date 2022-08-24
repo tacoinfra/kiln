@@ -42,21 +42,23 @@ type instance ChainType RpcQuery = ChainTag
 
 -- | Datatype that represents possible block queries.
 data BlockQuery
-  = BlockQueryOffset BlockHash RawLevel
-  -- TODO [#154] BlockQueryOffset (Either RawLevel BlockHash) RawLevel
+  = BlockQueryOffset (Either RawLevel BlockHash) RawLevel
   deriving (Show, Eq, Ord)
 
 (~~) :: BlockHash -> RawLevel -> BlockQuery
-(~~) = BlockQueryOffset
+(~~) blk offset = BlockQueryOffset (Right blk) offset
 
 class ToBlockQuery a where
   toBlockQuery :: a -> BlockQuery
 
 instance ToBlockQuery BlockHash where
-  toBlockQuery blkHash = BlockQueryOffset blkHash 0
+  toBlockQuery blkHash = BlockQueryOffset (Right blkHash) 0
 
 instance ToBlockQuery BlockQuery where
   toBlockQuery = id
+
+instance ToBlockQuery RawLevel where
+  toBlockQuery rawLevel = BlockQueryOffset (Left rawLevel) 0
 
 class QueryBlock (repr :: * -> *) where
   type BlockType repr
@@ -188,8 +190,13 @@ chainBlockUrl :: ChainId -> BlockQuery -> Text
 chainBlockUrl = chainBlockUrl' . ChainTag_Hash
 
 chainBlockUrl' :: ChainTag -> BlockQuery -> Text
-chainBlockUrl' chainId (BlockQueryOffset blkHash offset) =
-  "/chains/" <> toChainTagText chainId <> "/blocks/" <> blockHashToBase58Text blkHash <> T.pack (show $ unRawLevel offset)
+chainBlockUrl' chainId (BlockQueryOffset queryBase offset) =
+  "/chains/" <> toChainTagText chainId <> "/blocks/" <> blockQueryBaseToText queryBase <> "~" <> T.pack (show $ unRawLevel offset)
+  where
+    blockQueryBaseToText = \case
+      Left lvl -> T.pack $ show $ unRawLevel lvl
+      Right blkHash -> blockHashToBase58Text blkHash
+
 
 -- In Ithaca instead of an optional list of cycle arguments, '/helpers/baking_rights' and
 -- '/helpers/endorsing_rights' RPC endpoints only take one optional cycle argument.
