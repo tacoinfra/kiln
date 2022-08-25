@@ -41,7 +41,7 @@ Unless the setting is disabled, the monitor should automically check for newer v
      your forked version of Tezos.
      `./backend --network-gitlab-project-id=PROJECTID [OTHER OPTIONS]`
 
-      1. Alternatively, you should be able to place the project ID in this file, but that did not work for me - https://gitlab.com/obsidian.systems/kiln/blob/f34428af76ed11add0c973facffe392f0e283f05/tezos-bake-central/config/network-gitlab-project-id
+      1. Alternatively, you should be able to place the project ID in this file, but that did not work for me - https://gitlab.com/tezos-kiln/kiln/blob/f34428af76ed11add0c973facffe392f0e283f05/tezos-bake-central/config/network-gitlab-project-id
         this is the only way to set this option in `ob run`, but our default instructions make the `config/app` dir non-writeable.
 
   1. Run Kiln with that project ID so it establishes a HEAD commit

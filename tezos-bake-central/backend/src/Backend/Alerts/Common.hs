@@ -69,11 +69,16 @@ queueEmailAlert
   => Alert -> m ()
 queueEmailAlert message = do
   recipients <- select CondEmpty
-  fromAddr <- _appConfig_emailFromAddress <$> askAppConfig
+  mbFromAddr <- _appConfig_emailFromAddress <$> askAppConfig
   for_ recipients $ \n -> do
     let mail = simpleMail'
           (Address Nothing $ _notificatee_email n) -- to
-          fromAddr                                 -- from
+          (mkFromAddress mbFromAddr n)             -- from
           (_alert_subject message)                 -- subject
           (TL.fromStrict $ _alert_content message)
     queueEmail mail Nothing
+  where
+    -- Use recipient email if sender address was not provided in config.
+    mkFromAddress mbAddr n =
+      fromMaybe (Address (Just "Tezos Bake Monitor") (_notificatee_email n)) mbAddr
+

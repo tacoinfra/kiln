@@ -154,10 +154,12 @@ backendImpl cfg serve = do
   !loggingConfig <- fromMaybe loggingConfigForDistro <$> getJSONConfigFromFile (configPath "loggers")
   let logExportAvailable = distributionMethod == Distribution_LinuxPackage && loggingConfig == loggingConfigForDistro
 
-  !emailFromAddress <- Address (Just "Tezos Bake Monitor") . fromMaybe "noreply@obsidian.systems" <$>
-    liftA2 (<|>)
-      (pure $ _opts_emailFromAddress cfg)
-      (getConfigFromFile Just $ configPath Config.emailFromAddress)
+  !senderAddress <- fmap ((<|>) (_opts_emailFromAddress cfg))
+    (getConfigFromFile Just $ configPath Config.emailFromAddress)
+  let
+    !emailFromAddress = case senderAddress of
+      Nothing -> Nothing
+      Just senderAddr -> Just $ Address (Just "Tezos Bake Monitor") senderAddr
 
   !(nodeConfigFile :: Maybe Aeson.Value) <- liftA2 (<|>)
     (maybe (pure Nothing) (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8)) $ _opts_nodeConfigFile cfg)
@@ -411,7 +413,7 @@ backendImpl cfg serve = do
 
       let withWs = RhyoliteWs.withWebsocketsConnectionLogging @Snap.Snap (\str e -> runLoggingEnv logger $ $logError $ T.pack $ "Websocket error: " <> str <> " " <> show e)
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs "v3" RhyoliteApp.functorFromWire db
-        (requestHandler appConfig emailFromAddress dataSrc)
+        (requestHandler appConfig dataSrc)
         (notifyHandler dataSrc)
         (viewSelectorHandler frontendConfig dataSrc db)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)

@@ -70,10 +70,9 @@ import ExtraPrelude
 requestHandler
   :: forall m. (MonadBaseNoPureAborts IO m, MonadIO m, MonadMask m, MonadUnliftIO m)
   => AppConfig
-  -> Address
   -> NodeDataSource
   -> RequestHandler (ApiRequest () PublicRequest PrivateRequest) m
-requestHandler appConfig emailFromAddr nds =
+requestHandler appConfig nds =
   RequestHandler $ \case
     ApiRequest_Public r -> runLoggingEnv (_nodeDataSource_logger nds) $ case r of
 
@@ -298,10 +297,12 @@ requestHandler appConfig emailFromAddr nds =
             now <- getTime
             update [ErrorLog_stoppedField =. Just now] (AutoKeyField `in_` fmap fromId ids)
 
-      PublicRequest_SendTestEmail email -> inDb $ void $ queueEmail
+      PublicRequest_SendTestEmail email ->
+        let fromAddr = _appConfig_emailFromAddress appConfig ?: Address Nothing email
+        in inDb $ void $ queueEmail
         (simpleMail'
           (Address Nothing email)
-          emailFromAddr
+          fromAddr
           "Tezos Bake Monitor - Test"
           "This is a test email!"
         )
