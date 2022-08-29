@@ -6,7 +6,7 @@
 -- in case of RPC schema changes.
 module Tezos.CrossCompat.Block where
 
-import Control.Lens (lens, view, (.~))
+import Control.Lens (lens, view, (^.), (.~))
 import Control.Monad (mzero)
 import Data.Aeson
 
@@ -92,3 +92,9 @@ blockCrossCompatToBlockHeader :: BlockCrossCompat -> BlockHeader
 blockCrossCompatToBlockHeader = \case
   BlockGenesis b -> Genesis.toBlockHeader b
   BlockV014 b -> V014.toBlockHeader b
+
+mkBranchInfo :: BlockCrossCompat -> V014.BranchInfo
+mkBranchInfo blk =
+  let levelInfo = blk ^. blockMetadata . V014.blockMetadata_levelInfo in
+    V014.BranchInfo (WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash))
+      (levelInfo ^. V014.levelInfo_cycle) (levelInfo ^. V014.levelInfo_cyclePosition)

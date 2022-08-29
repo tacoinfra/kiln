@@ -25,6 +25,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 
 import Tezos.Common.Ballot
+import Tezos.Common.Base58Check (BlockHash(..), blockHashToBase58Text)
 import Tezos.Common.Contract
 import Tezos.Common.Level
 import Tezos.Common.PublicKeyHash
@@ -39,38 +40,57 @@ class QueryChain repr where
 type family ChainType (repr :: * -> *) :: *
 type instance ChainType RpcQuery = ChainTag
 
+-- | Datatype that represents possible block queries.
+data BlockQuery
+  = BlockQueryOffset (Either RawLevel BlockHash) RawLevel
+  deriving (Show, Eq, Ord)
+
+(~~) :: BlockHash -> RawLevel -> BlockQuery
+(~~) blk offset = BlockQueryOffset (Right blk) offset
+
+class ToBlockQuery a where
+  toBlockQuery :: a -> BlockQuery
+
+instance ToBlockQuery BlockHash where
+  toBlockQuery blkHash = BlockQueryOffset (Right blkHash) 0
+
+instance ToBlockQuery BlockQuery where
+  toBlockQuery = id
+
+instance ToBlockQuery RawLevel where
+  toBlockQuery rawLevel = BlockQueryOffset (Left rawLevel) 0
+
 class QueryBlock (repr :: * -> *) where
   type BlockType repr
   type BlockHeaderType repr
   rHead :: ChainType repr -> repr (BlockType repr)
-  rBlock :: ChainType repr -> BlockHash -> repr (BlockType repr)
-  rBlockHeader :: ChainType repr -> BlockHash -> repr (BlockHeaderType repr)
+  rBlock :: ChainType repr -> BlockQuery -> repr (BlockType repr)
+  rBlockHeader :: ChainType repr -> BlockQuery -> repr (BlockHeaderType repr)
 
 class QueryHistory repr where -- blockscale
   rBlocks :: ChainId -> RawLevel -> Set BlockHash -> repr (Map BlockHash (Seq BlockHash)) -- the predecessors of the requested block.
-  rBlockPred :: RawLevel -> ChainId -> BlockHash -> repr (BlockType repr)
 
-  rProtoConstants :: ChainId -> BlockHash -> repr ProtoInfo
-  rContract :: ContractId -> ChainType repr -> BlockHash -> repr AccountCrossCompat
+  rProtoConstants :: ChainId -> BlockQuery -> repr ProtoInfo
+  rContract :: ContractId -> ChainType repr -> BlockQuery -> repr AccountCrossCompat
 
-  rBallots :: ChainId -> BlockHash -> repr BallotsCrossCompat
-  rListings :: ChainId -> BlockHash -> repr VoterListingsCrossCompat
-  rProposals :: ChainId -> BlockHash -> repr ProposalVotesListCrossCompat
-  rCurrentProposal :: ChainId -> BlockHash -> repr (Maybe ProtocolHash)
-  rCurrentQuorum :: ChainId -> BlockHash -> repr Int
-  rBallot :: ChainId -> BlockHash -> PublicKeyHash -> repr (Maybe Ballot)
-  rProposalVote :: ChainId -> BlockHash -> PublicKeyHash -> repr (Set ProtocolHash)
+  rBallots :: ChainId -> BlockQuery -> repr BallotsCrossCompat
+  rListings :: ChainId -> BlockQuery -> repr VoterListingsCrossCompat
+  rProposals :: ChainId -> BlockQuery -> repr ProposalVotesListCrossCompat
+  rCurrentProposal :: ChainId -> BlockQuery -> repr (Maybe ProtocolHash)
+  rCurrentQuorum :: ChainId -> BlockQuery -> repr Int
+  rBallot :: ChainId -> BlockQuery -> PublicKeyHash -> repr (Maybe Ballot)
+  rProposalVote :: ChainId -> BlockQuery -> PublicKeyHash -> repr (Set ProtocolHash)
 
   -- This only produces results when the cycles requested are between within
   -- PRESERVED_CYCLES of the BlockId requested. for older data, use an older block as context
-  rBakingRights :: Either Cycle (Set RawLevel) -> ChainId -> BlockHash -> repr (Seq BakingRightsCrossCompat)
-  rBakingRightsFull :: Either Cycle (Set RawLevel) -> Round -> ChainId -> BlockHash -> repr (Seq BakingRightsCrossCompat)
-  rEndorsingRights :: Either Cycle (Set RawLevel) -> ChainId -> BlockHash -> repr (Seq EndorsingRightsCrossCompat)
+  rBakingRights :: Either Cycle (Set RawLevel) -> ChainId -> BlockQuery -> repr (Seq BakingRightsCrossCompat)
+  rBakingRightsFull :: Either Cycle (Set RawLevel) -> Round -> ChainId -> BlockQuery -> repr (Seq BakingRightsCrossCompat)
+  rEndorsingRights :: Either Cycle (Set RawLevel) -> ChainId -> BlockQuery -> repr (Seq EndorsingRightsCrossCompat)
 
-  rBalance :: PublicKeyHash -> ChainId -> BlockHash -> repr Tez
-  rDelegateInfo :: PublicKeyHash -> ChainId -> BlockHash -> repr DelegateInfoCrossCompat
-  rParticipationInfo :: PublicKeyHash -> ChainId -> BlockHash -> repr ParticipationInfo
-  rRound :: ChainId -> BlockHash -> repr Int32
+  rBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr Tez
+  rDelegateInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr DelegateInfoCrossCompat
+  rParticipationInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr ParticipationInfo
+  rRound :: ChainId -> BlockQuery -> repr Int32
 
 instance QueryBlock RpcQuery where
   type BlockType RpcQuery = BlockCrossCompat
@@ -80,13 +100,12 @@ instance QueryBlock RpcQuery where
   rBlockHeader = blockAPI' "/header"
 
 instance QueryHistory RpcQuery where
-  rBlockPred (RawLevel levelsBack) = blockAPI $ "~" <> T.pack (show levelsBack)
   rBlocks chainId (RawLevel len) heads = byHead <$> chainAPI ("/blocks?length=" <> T.pack (show len) <> foldMap blk2param heads) chainId
     where
       byHead :: [Seq BlockHash] -> Map.Map BlockHash (Seq BlockHash)
       byHead = foldMap $ maybe mempty (uncurry Map.singleton) . uncons
       blk2param :: BlockHash -> Text
-      blk2param blkHash = "&head=" <> toBase58Text blkHash
+      blk2param blkHash = "&head=" <> blockHashToBase58Text blkHash
   rProtoConstants = blockAPI "/context/constants"
   rContract contractId = blockAPI' ("/context/contracts/" <> toContractIdText contractId)
   rBallots = blockAPI "/votes/ballots/"
@@ -152,10 +171,10 @@ chainAPI = (. ChainTag_Hash) . chainAPI'
 chainAPI' :: FromJSON a => Text -> ChainTag -> RpcQuery a
 chainAPI' path chainId = plainNodeRequest Http.methodGet $ "/chains/" <> toChainTagText chainId <> path
 
-blockAPI :: FromJSON a => Text -> ChainId -> BlockHash -> RpcQuery a
+blockAPI :: FromJSON a => Text -> ChainId -> BlockQuery -> RpcQuery a
 blockAPI = (. ChainTag_Hash) . blockAPI'
 
-blockAPI' :: FromJSON a => Text -> ChainTag -> BlockHash -> RpcQuery a
+blockAPI' :: FromJSON a => Text -> ChainTag -> BlockQuery -> RpcQuery a
 blockAPI' path chainId blockHash = plainNodeRequest Http.methodGet (chainBlockUrl' chainId blockHash <> path)
 
 instance QueryNode RpcQuery where
@@ -167,11 +186,16 @@ instance QueryNode RpcQuery where
   rIsBootstrapped = chainAPI "/is_bootstrapped"
   rConfig = plainNodeRequest Http.methodGet "/config"
 
-chainBlockUrl :: ChainId -> BlockHash -> Text
+chainBlockUrl :: ChainId -> BlockQuery -> Text
 chainBlockUrl = chainBlockUrl' . ChainTag_Hash
 
-chainBlockUrl' :: ChainTag -> BlockHash -> Text
-chainBlockUrl' chainId blockHash = "/chains/" <> toChainTagText chainId <> "/blocks/" <> toBase58Text blockHash
+chainBlockUrl' :: ChainTag -> BlockQuery -> Text
+chainBlockUrl' chainId (BlockQueryOffset queryBase offset) =
+  "/chains/" <> toChainTagText chainId <> "/blocks/" <> blockQueryBaseToText queryBase <> "~" <> T.pack (show $ unRawLevel offset)
+  where
+    blockQueryBaseToText = \case
+      Left lvl -> T.pack $ show $ unRawLevel lvl
+      Right blkHash -> blockHashToBase58Text blkHash
 
 
 -- In Ithaca instead of an optional list of cycle arguments, '/helpers/baking_rights' and

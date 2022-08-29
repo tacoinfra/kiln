@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -132,33 +133,76 @@ data NoRightsException = NoRightsException BlockHash RawLevel Round
 instance Exception NoRightsException
 
 data NodeQuery a where
-  NodeQuery_ProtocolConstants :: BlockHash -> NodeQuery ProtoInfo
+  NodeQuery_ProtocolConstants :: BlockQuery -> NodeQuery ProtoInfo
   -- Query only baking rights with zero 'round'.
-  NodeQuery_BakingRights      :: BlockHash -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
-  NodeQuery_EndorsingRights   :: BlockHash -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
-  NodeQuery_Account           :: BlockHash -> ContractId -> NodeQuery AccountCrossCompat
-  NodeQuery_Ballots           :: BlockHash -> NodeQuery BallotsCrossCompat
-  NodeQuery_Ballot            :: BlockHash -> PublicKeyHash -> NodeQuery (Maybe Ballot)
-  NodeQuery_ProposalVote      :: BlockHash -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
-  NodeQuery_Listings          :: BlockHash -> NodeQuery VoterListingsCrossCompat
-  NodeQuery_Proposals         :: BlockHash -> NodeQuery ProposalVotesListCrossCompat
-  NodeQuery_CurrentProposal   :: BlockHash -> NodeQuery (Maybe ProtocolHash)
-  NodeQuery_CurrentQuorum     :: BlockHash -> NodeQuery Int
-  NodeQuery_Block             :: BlockHash -> NodeQuery BlockCrossCompat
-  NodeQuery_BlockPred         :: BlockHash -> RawLevel -> NodeQuery BlockCrossCompat
-  NodeQuery_BlockHeader       :: BlockHash -> NodeQuery BlockHeader
-  NodeQuery_DelegateInfo      :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
-  NodeQuery_ParticipationInfo :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
-  NodeQuery_Balance           :: BlockHash -> RawLevel -> PublicKeyHash -> NodeQuery Tez
+  NodeQuery_BakingRights      :: BlockQuery -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
+  NodeQuery_EndorsingRights   :: BlockQuery -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
+  NodeQuery_Account           :: BlockQuery -> ContractId -> NodeQuery AccountCrossCompat
+  NodeQuery_Ballots           :: BlockQuery -> NodeQuery BallotsCrossCompat
+  NodeQuery_Ballot            :: BlockQuery -> PublicKeyHash -> NodeQuery (Maybe Ballot)
+  NodeQuery_ProposalVote      :: BlockQuery -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
+  NodeQuery_Listings          :: BlockQuery -> NodeQuery VoterListingsCrossCompat
+  NodeQuery_Proposals         :: BlockQuery -> NodeQuery ProposalVotesListCrossCompat
+  NodeQuery_CurrentProposal   :: BlockQuery -> NodeQuery (Maybe ProtocolHash)
+  NodeQuery_CurrentQuorum     :: BlockQuery -> NodeQuery Int
+  NodeQuery_Block             :: BlockQuery -> NodeQuery BlockCrossCompat
+  NodeQuery_BlockHeader       :: BlockQuery -> NodeQuery BlockHeader
+  NodeQuery_DelegateInfo      :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
+  NodeQuery_ParticipationInfo :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
+  NodeQuery_Balance           :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery Tez
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
-  NodeQuery_Round             :: BlockHash -> NodeQuery Int32
+  NodeQuery_Round             :: BlockQuery -> NodeQuery Int32
 deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
+-- @NodeQuery@ smart constructors that allow arbitrary @ToBlockQuery@ arguments.
+-- It's hard to use this constraint in GADT constructors directly because it'll
+-- require to manually defined @GEq@ and @GCompare@ instances since TH is unable
+-- to generate instances for GADTs with existentially parameterized constructors:(
+nodeQuery_ProtocolConstants :: ToBlockQuery blk => blk -> NodeQuery ProtoInfo
+nodeQuery_BakingRights      :: ToBlockQuery blk => blk -> Set RawLevel -> NodeQuery (Seq BakingRightsCrossCompat)
+nodeQuery_EndorsingRights   :: ToBlockQuery blk => blk -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
+nodeQuery_Account           :: ToBlockQuery blk => blk -> ContractId -> NodeQuery AccountCrossCompat
+nodeQuery_Ballots           :: ToBlockQuery blk => blk -> NodeQuery BallotsCrossCompat
+nodeQuery_Ballot            :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Maybe Ballot)
+nodeQuery_ProposalVote      :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
+nodeQuery_Listings          :: ToBlockQuery blk => blk -> NodeQuery VoterListingsCrossCompat
+nodeQuery_Proposals         :: ToBlockQuery blk => blk -> NodeQuery ProposalVotesListCrossCompat
+nodeQuery_CurrentProposal   :: ToBlockQuery blk => blk -> NodeQuery (Maybe ProtocolHash)
+nodeQuery_CurrentQuorum     :: ToBlockQuery blk => blk -> NodeQuery Int
+nodeQuery_Block             :: ToBlockQuery blk => blk -> NodeQuery BlockCrossCompat
+nodeQuery_BlockHeader       :: ToBlockQuery blk => blk -> NodeQuery BlockHeader
+nodeQuery_DelegateInfo      :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
+nodeQuery_ParticipationInfo :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
+nodeQuery_Balance           :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery Tez
+nodeQuery_Round             :: ToBlockQuery blk => blk -> NodeQuery Int32
+nodeQuery_ProtocolConstants = NodeQuery_ProtocolConstants . toBlockQuery
+nodeQuery_BakingRights blk = NodeQuery_BakingRights (toBlockQuery blk)
+nodeQuery_EndorsingRights blk = NodeQuery_EndorsingRights (toBlockQuery blk)
+nodeQuery_Account blk = NodeQuery_Account (toBlockQuery blk)
+nodeQuery_Ballots blk = NodeQuery_Ballots (toBlockQuery blk)
+nodeQuery_Ballot blk = NodeQuery_Ballot (toBlockQuery blk)
+nodeQuery_ProposalVote blk = NodeQuery_ProposalVote (toBlockQuery blk)
+nodeQuery_Listings blk = NodeQuery_Listings (toBlockQuery blk)
+nodeQuery_Proposals blk = NodeQuery_Proposals (toBlockQuery blk)
+nodeQuery_CurrentProposal blk = NodeQuery_CurrentProposal (toBlockQuery blk)
+nodeQuery_CurrentQuorum blk = NodeQuery_CurrentQuorum (toBlockQuery blk)
+nodeQuery_Block blk = NodeQuery_Block (toBlockQuery blk)
+nodeQuery_BlockHeader blk = NodeQuery_BlockHeader (toBlockQuery blk)
+nodeQuery_DelegateInfo blk = NodeQuery_DelegateInfo (toBlockQuery blk)
+nodeQuery_ParticipationInfo blk = NodeQuery_ParticipationInfo (toBlockQuery blk)
+nodeQuery_Balance blk = NodeQuery_Balance (toBlockQuery blk)
+nodeQuery_Round blk = NodeQuery_Round (toBlockQuery blk)
+
 data NodeQueryIx a where
-  NodeQueryIx_BakingRights    :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq BakingRightsCrossCompat)
-  NodeQueryIx_EndorsingRights :: BlockHash -> Set RawLevel -> NodeQueryIx (Seq EndorsingRightsCrossCompat)
+  NodeQueryIx_BakingRights    :: BlockQuery -> Set RawLevel -> NodeQueryIx (Seq BakingRightsCrossCompat)
+  NodeQueryIx_EndorsingRights :: BlockQuery -> Set RawLevel -> NodeQueryIx (Seq EndorsingRightsCrossCompat)
 deriving instance Show (NodeQueryIx a)
+
+nodeQueryIx_BakingRights    :: ToBlockQuery blk => blk -> Set RawLevel -> NodeQueryIx (Seq BakingRightsCrossCompat)
+nodeQueryIx_EndorsingRights :: ToBlockQuery blk => blk -> Set RawLevel -> NodeQueryIx (Seq EndorsingRightsCrossCompat)
+nodeQueryIx_BakingRights blk = NodeQueryIx_BakingRights (toBlockQuery blk)
+nodeQueryIx_EndorsingRights blk = NodeQueryIx_EndorsingRights (toBlockQuery blk)
 
 toCacheDelegateInfo :: DelegateInfoCrossCompat -> CacheDelegateInfo
 toCacheDelegateInfo di = CacheDelegateInfo
@@ -179,7 +223,7 @@ data RpcResult a = RpcResult
 -- | Cache that is used within @NodeQueryT@.
 -- It stores occured errors and successful responses
 data NodeQueryTCache = NodeQueryTCache
-  { _nodeQueryTCache_errors :: DMap NodeQuery (Const (Map BlockHash KilnRpcError))
+  { _nodeQueryTCache_errors :: DMap NodeQuery (Const KilnRpcError)
   , _nodeQueryTCache_responses :: DMap NodeQuery RpcResult
   }
 
@@ -192,7 +236,6 @@ data NodeDataSource = NodeDataSource
   { _nodeDataSource_chain :: ChainId
   , _nodeDataSource_httpMgr :: Http.Manager
   , _nodeDataSource_pool :: Pool Postgresql
-  , _nodeDataSource_latestHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_latestFinalHead :: TVar (Maybe BranchInfo)
   , _nodeDataSource_logger :: LoggingEnv
   , _nodeDataSource_ioQueue :: TQueue (IO ())
@@ -218,7 +261,7 @@ class MonadLogger m => MonadNodeQuery m where
   default nqAtomically :: MonadIO m => STM a -> m a
   nqAtomically action = liftIO $ atomically action
   withFinishWith :: NodeDataSource -> (forall r. (Either KilnRpcError a -> STM r) -> STM (m r)) -> STM (m (AnswerM m a))
-  nodeRPCOrBust :: (FromJSON a) => BlockHash -> NodeQuery a -> m (RpcResult a)
+  nodeRPCOrBust :: (FromJSON a) => NodeQuery a -> m (RpcResult a)
 
 askNodeDataSource :: MonadNodeQuery m => m NodeDataSource
 askNodeDataSource = asksNodeDataSource id
@@ -273,8 +316,8 @@ instance MonadNodeQuery NodeQueryQueued where
   -- We keep hold of our candidate nodes right till the end in case we exhaust all of our options
   -- and need to give everything that we tried and what went wrong to the user in a KilnRpcError_NoSuitableNode
   -- error.
-  nodeRPCOrBust qBranch q = do
-    $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: Branch ${qBranch}: ${tshow q}|]
+  nodeRPCOrBust q = do
+    $(logDebug) [i|nodeRPCOrBust@NodeQueryQueued: ${tshow q}|]
     dsrc <- askNodeDataSource
     mNodesToTry <- case _nodeDataSource_nodeForQuery dsrc of
       -- If we have the nodeForQuery override set, just push it through assuming that the overrider is responsible for
@@ -322,11 +365,11 @@ instance MonadNodeQuery NodeQueryImmediate where
   nqCatchError action handler = NodeQueryImmediate $ nqCatchError (unNodeQueryImmediate action) (unNodeQueryImmediate . handler)
   nqInDB action = NodeQueryImmediate $ nqInDB action
   withFinishWith _ cb = (fmap NodeQueryImmediateAnswerM . nqLiftEither =<<) <$> cb return
-  nodeRPCOrBust h q = NodeQueryImmediate $ nodeRPCOrBust h q
+  nodeRPCOrBust q = NodeQueryImmediate $ nodeRPCOrBust q
 
 data NodeQueryTResult a where
   NodeQueryTResult_Done :: a -> NodeQueryTResult a
-  NodeQueryTResult_Query :: forall a b. (FromJSON a) => BlockHash -> NodeQuery a -> NodeQueryTResult b
+  NodeQueryTResult_Query :: forall a b. (FromJSON a) => NodeQuery a -> NodeQueryTResult b
 
 deriving instance Functor NodeQueryTResult
 
@@ -339,11 +382,11 @@ instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKil
   nqCatchError action handler = NodeQueryT $ \cache -> catching asKilnRpcError (unNodeQueryT action cache) (flip unNodeQueryT cache . handler)
   nqInDB = id
   withFinishWith _ cb = (fmap NodeQueryTAnswerM . nqLiftEither =<<) <$> cb return
-  nodeRPCOrBust h q = NodeQueryT $ \cache ->
+  nodeRPCOrBust q = NodeQueryT $ \cache ->
     case DMap.lookup q (cache ^. nodeQueryTCache_responses) of
-      Nothing -> case DMap.lookup q (cache ^. nodeQueryTCache_errors) >>= pure . getConst >>= Map.lookup h of
+      Nothing -> case DMap.lookup q (cache ^. nodeQueryTCache_errors) >>= pure . getConst of
         Just e -> throwError $ e ^. re asKilnRpcError
-        Nothing -> pure $ NodeQueryTResult_Query h q
+        Nothing -> pure $ NodeQueryTResult_Query q
       Just res -> pure $ NodeQueryTResult_Done res
 
 instance (MonadIO m, MonadNodeQuery (NodeQueryT m)) => MonadLogger (NodeQueryT m) where
@@ -355,7 +398,7 @@ instance Monad m => Monad (NodeQueryT m) where
   return = NodeQueryT . const . return . NodeQueryTResult_Done
   (NodeQueryT x) >>= f = NodeQueryT $ \cache -> x cache >>= \case
     NodeQueryTResult_Done v -> unNodeQueryT (f v) cache
-    NodeQueryTResult_Query h q -> pure $ NodeQueryTResult_Query h q
+    NodeQueryTResult_Query q -> pure $ NodeQueryTResult_Query q
 
 instance Monad m => Applicative (NodeQueryT m) where
   (<*>) = ap
@@ -392,24 +435,24 @@ instance MonadMask m => MonadMask (NodeQueryT m) where
     (ranswer, rreleased) <- generalBracket
       (unNodeQueryT acquire bad)
       (\case
-        NodeQueryTResult_Query h q -> const $ return $ NodeQueryTResult_Query h q -- query during acquire, nothing to release
+        NodeQueryTResult_Query q -> const $ return $ NodeQueryTResult_Query q -- query during acquire, nothing to release
         NodeQueryTResult_Done resource -> \case
           ExitCaseSuccess (NodeQueryTResult_Done answer) -> flip unNodeQueryT bad $ release resource $ ExitCaseSuccess answer
-          ExitCaseSuccess (NodeQueryTResult_Query _ _) -> flip unNodeQueryT bad $ release resource ExitCaseAbort
+          ExitCaseSuccess (NodeQueryTResult_Query _) -> flip unNodeQueryT bad $ release resource ExitCaseAbort
             -- because things need to actually happen in the release handler.  The query will still get passed through
             -- on another channel.
           ExitCaseException e -> flip unNodeQueryT bad $ release resource $ ExitCaseException e
           ExitCaseAbort -> flip unNodeQueryT bad $ release resource ExitCaseAbort)
       (\case
-        NodeQueryTResult_Query h q -> return $ NodeQueryTResult_Query h q
+        NodeQueryTResult_Query q -> return $ NodeQueryTResult_Query q
         NodeQueryTResult_Done resource -> flip unNodeQueryT bad $ use resource)
     return $ case ranswer of
-      NodeQueryTResult_Query h q -> NodeQueryTResult_Query h q
+      NodeQueryTResult_Query q -> NodeQueryTResult_Query q
         -- let the query from 'use' win even if both are queries, both
         -- because it is first, and because 'release' will be called
         -- with different arguments on the final retry.
       NodeQueryTResult_Done answer -> case rreleased of
-        NodeQueryTResult_Query h q -> NodeQueryTResult_Query h q
+        NodeQueryTResult_Query q -> NodeQueryTResult_Query q
         NodeQueryTResult_Done released -> NodeQueryTResult_Done (answer, released)
 
 instance (Monad m, PostgresRaw m) => PostgresRaw (NodeQueryT m)
@@ -527,12 +570,12 @@ runNodeQueryT f = ExceptT @e $ go 0 emptyNodeQueryTCache
         Right (NodeQueryTResult_Done v) -> do
           $(logDebug) [i|RPC monad attempt number ${n}: succeeded|]
           return $ Right v
-        Right (NodeQueryTResult_Query h q) -> do
+        Right (NodeQueryTResult_Query q) -> do
           $(logDebug) [i|RPC monad attempt number ${n}: retrying for query: ${tshow q}|]
           -- just get it into cache
           runExceptT (nodeQueryDataSource' q) >>= \case
             Right res -> go (n + 1) $ cache & nodeQueryTCache_responses <>~ DMap.singleton q res
-            Left e -> go (n + 1) $ cache & nodeQueryTCache_errors <>~ DMap.singleton q (Const $ Map.singleton h e)
+            Left e -> go (n + 1) $ cache & nodeQueryTCache_errors <>~ DMap.singleton q (Const e)
 
 tryNodeQueryTWithDb
   :: forall a s e m.
@@ -549,7 +592,7 @@ tryNodeQueryTWithDb cache f = do
   runDb (Identity db) $ runReaderT (runExceptT (unNodeQueryT f cache)) nds >>= \case
     e@(Left _) -> e <$ bail
     v@(Right (NodeQueryTResult_Done _)) -> return v
-    q@(Right (NodeQueryTResult_Query _ _)) -> q <$ bail
+    q@(Right (NodeQueryTResult_Query _)) -> q <$ bail
 
 
 tryNodeQueryT :: Functor m => NodeQueryT m a -> m (Maybe a)
@@ -570,11 +613,9 @@ waitForNewFinalHead nds = do
     when (oldHead == Just (newHeadInfo ^. hash)) retry
     pure $ newHeadInfo ^.  branchInfo_block . withProtocolHash_value
 
--- | extracts the latest known head
-dataSourceHead
-  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
-  => nds -> m (Maybe BranchInfo)
-dataSourceHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestHead)
+-- | Extracts the level of the latest seen head
+dataSourceHeadLevel :: (HasNodeDataSource nds, MonadSTM m) => nds -> m (Maybe RawLevel)
+dataSourceHeadLevel nds = ((+2) . view level) <<$>> readTVar' (nds ^. nodeDataSource . nodeDataSource_latestFinalHead)
 
 -- | extracts the latest known final head
 dataSourceFinalHead
@@ -584,28 +625,6 @@ dataSourceFinalHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_late
 
 roundChunkSize :: Num a => a
 roundChunkSize = 64
-
-getContext :: forall m a. (MonadNodeQuery m) => NodeQuery a -> m BlockHash
-getContext = \case
-  NodeQuery_ProtocolConstants ctx -> pure ctx
-  NodeQuery_BakingRights ctx _lvl -> pure ctx
-  NodeQuery_EndorsingRights ctx _lvl -> pure ctx
-  NodeQuery_Block ctx -> pure ctx
-  NodeQuery_BlockPred ctx _offset -> pure ctx
-  NodeQuery_BlockHeader ctx -> pure ctx
-  NodeQuery_Account ctx _contractId -> pure ctx
-  NodeQuery_Ballots ctx -> pure ctx
-  NodeQuery_Ballot ctx _pkh -> pure ctx
-  NodeQuery_ProposalVote ctx _pkh -> pure ctx
-  NodeQuery_Listings ctx -> pure ctx
-  NodeQuery_Proposals ctx -> pure ctx
-  NodeQuery_CurrentProposal ctx -> pure ctx
-  NodeQuery_CurrentQuorum ctx -> pure ctx
-  NodeQuery_DelegateInfo ctx _lvl _pkh -> pure ctx
-  NodeQuery_ParticipationInfo ctx _lvl _pkh -> pure ctx
-  NodeQuery_Balance ctx _lvl _pkh -> pure ctx
-  NodeQuery_Blocks ctx _ -> pure ctx
-  NodeQuery_Round ctx -> pure ctx
 
 -- | Caching query function simplified by blocking until we get a result.
 nodeQueryDataSource
@@ -674,8 +693,7 @@ nodeQueryDataSourceRaw
 nodeQueryDataSourceRaw q = do
   $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q}|]
   dsrc <- asksNodeDataSource id
-  qBranch <- getContext q
-  join $ nqAtomically $ nodeQueryDataSourceSTM _rpcResult_value dsrc qBranch q
+  join $ nqAtomically $ nodeQueryDataSourceSTM _rpcResult_value dsrc q
 
 -- | Query cached data immediately, in this thread.  Only meant to be used in the implementation
 --   of recursive queries, lest the dreaded deadlock heisenbunny return.
@@ -712,15 +730,14 @@ nodeQueryDataSourceRaw'
 nodeQueryDataSourceRaw' q = do
   $(logDebug) [i|nodeQueryDataSourceRaw: ${tshow q}|]
   dsrc <- asksNodeDataSource id
-  qBranch <- getContext q
-  join $ nqAtomically $ nodeQueryDataSourceSTM id dsrc qBranch q
+  join $ nqAtomically $ nodeQueryDataSourceSTM id dsrc q
 
 -- | Core primitive for running a 'NodeQuery' against the worker queue.
 -- Returns an action that will wait for a new request to be finished.
 nodeQueryDataSourceSTM
   :: forall n a b m nds. (HasNodeDataSource nds, MonadSTM m, MonadLogger n, MonadNodeQuery n, MonadMask n, FromJSON a)
-  => (RpcResult a -> b) -> nds -> BlockHash -> NodeQuery a -> m (n (AnswerM n b))
-nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
+  => (RpcResult a -> b) -> nds -> NodeQuery a -> m (n (AnswerM n b))
+nodeQueryDataSourceSTM projectRpcResult nds q = do
   liftSTM $ withFinishWith @n dsrc $ \finishWith -> do
     let
       -- Communicates the result upstream.
@@ -736,7 +753,7 @@ nodeQueryDataSourceSTM projectRpcResult nds qBranch q = do
       -- thread.  The result is thrown away meaning in the immediate case the caller
       -- cannot recover, but this is fine because that's what is supposed to happen for
       -- such an error.
-      (writeResult =<< nqTry (nodeRPCOrBust qBranch q))
+      (writeResult =<< nqTry (nodeRPCOrBust q))
         `catch` \e ->
           nqAtomically (finishWith $ Left $ KilnRpcError_SomeException e)
         `withException` \x ->
@@ -792,7 +809,6 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
   NodeQuery_CurrentProposal branch -> nodeRPC' $ rCurrentProposal chainId branch
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock (toChain chainId) branch
-  NodeQuery_BlockPred branch offset -> nodeRPC' $ rBlockPred offset chainId branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_ParticipationInfo branch _lvl pkh -> nodeRPC' $ rParticipationInfo pkh chainId branch
@@ -986,7 +1002,7 @@ getProtocolConstants
 getProtocolConstants ct = do
   protoHash <- case ct of
     Right p -> pure p
-    Left h -> view protocolHash <$> nodeQueryDataSourceSafe (NodeQuery_BlockHeader h)
+    Left h -> view protocolHash <$> nodeQueryDataSourceSafe (nodeQuery_BlockHeader h)
   chainId <- asksNodeDataSource _nodeDataSource_chain
   existingEntries :: [ProtocolIndex] <- select $
     ProtocolIndex_chainIdField ==. chainId &&. ProtocolIndex_hashField ==. protoHash
@@ -1040,7 +1056,7 @@ buildProtocolIndex branch protoHash = do
       -- in a protocol to get it's constants (the most recent block possible). To do this we
       -- pair up the protocols with the block immediately *prior* to the first block in the
       -- next protocol. For the most recent protocol, we will use 'branch' as the query block.
-      branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
+      branchBlock <- nodeQueryDataSourceSafe $ nodeQuery_Block branch
       let initOrderedLastBlocks = flip NE.map orderedFirstBlocksWithProto $ \(proto, _) ->
             -- The only protocol for which we know the first but don't know the last block is the current protocol.
             -- For it we use current @branch@ as the last block
@@ -1059,7 +1075,7 @@ buildProtocolIndex branch protoHash = do
             actualQueryBlockHash = case queryBlock' of
               queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
               _ -> firstBlock ^. hash
-          constants <- nodeQueryDataSourceSafe' $ NodeQuery_ProtocolConstants actualQueryBlockHash
+          constants <- nodeQueryDataSourceSafe' $ nodeQuery_ProtocolConstants actualQueryBlockHash
           pure ProtocolIndex
             { _protocolIndex_chainId = chainId
             , _protocolIndex_hash = firstBlock ^. protocolHash
@@ -1098,14 +1114,14 @@ buildProtocolHistoryUntil
   -> NodeQueryT m (Map ProtocolHash BlockCrossCompat, Map ProtocolHash BlockCrossCompat)
   -- Turns this into table, ProtocolHash
 buildProtocolHistoryUntil (Arg predicate) (Arg branch) = do
-  branchBlock <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
+  branchBlock <- nodeQueryDataSourceSafe $ nodeQuery_Block branch
   go ! #currentBlock branchBlock
      ! #currentProtocol (branchBlock ^. protocolHash)
      ! #protocolFirstBlocksHistory mempty
      ! #protocolLastBlocksHistory mempty
   where
     levelsBefore :: BlockCrossCompat -> RawLevel -> NodeQueryT m BlockCrossCompat
-    levelsBefore blk lvls = nodeQueryDataSourceSafe $ NodeQuery_BlockPred (blk ^. hash) lvls
+    levelsBefore blk lvls = nodeQueryDataSourceSafe $ nodeQuery_Block $ (blk ^. hash) ~~ lvls
 
     votingPeriodPosition = blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
 
@@ -1156,8 +1172,8 @@ fetchProtocolForBlock
   -> NodeQueryT m ProtocolIndex
 fetchProtocolForBlock chainId blkHash = do
   $(logDebug) [i|fetchProtocolForBlock: ${blkHash}|]
-  protoInfo <- nodeQueryDataSourceSafe' $ NodeQuery_ProtocolConstants blkHash
-  blockHeader <- nodeQueryDataSourceSafe $ NodeQuery_BlockHeader blkHash
+  protoInfo <- nodeQueryDataSourceSafe' $ nodeQuery_ProtocolConstants blkHash
+  blockHeader <- nodeQueryDataSourceSafe $ nodeQuery_BlockHeader blkHash
   let p = ProtocolIndex
           { _protocolIndex_chainId = chainId
           , _protocolIndex_hash = blockHeader ^. protocolHash

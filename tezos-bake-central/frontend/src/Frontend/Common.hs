@@ -50,7 +50,8 @@ import qualified GHCJS.DOM.HTMLTextAreaElement as TextArea
 import qualified GHCJS.DOM.Node as Node
 import qualified GHCJS.DOM.Types as DOM
 
-import Tezos.Types (BlockHash, NamedChain(..), PublicKeyHash, Tez(..), toBase58Text, toPublicKeyHashText)
+import Tezos.Types
+  (BlockHash, NamedChain(..), PublicKeyHash, Tez(..), blockHashToBase58Text, toPublicKeyHashText)
 
 import Common (humanizeTimestamp,humanizeTimestampWithoutTZ)
 import Common.Api (PublicRequest, PrivateRequest)
@@ -446,10 +447,10 @@ blockExplorerLink dPath f = do
         f
 
 blockHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t BlockHash -> m ()
-blockHashLink blockHash = blockHashLinkAs blockHash (dynText $ T.take 14 . toBase58Text <$> blockHash)
+blockHashLink blockHash = blockHashLinkAs blockHash (dynText $ T.take 14 . blockHashToBase58Text <$> blockHash)
 
 blockHashLinkAs :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t BlockHash -> m a -> m a
-blockHashLinkAs blockHash = blockExplorerLink (toBase58Text <$> blockHash)
+blockHashLinkAs blockHash = blockExplorerLink (blockHashToBase58Text <$> blockHash)
 
 publicKeyHashLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => PublicKeyHash -> m ()
 publicKeyHashLink pkh = blockExplorerLink (pure hash) (text hash)

@@ -508,6 +508,7 @@ instance PersistField ProtoAgnosticVotingPower where
   dbType p (ProtoAgnosticVotingPower x) = dbType p x
 
 instance NeverNull (HashedValue a)
+instance NeverNull BlockHash
 -- instance NeverNull (Json BlockInfo)
 instance NeverNull Cycle
 instance NeverNull Fitness
@@ -538,11 +539,22 @@ instance FromField (HashedValue t) where
 instance ToField (HashedValue t) where
   toField (HashedValue a) = toField $ Binary $ fromShort a
 
+instance FromField BlockHash where
+  fromField f b = BlockHash . HashedValue . toShort . fromBinary <$> fromField f b
 
-instance {-PrimitivePersistField a =>-} PersistField (HashedValue t) where
+instance ToField BlockHash where
+  toField (BlockHash a) = toField $ Binary $ fromShort $ unHashedValue a
+
+instance PersistField (HashedValue t) where
   persistName _ = "HashedValue"
   toPersistValues = primToPersistValue . fromShort . unHashedValue
   fromPersistValues = (fmap.first) (HashedValue . toShort) . primFromPersistValue
+  dbType p _ = dbType p (error "dbType for HashedValue forced" :: ByteString)
+
+instance PersistField BlockHash where
+  persistName _ = "BlockHash"
+  toPersistValues = primToPersistValue . fromShort . unHashedValue . unBlockHash
+  fromPersistValues = (fmap.first) (BlockHash . HashedValue . toShort) . primFromPersistValue
   dbType p _ = dbType p (error "dbType for HashedValue forced" :: ByteString)
 
 deriving instance ToField TezosWord64
@@ -573,6 +585,10 @@ instance PrimitivePersistField Cycle where
 instance PrimitivePersistField (HashedValue t) where
   toPrimitivePersistValue x (HashedValue v) = toPrimitivePersistValue x $ fromShort v
   fromPrimitivePersistValue x v = HashedValue $ toShort $ fromPrimitivePersistValue x v
+
+instance PrimitivePersistField BlockHash where
+  toPrimitivePersistValue x (BlockHash v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = BlockHash $ HashedValue $ toShort $ fromPrimitivePersistValue x v
 
 instance PrimitivePersistField Round where
   toPrimitivePersistValue x (Round v) = toPrimitivePersistValue x v

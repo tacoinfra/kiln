@@ -20,8 +20,8 @@ import Tezos.Types
 import Backend.NodeRPC
   ( MonadNodeQuery (asksNodeDataSource, nqAtomically, nqThrowError)
   , NodeDataSource(..)
-  , NodeQuery (..)
   , NodeQueryT
+  , nodeQuery_Block
 
   -- Protocol constant
   , getProtocolIndex
@@ -33,6 +33,8 @@ import Backend.NodeRPC
 import Backend.STM (readTVar')
 import Common.Schema
 import ExtraPrelude
+
+import Tezos.NodeRPC.Class ((~~))
 
 getLatestProtocolConstants
   :: (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
@@ -49,7 +51,7 @@ levelToCycle
   => (BlockHash, RawLevel) -> RawLevel -> NodeQueryT m Cycle
 levelToCycle (branch, branchLevel) lvl = do
   fmap (view $ blockMetadata . blockMetadata_levelInfo . levelInfo_cycle) $
-    nodeQueryDataSourceSafe $ NodeQuery_BlockPred branch (branchLevel - lvl)
+    nodeQueryDataSourceSafe $ nodeQuery_Block $ branch ~~ (branchLevel - lvl)
 
 lastLevelInCycle
   :: ( MonadNodeQuery (NodeQueryT m)
@@ -58,13 +60,13 @@ lastLevelInCycle
      )
   => BlockHash -> Cycle -> NodeQueryT m RawLevel
 lastLevelInCycle branch c = do
-  block <- nodeQueryDataSourceSafe $ NodeQuery_Block branch
+  block <- nodeQueryDataSourceSafe $ nodeQuery_Block branch
   blocksPerCycle <- fmap (view protoInfo_blocksPerCycle) $ getProtocolConstants $ Left branch
   let levelInfo = block ^. blockMetadata . blockMetadata_levelInfo
       cycleDiff = levelInfo ^. levelInfo_cycle - c
       lastLevelInCurrentCycle = levelInfo ^. levelInfo_level + (blocksPerCycle - levelInfo ^. levelInfo_cyclePosition) - 1
   return $ lastLevelInCurrentCycle + fromIntegral cycleDiff * blocksPerCycle
 
-endOfPreservedCycles :: BranchInfo -> ProtoInfo -> RawLevel
-endOfPreservedCycles blk protoInfo = blk ^. level - blk ^. branchInfo_cyclePosition +
+endOfPreservedCycles :: RawLevel -> RawLevel -> ProtoInfo -> RawLevel
+endOfPreservedCycles lvl cyclePosition protoInfo = lvl - cyclePosition +
   (protoInfo ^. protoInfo_blocksPerCycle) * fromIntegral (protoInfo ^. protoInfo_preservedCycles + 1) - 1

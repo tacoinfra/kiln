@@ -776,7 +776,7 @@ reportBadNodeHeadError nodeId latestHead nodeHead bootstrapped chainStatus = whe
         , ErrorLogBadNodeHead_latestHeadField =. Json . mkVeryBlockLike <$> latestHead
         ]
       when (_errorLog_lastSeen g >= addUTCTime badNodeHeadErrorDelaySeconds (_errorLog_started g) && isNothing (_errorLog_noticeSentAt g)) $ do
-        let (heading, Const message) = badNodeHeadMessage Const (Const . toBase58Text) l
+        let (heading, Const message) = badNodeHeadMessage Const (Const . blockHashToBase58Text) l
             formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
         (getNodeName nodeId formatExtNodeName >>=) $ mapM_ $ \nodeName -> do
           queueAlert (Just logId) $ Alert Unresolved heading $

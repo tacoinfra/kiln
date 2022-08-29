@@ -57,6 +57,7 @@ import qualified Tezos.Genesis.Block as Genesis
 import qualified Tezos.V014.Types as V014
 import Tezos.CrossCompat.Account
 import Tezos.CrossCompat.Block
+import Tezos.NodeRPC.Class ((~~))
 import Tezos.Unsafe (unsafeEstimatePastTimestamp)
 
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
@@ -92,7 +93,8 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
       chainId = _nodeDataSource_chain nds
       headHash :: BlockHash = latestBranchInfo ^. hash
       headLevel = latestBranchInfo ^. level
-      endOfPreservedCyclesLvl = endOfPreservedCycles latestBranchInfo protocolConstants
+      endOfPreservedCyclesLvl =
+        endOfPreservedCycles (latestBranchInfo ^. level) (latestBranchInfo ^. branchInfo_cyclePosition) protocolConstants
 
     --  * compute the list of rights we "want" to have and the list we actually have; their difference is the rights we need
     --  * then actually obtain the rights for all bakers at the oldest cycle we still want.
@@ -153,8 +155,8 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
             maxLvl = Set.findMax lvls
         -- At this point, our use of the earlier queried BakerRightsCycleProgress is "useless",  we've previously made at least that much progress, so it tells us which we should work on,
         (reqBakers, reqEndorsers) <- runNodeQueryT $ liftA2 (,)
-          (nodeQueryIx $ NodeQueryIx_BakingRights headHash lvls)
-          (nodeQueryIx $ NodeQueryIx_EndorsingRights headHash lvls)
+          (nodeQueryIx $ nodeQueryIx_BakingRights headHash lvls)
+          (nodeQueryIx $ nodeQueryIx_EndorsingRights headHash lvls)
         let
           pri1bakers :: [BakingRightsCrossCompat]
           pri1bakers = filter (\br -> (flip Set.member pkhs . view bakingRightsCrossCompat_delegate) br) $ toList reqBakers
@@ -339,8 +341,8 @@ checkMissedOpportunities nds appConfig protoInfo headBlock baker isInternal lvl 
 
   -- Check baking opportunities for the current block and endorsing opprotunities for the
   -- previous block
-  thisBlock <- nodeQueryDataSource $ NodeQuery_BlockPred headHash (headLvl - lvl)
-  bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_BakingRights headHash (Set.singleton lvl)
+  thisBlock <- nodeQueryDataSource $ nodeQuery_Block $ headHash ~~ (headLvl - lvl)
+  bakingRights :: Seq BakingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ nodeQueryIx_BakingRights headHash (Set.singleton lvl)
   bakingAlerts :: [AppSerializable ()]
                <- whenM (any (\br -> ((== _baker_publicKeyHash baker) . view bakingRightsCrossCompat_delegate) br) bakingRights) $ do
     let
@@ -363,7 +365,7 @@ checkMissedOpportunities nds appConfig protoInfo headBlock baker isInternal lvl 
       , needToResetHWMAction
       ]
   -- endorsements *on* this block are *of* the previous block
-  endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ NodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
+  endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ nodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
   endorsingAlerts :: [AppSerializable ()]
                     <- whenM (any (elem (_baker_publicKeyHash baker)) $ view endorsingRightsCrossCompat_delegates <$> endorsers) $ do
       let
@@ -423,14 +425,14 @@ updateDelegateDetails protoInfo headBlock headCycle baker details isInternal = d
   -- it is delegated (`NodeQuery_Account`). Only proceed if there is a delegate,
   -- and cache that.
   delegate <- (^.accountCrossCompat_delegatePkh) <$>
-    nodeQueryDataSource (NodeQuery_Account headHash (Implicit pkh))
+    nodeQueryDataSource (nodeQuery_Account headHash (Implicit pkh))
   selfDelegateActions <- case delegate of
     Nothing -> pure []
     Just delegatePkh -> do
-      di <- nodeQueryDataSource (NodeQuery_DelegateInfo headHash headLvl delegatePkh)
+      di <- nodeQueryDataSource (nodeQuery_DelegateInfo headHash headLvl delegatePkh)
 
       j_pti <- catchError
-          (Just . Json <$> nodeQueryDataSource (NodeQuery_ParticipationInfo headHash headLvl delegatePkh))
+          (Just . Json <$> nodeQueryDataSource (nodeQuery_ParticipationInfo headHash headLvl delegatePkh))
           (\_ -> pure $ _bakerDetails_participationInfo =<< details) -- reuse known data (if any)
 
       let

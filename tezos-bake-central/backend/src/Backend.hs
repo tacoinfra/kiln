@@ -356,7 +356,6 @@ backendImpl cfg serve = do
 
 
     dataSrc <- liftIO $ do
-      latestHead <- newTVarIO Nothing
       latestFinalHead <- newTVarIO Nothing
       ioQueue <- newTQueueIO
       ledgerIOQueue <- newTQueueIO
@@ -364,7 +363,6 @@ backendImpl cfg serve = do
         { _nodeDataSource_chain = chainId
         , _nodeDataSource_httpMgr = httpMgr
         , _nodeDataSource_pool = db
-        , _nodeDataSource_latestHead = latestHead
         , _nodeDataSource_latestFinalHead = latestFinalHead
         , _nodeDataSource_logger = logger
         , _nodeDataSource_ioQueue = ioQueue

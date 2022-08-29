@@ -755,25 +755,21 @@ getBakerAddresses nds bid = do
             }
       in (pkh, (pd, sk, (missedAlertsCount, insufficientFundsAlert))))
 
-  -- TODO: this is rather inelegant: we need something like this; to give you
-  -- your next rights we need to know what level we're at now.  there's not an
-  -- elegant way to do that today, from the postgres level.  a "current level"
-  --
-  -- we need to do this *here* instead of, say, on bakerdetails, because we
-  -- need to show a grey dot when we "cant" show this, in the baker list.
-  -- grab the hashes of the cycle starts, if they exist
-  -- Here we use latest head instead latest final head to notify about upcoming baking opportunities
-  latestHead' <- liftIO $ atomically $ dataSourceHead nds -- TODO: Add schema so this can be DB-based
-  maxProgress_rightsInfo :: Either KilnRpcError (Maybe RawLevel) <- case latestHead' of
+  -- TODO: this is rather inelegant: we need something like this; to give yo  -- grab the hashes of the cycle starts, if they exist
+  (latestFinalHead', latestHeadLevel) <- liftIO $ atomically $ liftA2 (,) (dataSourceFinalHead nds) (dataSourceHeadLevel nds)
+  maxProgress_rightsInfo :: Either KilnRpcError (Maybe RawLevel) <- case latestFinalHead' of
     Nothing -> pure $ Left KilnRpcError_NoKnownHeads
-    Just latestHeadInfo -> flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
-      let protocol = latestHeadInfo ^. protocolHash
+    Just latestFinalHeadInfo -> flip runReaderT nds $ runExceptT $ tryNodeQueryT $ do
+      let protocol = latestFinalHeadInfo ^. protocolHash
       mbProtoInfo :: Maybe ProtoInfo <- fmap (fmap (view protocolIndex_constants) . headMay) $ select
         ( ProtocolIndex_hashField ==. protocol &&.
           ProtocolIndex_chainIdField ==. chainId)
       case mbProtoInfo of
         Nothing -> throwError $ KilnRpcError_UnknownProtocol protocol
-        Just protoInfo -> pure $ endOfPreservedCycles latestHeadInfo protoInfo
+        Just protoInfo -> pure $ endOfPreservedCycles (latestFinalHeadInfo ^. level + 2)
+          -- Note that using @mod@ below is safe because all computations are done within the @protoInfo@
+          -- known for the latest final head
+          ((latestFinalHeadInfo ^. branchInfo_cyclePosition + 2) `mod` (protoInfo ^. protoInfo_blocksPerCycle)) protoInfo
 
   let
     maxProgress = maxProgress_rightsInfo ^? _Right . _Just
@@ -782,7 +778,7 @@ getBakerAddresses nds bid = do
     bakers = Map.union (fmap (\(b, li, c) -> (Right (BakerInternalData li b), c)) internalBakerData) $
       fmap (\(a, c) -> (Left (BakerData a), (c, False))) bakersAlertCount
 
-  nextBakes <- case latestHead' ^? _Just . level of
+  nextBakes <- case latestHeadLevel of
     Nothing -> pure Map.empty
     Just headLevel -> fmap (Map.fromList . map (\(pkh, pr, mbLvl) -> (pkh, (pr, mbLvl))))
       [queryQ|

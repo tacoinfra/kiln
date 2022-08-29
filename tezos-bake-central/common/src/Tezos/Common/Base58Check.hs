@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -41,7 +42,12 @@ import qualified Tezos.Common.Binary as B
 import Tezos.Common.ShortByteString (ShortByteString, fromShort, toShort)
 
 -- see ~/tezos/src/lib_crypto/base58.ml
-type BlockHash = HashedValue 'HashType_BlockHash
+
+-- @BlockHash@ is a newtype instead of type alias because in some places
+-- we want to define instances only for @BlockHash@ instead of arbitrary @HashedValue@
+newtype BlockHash = BlockHash { unBlockHash :: HashedValue 'HashType_BlockHash }
+  deriving newtype (Show, Read, Eq, Ord, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+  deriving NFData
 type OperationHash = HashedValue 'HashType_OperationHash
 type OperationListHash = HashedValue 'HashType_OperationListHash
 type OperationListListHash = HashedValue 'HashType_OperationListListHash
@@ -147,6 +153,8 @@ toBase58 (HashedValue x) = encodeBase58 bitcoinAlphabet $ x' <> checksum x'
 toBase58Text :: forall t. IsBase58Hash t => HashedValue t -> Text
 toBase58Text = T.decodeUtf8 . toBase58
 
+blockHashToBase58Text :: BlockHash -> Text
+blockHashToBase58Text = toBase58Text . unBlockHash
 
 data HashBase58Error
   = HashBase58Error_DecodeError
