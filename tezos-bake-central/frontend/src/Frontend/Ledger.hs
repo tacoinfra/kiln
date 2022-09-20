@@ -34,6 +34,7 @@ import qualified Data.Map as Map
 import qualified Data.Map.Monoidal as MMap
 import Data.Some (Some(..), withSome)
 import qualified Data.Text as T
+import Data.Type.Equality ((:~:)(..))
 import GHCJS.DOM.Types (MonadJSM)
 import Obelisk.Generated.Static (static)
 import Reflex.Dom.Core
@@ -133,7 +134,7 @@ ledgerSetupSteps = mdo
       elDynAttr "li" attrs $ do
         text $ withSome step toLSSText
         when (step == Some LSS_ConnectLedger) $ dyn_ $ ffor ledgerIdentifier $ traverse_ $ \li -> divClass "extra" $ do
-          elAttr "img" ("src" =: static @"images/ledger.svg") blank
+          elAttr "img" ("src" =: $(static "images/ledger.svg")) blank
           text $ unLedgerIdentifier li
         when (step == Some LSS_SelectAddress) $ divClass "extra monospaced-text" $ do
           dynText $ ffor currentStepDyn $ maybe "" toPublicKeyHashText . \case
@@ -295,7 +296,7 @@ connectLedger
   :: MonadAppWidget js t m
   => Dynamic t (Maybe ConnectedLedger) -> m (Event t LedgerIdentifier)
 connectLedger connectedLedger = divClass "central" $ do
-  elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
+  elAttr "img" ("src" =: $(static "images/ledger.svg") <> "class" =: "ledger") blank
   elClass "h5" "ui header" $ do
     divClass "ui active small inline blue loader" blank
     text "Looking for Ledger Device..."

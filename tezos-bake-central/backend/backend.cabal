@@ -78,8 +78,6 @@ library
     , obelisk-route
     , postgresql-simple
     , process
-    , random-extras
-    , random-fu
     , reflex
     , reflex-dom-core
     , regex-tdfa
@@ -96,7 +94,6 @@ library
     , semigroupoids
     , shelly
     , snap-core
-    , snap-loader-static
     , snap-server
     , split
     , streaming-commons

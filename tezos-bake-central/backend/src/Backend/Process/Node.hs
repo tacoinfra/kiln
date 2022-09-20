@@ -20,7 +20,7 @@ import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Builder as Builder
-import Data.Dependent.Map (DSum (..))
+import Data.Dependent.Sum (DSum (..))
 import qualified Data.HashMap.Lazy as HashMap
 import Data.Pool (Pool)
 import Data.List (isInfixOf)

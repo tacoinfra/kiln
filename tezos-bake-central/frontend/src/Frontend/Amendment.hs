@@ -11,6 +11,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -140,7 +141,7 @@ amendmentPopup dAmendment dAmendments dProtoInfo = divClass "amendment-popup" $ 
             LT -> (cyclesPerPeriod i + 1, cyclesPerPeriod i)
             EQ -> (currentCyclePosition a i, cyclesPerPeriod i)
             GT -> (0, cyclesPerPeriod i)
-          elAttr "img" ("class" =: "arrow" <> "src" =: static @"images/angle-right.svg") blank
+          elAttr "img" ("class" =: "arrow" <> "src" =: $(static "images/angle-right.svg")) blank
         pure $ p <$ gate (current enabled) (domEvent Click e)
       divClass "estimated-date" $ text "* Estimated date."
       pure e
@@ -349,7 +350,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
               in textWithCommas periodStartCycle <> " - " <> textWithCommas periodEndCycle
       divClass "detail" $ text detail
       divClass "vote-cast-as" $ do
-        elAttr "img" ("class" =: "kiln-icon" <> "src" =: static @"images/logo.svg") blank
+        elAttr "img" ("class" =: "kiln-icon" <> "src" =: $(static "images/logo.svg")) blank
         divClass "item" $ do
           divClass "title" $ text "Votes will be cast as your Kiln Baker."
           divClass "detail monospaced-text" $ text $ toPublicKeyHashText bakerPkh
@@ -562,7 +563,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             then "icon-check blue"
             else "icon-x-thick red"
       divClass "" $ do
-        elAttr "img" ("src" =: static @"images/ledger.svg") blank
+        elAttr "img" ("src" =: $(static "images/ledger.svg")) blank
         dyn_ $ ffor iconType $ mapM $ \it ->
           elClass "span" "mark" $ icon $ "small circular " <> it
       divClass "centered-grey" $ text $ unLedgerIdentifier $ _secretKey_ledgerIdentifier sk
