@@ -28,6 +28,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
 import Data.Dependent.Map (DSum (..))
+import Data.Either (fromRight)
 import qualified Data.Map as Map
 import Data.Pool (Pool)
 import qualified Data.Set as Set
@@ -50,16 +51,13 @@ import Obelisk.Frontend
 import Obelisk.Route (R)
 import Reflex.Dom.Core (DomBuilder)
 import qualified Rhyolite.Backend.App as RhyoliteApp
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (RunDb, runDb, selectSingle)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, RunDb, runDb, selectSingle)
 import Rhyolite.Backend.DB.Serializable
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
-import Rhyolite.Backend.Logging (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender (..),
-                                 RhyoliteLogLevel (..), runLoggingEnv, withLoggingMinLevel)
-#if defined(SUPPORT_SYSTEMD_JOURNAL)
-import Rhyolite.Backend.Logging (RhyoliteLogAppenderJournald (..))
-#endif
+import Rhyolite.Backend.Logging
+  (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender (..), RhyoliteLogAppenderJournald (..),
+  RhyoliteLogLevel (..), runLoggingEnv, withLoggingMinLevel)
 
 import qualified Rhyolite.Backend.WebSocket as RhyoliteWs
 import qualified Snap.Core as Snap
@@ -99,6 +97,7 @@ import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
 import Backend.Workers.TezosClient (computeChainId, ledgerConnectivityCheckWorker)
 import Backend.Workers.TezosRelease
+import Common.Config (combineConfigs)
 import qualified Common.Config as Config
 import Common.Distribution (Distribution (..), distributionMethod)
 import Common.HeadTag (headTag)
@@ -160,17 +159,16 @@ backendImpl cfg serve = do
     !emailFromAddress = case senderAddress of
       Nothing -> Nothing
       Just senderAddr -> Just $ Address (Just "Tezos Bake Monitor") senderAddr
-
   !(nodeConfigFile :: Maybe Aeson.Value) <- liftA2 (<|>)
     (maybe (pure Nothing) (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8)) $ _opts_nodeConfigFile cfg)
     (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.nodeConfigFile)
 
-  !(configChain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ liftA2 (<|>)
-    (pure $ _opts_chain cfg)
+  !(configChain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ combineConfigs
+    (_opts_chain cfg)
     (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
 
-  !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ liftA2 (<|>)
-    (pure $ _opts_checkForUpgrade cfg)
+  !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ combineConfigs
+    (_opts_checkForUpgrade cfg)
     (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkForUpgrade)
 
   !(pgConnStringFile :: Maybe FilePath) <- do
@@ -181,51 +179,52 @@ backendImpl cfg serve = do
       (Just _, Nothing) -> pure $ Just fileName
       _ -> pure Nothing
 
-  !(networkGitLabProjectId :: Text) <- fmap (fromMaybe Config.networkGitLabProjectIdDefault) $ liftA2 (<|>)
-    (pure $ _opts_networkGitLabProjectId cfg)
+  !(networkGitLabProjectId :: Text) <- fmap (fromMaybe Config.networkGitLabProjectIdDefault) $ combineConfigs
+    (_opts_networkGitLabProjectId cfg)
     (getConfigFromFile Just $ configPath Config.networkGitLabProjectId)
 
-  !(tezosReleaseTag :: Maybe Text) <- liftA2 (<|>) (pure $ _opts_tezosReleaseTag cfg)
+  !(tezosReleaseTag :: Maybe Text) <- combineConfigs
+    (_opts_tezosReleaseTag cfg)
     (getConfigFromFile Just $ configPath Config.tezosReleaseTag)
 
-  !(kilnNodeRpcPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeRpcPort) $ liftA2 (<|>)
-    (pure $ _opts_kilnNodeRpcPort cfg)
+  !(kilnNodeRpcPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeRpcPort) $ combineConfigs
+    (_opts_kilnNodeRpcPort cfg)
     (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodeRpcPort)
 
-  !(kilnNodeNetPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeNetPort) $ liftA2 (<|>)
-    (pure $ _opts_kilnNodeNetPort cfg)
+  !(kilnNodeNetPort :: Port) <- fmap (fromMaybe Config.defaultKilnNodeNetPort) $ combineConfigs
+    (_opts_kilnNodeNetPort cfg)
     (getConfigFromFile (Just . Config.parsePortUnsafe) $ configPath Config.kilnNodeNetPort)
 
-  !(kilnDataDir :: FilePath) <- fmap (fromMaybe Config.defaultKilnDataDir) $ liftA2 (<|>)
-    (pure $ _opts_kilnDataDir cfg)
+  !(kilnDataDir :: FilePath) <- fmap (fromMaybe Config.defaultKilnDataDir) $ combineConfigs
+    (_opts_kilnDataDir cfg)
     (getConfigFromFile (Just . T.unpack) $ configPath Config.kilnDataDir)
 
-  !(kilnNodeCustomArgs :: Maybe Text) <- liftA2 (<|>)
-    (pure $ _opts_kilnNodeCustomArgs cfg)
+  !(kilnNodeCustomArgs :: Maybe Text) <- combineConfigs
+    (_opts_kilnNodeCustomArgs cfg)
     (getConfigFromFile Just $ configPath Config.kilnNodeCustomArgs)
 
-  !(kilnBakerCustomArgs :: Maybe Text) <- liftA2 (<|>)
-    (pure $ _opts_kilnBakerCustomArgs cfg)
+  !(kilnBakerCustomArgs :: Maybe Text) <- combineConfigs
+    (_opts_kilnBakerCustomArgs cfg)
     (getConfigFromFile Just $ configPath Config.kilnBakerCustomArgs)
 
-  !(binaryPaths :: Maybe BinaryPaths) <- liftA2 (<|>)
-    (pure $ (Aeson.decodeStrict' . T.encodeUtf8) =<< _opts_binaryPaths cfg)
+  !(binaryPaths :: Maybe BinaryPaths) <- combineConfigs
+    (Aeson.decodeStrict' . T.encodeUtf8 =<< _opts_binaryPaths cfg)
     (getJSONConfigFromFile $ configPath Config.binaryPaths)
 
-  (rightsHistoryWindow :: Int) <- fmap (fromMaybe Config.defaultRightsHistoryWindow) $ liftA2 (<|>)
-    (pure $ _opts_rightsHistoryWindow cfg)
+  (rightsHistoryWindow :: Int) <- fmap (fromMaybe Config.defaultRightsHistoryWindow) $ combineConfigs
+    (_opts_rightsHistoryWindow cfg)
     (getConfigFromFile (Just . read . T.unpack) $ configPath Config.rightsHistoryWindow)
 
-  !(nodes :: Maybe (Map.Map URI (Maybe Text))) <- liftA2 (<|>)
-    (pure $ getOption $ _opts_nodes cfg)
+  !(nodes :: Maybe (Map.Map URI (Maybe Text))) <- combineConfigs
+    (getOption $ _opts_nodes cfg)
     (getConfigFromFile (Just . Config.parseNodesUnsafe) $ configPath Config.nodes)
 
-  !(bakers :: Maybe (Map.Map PublicKeyHash (Maybe Text))) <- liftA2 (<|>)
-    (pure $ getOption $ _opts_bakers cfg)
+  !(bakers :: Maybe (Map.Map PublicKeyHash (Maybe Text))) <- combineConfigs
+    (getOption $ _opts_bakers cfg)
     (getConfigFromFile (Just . Config.parseBakersUnsafe) $ configPath Config.bakers)
 
-  !(ledgerCheckDelay :: NominalDiffTime) <- fmap (fromMaybe Config.defaultLedgerCheckDelay) $ liftA2 (<|>)
-    (pure $ _opts_ledgerCheckDelaySeconds cfg)
+  !(ledgerCheckDelay :: NominalDiffTime) <- fmap (fromMaybe Config.defaultLedgerCheckDelay) $ combineConfigs
+    (_opts_ledgerCheckDelaySeconds cfg)
     (getConfigFromFile (Just . Config.parseSecondsUnsafe) $ configPath Config.ledgerCheckDelay)
 
   let computeChainId' bins json =
@@ -383,7 +382,7 @@ backendImpl cfg serve = do
       let
         frontendConfig = Config.FrontendConfig
           { Config._frontendConfig_chain = fromMaybe chain customChainId
-          , Config._frontendConfig_chainId = maybe chainId (either (const $ error "impossible") id) customChainId
+          , Config._frontendConfig_chainId = maybe chainId (fromRight (error "impossible")) customChainId
           , Config._frontendConfig_checkForUpgrade = checkForUpgrade
           , Config._frontendConfig_appVersion = version
           , Config._frontendConfig_usingNodeOption = join $ (Config.UsingCustomNode <$> nodeConfigFile) <$ customChainId
@@ -651,8 +650,8 @@ backendMain k = do
       print errs
       let cfg = fold opts'
 
-      !(route :: Maybe URI) <- liftA2 (<|>)
-        (pure $ _opts_route cfg)
+      !(route :: Maybe URI) <- combineConfigs
+        (_opts_route cfg)
         (getConfigFromFile (Just . Config.parseRootURIUnsafe) $ configPath Config.route)
 
       let

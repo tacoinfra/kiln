@@ -16,12 +16,10 @@ module Backend.Upgrade where
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 import Control.Error hiding (err, isRight)
-import Control.Exception.Safe (try)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
 import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logError, logInfo)
 import Data.Aeson.Lens
-import qualified Data.ByteString.Lazy as Bz
 import Data.Pool (Pool)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime, UTCTime)
@@ -31,8 +29,7 @@ import Database.Id.Class
 import Database.Id.Groundhog
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (getTime, runDb)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime, runDb)
 import Rhyolite.Backend.DB.PsqlSimple
 import Rhyolite.Backend.Logging (LoggingEnv, runLoggingEnv)
 
@@ -40,6 +37,7 @@ import Backend.Alerts
 import Backend.Alerts.Common
 import Backend.Config (AppConfig(..))
 import Backend.Common
+import Backend.Http (doRequestLBS)
 import Backend.Schema
 import Backend.Version (parseVersion)
 import Common.Schema
@@ -168,8 +166,7 @@ getTezosReleaseCommit :: (MonadIO m) => Http.Manager -> Text -> Maybe Text -> m 
 getTezosReleaseCommit httpMgr projectId mrelease = do
   let url = gitlabApiBaseUrl <> "/projects/" <> projectId <> "/releases"
       getCommit = (^? key "commit" . key "id" . _String)
-  resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $
-    Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack url))
+  resp' <- doRequestLBS httpMgr (T.unpack url)
   return $ case resp' of
     Left ex -> Left $ T.pack $ show ex
     Right body -> case getRelease mrelease getCommit $ Http.getResponseBody body of
@@ -187,8 +184,7 @@ releaseGitLab = gitlabApiBaseUrl <> "/projects/19392551/releases"
 
 getUpstreamVersion :: (MonadError UpgradeCheckError m, MonadIO m) => Http.Manager -> m V.Version
 getUpstreamVersion httpMgr = do
-  resp' :: Either Http.HttpException (Http.Response Bz.ByteString) <- liftIO $ try $
-    Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack releaseGitLab))
+  resp' <- doRequestLBS httpMgr (T.unpack releaseGitLab)
   case resp' of
     Left _ -> throwError UpgradeCheckError_UpstreamUnreachable
     Right resp -> case Http.getResponseStatusCode resp of

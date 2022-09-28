@@ -44,8 +44,7 @@ import Database.Groundhog.Postgresql
 import Fmt (pretty)
 import GHC.IO.Handle.FD (handleToFd)
 import Named
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)

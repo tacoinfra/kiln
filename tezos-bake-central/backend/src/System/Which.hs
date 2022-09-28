@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell, PackageImports #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskellQuotes, PackageImports #-}
 module System.Which where
 
 import qualified Shelly as Sh

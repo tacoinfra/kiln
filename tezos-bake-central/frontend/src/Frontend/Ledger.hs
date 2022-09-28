@@ -40,8 +40,7 @@ import Reflex.Dom.Core
 import qualified Reflex.Dom.SemanticUI as SemUi
 import qualified Reflex.Dom.Form.Validators as Validator
 import qualified Reflex.Dom.TextField as Txt
-import Reflex.Dom.Form.Widgets (formItem')
-import Reflex.Dom.Form.Widgets (validatedInput)
+import Reflex.Dom.Form.Widgets (formItem', validatedInput)
 import Rhyolite.Api (public)
 import Text.Read (readMaybe)
 import Tezos.Types
@@ -111,7 +110,7 @@ ledgerSetupSteps
   => m (Event t (Either ClientError ()))
 ledgerSetupSteps = mdo
   connectedLedger <- watchConnectedLedgerForced
-  ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >>= \_ -> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
+  ledgerIdentifier <- holdUniqDyn $ (>>= \cl -> _connectedLedger_bakingAppVersion cl >> _connectedLedger_ledgerIdentifier cl) <$> connectedLedger
   let disconnect = ffilter isNothing $ updated ledgerIdentifier
   divClass "progress" $ do
     elClass "h4" "ui header" $ do
@@ -150,7 +149,7 @@ ledgerSetupSteps = mdo
       LSS_SelectAddress :=> Identity l -> (fmap . fmap) (Right . (LSS_SetLiquidityBakingToggle ==>)) (selectAddress l)
       LSS_SetLiquidityBakingToggle :=> Identity sk -> (fmap . fmap) (Right . (LSS_ImportAddress ==>)) (setLiquidityBakingToggle sk False)
       LSS_ImportAddress :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_AuthorizeLedger ==> sk) (importSecretKey sk)
-      LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (bimap Left id) (authorizeLedger sk)
+      LSS_AuthorizeLedger :=> Identity sk -> (fmap . fmap) (first Left) (authorizeLedger sk)
       LSS_RegisterDelegate :=> Identity sk -> (fmap . fmap) (bimap Left $ const $ LSS_Complete ==> sk) (registerDelegate sk)
       LSS_Complete :=> Identity sk -> (fmap . fmap) (Left . Right) (setupComplete sk)
   let (quit :: Event t (Either ClientError ()), updateStep) = fanEither quitOrUpdate
@@ -492,9 +491,7 @@ isValidBIP32 t
       "'" -> Right t -- return the original
       t2 -> parseMiddle t2 >>= (\t3 -> if n > 1 then go (n - 1) t3 else errFormat)
     errFormat = Left "Incorrect format"
-    parseMiddle t1 = case T.stripPrefix "'/" t1 of
-      Nothing -> errFormat
-      Just t2 -> Right t2
+    parseMiddle t1 = maybe errFormat Right (T.stripPrefix "'/" t1)
     maxVal = 2 ^ (31 :: Int) - 1 :: Int
     parseDigit t1 = case T.takeWhile isDigit t1 of
       "" -> errFormat

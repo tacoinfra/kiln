@@ -430,7 +430,7 @@ runClientCommand' nodeRpcURI clientDataDir maybePaths mTimeout args handleError 
   le <- askLoggerIO
   let procSpec = Process.proc (clientPath maybePaths) (["--endpoint", T.unpack $ render nodeRpcURI, "--base-dir", clientDataDir] ++ args)
       runProc = runLoggingEnv (LoggingEnv le) $ readCreateProcessWithExitCodeWithLogging procSpec ""
-      withTimeout run handle = flip (maybe ((liftIO run) >>= handle)) mTimeout $ \(t, err) -> (liftIO $ timeout' t run) >>= \case
+      withTimeout run handle = flip (maybe (liftIO run >>= handle)) mTimeout $ \(t, err) -> liftIO (timeout' t run) >>= \case
         Just v -> handle v
         Nothing -> do
           $(logInfo) "runClientCommand Timedout"
@@ -530,7 +530,7 @@ registerKeyAsDelegate db nds sk appConfig = LedgerQuery LedgerQueryType_ImportKe
   mla <- withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
   for_ mla $ \la -> do
     let mbPkh = _ledgerAccount_publicKeyHash la
-    isReg <- (fromMaybe False <$>) $ traverse (checkIfRegistered db nds) $ mbPkh
+    isReg <- (fromMaybe False <$>) $ traverse (checkIfRegistered db nds) mbPkh
     result <- case isReg of
       True -> pure RegisterStep_AlreadyRegistered
       False -> do
@@ -542,7 +542,7 @@ registerKeyAsDelegate db nds sk appConfig = LedgerQuery LedgerQueryType_ImportKe
               { Process.std_err = Process.UseHandle writePipe
               , Process.std_out = Process.UseHandle writePipe
               }
-        $(logInfoSH) $ ("registerKeyAsDelegate: process: " :: Text, p)
+        $(logInfoSH) ("registerKeyAsDelegate: process: " :: Text, p)
         result <- liftIO $ Process.withCreateProcess p $ \_ _ _ ph -> runLoggingEnv (_nodeDataSource_logger nds) $ do
           let notifyStep rs = runDb (Identity db) $ notify NotifyTag_Prompting (sk, Just $ mempty { _setupState_register = Just $ First rs })
               go mrs' = liftIO (hIsEOF readPipe) >>= \case
@@ -654,7 +654,7 @@ submitProposals appConfig proposals = do
     | "Ledger Transport level error:" : _ <- errors -> Left VoteStep_Disconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left VoteStep_Disconnected
     | otherwise -> Left $ VoteStep_Failed $ T.unlines errors
-  pure $ either id (const VoteStep_Done) e
+  pure $ fromLeft VoteStep_Done e
 
 submitBallot :: (MonadLoggerIO m) => AppConfig -> ProtocolHash -> Ballot -> m VoteStep
 submitBallot appConfig proposal ballot = do
@@ -666,7 +666,7 @@ submitBallot appConfig proposal ballot = do
     | "Ledger Transport level error:" : _ <- errors -> Left VoteStep_Disconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left VoteStep_Disconnected
     | otherwise -> Left $ VoteStep_Failed $ T.unlines errors
-  pure $ either id (const VoteStep_Done) e
+  pure $ fromLeft VoteStep_Done e
   where
     ballotText = \case
       Ballot_Yay -> "yay"

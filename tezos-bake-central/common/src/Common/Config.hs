@@ -6,6 +6,7 @@
 
 module Common.Config where
 
+import Control.Applicative (Alternative (..))
 import Control.Lens.TH (makeLenses, makePrisms)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH (deriveJSON)
@@ -221,6 +222,9 @@ class HasFrontendConfig r where
 
 instance HasFrontendConfig FrontendConfig where
   frontendConfig = id
+
+combineConfigs :: (Alternative f, Functor g) => f a -> g (f a) -> g (f a)
+combineConfigs cfgFromOpts cfgFromFile = fmap ((<|>) cfgFromOpts) cfgFromFile
 
 makePrisms ''UsingNodeOption
 makeLenses ''FrontendConfig

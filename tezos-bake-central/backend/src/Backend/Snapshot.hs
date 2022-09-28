@@ -309,7 +309,7 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
                           parse =<< listToMaybe matches
 
                       mBlkHash = BlockHash <$> extractFromSnapshotInfo infoStdout blockHashRegex
-                        ((either (const Nothing) Just) . fromBase58 . fromString)
+                        (either (const Nothing) Just . fromBase58 . fromString)
                       mLevel = extractFromSnapshotInfo infoStdout levelRegex (fmap fromIntegral . readMaybe @Int32)
                     whenJust mBlkHash $ \blkHash -> void $ do
                       mBlk <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ do

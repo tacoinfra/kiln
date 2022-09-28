@@ -210,14 +210,14 @@ reportLedgerDisconnection :: (MonadLoggerIO m) => Pool Postgresql -> AppConfig -
 reportLedgerDisconnection db appConfig isWrongApp = withDbAndConfig db appConfig $ do
   bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
   for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data bdi) $ \pkh ->
       reportBakerLedgerDisconnected pkh isWrongApp
 
 clearLedgerDisconnection :: (MonadLoggerIO m) => Pool Postgresql -> AppConfig -> m ()
 clearLedgerDisconnection db appConfig = withDbAndConfig db appConfig $ do
   bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
   for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data bdi) $ \pkh ->
       clearBakerLedgerDisconnected pkh
 
 reportBakerLedgerDisconnected
@@ -278,14 +278,14 @@ reportLedgerNeedToResetHWM
 reportLedgerNeedToResetHWM db appConfig headLevel hwm = withDbAndConfig db appConfig $ do
   bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
   for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh ->
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data bdi) $ \pkh ->
       reportBakerNeedToResetHWM pkh headLevel hwm
 
 clearLedgerNeedToResetHWM :: (MonadLoggerIO m) => Pool Postgresql -> AppConfig -> m ()
 clearLedgerNeedToResetHWM db appConfig = withDbAndConfig db appConfig $ do
   bdis :: [BakerDaemonInternal] <- select (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
   for_ bdis $ \bdi -> do
-    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data $ bdi) $ \pkh -> do
+    for_ (_bakerDaemonInternalData_publicKeyHash $ _deletableRow_data $ _bakerDaemonInternal_data bdi) $ \pkh -> do
       -- We need to clear cached high-watermark value when alert has become resolved.
       update [LedgerAccount_highWatermarkField =. (Nothing :: Maybe RawLevel)] (LedgerAccount_publicKeyHashField ==. Just pkh)
       clearBakerNeedToResetHWM pkh

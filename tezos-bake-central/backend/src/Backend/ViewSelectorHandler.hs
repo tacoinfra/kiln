@@ -20,14 +20,11 @@ module Backend.ViewSelectorHandler where
 import Control.Concurrent.STM (atomically)
 import Control.Monad.Except (runExceptT)
 import Control.Monad.Logger
-import Control.Exception.Safe (try, MonadMask)
-import Control.Monad.Trans.State (StateT(..))
-import Control.Monad.Trans.State (evalStateT)
-import Control.Monad.Trans.State (modify)
+import Control.Exception.Safe (MonadMask)
+import Control.Monad.Trans.State (StateT(..), evalStateT, modify)
 import Data.Aeson (decode')
 import Data.Align (alignWith)
 import Data.Bifunctor (bimap, first)
-import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Functor.Identity (Identity (..))
@@ -51,34 +48,19 @@ import Data.Time (UTCTime)
 import Data.These (these)
 import Data.Validation hiding (ensure)
 import Data.Universe (universe)
-import Database.Groundhog.Core (ConstructorMarker)
-import Database.Groundhog.Core (EntityConstr)
-import Database.Groundhog.Core (FieldChain)
-import Database.Groundhog.Core (PersistEntity)
-import Database.Groundhog.Core (PersistValue)
-import Database.Groundhog.Core (Utf8(..))
-import Database.Groundhog.Core (constrParams)
-import Database.Groundhog.Core (constructors)
-import Database.Groundhog.Core (entityConstrNum)
-import Database.Groundhog.Core (entityDef)
-import Database.Groundhog.Core (fieldChain)
-import Database.Groundhog.Core (fromEntityPersistValues)
-import Database.Groundhog.Core (fromPersistValues)
-import Database.Groundhog.Core (fromUtf8)
-import Database.Groundhog.Core (toPrimitivePersistValue)
+import Database.Groundhog.Core
+  (ConstructorMarker, EntityConstr, FieldChain, PersistEntity, PersistValue, Utf8(..),
+  constrParams, constructors, entityConstrNum, entityDef, fieldChain, fromEntityPersistValues,
+  fromPersistValues, fromUtf8, fromUtf8, toPrimitivePersistValue)
 import Database.Groundhog.Generic (mapAllRows)
-import Database.Groundhog.Generic.Sql (RenderConfig(..))
-import Database.Groundhog.Generic.Sql (flatten)
-import Database.Groundhog.Generic.Sql (renderChain)
-import Database.Groundhog.Generic.Sql (tableName)
+import Database.Groundhog.Generic.Sql (RenderConfig(..), flatten, renderChain, tableName)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import qualified Database.PostgreSQL.Simple as Pg
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.App (QueryHandler (..))
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
@@ -87,6 +69,7 @@ import Text.URI (render, URI)
 
 import Tezos.Types
 
+import Backend.Http (doRequestLBS)
 import Backend.IndexQueries (endOfPreservedCycles)
 import Backend.NodeRPC
 import Backend.Schema
@@ -594,6 +577,7 @@ getBakerAlert chainId = do
   pure $ mapMaybe (\(k, v) -> fmap (k,) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList bakerErrors
 
 
+{-# ANN getAlertCount ("HLint: ignore Use bimap" :: String) #-}
 getAlertCount
   :: forall m.
   ( MonadLogger m
@@ -838,22 +822,15 @@ getNodeVersions httpMgr internalUri = getNodeAddresses >=> (mapM . mapM) retriev
 versionWorker :: MonadIO m => Http.Manager -> String -> m (Maybe TezosVersion)
 versionWorker httpMgr baseUrl = do
     let versionUrl = ensure baseUrl "version"
-
-    versionResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
-        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest versionUrl)
-
+    versionResp' <- doRequestLBS httpMgr versionUrl
     either (const doCommit) (maybe doCommit return . decode' . Http.getResponseBody) versionResp'
-
   where
     ensure :: String -> String -> String
     ensure base path = dropWhileEnd (== '/') base <> "/" <> path
 
     doCommit = do
         let commitUrl = ensure baseUrl "monitor/commit_hash"
-
-        commitResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
-            liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest commitUrl)
-
+        commitResp' <- doRequestLBS httpMgr commitUrl
         return $ either (const Nothing) (decode' . Http.getResponseBody) commitResp'
 
 getNodeAddresses
