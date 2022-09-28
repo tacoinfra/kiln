@@ -17,7 +17,7 @@ hlint:
   # There is so much hlint suggestions, one day we'll handle them all
   allow_failure: true
   script:
-    - nix run nixpkgs.haskellPackages.hlint -c ./scripts/hlint.sh
+    - nix-shell -p haskellPackages.hlint --run ./scripts/hlint.sh
 
 check-trailing-whitespace:
   stage: validate
