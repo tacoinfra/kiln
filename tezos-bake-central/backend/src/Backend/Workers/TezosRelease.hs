@@ -9,11 +9,9 @@ module Backend.Workers.TezosRelease where
 import Control.Lens
 import Control.Monad.IO.Class
 import Control.Monad.Logger (logDebug)
-import qualified Data.ByteString.Lazy as LB
 import Data.Foldable
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)
-import Control.Exception.Safe (try)
 import Data.Text (Text)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.DB (runDb)
@@ -23,6 +21,7 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 
 import Backend.Common
+import Backend.Http (doRequestLBS)
 import Backend.NodeRPC
 
 import Backend.Schema
@@ -52,8 +51,7 @@ getLatestTezosRelease
   -> Maybe Text
   -> m (Maybe MajorMinorVersion)
 getLatestTezosRelease httpMgr projId mrelease = do
-    releaseResp :: Either Http.HttpException (Http.Response LB.ByteString) <-
-        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest (T.unpack releaseLink))
+    releaseResp <- doRequestLBS httpMgr (T.unpack releaseLink)
     return $ case releaseResp of
          Left _ -> Nothing
          Right body -> getRelease mrelease getReleaseTag (Http.getResponseBody body)

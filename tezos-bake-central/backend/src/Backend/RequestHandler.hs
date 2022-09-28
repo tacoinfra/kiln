@@ -38,8 +38,7 @@ import Database.Id.Groundhog
 import Network.Mail.Mime (Address (..), simpleMail')
 import Rhyolite.Api (ApiRequest (..))
 import Rhyolite.Backend.App (RequestHandler (..))
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (getTime, project1, runDb, selectMap', selectSingle)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime, project1, runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.EmailWorker (queueEmail)

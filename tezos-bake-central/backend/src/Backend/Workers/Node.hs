@@ -19,7 +19,6 @@ module Backend.Workers.Node where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
 import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
-import Control.Exception.Safe (try)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
@@ -28,7 +27,7 @@ import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
 import Data.Align
-import qualified Data.ByteString.Lazy as LB
+import Data.Either (fromRight)
 import Data.Foldable (foldl', length)
 import Data.Functor.Apply
 import Data.List (dropWhileEnd)
@@ -52,8 +51,7 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 -- import qualified Network.HTTP.Types.Method as Http (methodGet)
 import Reflex.Class (fmapMaybe)
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (getTime, runDb, selectMap, project1)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime, runDb, selectMap, project1)
 import Rhyolite.Backend.DB.PsqlSimple (In(..), sql, returning, queryQ)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -75,6 +73,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
 import Backend.Common (AppSerializable, threadDelay', unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.IndexQueries
+import Backend.Http (doRequestLBS)
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.Supervisor (withTermination)
@@ -179,22 +178,15 @@ nodeVersionMonitor nds nodeAddr nodeId = do
 versionWorker :: MonadIO m => Http.Manager -> String -> m (Maybe TezosVersion)
 versionWorker httpMgr baseUrl = do
     let versionUrl = ensure baseUrl "version"
-
-    versionResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
-        liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest versionUrl)
-
+    versionResp' <- doRequestLBS httpMgr versionUrl
     either (const doCommit) (maybe doCommit return . decode' . Http.getResponseBody) versionResp'
-
   where
     ensure :: String -> String -> String
     ensure base path = dropWhileEnd (== '/') base <> "/" <> path
 
     doCommit = do
         let commitUrl = ensure baseUrl "monitor/commit_hash"
-
-        commitResp' :: Either Http.HttpException (Http.Response LB.ByteString) <-
-            liftIO $ try $ Http.httpLBS =<< (Http.setRequestManager httpMgr <$> Http.parseRequest commitUrl)
-
+        commitResp' <- doRequestLBS httpMgr commitUrl
         return $ either (const Nothing) (decode' . Http.getResponseBody) commitResp'
 
 updateNetworkStats
@@ -499,6 +491,7 @@ data ProposalVoteState
   | ProposalVotingState_OutdatedVote -- some proposals in the current block were not visible at the time of last vote
   deriving (Eq, Ord, Show, Enum, Bounded)
 
+{-# ANN amendmentProcessWorker ("HLint: ignore Redundant fmap" :: String) #-}
 -- Monitors the amendment process
 amendmentProcessWorker
   :: AppConfig
@@ -680,7 +673,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
     getBlockLevelAncestor lvl hash' = nodeQueryDataSource $ nodeQuery_Block $ hash' ~~ lvl
 
     throwing :: (Monad m, MonadLogger m) => ExceptT KilnRpcError (ReaderT NodeDataSource m) a -> m a
-    throwing = (>>= either logThenThrow pure) . flip runReaderT nds . runExceptT @KilnRpcError
+    throwing = either logThenThrow pure <=< flip runReaderT nds . runExceptT @KilnRpcError
       where
 
         logThenThrow e' = do
@@ -705,7 +698,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         Left e -> throwM e
 
     runMaybe :: Functor m => ExceptT KilnRpcError (ReaderT NodeDataSource m) (Maybe a) -> m (Maybe a)
-    runMaybe = fmap (either (const Nothing) id) . flip runReaderT nds . runExceptT
+    runMaybe = fmap (fromRight Nothing) . flip runReaderT nds . runExceptT
 
     wipe p = do
       delete $ Amendment_periodField ==. p

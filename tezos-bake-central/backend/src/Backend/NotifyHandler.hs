@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -21,8 +20,7 @@ import Data.Validation (liftError)
 import Database.Groundhog.Postgresql (PersistBackend(..), Postgresql(..), get, (&&.), (==.), Cond(..))
 import Database.Id.Class
 import Database.Id.Groundhog
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb, selectMap', selectSingle)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap', selectSingle)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw(..))
 import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -33,19 +31,17 @@ import Tezos.Types
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses, getBakerAlert)
-import Common.App (BakeView (..), BakeViewSelector (..), Deletable,
-                   NodeSummary (..), BakerSummary (..), SetupState (..), VoteState,
-                   nodeIdForNodeErrorLogView, nodeErrorViewOnly,
-                   mailServerConfigToView, Deletable, BakerSummary)
-import Common.App (bakerErrorViewOnly)
-import Common.App (bakerIdForBakerErrorLogView)
-import Common.App (errorLogIdForErrorLogView)
+import Common.App
+  (BakeView (..), BakeViewSelector (..), Deletable, NodeSummary (..), BakerSummary (..), SetupState (..), VoteState,
+  bakerErrorViewOnly, bakerIdForBakerErrorLogView, bakerIdForBakerErrorLogView, errorLogIdForErrorLogView,
+  mailServerConfigToView, nodeIdForNodeErrorLogView, nodeErrorViewOnly)
 import qualified Common.AppendIntervalMap as AppendIMap
 import Common.Alerts (alertsFilter)
 import Common.Schema
 import Common.Vassal
 import ExtraPrelude
 
+{-# ANN notifyHandler ("HLint: ignore Evaluate" :: String) #-}
 notifyHandler
   :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m)
   => NodeDataSource
@@ -58,14 +54,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
   case _dbNotification_message notification of
     NotifyTag_Baker :=> args -> runIdentity $ uncurry handleBaker <$> args
     NotifyTag_BakerDetails :=> bakerDetails -> runIdentity $ handleBakerDetails <$> bakerDetails
-    NotifyTag_BakerRightsProgress :=> args -> runIdentity $ (handleBakerAddress . _bakerRightsProgress_publicKeyHash . view _2) <$> args
+    NotifyTag_BakerRightsProgress :=> args -> runIdentity $ handleBakerAddress . _bakerRightsProgress_publicKeyHash . view _2 <$> args
     NotifyTag_ErrorLog tag :=> Identity eid ->
       logAssume tag $ handleErrorLog (errorLogIdForErrorLogView . (tag :=>) . Identity) tag eid
     NotifyTag_ProtocolIndex :=> eid -> runIdentity $ handleParameters <$> eid
     NotifyTag_MailServerConfig :=> args -> runIdentity $ handleMailServer . snd <$> args
-    NotifyTag_NodeExternal :=> args -> runIdentity $ (liftA2 (flip (<>)) alsoEveryBakerSummary) . uncurry handleNodeExternal <$> args
-    NotifyTag_NodeInternal :=> args -> runIdentity $ (liftA2 (flip (<>)) alsoEveryBakerSummary) . uncurry handleNodeInternal <$> args
-    NotifyTag_NodeDetails :=> args -> runIdentity $ (liftA2 (flip (<>)) alsoEveryBakerSummary) . uncurry handleNodeDetails <$> args
+    NotifyTag_NodeExternal :=> args -> runIdentity $ liftA2 (flip (<>)) alsoEveryBakerSummary . uncurry handleNodeExternal <$> args
+    NotifyTag_NodeInternal :=> args -> runIdentity $ liftA2 (flip (<>)) alsoEveryBakerSummary . uncurry handleNodeInternal <$> args
+    NotifyTag_NodeDetails  :=> args -> runIdentity $ liftA2 (flip (<>)) alsoEveryBakerSummary . uncurry handleNodeDetails <$> args
     NotifyTag_Notificatee :=> _eid -> handleNotificatee
     NotifyTag_SnapshotMeta :=> arg -> runIdentity $ handleSnapshotMeta <$> arg
     NotifyTag_TelegramConfig :=> args -> runIdentity $ handleTelegramConfig . snd <$> args

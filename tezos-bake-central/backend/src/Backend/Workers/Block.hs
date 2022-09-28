@@ -8,7 +8,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -55,7 +54,7 @@ blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) 
   whenRight headBlockOrErr $ \headBlock -> do
     now <- liftIO getCurrentTime
     let headBlockTime = headBlock ^. timestamp
-        maxTimeDiff = fromInteger 600 -- 10 minutes, picked somewhat arbitrarily
+        maxTimeDiff = 600 -- 10 minutes, picked somewhat arbitrarily
         isRecentHeadBlock = now `diffUTCTime` headBlockTime < maxTimeDiff
 
         historyLength = 720

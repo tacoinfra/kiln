@@ -74,8 +74,7 @@ import Tezos.Types
 
 
 
-import Common (humanBytes)
-import Common (unixEpoch, uriHostPortPath)
+import Common (humanBytes, unixEpoch, uriHostPortPath)
 import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHeadMessage,
                       bakerAccusedDescriptions, bakerDeactivatedDescriptions,
                       bakerDeactivationRiskDescriptions, bakerGroupedMissedBonusDescriptions,
@@ -86,9 +85,10 @@ import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHea
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
-import Common.Config (FrontendConfig (..), HasFrontendConfig (frontendConfig), frontendConfig_appVersion,
-                      frontendConfig_chain, frontendConfig_chainId, frontendConfig_usingNodeOption, frontendConfig_logExportAvailable)
-import Common.Config (UsingNodeOption(..), _UsingCustomNode)
+import Common.Config
+  (FrontendConfig (..), HasFrontendConfig (frontendConfig), UsingNodeOption(..), frontendConfig_appVersion,
+  frontendConfig_chain, frontendConfig_chainId, frontendConfig_usingNodeOption, frontendConfig_logExportAvailable,
+  _UsingCustomNode)
 import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
@@ -800,6 +800,7 @@ instance (HasAlertMetaData a, HasAlertMetaData b) => HasAlertMetaData (Either a 
   getAlertMetaData (Left v) = getAlertMetaData v
   getAlertMetaData (Right v) = getAlertMetaData v
 
+{-# ANN liveErrorsWidget ("HLint: ignore Evaluate" :: String) #-}
 liveErrorsWidget
   :: forall r m t js.
     ( MonadAppWidget js t m
@@ -1587,7 +1588,7 @@ startNodeWorkflow backWF close = Workflow $ do
       else if useSnapshotURI'
       then NodeBootstrapMethod_SnapshotURI <$> mSnapshotURI
       else if useSnapshotFilePath'
-      then NodeBootstrapMethod_SnapshotFilePath <$> fmap T.unpack <$> mSnapshotFilePath
+      then NodeBootstrapMethod_SnapshotFilePath . fmap T.unpack <$> mSnapshotFilePath
       else return NodeBootstrapMethod_PeerToPeer
 
     disabledFlag :: Dynamic t Text
@@ -1709,7 +1710,7 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
         divClass "" $ (localHumanizedTimestampBasic . constDyn) headBlockTimestamp
   start <- divClass "buttons" $ uiButton "primary" "Start Node"
   response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
-  pure (pure ["confirmation"], leftmost [() <$ response, close])
+  pure (pure ["confirmation"], leftmost [void response, close])
 
 showErrorLogModal ::
   ( MonadReader r m
@@ -1732,7 +1733,7 @@ thirtySixHoursToInfinity = do
   let thirtySixHoursAgo = (-1.5) * Time.nominalDay
   let oneHour = 60 * 60
   let quantize = flip Time.addUTCTime unixEpoch . (* oneHour) . fromIntegral @Integer . floor . (/ oneHour) . flip Time.diffUTCTime unixEpoch
-  time <- holdUniqDyn =<< fmap quantize <$> asks (view timer)
+  time <- holdUniqDyn . fmap quantize =<< asks (view timer)
 
   return $ fmap (flip ClosedInterval UpperInfinity . Bounded . Time.addUTCTime thirtySixHoursAgo) time
 
@@ -1760,6 +1761,7 @@ ppTezosVersion = either id showV . getTezosVersion
         ReleaseCandidate rc -> "-rc" <> T.pack (show rc)
         Release -> mempty
 
+{-# ANN nodesTab ("HLint: ignore Use &&" :: String) #-}
 nodesTab
   :: forall r m t js.
     ( MonadAppWidget js t m
@@ -2449,9 +2451,9 @@ bakersTab =
       SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
         let
           i = icon "icon-warning big red"
-          title = text $ "Kiln Baker failed."
+          title = text "Kiln Baker failed."
           desc = do
-            el "p" $ text $ "Kiln baker failed during work. Check 'kiln-baker-custom-args' Kiln argument."
+            el "p" $ text "Kiln baker failed during work. Check 'kiln-baker-custom-args' Kiln argument."
             el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Baker tile and select “Show error log”."
         renderSplashAlert i title Nothing desc
 
@@ -2855,6 +2857,7 @@ semuiTab label k currentTab enabled =
     elDynAttr' "a" `flip` label $ ffor (zipDyn enabled $ demuxed currentTab k) $ \(e,b) ->
       "class" =: T.unwords (["item"] ++ ["disabled" | isDisabled e] ++ ["active" | b])
 
+{-# ANN withAmendmentPeriodProgress ("HLint: ignore Redundant fmap" :: String) #-}
 withAmendmentPeriodProgress :: (HasTimer t r, MonadReader r m, MonadAppWidget js t m)
                      => RawLevel -> (Dynamic t Time.NominalDiffTime -> m ()) -> m ()
 withAmendmentPeriodProgress expectedVotingPeriod w = do

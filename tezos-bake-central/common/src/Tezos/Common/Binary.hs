@@ -158,6 +158,7 @@ instance TezosBinary a => TezosBinary (Seq a) where
   put = traverse_ put
   get = Seq.fromList <$> many get
 
+{-# ANN module ("HLint: ignore Redundant fmap" :: String) #-}
 instance TezosBinary Data.Text.Text where
   build = build . TE.encodeUtf8
   put = put . TE.encodeUtf8

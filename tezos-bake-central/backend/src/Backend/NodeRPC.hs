@@ -42,28 +42,16 @@ import Control.Concurrent.STM (
     writeTQueue,
   )
 
-import Control.Exception.Safe (Exception)
-import Control.Exception.Safe (MonadMask, withException)
+import Control.Exception.Safe (Exception, MonadMask, withException)
 import Control.Lens (re, review, (<>~))
 import Control.Lens.TH (makeLenses)
 import Control.Monad (ap)
 import Control.Monad.Base (MonadBase(..), liftBaseDefault)
-import Control.Monad.Catch (ExitCase (..))
-import Control.Monad.Catch (MonadCatch)
-import Control.Monad.Catch (MonadThrow)
-import Control.Monad.Catch (catch)
-import Control.Monad.Catch (generalBracket, bracket)
-import Control.Monad.Catch (mask)
-import Control.Monad.Catch (throwM)
-import Control.Monad.Catch (uninterruptibleMask)
+import Control.Monad.Catch (ExitCase (..), MonadCatch, MonadThrow, bracket, catch, generalBracket, mask, throwM, uninterruptibleMask)
 import Control.Monad.Error.Lens (catching)
-import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
-import Control.Monad.Except (catchError)
-import Control.Monad.Except (liftEither)
-import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logWarnSH)
-import Control.Monad.Logger (monadLoggerLog)
-import Control.Monad.Reader (local)
-import Control.Monad.Reader (reader)
+import Control.Monad.Except (ExceptT (..), MonadError, catchError, liftEither, runExceptT, throwError)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logWarnSH, monadLoggerLog)
+import Control.Monad.Reader (local, reader)
 import qualified Control.Monad.State as S
 import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -101,8 +89,7 @@ import qualified Database.PostgreSQL.Simple.LargeObjects as PG
 import qualified Database.PostgreSQL.Simple as PG
 import Named
 import qualified Network.HTTP.Client as Http
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
-import Rhyolite.Backend.DB (runDb, project1)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeMany, executeQ, queryQ, sql)
 import Rhyolite.Backend.DB.Serializable
@@ -384,7 +371,7 @@ instance (MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKil
   withFinishWith _ cb = (fmap NodeQueryTAnswerM . nqLiftEither =<<) <$> cb return
   nodeRPCOrBust q = NodeQueryT $ \cache ->
     case DMap.lookup q (cache ^. nodeQueryTCache_responses) of
-      Nothing -> case DMap.lookup q (cache ^. nodeQueryTCache_errors) >>= pure . getConst of
+      Nothing -> case DMap.lookup q (cache ^. nodeQueryTCache_errors) <&> getConst of
         Just e -> throwError $ e ^. re asKilnRpcError
         Nothing -> pure $ NodeQueryTResult_Query q
       Just res -> pure $ NodeQueryTResult_Done res
@@ -824,7 +811,7 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
     {-# INLINE nodeRPC' #-}
 
 keepOriginalInput :: (LBS.ByteString -> Either err a) -> LBS.ByteString -> Either err (RpcResult a)
-keepOriginalInput f str = (RpcResult str) <$> f str
+keepOriginalInput f str = RpcResult str <$> f str
 
 nodeQueryIx
   :: forall a m.

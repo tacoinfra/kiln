@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE OverloadedStrings #-}
+
 -- | This module contains data types similat to the ones from 'Tezos.V*.Account'
 -- but represented as unions to provide cross compatibility between protocols
 -- in case of RPC schema changes.

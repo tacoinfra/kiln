@@ -23,10 +23,8 @@ import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
-import Control.Monad.Reader (ReaderT (..))
-import Control.Monad.State (MonadState, execStateT, gets, modify)
 import Control.Monad.Reader (ReaderT (..), lift)
-import Control.Monad.State (execStateT, gets, modify)
+import Control.Monad.State (MonadState, execStateT, gets, modify)
 import Control.Monad.Trans.Maybe (MaybeT (..))
 import Data.List.NonEmpty (nonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -63,12 +61,10 @@ import Tezos.Unsafe (unsafeEstimatePastTimestamp)
 import Backend.Config (AppConfig (..), HasAppConfig, askAppConfig)
 import Backend.Alerts
 import Backend.Common (worker', AppSerializable)
-import Backend.Config (AppConfig (..))
 import Backend.IndexQueries (endOfPreservedCycles, levelToCycle, getLatestProtocolConstants)
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.STM (atomicallyWith)
-import Backend.Alerts (clearMissedBake, reportMissedBake)
 import Common (curryMap)
 import Common.Schema
 import ExtraPrelude
@@ -317,7 +313,7 @@ checkMissedOpportunities nds appConfig protoInfo headBlock baker isInternal lvl 
             [BakerDetails_missedRightsInRowField =. (0 :: Int)] $
             BakerDetails_publicKeyHashField ==. pkh'
           notifyDefault newVal
-    cleanAction = \blockTimestamp blockFitness kind bakerPkh blockLevel -> do
+    cleanAction blockTimestamp blockFitness kind bakerPkh blockLevel = do
       clearMissedBake blockFitness kind bakerPkh blockLevel
       -- If the internal baker successfully endorses or baker, then there is an
       -- evidence that the Ledger device is connected properly

@@ -1,6 +1,4 @@
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -730,11 +728,9 @@ instance (Semigroup a, FromJSON a) => FromJSON (BakeView a)
 instance ToJSON a => ToJSON (BakeViewSelector a)
 instance (Semigroup a, ToJSON a) => ToJSON (BakeView a)
 
-fmap concat $ sequence $ concat
-  [ map makeLenses
-    [ 'BakeView
-    , 'BakeViewSelector
-    , 'MailServerView
-    , 'NodeSummary
-    ]
+concat <$> traverse makeLenses
+  [ 'BakeView
+  , 'BakeViewSelector
+  , 'MailServerView
+  , 'NodeSummary
   ]

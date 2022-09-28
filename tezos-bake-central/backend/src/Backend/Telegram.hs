@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE LambdaCase #-}
@@ -187,9 +186,8 @@ sendMessage
 sendMessage botApiKey cfg = do
   $(logDebug) $ "Sending a telegram message: " <> tshow cfg
   fmap Http.getResponseBody $
-    Http.req . Http.Request_JSON =<<
-      Http.setRequestBodyJSON cfg . Http.setRequestMethod "POST" <$>
-        Http.parseRequestThrow (maybe "" (T.unpack . Uri.render) $ telegramApiSendMessageUri botApiKey)
+    Http.req . Http.Request_JSON . Http.setRequestBodyJSON cfg . Http.setRequestMethod "POST" =<<
+      Http.parseRequestThrow (maybe "" (T.unpack . Uri.render) $ telegramApiSendMessageUri botApiKey)
 
 getUpdates
   :: (MonadThrow m, HasHttp m, MonadLogger m)
@@ -197,8 +195,8 @@ getUpdates
 getUpdates cfg = do
   $(logDebug) $ "Getting updates for Telegram starting at offset " <> tshow (_telegramGetUpdates_offset cfg)
   fmap Http.getResponseBody $
-    Http.req . Http.Request_JSON
-      =<< maybe id setTimeout (_telegramGetUpdates_timeout cfg) <$> Http.parseRequestThrow (maybe "" (T.unpack . Uri.render) $ telegramApiGetUpdatesUri cfg)
+    Http.req . Http.Request_JSON . maybe id setTimeout (_telegramGetUpdates_timeout cfg)
+      =<< Http.parseRequestThrow (maybe "" (T.unpack . Uri.render) $ telegramApiGetUpdatesUri cfg)
   where
     setTimeout timeout req = req { Http.responseTimeout = Http.responseTimeoutMicro $
       fromIntegral $ nominalDiffTimeToMicroseconds $ timeout + 1 }

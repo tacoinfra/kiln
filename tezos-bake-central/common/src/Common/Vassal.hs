@@ -29,6 +29,7 @@ import Common.AppendIntervalMap (AppendIntervalMap, ClosedInterval (..), WithInf
 import qualified Common.AppendIntervalMap as IMap
 import Control.Category ((.))
 import Control.Lens.Indexed (FoldableWithIndex, FunctorWithIndex, TraversableWithIndex, imap, itraverse)
+import Control.Monad (void)
 import Control.Monad.Writer.CPS (Writer, runWriter, tell)
 import Data.Aeson (FromJSON, FromJSON1, FromJSONKey, ToJSON, ToJSON1, ToJSONKey, liftParseJSON,
                    liftToEncoding, liftToJSON, parseJSON, toEncoding, toJSON)
@@ -392,7 +393,7 @@ instance (Ord i, Ord e) => Filterable (View (IntervalSelector e i v)) where
       entries' = mapMaybe (\x@(First (_, k)) -> x <$ lookup k viewSelector) entries
 
       viewSelector :: IntervalSelector e i v ()
-      viewSelector = IntervalSelector (() <$ support')
+      viewSelector = IntervalSelector (void support')
 
 instance FunctorWithIndex (ClosedInterval e) (View (IntervalSelector e i v))
 instance FoldableWithIndex (ClosedInterval e) (View (IntervalSelector e i v))
