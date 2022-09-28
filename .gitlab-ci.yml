@@ -14,8 +14,6 @@ hlint:
   stage: validate
   rules: &if_merge_request
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-  # There is so much hlint suggestions, one day we'll handle them all
-  allow_failure: true
   script:
     - nix-shell -p haskellPackages.hlint --run ./scripts/hlint.sh
 
