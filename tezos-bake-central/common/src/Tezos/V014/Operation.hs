@@ -166,6 +166,10 @@ instance FromJSON OperationContents where
       "tx_rollup_remove_commitment"    -> pure OperationContents_Unknown
       "tx_rollup_return_bond"          -> pure OperationContents_Unknown
       "tx_rollup_submit_batch"         -> pure OperationContents_Unknown
+      "transfer_ticket"                -> pure OperationContents_Unknown
+      "increase_paid_storage"          -> pure OperationContents_Unknown
+      "vdf_revelation"                 -> pure OperationContents_Unknown
+      "event"                          -> pure OperationContents_Unknown
       unknown -> trace ("Warning: Unknown operation kind " <> T.unpack unknown) $ pure OperationContents_Unknown
 
 concat <$> traverse deriveTezosFromJson
