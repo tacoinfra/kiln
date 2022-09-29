@@ -337,12 +337,6 @@ data CacheBakingRights = CacheBakingRights
   }
   deriving (Eq, Show, Typeable)
 
-data CacheEndorsingRights = CacheEndorsingRights
-  { _cacheEndorsingRights_level :: RawLevel
-  , _cacheEndorsingRights_result :: Json Aeson.Value
-  }
-  deriving (Eq, Show, Typeable)
-
 instance FromField Word64 where
   fromField f b = fromInteger <$> fromField f b -- is this sign-correct?
 
@@ -1234,14 +1228,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: CacheBakingRights_round_level
             type: primary
             fields: [_cacheBakingRights_round, _cacheBakingRights_level]
-  - entity: CacheEndorsingRights
-    autoKey: null
-    constructors:
-      - name: CacheEndorsingRights
-        uniques:
-          - name: CacheEndorsingRights_level
-            type: primary
-            fields: [_cacheEndorsingRights_level]
 |]
 
 fmap concat $ traverse (uncurry makeDefaultKeyIdInt64)

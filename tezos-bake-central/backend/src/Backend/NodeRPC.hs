@@ -50,7 +50,7 @@ import Control.Monad.Base (MonadBase(..), liftBaseDefault)
 import Control.Monad.Catch (ExitCase (..), MonadCatch, MonadThrow, bracket, catch, generalBracket, mask, throwM, uninterruptibleMask)
 import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, liftEither, runExceptT, throwError)
-import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, logWarnSH, monadLoggerLog)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, monadLoggerLog)
 import Control.Monad.Reader (local, reader)
 import qualified Control.Monad.State as S
 import Control.Monad.Trans (MonadTrans, lift)
@@ -76,7 +76,7 @@ import Data.Maybe (mapMaybe)
 import Data.Ord (Down(..))
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
-import qualified Data.Sequence as Seq (filter, singleton, (<|))
+import qualified Data.Sequence as Seq (singleton, (<|))
 import qualified Data.Set as Set
 import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
@@ -91,10 +91,10 @@ import Named
 import qualified Network.HTTP.Client as Http
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, project1)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeMany, executeQ, queryQ, sql)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeMany, queryQ, sql)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import Rhyolite.Schema (Json (..), LargeObjectId (..))
+import Rhyolite.Schema (LargeObjectId (..))
 import Safe (headMay)
 import Text.URI (URI)
 import qualified Text.URI as Uri
@@ -823,102 +823,68 @@ nodeQueryIx
     , Monoid a
     )
   => NodeQueryIx a -> NodeQueryT m a
-nodeQueryIx q = do
-  $(logDebugSH) ("nodeQueryIx called" :: Text,q)
-
-  (cachedLvls, cachedRights) <- fmap unzip $ checkCacheDb q
-  let cachedLvlsSet = Set.fromList cachedLvls
-      lvlsToFetch = queryLvls `Set.difference` cachedLvlsSet
-      chunkedRights = mconcat $ catMaybes cachedRights
-  if Set.size lvlsToFetch == 0
-    then pure chunkedRights
-    else do
-      result <- nodeQueryDataSourceSafe $ getNodeQuery (filterCachedLvls cachedLvlsSet q)
-      addToDb result q
-      pure $ result <> chunkedRights
+nodeQueryIx q = $(logDebugSH) ("nodeQueryIx called" :: Text, q) *> case q of
+  NodeQueryIx_BakingRights ctx queryLvls -> do
+    (cachedLvls, cachedRights) <- fmap unzip $ checkBakingRightsCache queryLvls
+    let cachedLvlsSet = Set.fromList cachedLvls
+        lvlsToFetch = queryLvls `Set.difference` cachedLvlsSet
+        chunkedRights = mconcat $ catMaybes cachedRights
+    if null lvlsToFetch
+      then pure chunkedRights
+      else do
+        let filteredNodeQuery = nodeQuery_BakingRights ctx lvlsToFetch
+        result <- nodeQueryDataSourceSafe filteredNodeQuery
+        addBakingRightsToCache queryLvls result
+        pure $ result <> chunkedRights
+  -- We don't cache endorsing rights
+  NodeQueryIx_EndorsingRights ctx lvl -> nodeQueryDataSourceSafe $ nodeQuery_EndorsingRights ctx lvl
   where
-    queryLvls :: Set RawLevel
-    queryLvls = case q of
-      NodeQueryIx_BakingRights _ lvls -> lvls
-      NodeQueryIx_EndorsingRights _ lvls -> lvls
-
-    getNodeQuery :: NodeQueryIx a -> NodeQuery a
-    getNodeQuery = \case
-      NodeQueryIx_BakingRights ctx lvl -> NodeQuery_BakingRights ctx lvl
-      NodeQueryIx_EndorsingRights ctx lvl -> NodeQuery_EndorsingRights ctx lvl
-
-    filterCachedLvls :: Set RawLevel -> NodeQueryIx a -> NodeQueryIx a
-    filterCachedLvls cachedLvls = \case
-      NodeQueryIx_BakingRights ctx lvls -> NodeQueryIx_BakingRights ctx (lvls `Set.difference` cachedLvls)
-      NodeQueryIx_EndorsingRights ctx lvls -> NodeQueryIx_EndorsingRights ctx (lvls `Set.difference` cachedLvls)
-
-    checkCacheDb
-      :: ( Monad m1
-         , PostgresRaw m1
-         , MonadLogger m1
+    checkBakingRightsCache
+      :: ( Monad f
+         , PostgresRaw f
+         , MonadLogger f
          )
-      => NodeQueryIx a -> m1 [(RawLevel, Maybe a)]
-    checkCacheDb = \case
-      NodeQueryIx_BakingRights _ lvls -> do
-        let minLvl = Set.findMin lvls
-            maxLvl = Set.findMax lvls
-        cachedRights <- [queryQ|
-          SELECT "level", "delegate", "round", "estimatedTime" AT TIME ZONE 'UTC'
-          FROM "CacheBakingRights"
-          WHERE "level" BETWEEN ?minLvl AND ?maxLvl
-        |]
-        for cachedRights $ \(lvl, delegate, round, estimatedTime) ->
-          let
-            bakingRight = BakingRightsV014 $ V014.BakingRights
-              { _bakingRights_level = lvl
-              , _bakingRights_delegate = delegate
-              , _bakingRights_round = round
-              , _bakingRights_estimatedTime = estimatedTime
-              }
-          in pure (lvl, Just $ Seq.singleton bakingRight)
-      NodeQueryIx_EndorsingRights _ lvls -> do
-        let minLvl = Set.findMin lvls
-            maxLvl = Set.findMax lvls
-        (rawData :: [(RawLevel, Json Aeson.Value)]) <- [queryQ|
-          SELECT "level", "result"
-          FROM "CacheEndorsingRights"
-          WHERE "level" BETWEEN ?minLvl AND ?maxLvl
-        |]
-        mapM (\(lvl, rawRight) -> fmap (lvl,) (getResult rawRight)) rawData
-      where
-        getResult json = case Aeson.fromJSON (unJson json) of
-          Aeson.Success v -> return $ Just v
-          Aeson.Error bad -> do
-            $(logWarnSH) $ "checkCacheDb failed to decode: " <> bad
-            return Nothing
+      => Set RawLevel -> f [(RawLevel, Maybe (Seq BakingRightsCrossCompat))]
+    checkBakingRightsCache lvls = do
+      let minLvl = Set.findMin lvls
+          maxLvl = Set.findMax lvls
+      cachedRights <- [queryQ|
+        SELECT "level", "delegate", "round", "estimatedTime" AT TIME ZONE 'UTC'
+        FROM "CacheBakingRights"
+        WHERE "level" BETWEEN ?minLvl AND ?maxLvl
+      |]
+      for cachedRights $ \(lvl, delegate, round, estimatedTime) ->
+        let
+          bakingRight = BakingRightsV014 $ V014.BakingRights
+            { _bakingRights_level = lvl
+            , _bakingRights_delegate = delegate
+            , _bakingRights_round = round
+            , _bakingRights_estimatedTime = estimatedTime
+            }
+        in pure (lvl, Just $ Seq.singleton bakingRight)
 
-    addToDb :: (Monad m1, PostgresRaw m1, MonadLogger m1, PersistBackend m1) => a -> NodeQueryIx a -> m1 ()
-    addToDb result' = \case
-      NodeQueryIx_BakingRights _ctx lvls -> case result' of
-        (bakingRights :: Seq BakingRightsCrossCompat) -> do
-          let
-            rightsToCache = flip mapMaybe (Set.toList lvls) $ \lvl ->
-              flip find bakingRights $ \right ->
-                right ^. bakingRightsCrossCompat_level == lvl
+    addBakingRightsToCache
+      :: ( Monad f
+         , PostgresRaw f
+         , MonadLogger f
+         , PersistBackend f
+         )
+      => Set RawLevel -> Seq BakingRightsCrossCompat -> f ()
+    addBakingRightsToCache queryLevels bakingRights = do
+      let
+        rightsToCache = flip mapMaybe (Set.toList queryLevels) $ \lvl ->
+          flip find bakingRights $ \right ->
+            right ^. bakingRightsCrossCompat_level == lvl
 
-          void $ executeMany [sql|
-            INSERT INTO "CacheBakingRights" ("level", "round", "delegate", "estimatedTime")
-            VALUES (?, ?, ?, ?)
-          |] $ rightsToCache <&> \br ->
-            ( br ^. bakingRightsCrossCompat_level
-            , br ^. bakingRightsCrossCompat_round
-            , br ^. bakingRightsCrossCompat_delegate
-            , br ^. bakingRightsCrossCompat_estimatedTime
-            )
-      NodeQueryIx_EndorsingRights _ctx lvls -> case result' of
-        (endorsingRights :: Seq EndorsingRightsCrossCompat) -> for_ lvls $ \lvl -> do
-          let lvlRights = Seq.filter (\right -> right ^. endorsingRightsCrossCompat_level == lvl) endorsingRights
-              result = Json $ Aeson.toJSON lvlRights
-          unless (null lvlRights) $
-            void [executeQ|
-              INSERT INTO "CacheEndorsingRights" ("level", "result")
-              values (?lvl, ?result)
-            |]
+      void $ executeMany [sql|
+        INSERT INTO "CacheBakingRights" ("level", "round", "delegate", "estimatedTime")
+        VALUES (?, ?, ?, ?)
+      |] $ rightsToCache <&> \br ->
+        ( br ^. bakingRightsCrossCompat_level
+        , br ^. bakingRightsCrossCompat_round
+        , br ^. bakingRightsCrossCompat_delegate
+        , br ^. bakingRightsCrossCompat_estimatedTime
+        )
 
 -- | Logs the cache error if it's not caused by an endpoint restriction.
 {-# INLINE logKilnRpcError #-}
