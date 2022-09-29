@@ -886,7 +886,7 @@ nodeQueryIx q = $(logDebugSH) ("nodeQueryIx called" :: Text, q) *> case q of
         , br ^. bakingRightsCrossCompat_estimatedTime
         )
 
--- | Logs the cache error if it's not caused by an endpoint restriction.
+-- | Logs the RPC error if it's not caused by an endpoint restriction.
 {-# INLINE logKilnRpcError #-}
 logKilnRpcError :: MonadLogger m => Text -> KilnRpcError -> m ()
 logKilnRpcError _ (KilnRpcError_RpcError (RpcError_RestrictedEndpoint _)) = pure ()
