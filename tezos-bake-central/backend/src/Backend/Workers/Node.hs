@@ -156,7 +156,11 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
         ]
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
-    traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
+    -- For the cases when node is bootstrapping in p2p mode, we don't need to use 'notify' on
+    -- each old block so not to flood websocket queue, so we render every 100th block on UI.
+    let isRecentBlock = now `diffUTCTime` (headBlockInfo ^. monitorBlock_timestamp) < 3600
+    when (isRecentBlock || headBlockInfo ^. level `mod` 100 == 0) $
+      traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
 
   atomically $ do
     writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds nodeAddr headBlockInfo
