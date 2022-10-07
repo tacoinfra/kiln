@@ -215,7 +215,6 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
     let oldestLevel = headLevel - fromIntegral rightsHistoryWindow
     void $ runDb (Identity db) [executeQ|
       DELETE FROM "CacheBakingRights" WHERE "level" < ?oldestLevel;
-      DELETE FROM "CacheEndorsingRights" WHERE "level" < ?oldestLevel;
       DELETE FROM "BakerRight" WHERE "level" < ?oldestLevel;
       |]
 
