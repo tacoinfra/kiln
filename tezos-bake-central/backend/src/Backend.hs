@@ -56,9 +56,13 @@ import Rhyolite.Backend.DB.Serializable
 import qualified Rhyolite.Backend.Email as RhyoliteEmail
 import Rhyolite.Backend.EmailWorker (clearMailQueue)
 import Rhyolite.Backend.Logging
-  (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender (..), RhyoliteLogAppenderJournald (..),
+  (LoggingConfig (..), LoggingEnv (..), RhyoliteLogAppender (..),
   RhyoliteLogLevel (..), runLoggingEnv, withLoggingMinLevel)
-
+-- necessary because 'RhyoliteLogAppenderJournald' is exported conditionally,
+-- depending on the platform, in particular it's not exported on macOS
+#if defined(SUPPORT_SYSTEMD_JOURNAL)
+import Rhyolite.Backend.Logging (RhyoliteLogAppenderJournald (..))
+#endif
 import qualified Rhyolite.Backend.WebSocket as RhyoliteWs
 import qualified Snap.Core as Snap
 import qualified Snap.Http.Server as SnapServer
@@ -107,6 +111,8 @@ import Common.URI (Port)
 import ExtraPrelude
 import Frontend (frontend)
 import Orphans.Instances ()
+
+{-# ANN module ("HLint: ignore Use fewer imports" :: String) #-}
 
 askLogger :: Monad m => LoggingT m LoggingEnv
 askLogger = LoggingT $ return . LoggingEnv
