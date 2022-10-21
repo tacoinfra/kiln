@@ -4,20 +4,24 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 module Backend.Common.Node where
 
+import Control.Monad.Logger (MonadLoggerIO, logError)
 import Data.Functor.Infix hiding ((<&>))
+import Data.Pool (Pool)
 import Data.Some (Some(..))
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
 import Database.Id.Class
 import Database.Id.Groundhog
-import Rhyolite.Backend.DB (getTime, project1)
+import Rhyolite.Backend.DB (getTime, project1, runDb)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
 import Text.URI (URI)
 
@@ -102,3 +106,17 @@ updateNodeDaemon control = do
       ] (AutoKeyField ==. fromId pid)
     processData <- getId $ _deletableRow_data nodeData
     notify NotifyTag_NodeInternal (nid, processData)
+
+isNodeSynced :: MonadLoggerIO m => Pool Postgresql -> Id Node -> m Bool
+isNodeSynced db nodeId = do
+  synced <- listToMaybe . stripOnly <$> runDb (Identity db)
+    [queryQ|
+      select count(el.id) = 0 from "ErrorLogBadNodeHead" ebh
+      join "ErrorLog" el on el.id = ebh.log
+      where ebh.node = ?nodeId and el.stopped is null
+    |]
+  case synced of
+    Just s  -> pure s
+    Nothing -> do
+      $(logError) $ "Couldn't get the count of alerts for node with id " <> tshow nodeId
+      pure False

@@ -71,6 +71,7 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        clearNodeInsufficientPeersError, clearNodeInvalidPeerCountError,
                        clearPastVotingPeriodErrors, reportVotingReminderError)
 import Backend.Common (AppSerializable, threadDelay', unsupervisedWorkerWithDelay, worker', workerWithDelay)
+import Backend.Common.Node (isNodeSynced)
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.IndexQueries
 import Backend.Http (doRequestLBS)
@@ -119,7 +120,7 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
             else pure Nothing
         for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: NodeDataSource -> AppConfig -> URI -> Id Node -> MonitorBlock -> IO ()
+nodeMonitor :: (BlockLike blk, Show blk) => NodeDataSource -> AppConfig -> URI -> Id Node -> blk -> IO ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity db) . flip runReaderT appConfig $ do
@@ -138,29 +139,25 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
       [] -> insert $ NodeDetails
         { _nodeDetails_id = nodeId
         , _nodeDetails_data = mkNodeDetails
-          { _nodeDetailsData_headLevel = Just (headBlockInfo ^. monitorBlock_level)
-          , _nodeDetailsData_headBlockHash = Just (headBlockInfo ^. monitorBlock_hash)
-          , _nodeDetailsData_headBlockBakedAt = Just (headBlockInfo ^. monitorBlock_timestamp)
-          , _nodeDetailsData_fitness = Just (headBlockInfo ^. monitorBlock_fitness)
+          { _nodeDetailsData_headLevel = Just (headBlockInfo ^. level)
+          , _nodeDetailsData_headBlockHash = Just (headBlockInfo ^. hash)
+          , _nodeDetailsData_headBlockBakedAt = Just (headBlockInfo ^. timestamp)
+          , _nodeDetailsData_fitness = Just (headBlockInfo ^. fitness)
           , _nodeDetailsData_updated = Just now
-          , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. monitorBlock_predecessor)
+          , _nodeDetailsData_headBlockPred = Just (headBlockInfo ^. predecessor)
           }
         }
       (_:_) -> update
-        [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. monitorBlock_level)
-        , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. monitorBlock_hash)
-        , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. monitorBlock_timestamp)
-        , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. monitorBlock_fitness)
+        [ p NodeDetailsData_headLevelSelector =. Just (headBlockInfo ^. level)
+        , p NodeDetailsData_headBlockHashSelector =. Just (headBlockInfo ^. hash)
+        , p NodeDetailsData_headBlockBakedAtSelector =. Just (headBlockInfo ^. timestamp)
+        , p NodeDetailsData_fitnessSelector =. Just (headBlockInfo ^. fitness)
         , p NodeDetailsData_updatedSelector =. Just now
-        , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. monitorBlock_predecessor)
+        , p NodeDetailsData_headBlockPredSelector =. Just (headBlockInfo ^. predecessor)
         ]
         (NodeDetails_idField `in_` [nodeId])
     newNodeDetails <- project NodeDetails_dataField $ (NodeDetails_idField ==. nodeId) `limitTo` 1
-    -- For the cases when node is bootstrapping in p2p mode, we don't need to use 'notify' on
-    -- each old block so not to flood websocket queue, so we render every 100th block on UI.
-    let isRecentBlock = now `diffUTCTime` (headBlockInfo ^. monitorBlock_timestamp) < 3600
-    when (isRecentBlock || headBlockInfo ^. level `mod` 100 == 0) $
-      traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
+    traverse_ (notify NotifyTag_NodeDetails . (nodeId,) . Just) newNodeDetails
 
   atomically $ do
     writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds nodeAddr headBlockInfo
@@ -345,7 +342,7 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
     ifor_ newNodes $ \nodeAddr (nodeId, _nodeAlias) -> do
       let
-        reconnectDelay = 5
+        monitorWorkerDelay = 5
 
         -- 2 minutes
         chunkedQueryTimeout :: Maybe NominalDiffTime
@@ -358,36 +355,17 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         chunkedNodeQuery f k = runLoggingEnv (_nodeDataSource_logger nds) $ runExceptT $ runReaderT (nodeRPCChunked f k chunkedQueryTimeout) $
           NodeRPCContext httpMgr $ Uri.render nodeAddr
 
-      killMonitor <- unsupervisedWorkerWithDelay reconnectDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-        _ <- liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block -> do
-          runLoggingEnv (_nodeDataSource_logger nds) $ inDb $ do
-            clearInaccessibleNodeError nodeId
-            clearNodeWrongChainError nodeId
-
-          nodeMonitor nds appConfig nodeAddr nodeId block
-          nodeAlertMonitor nds appConfig db nodeAddr nodeId block
-
-          nodeVersionMonitor nds nodeAddr nodeId
-        liftIO (nodeQuery rChain) >>= inDb . \case
-          Left (RpcError_RestrictedEndpoint _) -> do
-            let p = (NodeDetails_dataField ~>)
-                nwStat = NetworkStat 0 0 0 0
-            update
-              [ p NodeDetailsData_headLevelSelector =. (Nothing :: Maybe RawLevel)
-              , p NodeDetailsData_headBlockHashSelector =. (Nothing :: Maybe BlockHash)
-              , p NodeDetailsData_headBlockPredSelector =. (Nothing :: Maybe BlockHash)
-              , p NodeDetailsData_headBlockBakedAtSelector =. (Nothing :: Maybe UTCTime)
-              , p NodeDetailsData_peerCountSelector =. (Nothing :: Maybe Word64)
-              , p NodeDetailsData_networkStatSelector =. nwStat
-              , p NodeDetailsData_fitnessSelector =. (Nothing :: Maybe Fitness)
-              ] (NodeDetails_idField ==. nodeId)
-          Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
-          Right actualChainId
-            | actualChainId == chainId -> do
-                -- Monitor stopped even though we're on the right chain, so we'll assume there was a connectivity issue.
-                clearNodeWrongChainError nodeId
-                reportInaccessibleNodeError nodeId
-            | otherwise -> reportNodeWrongChainError nodeId chainId actualChainId
+      killMonitor <- unsupervisedWorkerWithDelay monitorWorkerDelay $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+        resp <- liftIO $ nodeQuery (rHead ChainTag_Main)
+        checkNodeConnectivity appConfig nodeId resp
+        case resp of
+          Left _ -> pure () -- We already handled all errors in the 'checkNodeConnectivity' function
+          Right block -> do
+            liftIO $ handleNewHead nodeAddr nodeId block
+            isSynced <- isNodeSynced db nodeId
+            when isSynced $
+              void $ liftIO $ chunkedNodeQuery (rMonitorHeads chainId) $ \block' ->
+                handleNewHead nodeAddr nodeId block'
 
       let cleanup = killMonitor *> modifyMVar_ nodePool (pure . Map.delete nodeAddr)
       liftIO $ modifyMVar_ nodePool $ pure . Map.insert nodeAddr cleanup
@@ -397,6 +375,48 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
   where
     inDb :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m) => AppSerializable a -> m a
     inDb = runDb (Identity db) . flip runReaderT appConfig
+
+    checkNodeConnectivity
+      :: (MonadIO m, MonadBaseNoPureAborts IO m, MonadLoggerIO m, MonadLogger m)
+      => AppConfig
+      -> Id Node
+      -> Either RpcError BlockCrossCompat
+      -> m ()
+    checkNodeConnectivity appCfg nodeId =
+      let chainId = _appConfig_chainId appCfg in inDb . \case
+      Left (RpcError_RestrictedEndpoint _) -> do
+        let p = (NodeDetails_dataField ~>)
+            nwStat = NetworkStat 0 0 0 0
+        update
+          [ p NodeDetailsData_headLevelSelector =. (Nothing :: Maybe RawLevel)
+          , p NodeDetailsData_headBlockHashSelector =. (Nothing :: Maybe BlockHash)
+          , p NodeDetailsData_headBlockPredSelector =. (Nothing :: Maybe BlockHash)
+          , p NodeDetailsData_headBlockBakedAtSelector =. (Nothing :: Maybe UTCTime)
+          , p NodeDetailsData_peerCountSelector =. (Nothing :: Maybe Word64)
+          , p NodeDetailsData_networkStatSelector =. nwStat
+          , p NodeDetailsData_fitnessSelector =. (Nothing :: Maybe Fitness)
+          ] (NodeDetails_idField ==. nodeId)
+      Left _e -> reportInaccessibleNodeError nodeId -- We have clear evidence that there are connectivity issues.
+      Right block
+        | view chainIdL block == chainId -> do
+            -- Monitor stopped even though we're on the right chain, so we'll assume there was a connectivity issue.
+            clearNodeWrongChainError nodeId
+            reportInaccessibleNodeError nodeId
+        | otherwise -> reportNodeWrongChainError nodeId chainId (view chainIdL block)
+
+    handleNewHead
+      :: (BlockLike blk, Show blk)
+      => URI
+      -> Id Node
+      -> blk
+      -> IO ()
+    handleNewHead nodeAddr nodeId block = do
+      runLoggingEnv (_nodeDataSource_logger nds) $ inDb $ do
+        clearInaccessibleNodeError nodeId
+        clearNodeWrongChainError nodeId
+      nodeMonitor nds appConfig nodeAddr nodeId block
+      nodeAlertMonitor nds appConfig db nodeAddr nodeId block
+      nodeVersionMonitor nds nodeAddr nodeId
 
 -- Send a 'bad branch' alert if 'is_bootstrapped' response isn't bootstrapped and synced.
 nodeAlertMonitor
