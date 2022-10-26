@@ -21,6 +21,7 @@ import qualified Tezos.V014.Types as V014
 data BlockCrossCompat
   = BlockGenesis Genesis.Block
   | BlockV014 V014.Block
+  deriving (Show)
 
 instance FromJSON BlockCrossCompat where
   parseJSON jv@(Object o) = do
