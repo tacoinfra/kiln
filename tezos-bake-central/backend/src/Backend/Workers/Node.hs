@@ -437,8 +437,12 @@ nodeAlertMonitor nds appConfig db nodeAddr nodeId nodeHead = runLoggingEnv (_nod
     isBootstrapped :: Either RpcError IsBootstrapped <-
       runExceptT $ flip runReaderT (NodeRPCContext httpMgr $ Uri.render nodeAddr) $ nodeRPC $ rIsBootstrapped chainId
     action' :: Either KilnRpcError (ReaderT AppConfig Serializable ()) <- flip runReaderT nds $ runExceptT @KilnRpcError $ do
-      latestHead <- mkBranchInfo <<$>> maybe (return Nothing)
-        (\h -> fmap Just $ runNodeQueryT $ nodeQueryDataSourceSafe $ nodeQuery_Block $ h ^. level + 2) latestFinalHead
+      -- Since 'latestFinalHead' can be higher than 'nodeHead' in case when the node was deleted
+      -- and created again, the error could be thrown there. So we catch it and set 'Nothing'
+      -- to the alert data type.
+      latestHeadOrErr <- runNodeQueryT $ nqTry $
+        maybe (return Nothing) (\h -> fmap Just $ nodeQueryDataSourceSafe $ nodeQuery_Block  $ h ^. level + 2) latestFinalHead
+      let latestHead = either (const Nothing) (fmap mkBranchInfo) latestHeadOrErr
       case isBootstrapped of
         Left _ -> pure $ when (Just (nodeHead ^. level) < fmap (^. level) latestHead) $
           reportBadNodeHeadError nodeId latestHead nodeHead False SyncState_Unsynced
