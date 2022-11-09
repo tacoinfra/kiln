@@ -101,8 +101,8 @@ type Deletable' e a = Validation (First e) a
 instance FromJSON e => FromJSON a => FromJSON (Validation e a)
 instance ToJSON e => ToJSON a => ToJSON (Validation e a)
 
-pattern JakartaProtocolHash :: ProtocolHash
-pattern JakartaProtocolHash = "PtJakart2xVj7pYXJBXrqHgd82rdkLey5ZeeGwDgPp9rhQUbSqY"
+pattern LimaProtocolHash :: ProtocolHash
+pattern LimaProtocolHash = "PtLimaPtLMwfNinJi9rCfDPWea8dFgTZ1MeJ9f1m2SRic6ayiwW"
 
 pattern KathmanduProtocolHash :: ProtocolHash
 pattern KathmanduProtocolHash = "PtKathmankSpLLDALzWw7CGD2j2MtyveTwboEYokqUCP4a1LxMg"

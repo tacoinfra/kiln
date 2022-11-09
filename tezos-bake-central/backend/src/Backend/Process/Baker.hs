@@ -61,15 +61,15 @@ getBakerPath paths = \case
     in maybe err _bakerPath_path $ find (\bp -> _bakerPath_proto bp == protoHash) paths
 
 defaultBakerPaths :: NonEmpty BakerPath
-defaultBakerPaths = NonEmpty.fromList [jakartaPath, kathmanduPath]
+defaultBakerPaths = NonEmpty.fromList [limaPath, kathmanduPath]
   where
-    jakartaPath = BakerPath
-      { _bakerPath_proto = JakartaProtocolHash
-      , _bakerPath_path = Just $(staticWhich "tezos-baker-013-PtJakart")
+    limaPath = BakerPath
+      { _bakerPath_proto = LimaProtocolHash
+      , _bakerPath_path = Just $(staticWhich "tezos-baker-PtLimaPt")
       }
     kathmanduPath = BakerPath
       { _bakerPath_proto = KathmanduProtocolHash
-      , _bakerPath_path = Just $(staticWhich "tezos-baker-014-PtKathma")
+      , _bakerPath_path = Just $(staticWhich "tezos-baker-PtKathma")
       }
 
 -- Start Baker and Endorser
