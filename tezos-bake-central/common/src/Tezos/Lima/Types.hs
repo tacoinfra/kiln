@@ -1,4 +1,4 @@
-module Tezos.V014.Types (module X) where
+module Tezos.Lima.Types (module X) where
 
 import Tezos.Common.ShortByteString as X
 import Tezos.Common.Base16ByteString as X
@@ -30,9 +30,9 @@ import Tezos.Common.PublicKey as X
 import Tezos.Common.PublicKeyHash as X
 import Tezos.Common.Tez as X
 
-import Tezos.V014.Account as X
-import Tezos.V014.Block as X
-import Tezos.V014.Level as X
-import Tezos.V014.Operation as X
-import Tezos.V014.ProtocolConstants as X hiding (unsafeEstimatePastTimestamp)
-import Tezos.V014.Vote as X
+import Tezos.Lima.Account as X
+import Tezos.Lima.Block as X
+import Tezos.Lima.Level as X
+import Tezos.Lima.Operation as X
+import Tezos.Lima.ProtocolConstants as X hiding (unsafeEstimatePastTimestamp)
+import Tezos.Lima.Vote as X

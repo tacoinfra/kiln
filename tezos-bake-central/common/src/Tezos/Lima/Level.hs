@@ -2,7 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Tezos.V014.Level where
+module Tezos.Lima.Level where
 
 import Control.DeepSeq (NFData)
 import Control.Lens.TH (makeLenses)
