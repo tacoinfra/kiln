@@ -434,6 +434,7 @@ tzStatsBlockUri chain path = (`appendPaths` [path]) $ case chain of
   NamedChain_Jakartanet -> [uri|https://jakarta.tzstats.com/|] -- this will produce a Nothing value
   NamedChain_Ghostnet -> [uri|https://ghost.tzstats.com/|]
   NamedChain_Kathmandunet -> [uri|https://kathmandu.tzstats.com/|] -- this will produce a Nothing value
+  NamedChain_Limanet -> [uri|https://lima.tzstats.com/|] -- this will produce a Nothing value
 
 blockExplorerLink :: (MonadReader r m, HasFrontendConfig r, DomBuilder t m, PostBuild t m) => Dynamic t Text -> m a -> m a
 blockExplorerLink dPath f = do
