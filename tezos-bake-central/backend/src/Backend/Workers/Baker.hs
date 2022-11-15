@@ -479,7 +479,7 @@ updateDelegateDetails protoInfo headBlock headCycle baker details isInternal = d
                 then reportBakerDeactivationRisk delegatePkh gracePeriod headCycle protoInfo headFitness
                 else clearBakerDeactivationRisk delegatePkh headFitness
 
-        isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_tokensPerRoll protoInfo
+        isInsufficientFunds = _cacheDelegateInfo_stakingBalance di < _protoInfo_minimalStake protoInfo
 
         insufficientFundAlerts :: AppSerializable ()
         insufficientFundAlerts = bool clearInsufficientFunds reportInsufficientFunds isInsufficientFunds baker

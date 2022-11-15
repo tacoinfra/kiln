@@ -132,6 +132,7 @@ preMigrate chainId =
   >=> migrateBakerDaemonInternalRemoveEndorser
   >=> migrateLedgerAccountAddRequested
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "CacheEndorsingRights")
+  >=> renameColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "constants#tokensPerRoll" "constants#minimalStake"
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
