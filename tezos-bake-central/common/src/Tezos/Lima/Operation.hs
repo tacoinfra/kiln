@@ -170,6 +170,8 @@ instance FromJSON OperationContents where
       "increase_paid_storage"          -> pure OperationContents_Unknown
       "vdf_revelation"                 -> pure OperationContents_Unknown
       "event"                          -> pure OperationContents_Unknown
+      "update_consensus_key"           -> pure OperationContents_Unknown
+      "drain_delegate"                 -> pure OperationContents_Unknown
       unknown -> trace ("Warning: Unknown operation kind " <> T.unpack unknown) $ pure OperationContents_Unknown
 
 concat <$> traverse deriveTezosFromJson
