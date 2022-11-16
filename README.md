@@ -318,7 +318,7 @@ There is also an opportunity to set this option using a file. You can create a
 ```
 { "liquidity_baking_toggle_vote": "on"/"off"/"pass" }
 ```
-And run Kiln with `--kiln-baker-custom-args="--votefile vote.json"` option. This way of setting the liquidity baking options takes precendence over the option which is set on Kiln UI. More details in the [documentation](https://tezos.gitlab.io/jakarta/liquidity_baking.html#toggle-vote).
+And run Kiln with `--kiln-baker-custom-args="--votefile vote.json"` option. This way of setting the liquidity baking options takes precendence over the option which is set on Kiln UI. More details in the [documentation](https://tezos.gitlab.io/active/liquidity_baking.html).
 
 ### Configuring Telegram notifications
 

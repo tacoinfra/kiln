@@ -2,19 +2,23 @@
 
 stdenv.mkDerivation rec {
   name = "tezos-${version}";
-  version = "14.1-1";
+  version = "15.0-1";
 
   src = fetchzip {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v${version}/binaries-${version}.tar.gz";
-      sha256 = "sha256-iI7v5kLE24xEos0fsuu92vNb79JmmyhOcVR9EtbNo3A=";
+      sha256 = "sha256-a2RK2/yO21cxHHLtxJunxGryr8i42H1aHwIG1HGP2uI=";
       stripRoot = false;
       };
-  binaries = ["tezos-client" "tezos-node" "tezos-baker-*" "tezos-admin-client"];
+  binaries = ["octez-client" "octez-node" "octez-baker-*" "octez-admin-client"];
+  # Since 'tezos-*' binaries were renamed to 'octez-*' in v15.0 Octez release
+  # but Kiln uses the old names, we rename them to 'tezos-*' while copying so
+  # not to make Kiln source depend on binaries names update.
   installPhase = ''
   mkdir -p $out/bin
   for bin in $binaries ; do
-    cp ${src}/$bin $out/bin/$bin
-    chmod +x $out/bin/$bin
+    tezos_bin=$(echo $bin | sed "s/octez/tezos/")
+    cp ${src}/$bin $out/bin/$tezos_bin
+    chmod +x $out/bin/$tezos_bin
   done
   '';
   }
