@@ -58,6 +58,10 @@ delegateInfoCrossCompat_deactivated :: Getter DelegateInfoCrossCompat Bool
 delegateInfoCrossCompat_deactivated = to $ \case
   DelegateInfoLima di -> di ^. Lima.delegateInfo_deactivated
 
+delegateInfoCrossCompat_activeConsensusKey :: Getter DelegateInfoCrossCompat (Maybe PublicKeyHash)
+delegateInfoCrossCompat_activeConsensusKey = to $ \case
+  DelegateInfoLima di -> di ^. Lima.delegateInfo_activeConsensusKey
+
 data BakingRightsCrossCompat
   = BakingRightsLima Lima.BakingRights
 

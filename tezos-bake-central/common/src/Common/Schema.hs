@@ -583,6 +583,8 @@ data CacheDelegateInfo = CacheDelegateInfo
   , _cacheDelegateInfo_delegatedBalance :: Tez
   , _cacheDelegateInfo_deactivated :: Bool
   , _cacheDelegateInfo_gracePeriod :: Cycle
+  , _cacheDelegateInfo_activeConsensusKey :: PublicKeyHash
+  , _cacheDelegateInfo_pendingConsensusKey :: Maybe PendingConsensusKey
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 -- newtype BakerDetails = BakerDetails (WithId PublicKeyHash BakerDetails')

@@ -68,6 +68,7 @@ data DelegateInfo = DelegateInfo
   , _delegateInfo_delegatedBalance      :: Tez
   , _delegateInfo_deactivated           :: Bool
   , _delegateInfo_gracePeriod           :: Cycle
+  , _delegateInfo_activeConsensusKey    :: Maybe PublicKeyHash
   }
 
 data ParticipationInfo = ParticipationInfo
