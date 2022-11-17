@@ -2,14 +2,17 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Tezos.Lima.Account where
 
 import Control.DeepSeq (NFData)
 import Control.Lens.TH (makeLenses)
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:), (.:?))
 import Data.Bits (Bits)
 import Data.Hashable (Hashable)
+import Data.Maybe (fromMaybe)
 import Data.Time
 import Data.Typeable
 import Data.Word
@@ -60,6 +63,11 @@ data EndorsingRightsDelegateInfo = EndorsingRightsDelegateInfo
   , _endorsingRightsDelegateInfo_endorsingPower :: Word16
   } deriving (Eq, Ord, Show)
 
+data PendingConsensusKey = PendingConsensusKey
+  { _pendingConsensusKey_cycle :: Cycle
+  , _pendingConsensusKey_pkh :: PublicKeyHash
+  } deriving (Eq, Ord, Show)
+
 data DelegateInfo = DelegateInfo
   { _delegateInfo_fullBalance           :: Tez
   , _delegateInfo_currentFrozenDeposits :: Tez
@@ -68,8 +76,27 @@ data DelegateInfo = DelegateInfo
   , _delegateInfo_delegatedBalance      :: Tez
   , _delegateInfo_deactivated           :: Bool
   , _delegateInfo_gracePeriod           :: Cycle
+  -- TODO: remove 'Maybe' after Lima is activated on mainnet.
   , _delegateInfo_activeConsensusKey    :: Maybe PublicKeyHash
+  , _delegateInfo_pendingConsensusKeys  :: [PendingConsensusKey]
   }
+
+instance FromJSON DelegateInfo where
+  parseJSON = withObject "DelegateInfo" $ \o -> do
+    _delegateInfo_fullBalance           <- o .: "full_balance"
+    _delegateInfo_currentFrozenDeposits <- o .: "current_frozen_deposits"
+    _delegateInfo_frozenDeposits        <- o .: "frozen_deposits"
+    _delegateInfo_stakingBalance        <- o .: "staking_balance"
+    _delegateInfo_delegatedBalance      <- o .: "delegated_balance"
+    _delegateInfo_deactivated           <- o .: "deactivated"
+    _delegateInfo_gracePeriod           <- o .: "grace_period"
+    _delegateInfo_activeConsensusKey    <- o .:? "active_consensus_key"
+
+    mbPendingConsensusKeys <- o .:? "pending_consensus_keys"
+    let _delegateInfo_pendingConsensusKeys = fromMaybe [] mbPendingConsensusKeys
+
+    pure $ DelegateInfo {..}
+
 
 data ParticipationInfo = ParticipationInfo
   { _participationInfo_expectedCycleActivity       :: Word32
@@ -82,13 +109,13 @@ data ParticipationInfo = ParticipationInfo
 
 concat <$> traverse deriveTezosFromJson
   [ ''BakingRights
-  , ''DelegateInfo
   ]
 
 concat <$> traverse deriveTezosJson
   [ ''EndorsingRights
   , ''EndorsingRightsDelegateInfo
   , ''ParticipationInfo
+  , ''PendingConsensusKey
   ]
 
 concat <$> traverse makeLenses
@@ -97,4 +124,5 @@ concat <$> traverse makeLenses
   , 'EndorsingRights
   , 'EndorsingRightsDelegateInfo
   , 'ParticipationInfo
+  , 'PendingConsensusKey
   ]

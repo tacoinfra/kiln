@@ -62,6 +62,10 @@ delegateInfoCrossCompat_activeConsensusKey :: Getter DelegateInfoCrossCompat (Ma
 delegateInfoCrossCompat_activeConsensusKey = to $ \case
   DelegateInfoLima di -> di ^. Lima.delegateInfo_activeConsensusKey
 
+delegateInfoCrossCompat_pendingConsensusKeys :: Getter DelegateInfoCrossCompat [Lima.PendingConsensusKey]
+delegateInfoCrossCompat_pendingConsensusKeys = to $ \case
+  DelegateInfoLima di -> di ^. Lima.delegateInfo_pendingConsensusKeys
+
 data BakingRightsCrossCompat
   = BakingRightsLima Lima.BakingRights
 

@@ -64,7 +64,7 @@ import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Either (rights)
-import Data.Foldable (find)
+import Data.Foldable (find, minimumBy)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Int (Int32)
@@ -203,6 +203,13 @@ toCacheDelegateInfo pkh di = CacheDelegateInfo
   , _cacheDelegateInfo_activeConsensusKey = fromMaybe pkh $ di ^. delegateInfoCrossCompat_activeConsensusKey
   , _cacheDelegateInfo_pendingConsensusKey = mbClosestPendingPkh
   }
+  where
+    mbPendingPkhs = case di ^. delegateInfoCrossCompat_pendingConsensusKeys of
+      []   -> Nothing
+      keys -> Just keys
+    mbClosestPendingPkh = mbPendingPkhs <&> \pendingPkhs ->
+      flip minimumBy pendingPkhs $ \pck1 pck2 ->
+        compare (pck1 ^. pendingConsensusKey_cycle) (pck2 ^. pendingConsensusKey_cycle)
 
 data RpcResult a = RpcResult
   { _rpcResult_raw :: LBS.ByteString

@@ -2719,6 +2719,11 @@ bakersTab =
                 whenJustDyn mbActiveConsensusPkhDyn $ \activeConsensusPkh -> el "div" $ do
                   el "dt" (text "Active consensus key")
                   el "dd" (text $ toPublicKeyHashText activeConsensusPkh)
+                whenJustDyn mbPendingConsensusPkhDyn $ \PendingConsensusKey{..} -> el "div" $ do
+                  el "dt" (text "Pending consensus key")
+                  let pkhText   = toPublicKeyHashText _pendingConsensusKey_pkh
+                      cycleText = tshow $ unCycle _pendingConsensusKey_cycle
+                  el "dd" (text $ pkhText <> " at cycle " <> cycleText)
             _ -> blank
 
           el "div" $ do
