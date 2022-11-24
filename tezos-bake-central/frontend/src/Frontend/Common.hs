@@ -728,3 +728,11 @@ isRadioItemSelected radioItems option selectedByDefault =
   where
     curOption    = True <$ option
     otherOptions = map (\opt -> False <$ opt) radioItems
+
+shortenPkh :: PublicKeyHash -> Text
+shortenPkh pkh =
+  let pkhText = toPublicKeyHashText pkh
+  in T.take 12 pkhText <> "..." <> T.takeEnd 4 pkhText
+
+pkhTooltip :: (DomBuilder t m) => PublicKeyHash -> m ()
+pkhTooltip = divClass "tooltip-description" . el "p" . text . toPublicKeyHashText
