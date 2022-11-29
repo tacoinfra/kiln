@@ -2560,6 +2560,7 @@ bakersTab =
       -> m ()
     tile title pkh subtitle mkRemoveReq errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
+          dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
 
         tooltipAndBadge :: Dynamic t (Maybe (Dynamic t (m (), Text))) <- do
@@ -2706,6 +2707,29 @@ bakersTab =
 
         el "dl" $ do
           (latestHead, knownProto) <- watchHeadWithProtocol
+          protoHashDyn <- watchLatestProtocolHash
+          -- TODO: remove when Lima is activated on mainnet.
+          dyn_ $ ffor protoHashDyn $ \case
+            Just LimaProtocolHash ->
+              let
+                mbActiveConsensusPkhDyn = _cacheDelegateInfo_activeConsensusKey <$$> dmDelegateInfo
+                mbPendingConsensusPkhDyn = ffor dmDelegateInfo $ \mDelegateInfo ->
+                  mDelegateInfo >>= _cacheDelegateInfo_pendingConsensusKey
+              in do
+                whenJustDyn mbActiveConsensusPkhDyn $ \activeConsensusPkh -> el "div" $ do
+                  el "dt" (text "Active consensus key")
+                  el "dd" $ do
+                    tooltipped TooltipPos_TopCenter (pkhTooltip pkh) $
+                      el "span" $ text $ shortenPkh activeConsensusPkh
+                whenJustDyn mbPendingConsensusPkhDyn $ \PendingConsensusKey{..} -> el "div" $ do
+                  el "dt" (text "Pending consensus key")
+                  let cycleText = tshow $ unCycle _pendingConsensusKey_cycle
+                  el "dd" $ do
+                    tooltipped TooltipPos_BottomCenter (pkhTooltip pkh) $
+                      el "span" $ text $ shortenPkh _pendingConsensusKey_pkh
+                    el "span" $ text $ " at cycle " <> cycleText
+            _ -> blank
+
           el "div" $ do
             el "dt" (text "Next Bake")
             el "dd" $ dyn_ $ ffor nextRightTxt $ \case
@@ -2719,8 +2743,6 @@ bakersTab =
                 text nbsp
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
-        let
-          dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'
         elClass "table" "baker-balance" $ do
           el "tr" $ do
             el "td" (text "Available Balance")
