@@ -1,10 +1,14 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Tezos.V014.ProtocolConstants where
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
+module Tezos.Lima.ProtocolConstants where
 
+import Control.Applicative (Alternative (..))
 import Control.DeepSeq (NFData)
 import Control.Lens ((^.))
 import Control.Lens.TH (makeLenses)
+import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
 import Data.Hashable (Hashable)
 import Data.Typeable
 import Data.Time (NominalDiffTime)
@@ -25,7 +29,7 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_blocksPerVotingPeriod :: Maybe RawLevel
   , _protoInfo_cyclesPerVotingPeriod :: Maybe RawLevel -- "blocks_per_voting_period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
 
-  , _protoInfo_tokensPerRoll :: Tez -- "tokens_per_roll": { "$ref": "#/definitions/mutez" },
+  , _protoInfo_minimalStake :: Tez -- "minimal_stake": { "$ref": "#/definitions/mutez" },
 
   , _protoInfo_minimalBlockDelay :: TezosWord64 -- "minimal_block_delay": { "$ref": "#/definitions/int64" }
   } deriving (Eq, Ord, Show, Typeable, Generic)
@@ -44,7 +48,22 @@ getCyclesPerVotingPeriod protoInfo = case (_protoInfo_blocksPerVotingPeriod prot
   (Just blocks, _) -> blocks `div` _protoInfo_blocksPerCycle protoInfo
   _ -> error "Neither 'blocks_per_voting_period' nor 'cycles_per_voting_period' are present in protocol constants."
 
-deriveTezosJson ''ProtoInfo
+instance FromJSON ProtoInfo where
+  parseJSON = withObject "ProtoInfo" $ \v -> do
+    preservedCycles   :: Cycle    <- v .: "preserved_cycles"
+    blocksPerCycle    :: RawLevel <- v .: "blocks_per_cycle"
+    blocksPerVP       :: Maybe RawLevel <-  v .:? "blocks_per_voting_period"
+    cyclesPerVP       :: Maybe RawLevel <- v .:? "cycles_per_voting_period"
+    -- In Lima protocol 'tokens_per_roll' constant was renamed to 'minimal_stake'.
+    -- In order to avoid creating cross-compat data type only for this change, we
+    -- try to parse both these constants there.
+    --
+    -- TODO: remove when Lima is activated on mainnet.
+    minimalStake      :: Tez <- v .: "tokens_per_roll" <|> v .: "minimal_stake"
+    minimalBlockDelay :: TezosWord64 <- v .: "minimal_block_delay"
+    pure $ ProtoInfo preservedCycles blocksPerCycle blocksPerVP cyclesPerVP minimalStake minimalBlockDelay
+
+deriveTezosToJson ''ProtoInfo
 makeLenses ''ProtoInfo
 
 getTimeBetweenBlocks :: ProtoInfo -> NominalDiffTime

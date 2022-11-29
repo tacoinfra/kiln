@@ -32,7 +32,7 @@ import Tezos.Common.PublicKeyHash
 import Tezos.CrossCompat.Account
 import Tezos.CrossCompat.Block
 import Tezos.CrossCompat.Vote
-import Tezos.V014.Types
+import Tezos.Lima.Types
 
 class QueryChain repr where
   rChain :: repr ChainId

@@ -343,7 +343,7 @@ bakerGroupedMissedBonusDescriptions tz count (fb, ft) (lb, lt) = BakerErrorDescr
     localTime ts = T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts
 
 bakerInsufficientFundsDescriptions :: Maybe Tez -> ErrorLogInsufficientFunds -> BakerErrorDescriptions
-bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
+bakerInsufficientFundsDescriptions mMinimalStake _ = BakerErrorDescriptions
     { _bakerErrorDescriptions_title = "Baker staking balance is insufficient to receive rights"
     , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
     , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than " <> roll <> "ꜩ and cannot receive any baking or endorsing rights."
@@ -358,7 +358,7 @@ bakerInsufficientFundsDescriptions mTokensPerRoll _ = BakerErrorDescriptions
         , "This baker now has a large enough staking balance to receive baking rights.")
     }
   where
-    roll = fromString $ formatCommas $ maybe 6000 ((`div` 1000000) . getMicroTez) mTokensPerRoll
+    roll = fromString $ formatCommas $ maybe 6000 ((`div` 1000000) . getMicroTez) mMinimalStake
     formatCommas = reverse . intercalate "," . chunksOf 3 . reverse . show
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions

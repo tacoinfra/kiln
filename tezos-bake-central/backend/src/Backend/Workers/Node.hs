@@ -63,7 +63,7 @@ import qualified Text.URI as Uri
 import Tezos.NodeRPC
 import Tezos.Types hiding (toBlockHeader)
 import qualified Tezos.Unsafe as Unsafe
-import qualified Tezos.V014.Vote as V014
+import qualified Tezos.Lima.Vote as Lima
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -767,7 +767,7 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
               |]
               for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
               let (protoAgnosticProposals :: [(ProtocolHash, ProtoAgnosticVotingPower)]) = toList $ case proposals of
-                    ProposalVotesListV014 l -> fmap (\(V014.ProposalVotes (pHash, votingPower)) ->
+                    ProposalVotesListLima l -> fmap (\(Lima.ProposalVotes (pHash, votingPower)) ->
                       (pHash, tezToProtoAgnosticVotingPower votingPower)) l
               inserted <- returning [sql|
                 INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
@@ -800,12 +800,12 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         quorum <- nodeQueryDataSource $ nodeQuery_CurrentQuorum (blk ^. hash)
         listings <- nodeQueryDataSource $ nodeQuery_Listings (blk ^. hash)
         let totalVotingPower = case listings of
-              VoterListingsV014 l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap V014._voterDelegate_votingPower l
+              VoterListingsLima l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap Lima._voterDelegate_votingPower l
         pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalVotingPower)
 
       for_ mpv $ \(proposal, ballots, quorum, totalVotingPower) -> runDb (Identity db) $ do
         let protoAgnosticBallots = case ballots of
-              BallotsV014 (V014.Ballots yay nay pass) ->
+              BallotsLima (Lima.Ballots yay nay pass) ->
                 ProtoAgnosticBallots (tezToProtoAgnosticVotingPower yay) (tezToProtoAgnosticVotingPower nay) (tezToProtoAgnosticVotingPower pass)
         mPid <- (fmap . fmap) toId $ project1 AutoKeyField $ PeriodProposal_hashField ==. proposal
         for_ mPid $ \pid -> do

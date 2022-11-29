@@ -1012,8 +1012,8 @@ liveErrorsWidget = void $ do
             (bakerNeedToResetHWMDescriptions log)
             pkh
           BakerLogTag_InsufficientFunds -> do
-              dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
-              dyn_ $ ffor dTokensPerRoll $ \mTokensPerRoll -> renderBakerError (bakerInsufficientFundsDescriptions mTokensPerRoll log) pkh
+              dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
+              dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError (bakerInsufficientFundsDescriptions mMinimalStake log) pkh
           BakerLogTag_VotingReminder ->
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining -> do
               let dsc = bakerVotingReminderDescriptions log <$> remaining
@@ -2373,8 +2373,8 @@ bakersTab =
                     BakerLogTag_BakerDeactivationRisk -> Just $ renderBakerError $ bakerDeactivationRiskDescriptions log
                     BakerLogTag_BakerAccused -> Just $ renderBakerError $ bakerAccusedDescriptions log
                     BakerLogTag_InsufficientFunds -> Just $ do
-                        dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
-                        dyn_ $ ffor dTokensPerRoll $ \mTokensPerRoll -> renderBakerError $ bakerInsufficientFundsDescriptions mTokensPerRoll log
+                        dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
+                        dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError $ bakerInsufficientFundsDescriptions mMinimalStake log
                     BakerLogTag_VotingReminder -> Nothing
                   Right (BakerAlert_GroupedAlert GroupedBakerAlert{..}) ->
                     Just $ el "span" $ do
@@ -2472,8 +2472,8 @@ bakersTab =
           BakerLogTag_BakerDeactivationRisk -> renderBakerError ev (pure $ bakerDeactivationRiskDescriptions log) pkh
           BakerLogTag_BakerAccused -> renderBakerError ev (pure $ bakerAccusedDescriptions log) pkh
           BakerLogTag_InsufficientFunds -> do
-              dTokensPerRoll <- _protoInfo_tokensPerRoll <$$$> watchLatestProtoInfo
-              dyn_ $ ffor dTokensPerRoll $ \mTokensPerRoll -> renderBakerError ev (pure $ bakerInsufficientFundsDescriptions mTokensPerRoll log) pkh
+              dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
+              dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError ev (pure $ bakerInsufficientFundsDescriptions mMinimalStake log) pkh
           BakerLogTag_VotingReminder ->
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining ->
               renderBakerError ev (bakerVotingReminderDescriptions log <$> remaining) pkh
