@@ -200,7 +200,7 @@ toCacheDelegateInfo pkh di = CacheDelegateInfo
   , _cacheDelegateInfo_delegatedBalance = di ^. delegateInfoCrossCompat_delegatedBalance
   , _cacheDelegateInfo_deactivated = di ^. delegateInfoCrossCompat_deactivated
   , _cacheDelegateInfo_gracePeriod = di ^. delegateInfoCrossCompat_gracePeriod
-  , _cacheDelegateInfo_activeConsensusKey = fromMaybe pkh $ di ^. delegateInfoCrossCompat_activeConsensusKey
+  , _cacheDelegateInfo_activeConsensusKey = di ^. delegateInfoCrossCompat_activeConsensusKey <|> Just pkh
   , _cacheDelegateInfo_pendingConsensusKey = mbClosestPendingPkh
   }
   where

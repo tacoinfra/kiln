@@ -2712,7 +2712,8 @@ bakersTab =
           dyn_ $ ffor protoHashDyn $ \case
             Just LimaProtocolHash ->
               let
-                mbActiveConsensusPkhDyn = _cacheDelegateInfo_activeConsensusKey <$$> dmDelegateInfo
+                mbActiveConsensusPkhDyn = ffor dmDelegateInfo $ \mDelegateInfo ->
+                  mDelegateInfo >>= _cacheDelegateInfo_activeConsensusKey
                 mbPendingConsensusPkhDyn = ffor dmDelegateInfo $ \mDelegateInfo ->
                   mDelegateInfo >>= _cacheDelegateInfo_pendingConsensusKey
               in do
