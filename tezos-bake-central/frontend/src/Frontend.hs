@@ -2719,9 +2719,7 @@ bakersTab =
               in do
                 whenJustDyn mbActiveConsensusPkhDyn $ \activeConsensusPkh -> el "div" $ do
                   el "dt" (text "Active consensus key")
-                  el "dd" $ do
-                    tooltipped TooltipPos_TopCenter (pkhTooltip pkh) $
-                      el "span" $ text $ shortenPkh activeConsensusPkh
+                  el "dd" $ text $ toPublicKeyHashText activeConsensusPkh
                 whenJustDyn mbPendingConsensusPkhDyn $ \PendingConsensusKey{..} -> el "div" $ do
                   el "dt" (text "Pending consensus key")
                   let cycleText = tshow $ unCycle _pendingConsensusKey_cycle
