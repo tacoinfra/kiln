@@ -1312,7 +1312,7 @@ i.ui.icon-letter.icon {
       border-radius: @2px !important;
       border: solid @1px #cacaca !important;
 
-      font-size: @12px;
+      font-size: @11px;
       line-height: 1.5;
 
       > .menu-section {
