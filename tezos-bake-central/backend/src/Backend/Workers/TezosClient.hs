@@ -19,25 +19,22 @@
 module Backend.Workers.TezosClient where
 
 import Control.Concurrent.STM (atomically, flushTQueue)
-import Control.Concurrent.STM.TQueue (writeTQueue)
 import Control.Exception (catchJust)
 import Control.Monad.Except
 import Control.Monad.Logger
 import Data.Aeson.Lens
 import Data.Either (fromLeft)
 import Data.Int (Int32)
-import Data.List (sortOn)
 import Data.Pool (Pool)
-import Data.Time (NominalDiffTime, diffUTCTime)
+import Data.Time (NominalDiffTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql(..), SqlDb)
 import Database.Id.Class
 import Database.Id.Groundhog
 import Rhyolite.Backend.DB
-import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.DB.Serializable (Serializable)
-import Safe
 import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..))
 import System.IO (hIsEOF)
@@ -56,7 +53,7 @@ import Tezos.Types
 
 import Backend.Alerts
 import Backend.Common
-  (AppSerializable, LedgerQuery(..), LedgerQueryType(..), addBakerImpl, workerWithDelay,
+  (LedgerQuery(..), LedgerQueryType(..), addBakerImpl,
   readCreateProcessWithExitCodeWithLogging, timeout', withDbAndConfig)
 import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI', kilnNodeRpcURI, BinaryPaths(..))
 import Backend.NodeRPC
@@ -85,74 +82,6 @@ startBaking nds pkh = do
            , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] CondEmpty
     update [ ProcessData_controlField =. ProcessControl_Run
            , ProcessData_errorLogField =. (Nothing :: Maybe Text)] $ AutoKeyField ==. bakerProcess
-
-ledgerConnectivityCheckWorker
-  :: NominalDiffTime
-  -> NominalDiffTime
-  -> LoggingEnv
-  -> NodeDataSource
-  -> AppConfig
-  -> Pool Postgresql
-  -> IO (IO ())
-ledgerConnectivityCheckWorker delay !ledgerCheckDelay logger nds appConfig db = runLoggingEnv logger $ do
-  workerWithDelay "tezosClientWorker" (pure delay) $ const $ runLoggingEnv logger $ do
-    liftIO $ createDirectoryIfMissing True (tezosClientDataDir appConfig)
-
-    mConnectedLedger :: Maybe ConnectedLedger <- inDb $ selectSingle CondEmpty
-    currentTime <- inDb getTime
-    case mConnectedLedger of
-      Just cl -> do
-        -- We might want to do the connectivity check because some time has passed
-        case (ledgerCheckDelay, _connectedLedger_updated cl) of
-          -- Check if it wasn't updated previously
-          (_, Nothing) -> liftIO $ atomically $ writeTQueue ledgerIOQueue $
-            updateConnectedLedgerViaGetConnectedLedger appConfig db
-          (ledgerBackgroundUpdateInterval, Just upd) ->
-            -- Attempt to check if sufficient amout of time has passed
-            when (currentTime `diffUTCTime` upd > ledgerBackgroundUpdateInterval) $ do
-              doSensibleLedgerCheck (isJust $ _connectedLedger_ledgerIdentifier cl)
-
-      _ -> do
-        -- If there is no row in the DB, this is our first time running and we should check it
-        doSensibleLedgerCheck False
-        pure ()
-
-    where
-      inDb :: AppSerializable a -> LoggingT IO a
-      inDb = runDb (Identity db) . flip runReaderT appConfig
-
-      ledgerIOQueue = _nodeDataSource_ledgerIOQueue nds
-
-      -- Regardless of updated time, we ought not to check the ledger if we are two levels around
-      -- a baking right and we shouldn't bother checking if we don't have an internal baker running
-      -- either
-      doSensibleLedgerCheck wasConnected = do
-        -- Here we use latest head instead of latest final head to check whether we have baking/endorsement
-        -- opportunities in upcoming blocks
-        mbLatestHeadLevel <- liftIO $ atomically $ dataSourceHeadLevel nds
-        doCheck <- for mbLatestHeadLevel $ \latestHeadLevel -> checkKilnBakerAndNextRights appConfig nds latestHeadLevel >>= \case
-          -- If we don't have an internal baker, don't bother checking
-          (Nothing, _, _) -> pure False
-          -- If we do and the ledger was previously disconnected, we need to check again
-          (_, _, _) | not wasConnected -> pure True
-          -- Avoid sending commands to the ledger within two blocks of baking rights
-          (_, Just (_, lvl), progressMay) -> do
-            let doC = latestHeadLevel < lvl - 2 || latestHeadLevel > lvl + 2
-            -- This is pretty spammy. We probably don't want this without updating the updated flag...
-            -- unless (doC || wasConnected) $ $(logWarn) ("Baking rights approaching at level " <> tshow lvl <> ". Kiln last saw that the ledger was disconnected!")
-            case progressMay of
-              -- If there are no rights we check that we actually seen all rights up to current block
-              -- since there is a possibility that there are rights that we haven't seen yet
-              Just progressLvl -> pure $ doC && progressLvl >= latestHeadLevel
-              -- This case shouldn't actually be possible
-              Nothing -> pure False
-          -- If we have no rights but a baker, we may as well check because the rights are coming
-          (_, Nothing, progressMay) -> case progressMay of
-              -- If we have no rights, we still check that we've seen all rights up to current block
-              Just progressLvl -> pure $ progressLvl >= latestHeadLevel
-              Nothing -> pure False
-        when (doCheck == Just True) $ liftIO $ atomically $ writeTQueue ledgerIOQueue $
-          updateConnectedLedgerViaGetConnectedLedger appConfig db
 
 updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> LedgerQuery (LoggingT IO)
 updateConnectedLedgerViaGetConnectedLedger appConfig db = LedgerQuery LedgerQueryType_PollLedger $ do
@@ -672,34 +601,3 @@ submitBallot appConfig proposal ballot = do
       Ballot_Yay -> "yay"
       Ballot_Nay -> "nay"
       Ballot_Pass -> "pass"
-
--- Logic mostly copied from viewselector' next rights code
-checkKilnBakerAndNextRights :: AppConfig -> NodeDataSource -> RawLevel -> LoggingT IO (Maybe PublicKeyHash, Maybe (RightKind, RawLevel), Maybe RawLevel)
-checkKilnBakerAndNextRights appConfig nds headLevel = withDbAndConfig (_nodeDataSource_pool nds) appConfig $ do
-  v <- flip runReaderT nds $ runExceptT @KilnRpcError $ tryNodeQueryT $ do
-    let chainId = _appConfig_chainId appConfig
-    bakerInt :: Maybe PublicKeyHash <- join . listToMaybe <$> project (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector)
-      (BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector ==. False)
-
-    progressMay :: Maybe RawLevel <- flip (maybe (pure Nothing)) bakerInt $ \pkh -> do
-      fmap (headMay . fmap fromOnly) [queryQ|
-        SELECT brp."progress"
-        FROM "BakerRightsProgress" brp
-        WHERE brp."chainId" = ?chainId
-          AND brp."publicKeyHash" = ?pkh
-      |]
-
-    rightsMay :: Maybe (RightKind, RawLevel) <- flip (maybe (pure Nothing)) bakerInt $ \pkh -> do
-      fmap (headMay . sortOn snd) [queryQ|
-          SELECT br."right", MIN(br.level)
-          FROM "BakerRightsProgress" brp
-          JOIN "BakerRight" br
-            ON br.branch = brp.id
-            AND br.level > ?headLevel + CASE WHEN br."right" = 'RightKind_Endorsing' THEN -1 ELSE 0 END -- if the endorsement is of the current block, you haven't missed it yet.
-          WHERE brp."chainId" = ?chainId
-            AND brp."publicKeyHash" = ?pkh
-          GROUP BY brp."publicKeyHash", br."right"
-        |]
-
-    pure (bakerInt, rightsMay, progressMay)
-  pure (v^?_Right._Just._1._Just, v^?_Right._Just._2._Just, v^?_Right._Just._3._Just)

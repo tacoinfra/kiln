@@ -62,11 +62,6 @@ upgradeBranchDefault = "master"
 networkGitLabProjectIdDefault :: Text
 networkGitLabProjectIdDefault = "3836952"
 
-ledgerCheckDelay :: FilePath
-ledgerCheckDelay = "ledger-check-delay"
-
-defaultLedgerCheckDelay :: NominalDiffTime
-defaultLedgerCheckDelay = 10 -- seconds
 
 parseSecondsUnsafe :: Text -> NominalDiffTime
 parseSecondsUnsafe = unsafeParse "seconds" $ \a -> case readMaybe (T.unpack a) of
