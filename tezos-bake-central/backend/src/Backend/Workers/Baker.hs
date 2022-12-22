@@ -132,7 +132,9 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
       -- drop the already completed bakers.
       mUnfinished :: Maybe (NonEmpty BakerRightsProgress)
       mUnfinished = nonEmpty $ fold $ flip MMap.map needProgress $ \(Max p) -> do
-        guard (_bakerRightsProgress_progress p <= endOfPreservedCyclesLvl)
+        -- We don't use '<=' there so not to mark bakers which progress is
+        -- equal to 'endofPreservedCyclesLvl' as unfinished.
+        guard (_bakerRightsProgress_progress p < endOfPreservedCyclesLvl)
         return p
 
       toChunks :: Int -> [a] -> [[a]]
@@ -142,9 +144,16 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
 
 
     $(logDebugSH) ("Baker rights TODO:" :: Text, mUnfinished)
-    for_ mUnfinished $ \(aBakerRight :| _) -> do
-      let bakerMinBound = _bakerRightsProgress_progress aBakerRight + 1
-          bakerMaxBound = endOfPreservedCyclesLvl
+    for_ mUnfinished $ \unfinished -> do
+      let bakerMinBound = minimum (fmap _bakerRightsProgress_progress unfinished) + 1
+          -- We don't want to process all blocks up to 'endOfPreservedCyclesLvl'
+          -- in one step in order to be able to pick up new bakers from database
+          -- and gather the rights simultaneously.
+          --
+          -- This number could be changed to process more/less baker per one
+          -- worker step.
+          maxBlocksPerStep = 200
+          bakerMaxBound = min (bakerMinBound + maxBlocksPerStep) endOfPreservedCyclesLvl
           lvlChunks = toChunks 50 [bakerMinBound .. bakerMaxBound]
       for_ lvlChunks $ \lvlChunk -> do
         let lvls = Set.fromList lvlChunk
@@ -159,57 +168,61 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
           endorsers :: [EndorsingRightsCrossCompat]
           endorsers = filter (any (flip Set.member pkhs) . view endorsingRightsCrossCompat_delegates) $ toList reqEndorsers
 
-          bakerRightCycleInfo :: PublicKeyHash -> BakerRightsProgress
-          bakerRightCycleInfo pkh = BakerRightsProgress
+          mkProgress :: PublicKeyHash -> BakerRightsProgress
+          mkProgress pkh = BakerRightsProgress
             { _bakerRightsProgress_chainId = chainId
             , _bakerRightsProgress_publicKeyHash = pkh
             , _bakerRightsProgress_progress = maxLvl
             }
-          bakerRights :: Maybe (Id BakerRightsProgress) -> PublicKeyHash -> [BakerRight]
-          bakerRights pid pkh = flip (maybe mempty) pid $ \pid' ->
-            map (\br -> BakerRight
-              { _bakerRight_branch = pid'
-              , _bakerRight_level = br ^. bakingRightsCrossCompat_level
-              , _bakerRight_right = RightKind_Baking
-              }) (filter ((== pkh) . view bakingRightsCrossCompat_delegate) pri1bakers) ++
-            mapMaybe (\end ->
-              if pkh `elem` end ^. endorsingRightsCrossCompat_delegates
-                then Just $ BakerRight
-                  { _bakerRight_branch = pid'
-                  , _bakerRight_level = end ^. endorsingRightsCrossCompat_level
-                  , _bakerRight_right = RightKind_Endorsing
-                  }
-                else Nothing
-              ) endorsers
+
+          -- Create the list of 'BakerRights' for given baker with levels greater than
+          -- baker's progress level
+          mkBakerRights
+            :: Maybe (Id BakerRightsProgress, BakerRightsProgress)
+            -> PublicKeyHash -> [BakerRight]
+          mkBakerRights Nothing _ = []
+          mkBakerRights (Just (pid', progress')) pkh =
+            let
+              progressLvl = _bakerRightsProgress_progress progress'
+              filteredBakers = filter ((== pkh) . view bakingRightsCrossCompat_delegate) pri1bakers
+              mkRight lvl kind = Just $ BakerRight pid' lvl kind
+              bakingRights = flip mapMaybe filteredBakers $ \br ->
+                if br ^. bakingRightsCrossCompat_level > progressLvl
+                  then mkRight (br ^. bakingRightsCrossCompat_level) RightKind_Baking
+                  else Nothing
+              endorsingRights = flip mapMaybe endorsers $ \end ->
+                let inDelegates = pkh `elem` end ^. endorsingRightsCrossCompat_delegates
+                    levelAbove  = end ^. endorsingRightsCrossCompat_level > progressLvl
+                in
+                if inDelegates && levelAbove
+                  then mkRight (end ^. endorsingRightsCrossCompat_level) RightKind_Endorsing
+                  else Nothing
+            in bakingRights ++ endorsingRights
 
         $(logDebug) ("bakerrights working lvl:" <> tshow (unRawLevel $ Set.findMax lvls))
         lift @(ExceptT KilnRpcError) $ runDb (Identity db) $ for_ pkhs $ \pkh -> do
-          let
-            newProgress = bakerRightCycleInfo pkh
-          progress' :: [(Id BakerRightsProgress, BakerRightsProgress)] <- Map.toList <$> selectMap BakerRightsProgressConstructor
-            ( BakerRightsProgress_publicKeyHashField `in_` [pkh]
-              &&. BakerRightsProgress_chainIdField `in_` [chainId]
-            )
-          progressId :: Maybe (Id BakerRightsProgress) <- case nonEmpty progress' of
-            Nothing -> Just . toId <$> insert newProgress -- assert lvl == _rightsCycleInfo_minLevel
-            Just ((pId, p):|_)
-              --  | _bakerRightsCycleProgress_progress < lvl-1 -> TODO sulk
-              | _bakerRightsProgress_progress p < maxLvl -> do
-                _ <- [executeQ|
-                  UPDATE "BakerRightsProgress"
-                  SET progress = ?maxLvl
-                  WHERE "id" = ?pId
-                  |]
-
-                return $ Just pId
-              | otherwise -> return Nothing -- already have this progress, do nothing.
-          rights <- for (bakerRights progressId pkh) $ \r -> insert r $> r
+          let newProgress = mkProgress pkh
+          existingProgress :: [(Id BakerRightsProgress, BakerRightsProgress)] <-
+            Map.toList <$> selectMap BakerRightsProgressConstructor
+              ( BakerRightsProgress_publicKeyHashField `in_` [pkh] &&.
+                BakerRightsProgress_chainIdField `in_` [chainId]
+              )
+          mbUpdatedProgress :: Maybe (Id BakerRightsProgress, BakerRightsProgress) <-
+            case nonEmpty existingProgress of
+              Nothing -> insert newProgress >>= \key -> pure $ Just (toId key, newProgress)
+              Just ((pId, p) :| _)
+                | _bakerRightsProgress_progress p < maxLvl -> do
+                  [executeQ| UPDATE "BakerRightsProgress" SET progress = ?maxLvl WHERE "id" = ?pId |]
+                  return $ Just (pId, p)
+                | otherwise -> pure Nothing
+          let mbUpdatedProgressId = fst <$> mbUpdatedProgress
+          rights <- for (mkBakerRights mbUpdatedProgress pkh) $ \r -> insert r $> r
           let
             maybeNotify :: forall m' . PersistBackend m' => Id BakerRightsProgress -> BakerRightsProgress -> [BakerRight] -> m' ()
             maybeNotify x y z = when (_bakerRightsProgress_progress y == bakerMaxBound) $
               notify NotifyTag_BakerRightsProgress (x,y,z)
             {-# INLINE maybeNotify #-}
-          sequence_ $ maybeNotify <$> progressId <*> pure newProgress <*> pure rights
+          sequence_ $ maybeNotify <$> mbUpdatedProgressId <*> pure newProgress <*> pure rights
 
       -- Trim old rights from the database
     let oldestLevel = headLevel - fromIntegral rightsHistoryWindow

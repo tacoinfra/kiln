@@ -422,7 +422,7 @@ setLiquidityBakingToggle
 setLiquidityBakingToggle (sk, pkh) shouldRestartBaker = divClass "central" $ mdo
   elClass "h5" "ui header" $ text "Set up liquidity baking toggle"
   divClass "explanation" $ do
-    let docsUri = "https://tezos.gitlab.io/jakarta/liquidity_baking.html#toggle-vote"
+    let docsUri = "https://tezos.gitlab.io/active/liquidity_baking.html#toggle-vote"
     el "p" $ do
       text "At every block, the baker producing the block includes a flag that requests ending the subsidy "
       text "or on the contrary continuing or restarting it. The context maintains an exponential moving "
