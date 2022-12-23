@@ -35,7 +35,6 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
-import Data.Time (NominalDiffTime)
 import Data.Time.Clock (nominalDay)
 import Data.Validation
 import Database.Groundhog.Core (Field, SubField)
@@ -99,7 +98,7 @@ import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
-import Backend.Workers.TezosClient (computeChainId, ledgerConnectivityCheckWorker)
+import Backend.Workers.TezosClient (computeChainId)
 import Backend.Workers.TezosRelease
 import Common.Config (combineConfigs)
 import qualified Common.Config as Config
@@ -228,10 +227,6 @@ backendImpl cfg serve = do
   !(bakers :: Maybe (Map.Map PublicKeyHash (Maybe Text))) <- combineConfigs
     (getOption $ _opts_bakers cfg)
     (getConfigFromFile (Just . Config.parseBakersUnsafe) $ configPath Config.bakers)
-
-  !(ledgerCheckDelay :: NominalDiffTime) <- fmap (fromMaybe Config.defaultLedgerCheckDelay) $ combineConfigs
-    (_opts_ledgerCheckDelaySeconds cfg)
-    (getConfigFromFile (Just . Config.parseSecondsUnsafe) $ configPath Config.ledgerCheckDelay)
 
   let computeChainId' bins json =
         runNoLoggingT
@@ -437,7 +432,6 @@ backendImpl cfg serve = do
       addFinalizer =<< internalNodeWorker appConfig logger db binaryPaths
       addFinalizer =<< protocolMonitorWorker dataSrc db
       addFinalizer =<< bakerDaemonProcess appConfig dataSrc logger db binaryPaths
-      addFinalizer =<< ledgerConnectivityCheckWorker 1.3 ledgerCheckDelay logger dataSrc appConfig db
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case
@@ -516,7 +510,6 @@ data Opts = Opts
   , _opts_kilnBakerCustomArgs :: Maybe Text
   , _opts_kilnDataDir :: Maybe FilePath
   , _opts_binaryPaths :: Maybe Text
-  , _opts_ledgerCheckDelaySeconds :: Maybe NominalDiffTime
   , _opts_nodeConfigFile :: Maybe FilePath
   , _opts_rightsHistoryWindow :: Maybe Int
   }
@@ -541,7 +534,6 @@ instance Semigroup Opts where
     , _opts_kilnBakerCustomArgs = rightBiased (<|>) _opts_kilnBakerCustomArgs
     , _opts_kilnDataDir = rightBiased (<|>) _opts_kilnDataDir
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
-    , _opts_ledgerCheckDelaySeconds = rightBiased (<|>) _opts_ledgerCheckDelaySeconds
     , _opts_nodeConfigFile = rightBiased (<|>) _opts_nodeConfigFile
     , _opts_rightsHistoryWindow = rightBiased (<|>) _opts_rightsHistoryWindow
     }
@@ -568,7 +560,6 @@ instance Monoid Opts where
       , _opts_kilnBakerCustomArgs = Nothing
       , _opts_kilnDataDir = Nothing
       , _opts_binaryPaths = Nothing
-      , _opts_ledgerCheckDelaySeconds = Nothing
       , _opts_nodeConfigFile = Nothing
       , _opts_rightsHistoryWindow = Nothing
       }
@@ -623,9 +614,6 @@ optsArgDescr =
 
   , mkReqArg Config.binaryPaths "BINPATHS" (set opts_binaryPaths . Just)
       "Custom paths to tezos binaries."
-
-  , mkReqArg Config.ledgerCheckDelay "SECONDS" (set opts_ledgerCheckDelaySeconds . Just . Config.parseSecondsUnsafe)
-      "Check ledger connectivity every X seconds (off by default)"
 
   , mkReqArg Config.nodeConfigFile "FILEPATH" (set opts_nodeConfigFile . Just . T.unpack)
       "The file containing the custom tezos-node configuration (for running custom networks)"
