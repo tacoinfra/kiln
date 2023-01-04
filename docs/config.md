@@ -85,10 +85,6 @@ Custom arguments for the Kiln Node.
 
 Custom arguments for the Kiln baker daemon.
 
-## ledger-check-delay SECONDS
-
-The time between connectivity checks to the ledger. By default this delay is 10 seconds.
-
 ## binary-paths
 
 Create a file named `binary-paths` in the `config` directory adjacent
