@@ -352,7 +352,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         elAttr "img" ("class" =: "kiln-icon" <> "src" =: static @"images/logo.svg") blank
         divClass "item" $ do
           divClass "title" $ text "Votes will be cast as your Kiln Baker."
-          divClass "detail" $ text $ toPublicKeyHashText bakerPkh
+          divClass "detail monospaced-text" $ text $ toPublicKeyHashText bakerPkh
         extras
 
     proposalFlow :: Workflow t m (Event t ())
@@ -511,7 +511,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             divClass "confirm-title" $ text "Confirm Vote"
             divClass "confirm-content" $ text $ textBallot ballot
         divClass "confirm-title" $ text "Source"
-        divClass "confirm-content" $ text $ toPublicKeyHashText bakerPkh
+        divClass "confirm-content monospaced-text" $ text $ toPublicKeyHashText bakerPkh
         divClass "confirm-title" $ text "Protocol"
         divClass "confirm-content" $ text $ toBase58Text $ snd proposal
         divClass "confirm-title" $ text "Period"

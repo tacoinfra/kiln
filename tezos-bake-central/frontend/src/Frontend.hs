@@ -1089,31 +1089,41 @@ sidebarList :: forall t m k js.
   , HasModal t m
   , Ord k
   )
-  => Text -> Dynamic t (MonoidalMap k ((Text, Maybe Text), MonitoredStatus, Bool)) -> (Event t () -> ModalM m (Dynamic t [Text], Event t ())) -> m ()
-sidebarList name nodes' modal = do
-  let nodes :: Dynamic t (Map.Map k ((Text, Maybe Text), MonitoredStatus, Bool)) = coerceDynamic nodes'
+  => Text
+  -> Dynamic t (MonoidalMap k ((Text, Maybe Text), MonitoredStatus, Bool))
+  -> (Event t () -> ModalM m (Dynamic t [Text], Event t ())) -> m ()
+sidebarList name items' modal = do
+  let items :: Dynamic t (Map.Map k ((Text, Maybe Text), MonitoredStatus, Bool)) = coerceDynamic items'
+      isBakerList = name == "Baker"
   divClass "ui sub header" $ text (pluralOf name)
   divClass "ui list" $ do
-    _ <- listWithKey nodes $ \_ node -> divClass "item bullet-before" $ do
-      -- let
-      --   addressDyn = view _1 <$> node
-      --   aliasDyn = view _2 <$> node
-      --   monitoredStatus = view _3 <$> node
+    _ <- listWithKey items $ \_ item -> divClass "item bullet-before" $ do
 
-      let color = (\(_,s,_) -> statusColor s) <$> node
+      let color = (\(_,s,_) -> statusColor s) <$> item
       _ <- SemUi.ui' "i" (def & SemUi.elConfigClasses .~ "icon circle tiny" <> SemUi.Dyn color) blank
       divClass "content" $ do
-        let (title, subtitle) = splitDynPure $ ffor node $ \(tst, _, _) -> tst
+        let (title, subtitle) = splitDynPure $ ffor item $ \(tst, _, _) -> tst
+        -- If we render the list of bakers, the either title or subtitle
+        -- is baker's PKH, and we need to use monospaced font for it.
+        --
+        -- If the subtitle is empty, the title is PKH. Otherwise, the
+        -- subtitle is PKH.
+        let isTitleMonospacedDyn    = fmap ((&&) isBakerList) (isNothing <$> subtitle)
+            isSubtitleMonospacedDyn = fmap ((&&) isBakerList) (isJust    <$> subtitle)
         divClass "header" $ do
-          divClass "title" $ dynText title
-          useSymbol <- holdUniqDyn $ view _3 <$> node
+          dyn_ $ ffor isTitleMonospacedDyn $ \isTitleMonospaced ->
+            let cssClass = if isTitleMonospaced then " monospaced-text" else ""
+            in divClass ("title" <> cssClass) $ dynText title
+          useSymbol <- holdUniqDyn $ view _3 <$> item
           let tooltippedKilnLogo = tooltipped
                 TooltipPos_BottomRight
                 (text $ "This " <> name <> " is run by Kiln.")
                 (divClass "ui image right floated" kilnLogo)
           dyn_ $ bool blank tooltippedKilnLogo <$> useSymbol
 
-        divClass "description" $ dynText $ fromMaybe "" <$> subtitle
+        dyn_ $ ffor isSubtitleMonospacedDyn $ \isSubtitleMonospaced ->
+          let cssClass = if isSubtitleMonospaced then " monospaced-text" else ""
+          in divClass ("description" <> cssClass) $ dynText $ fromMaybe "" <$> subtitle
 
     openAddItemOptions <- buttonIconWithInfoCls "icon-plus" "modalopener fluid" ("Add " <> pluralOf name)
     tellModal $ (openAddItemOptions $>) $ cancelableModalWithClasses modal
@@ -1263,12 +1273,14 @@ authorizeLedgerToBakeModal sk pkh close = ffor (workflow auth) $ \d -> let (c, e
     auth = Workflow $ do
       ledgerCheckImg ledger
       elClass "h5" "ui header" $ text "Authorize this Ledger Device to bake for the following account?"
-      elClass "h6" "ui header" $ text $ toPublicKeyHashText pkh
+      elClass "h6" "ui header monospaced-text" $ text $ toPublicKeyHashText pkh
       authorize <- uiButton "primary" "Authorize"
       pure ((["ledger-prompt"], never), waiting <$ authorize)
     waiting = Workflow $ do
       ledgerCheckImg ledger
-      respondToPrompt $ text $ "Authorize Baking With Public Key? Public Key Hash " <> toPublicKeyHashText pkh
+      respondToPrompt $ do
+        el "span" $ text "Authorize Baking With Public Key? Public Key Hash "
+        monospacedPkhText pkh
       pb <- getPostBuild
       _ <- requestingIdentity $ public (PublicRequest_SetupLedgerToBake sk) <$ pb
       promptStep <- watchPrompting sk
@@ -1289,7 +1301,9 @@ authorizeLedgerToBakeModal sk pkh close = ffor (workflow auth) $ \d -> let (c, e
       elClass "h5" "ui header" $ do
         icon "blue icon-check"
         text "Ledger Device authorized."
-      elClass "h6" "ui header" $ text $ "This Ledger Device is now authorized to bake for the address: " <> toPublicKeyHashText pkh
+      elClass "h6" "ui header" $ do
+        el "span" $ text "This Ledger Device is now authorized to bake for the address: "
+        monospacedPkhText pkh
       continue <- uiButton "primary" "Continue"
       pure ((["ledger-prompt"], continue), never)
 
@@ -1302,7 +1316,7 @@ setHighWaterMark latestBlockLevelDyn secretKey pkh close = ffor (workflow set) $
     set = Workflow $ do
       ledgerCheckImg ledger
       elClass "h5" "ui header" $ text "Set the high-water mark for this account on the connected Ledger Device?"
-      elClass "h6" "ui header" $ text $ toPublicKeyHashText pkh
+      elClass "h6" "ui header monospaced-text" $ text $ toPublicKeyHashText pkh
       el "p" $ do
         text "The high-water mark (latest recorded block level) will"
         el "br" blank
@@ -2394,10 +2408,17 @@ bakersTab =
               subtitleUniq <- holdUniqDyn subtitle
               details <- watchBakerDetails pkh
 
+              -- If subtitle is 'Nothing' (in other words, if the baker has no alias)
+              -- then the title is baker's pkh, and we should use monospaced font there
+              let isTitleMonospaced = isNothing <$> subtitleUniq
+              let
+                title' = dyn_ $ ffor isTitleMonospaced $ \case
+                  False -> dynText titleUniq
+                  True  -> elClass "span" "monospaced-text" $ dynText titleUniq
               let
                 standardBakerTile =
                   tile
-                    (dynText titleUniq)
+                    title'
                     pkh
                     subtitleUniq
                     (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
@@ -2688,7 +2709,7 @@ bakersTab =
                 MonitoredStatus_Healthy -> "Running"
                 MonitoredStatus_Unhealthy -> "Unhealthy"
                 MonitoredStatus_Unknown -> "Unknown"
-          divClass "secondary-name" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
+          divClass "secondary-name monospaced-text" $ dynText =<< holdUniqDyn (fromMaybe nbsp <$> subtitle)
 
         for_ errors' $ \errors -> do
           dyn_ $ ffor errors $ traverse_ $ \(severity, m) ->
@@ -2719,13 +2740,13 @@ bakersTab =
               in do
                 whenJustDyn mbActiveConsensusPkhDyn $ \activeConsensusPkh -> el "div" $ do
                   el "dt" (text "Active consensus key")
-                  el "dd" $ text $ toPublicKeyHashText activeConsensusPkh
+                  elClass "dd" "monospaced-text" $ text $ toPublicKeyHashText activeConsensusPkh
                 whenJustDyn mbPendingConsensusPkhDyn $ \PendingConsensusKey{..} -> el "div" $ do
                   el "dt" (text "Pending consensus key")
                   let cycleText = tshow $ unCycle _pendingConsensusKey_cycle
                   el "dd" $ do
                     tooltipped TooltipPos_BottomCenter (pkhTooltip pkh) $
-                      el "span" $ text $ shortenPkh _pendingConsensusKey_pkh
+                      elClass "span" "monospaced-text" $ text $ shortenPkh _pendingConsensusKey_pkh
                     el "span" $ text $ " at cycle " <> cycleText
             _ -> blank
 
