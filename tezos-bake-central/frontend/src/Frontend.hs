@@ -2752,7 +2752,7 @@ bakersTab =
 
           el "div" $ do
             el "dt" (text "Next Bake")
-            el "dd" $ dyn_ $ ffor nextRightTxt $ \case
+            elClass "dd" "monospaced-text" $ dyn_ $ ffor nextRightTxt $ \case
               Left t -> t
               Right lvl -> do
                 text $ tshow $ unRawLevel lvl
@@ -2766,20 +2766,20 @@ bakersTab =
         elClass "table" "baker-balance" $ do
           el "tr" $ do
             el "td" (text "Available Balance")
-            elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+            elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
               let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
               text w
-            elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+            elClass "td" "baker-balance-part monospaced-text" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
               let (_w, p, tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
               text p
               elClass "span" "tez" $ text tz
 
           el "tr" $ do
             el "td" (text "Staking Balance")
-            elClass "td" "baker-balance-whole" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
+            elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
               let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
               text w
-            elClass "td" "baker-balance-part" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
+            elClass "td" "baker-balance-part monospaced-text" $ withPlaceholder' "" $ ffor dmDelegateInfo $ fmap $ \t -> do
               let (_w, p, tz) = tez' $ _cacheDelegateInfo_stakingBalance t
               text p
               elClass "span" "tez" $ text tz
@@ -2795,7 +2795,7 @@ bakersTab =
             let
               infoTableRow rtitle label method = el "tr" $ do
                 el "td" (text rtitle)
-                elClass "td" label (text . tshow . method $ participationInfo)
+                elClass "td" (label <> " monospaced-text") (text . tshow . method $ participationInfo)
 
             elClass "table" "participation-info" $ do
 
@@ -2814,7 +2814,7 @@ bakersTab =
 
               el "tr" $ do
                 el "td" (text "Expected endorsing rewards")
-                elClass "td" "expected-endorsing-rewards" . withPlaceholder . ffor dmParticipationInfo .
+                elClass "td" "expected-endorsing-rewards monospaced-text" . withPlaceholder . ffor dmParticipationInfo .
                   fmap $ \t -> do
                     let (w, p, tz) = tez' $ _participationInfo_expectedEndorsingRewards t
                     text $ w <> p
