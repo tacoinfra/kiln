@@ -675,7 +675,7 @@ errorLabel primary secondary = el "div" $ do
   el "label" $ text primary
   el "wbr" blank
   for_ secondary $ \x -> do
-    elClass "label" "secondary-label" $ do
+    elClass "label" "secondary-label monospaced-text" $ do
       text x
 
 nodeLabel :: DomBuilder t m => NodeSummary -> m ()
@@ -735,4 +735,7 @@ shortenPkh pkh =
   in T.take 12 pkhText <> "..." <> T.takeEnd 4 pkhText
 
 pkhTooltip :: (DomBuilder t m) => PublicKeyHash -> m ()
-pkhTooltip = divClass "tooltip-description" . el "p" . text . toPublicKeyHashText
+pkhTooltip = divClass "tooltip-description" . elClass "p" "monospaced-text" . text . toPublicKeyHashText
+
+monospacedPkhText :: (DomBuilder t m) => PublicKeyHash -> m ()
+monospacedPkhText = elClass "span" "monospaced-text" . text . toPublicKeyHashText

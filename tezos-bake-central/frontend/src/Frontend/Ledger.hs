@@ -135,7 +135,7 @@ ledgerSetupSteps = mdo
         when (step == Some LSS_ConnectLedger) $ dyn_ $ ffor ledgerIdentifier $ traverse_ $ \li -> divClass "extra" $ do
           elAttr "img" ("src" =: static @"images/ledger.svg") blank
           text $ unLedgerIdentifier li
-        when (step == Some LSS_SelectAddress) $ divClass "extra" $ do
+        when (step == Some LSS_SelectAddress) $ divClass "extra monospaced-text" $ do
           dynText $ ffor currentStepDyn $ maybe "" toPublicKeyHashText . \case
             LSS_ImportAddress :=> Identity (_, pkh) -> Just pkh
             LSS_AuthorizeLedger :=> Identity (_, pkh) -> Just pkh
@@ -166,7 +166,7 @@ doPrompt
   -> m (Behavior t (Maybe (PublicRequest ())))
   -- ^ Widget placed before the continue button
   -- ^ Returns request to start the prompt
-  -> Text
+  -> m ()
   -- ^ Ledger prompt
   -> SecretKey
   -> (SetupState -> Maybe (DSum (PromptResult m) Identity))
@@ -183,7 +183,7 @@ doPrompt title explanation prompt sk handleStep = divClass "central" $ do
       continue <- uiButton "primary" "Continue"
       pure (never, attachWithMaybe (\r () -> prompting <$> r) req continue)
     prompting req = Workflow $ mdo
-      _ <- runWithReplace (respondToPrompt $ text prompt) interstitial
+      _ <- runWithReplace (respondToPrompt prompt) interstitial
       pb <- getPostBuild
       _ <- requestingIdentity $ public req <$ pb
       let changed = leftmost [updated promptDyn, tag (current promptDyn) pb]
@@ -219,7 +219,9 @@ importSecretKey (sk, pkh) = doPrompt "Import address to Kiln." explanation promp
     explanation = do
       text "Kiln must import this address before it can bake and endorse with your Ledger Device. Your private keys will remain securely stored on the Ledger."
       pure $ pure $ Just $ PublicRequest_ImportSecretKey sk
-    prompt = "Provide Public Key? Public Key Hash: " <> toPublicKeyHashText pkh
+    prompt = do
+      el "span" $ text "Provide Public Key? Public Key Hash: "
+      monospacedPkhText pkh
     handleStep ss
       | Just (First importStep) <- _setupState_import ss = case importStep of
         ImportSecretKeyStep_Done -> Just $ PromptResult_Success ==> ()
@@ -243,7 +245,9 @@ authorizeLedger (sk, pkh) = do
     explanation = do
       text "This allows the Ledger Device to sign blocks and endorsements for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or endorsements it may have already signed."
       pure $ pure $ Just $ PublicRequest_SetupLedgerToBake sk
-    prompt = "Setup Baking? Address: " <> toPublicKeyHashText pkh
+    prompt = do
+      el "span" $ text "Setup Baking? Address: "
+      monospacedPkhText pkh
     handleStep ss
       | Just (First setupStep) <- _setupState_setup ss = case setupStep of
         SetupLedgerToBakeStep_Done -> Just $ PromptResult_Success ==> ()
@@ -261,7 +265,9 @@ registerDelegate
   => (SecretKey, PublicKeyHash) -> m (Event t (Either ClientError ()))
 registerDelegate (sk, pkh) = doPrompt "Register address as a delegate." explanation prompt sk handleStep
   where
-    prompt = "Register as delegate? Address: " <> toPublicKeyHashText pkh
+    prompt = do
+      el "span" $ text "Register as delegate? Address: "
+      monospacedPkhText pkh
     handleStep ss
       | Just (First registerStep) <- _setupState_register ss = case registerStep of
         RegisterStep_Registered -> Just $ PromptResult_Success ==> ()
@@ -360,7 +366,7 @@ selectAddress ledger = divClass "select-address" $ mdo
 
                 in tooltipped TooltipPos_TopCenter tooltipContent $ do
                   SemUi.ui "div" (def & SemUi.classes .~ SemUi.Dyn (bool "icon-check" "active icon-check" <$> selected)) blank
-                  text $ toPublicKeyHashText pkh
+                  monospacedPkhText pkh
                   maybe (pure ()) fancyTez tz
           let f mepkh () = fmap (\(pkh, _) -> (SecretKey ledger sc dp, pkh)) (either (const Nothing) Just =<< mepkh)
           pure $ attachWithMaybe f (current dynPkhTez) (domEvent Click e)
@@ -509,6 +515,8 @@ setupComplete (_sk, pkh) = divClass "central" $ do
   elClass "h5" "ui header" $ do
     icon "blue icon-check"
     text "Setup is complete!"
-  elClass "h6" "ui header prompt-text" $ text $ "Kiln is now running a baker using the address: " <> toPublicKeyHashText pkh
+  elClass "h6" "ui header prompt-text" $ do
+    el "span" $ text "Kiln is now running a baker using the address: "
+    monospacedPkhText pkh
   divClass "centered explanation" $ text "If this was the first time you have registered this address as a delegate, this baker will not immediately have rights to bake or endorse. It takes at least 6 cycles after registering to receive rights."
   uiButton "primary" "Continue"
