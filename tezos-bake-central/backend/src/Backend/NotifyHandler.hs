@@ -12,10 +12,11 @@ import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Logger (MonadLogger)
 import Control.Concurrent.STM (atomically)
-import Data.Dependent.Map (DSum(..), Some (..))
+import Data.Dependent.Sum (DSum(..))
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
+import Data.Some (Some (..))
 import Data.Validation (liftError)
 import Database.Groundhog.Postgresql (PersistBackend(..), Postgresql(..), get, (&&.), (==.), Cond(..))
 import Database.Id.Class

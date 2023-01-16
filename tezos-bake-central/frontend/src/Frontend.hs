@@ -13,6 +13,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -457,7 +458,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
             let dIsLedgerConnected = isJust . (_connectedLedger_ledgerIdentifier =<<) <$> dCl
             divClass "header" $ do
               iconDyn $ ffor dIsLedgerConnected $ bool "red x" "green check"
-              elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
+              elAttr "img" ("src" =: $(static "images/ledger.svg") <> "class" =: "ledger") blank
             divClass "description" $ do
               text "Ledger Device "
               dynText $ ffor dIsLedgerConnected $ bool "Disconnected" "Connected"
@@ -860,7 +861,7 @@ liveErrorsWidget = void $ do
     synthErrors
       :: Dynamic t (Map.Map SynthError (ErrorLog, SynthError))
     synthErrors = ffor3 dBakers dTimer dAllNodesDownTime $
-      \bakers now allNodesDownTime ->
+      \bakers nowTime allNodesDownTime ->
         fromMaybe mempty $ do
           let getBaker (k, e) = case e of
                 Left v -> Just (k, v)
@@ -872,7 +873,7 @@ liveErrorsWidget = void $ do
             ErrorLog
               { _errorLog_started = since
               , _errorLog_stopped = Nothing
-              , _errorLog_lastSeen = now
+              , _errorLog_lastSeen = nowTime
               , _errorLog_noticeSentAt = Nothing
               , _errorLog_chainId = chainId
               }
@@ -1380,7 +1381,7 @@ handleClientErrorWorkflow recover = \case
     pure ((["ledger-disconnected"], never), recover <$ retry)
   where
     requestDeclinedByLedger tryAgain = Workflow $ do
-      elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
+      elAttr "img" ("src" =: $(static "images/ledger.svg") <> "class" =: "ledger") blank
       elClass "h5" "ui header" $ do
         icon "red icon-x"
         text "The request was declined by the Ledger Device."
@@ -1389,7 +1390,7 @@ handleClientErrorWorkflow recover = \case
       pure ((["ledger-declined"], never), tryAgain <$ retry)
 
     ledgerDisconnected tryAgain = Workflow $ do
-      elAttr "img" ("src" =: static @"images/ledger.svg" <> "class" =: "ledger") blank
+      elAttr "img" ("src" =: $(static "images/ledger.svg") <> "class" =: "ledger") blank
       elClass "h5" "ui header" $ text "Ledger Device was disconnected."
       restart <- uiButton "primary" "Restart"
       pure ((["ledger-disconnected"], never), tryAgain <$ restart) -- TODO restart should go back to start?
@@ -1403,7 +1404,7 @@ handleClientErrorWorkflow recover = \case
 ledgerCheckImg :: DomBuilder t m => LedgerIdentifier -> m ()
 ledgerCheckImg ledger = do
   divClass "ledger" $ do
-    elAttr "img" ("src" =: static @"images/ledger.svg") blank
+    elAttr "img" ("src" =: $(static "images/ledger.svg")) blank
     icon "blue icon-check"
   divClass "ledger-name" $ text $ unLedgerIdentifier ledger
 

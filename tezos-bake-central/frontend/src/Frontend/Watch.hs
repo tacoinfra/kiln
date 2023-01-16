@@ -15,14 +15,16 @@ module Frontend.Watch where
 
 import Data.Bifunctor
 import qualified Data.List.NonEmpty as NEL
-import Data.Dependent.Map (DMap, DSum(..), Some (..))
+import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
+import Data.Dependent.Sum (DSum(..))
 import Data.List ((\\))
 import Data.Map (Map)
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (Down(..))
 import Data.Semigroup (Min (..))
 import Data.Semigroup.Foldable (fold1)
+import Data.Some (Some(..))
 import Data.Time (UTCTime)
 import Data.Universe (universe)
 import Data.Validation

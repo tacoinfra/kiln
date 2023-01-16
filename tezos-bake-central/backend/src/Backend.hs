@@ -27,7 +27,7 @@ import Control.Monad.Logger (NoLoggingT(..), LoggingT (..), MonadLoggerIO, Monad
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
-import Data.Dependent.Map (DSum (..))
+import Data.Dependent.Sum (DSum (..))
 import Data.Either (fromRight)
 import qualified Data.Map as Map
 import Data.Pool (Pool)
