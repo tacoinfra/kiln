@@ -2,14 +2,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 module Backend.Common.Baker where
 
+import Control.Monad.Logger (MonadLoggerIO, logWarn)
 import Data.List.NonEmpty (nonEmpty)
 import Data.Maybe (maybeToList)
+import qualified Data.Text as T
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import Database.Id.Class
@@ -17,6 +20,7 @@ import Database.Id.Groundhog
 import Rhyolite.Backend.DB (project1)
 import Tezos.Types (ChainId, PublicKeyHash)
 
+import Backend.Config (AppConfig (..))
 import Backend.Schema
 import Common.App
 import Common.Schema
@@ -101,3 +105,16 @@ updateBakerDaemon control = do
         [ ProcessData_controlField =. control
         , ProcessData_errorLogField =. (Nothing :: Maybe Text)
         ] (AutoKeyField ==. fromId bPid))
+
+getKilnBakerCustomArgs :: (MonadLoggerIO m) => AppConfig -> m [String]
+getKilnBakerCustomArgs appConfig = do
+  let fullArgs = maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
+  case span (/= liquidityBakingArg) fullArgs of
+    (xs, _ : y : ys) | isCorrectLiquidityBakingValue y -> do
+      $(logWarn) $ "'liquidity-baking-toggle-vote' baker custom argument"
+        <> " was ignored because it's set on Kiln UI"
+      pure $ xs ++ ys
+    _ -> pure fullArgs
+  where
+    liquidityBakingArg = "--liquidity-baking-toggle-vote"
+    isCorrectLiquidityBakingValue s = s == "on" || s == "off" || s == "pass"

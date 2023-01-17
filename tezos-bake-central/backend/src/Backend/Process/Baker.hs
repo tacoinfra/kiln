@@ -263,6 +263,7 @@ getBakerArgs appConfig logger db = do
   runLoggingEnv logger $
     $(logDebug) $ "Baker extra args: " <> tshow extraArgs
   let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
+  bakerCustomArgs <- runLoggingEnv logger $ getKilnBakerCustomArgs appConfig
   pure $ Right $ protocolAgnosticArgs alias <> bakerCustomArgs <> extraArgsCmd
   where
     protocolAgnosticArgs alias =
@@ -271,4 +272,3 @@ getBakerArgs appConfig logger db = do
       , "run", "with", "local", "node", nodeDataDir appConfig
       , alias
       ]
-    bakerCustomArgs = maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
