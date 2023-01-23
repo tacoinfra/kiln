@@ -51,25 +51,3 @@ sudo chown -R kiln:kiln /var/lib/kiln/data-dir/tezos-node/[chain-id]
 ```
 
 6. Restart Kiln: `sudo systemctl start kiln`
-
-## Virtual Machine
-
-1. Start the Kiln Node. You can do so through the Kiln Node’s options menu. Wait for it to finish "Initializing".
-
-2. Stop Kiln: `sudo systemctl stop kiln`
-
-3. Remove the Kiln Node's existing context and store:
-
-```shell
-sudo rm -rf /home/kiln/app/.kiln/tezos-node/[chain-id]/{context,store}
-```
-
-4. Stop the node whose data you are copying.
-
-5. Copy data:
-
-```shell
-sudo cp -r ~/.tezos-node/context ~/.tezos-node/store /home/kiln/app/.kiln/tezos-node/[chain-id]/
-```
-
-6. Restart Kiln: `sudo systemctl start kiln`
