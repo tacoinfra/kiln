@@ -42,3 +42,6 @@ instance MonadReader r m => MonadReader r (HttpT m) where
 
 doRequestLBS :: (MonadIO m) => Http.Manager -> String -> m (Either Http.HttpException (Http.Response LBS.ByteString))
 doRequestLBS httpMgr url = liftIO $ try $ Http.httpLBS . Http.setRequestManager httpMgr =<< Http.parseRequest url
+
+doRequestLBSThrows :: (MonadIO m) => Http.Manager -> String -> m (Http.Response LBS.ByteString)
+doRequestLBSThrows httpMgr url = liftIO $ Http.httpLBS . Http.setRequestManager httpMgr =<< Http.parseRequest url

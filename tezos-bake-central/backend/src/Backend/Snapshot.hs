@@ -10,6 +10,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -17,15 +18,17 @@ module Backend.Snapshot where
 
 import Control.Concurrent
 import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception.Safe (IOException, try)
+import Control.Exception.Safe (IOException, MonadThrow, throwString, try)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Trans.Resource (runResourceT)
 import Control.Monad.Logger
+import Data.Aeson (eitherDecode)
 import Data.ByteString (ByteString)
 import Data.Conduit.Binary (sinkFileCautious)
 import qualified Data.Conduit.List as CL
 import Data.Conduit.Process (getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
+import Data.Foldable (maximumBy)
 import Data.Int (Int32)
 import Data.String (IsString(..))
 import qualified Data.Text as T
@@ -37,8 +40,8 @@ import Database.Groundhog.Postgresql (Postgresql(..), (=.), (==.))
 import Rhyolite.Backend.DB (getTime, runDb, project1, MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging
-import Network.HTTP.Client (HttpException, parseRequest)
-import Network.HTTP.Simple (httpSink)
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Simple as Http
 import Safe
 import qualified Snap.Core as Snap
 import Snap.Util.FileUploads
@@ -48,18 +51,23 @@ import System.FilePath.Posix (takeFileName)
 import qualified System.Process as Process
 import Text.Read (readMaybe)
 import Text.Regex.TDFA ((=~))
-import Text.URI (URI, renderStr)
+import Text.URI (URI, mkURI, renderStr)
+import Text.URI.QQ (uri)
 
 import Tezos.Types
 
 import Backend.Common
 import Backend.Config
+import Backend.Http (doRequestLBSThrows)
 import Backend.NodeRPC
 import Backend.Process.Node (nixNodePath)
 import Backend.Schema
 import Backend.Workers.Process
 import Common.Schema
 import ExtraPrelude
+
+-- | Type alias for the default key of 'SnapshotMeta' table defined for convenience.
+type SnapshotMetaId = Key SnapshotMeta BackendSpecific
 
 handleSnapshotUpload
   :: AppConfig
@@ -73,7 +81,7 @@ handleSnapshotUpload appConfig nds lockMVar = do
   where
     logger = _nodeDataSource_logger nds
     uploadTmpLocation = _appConfig_kilnDataDir appConfig <> "/snapshots_tmp/"
-    storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
+    storeLocation = snapshotStorePath appConfig
     partUploadPolicy _ = allowWithMaximumSize (10 * 1024 * 1024 * 1024) -- 10gb
     withLockRelease m = liftIO $ finally m (tryTakeMVar lockMVar)
 
@@ -99,7 +107,7 @@ handleSnapshotUpload appConfig nds lockMVar = do
           liftIO $ do
             renameFile fp storePath
             forkIO $ withLockRelease $ runLoggingEnv logger $ do
-              (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds Nothing
+              (smId, sm) <- initSnapshotMeta appConfig (Just storePath) nds Nothing
               importSnapshotData appConfig nds sm smId True
 
 validateSnapshotFilePath
@@ -137,7 +145,7 @@ handleSnapshotFilePathImport
   -> FilePath
   -> m ()
 handleSnapshotFilePathImport appConfig nds fp = do
-  (smId, sm) <- initSnapshotMeta (takeFileName fp) fp nds Nothing
+  (smId, sm) <- initSnapshotMeta appConfig (Just fp) nds Nothing
   void $ liftIO $ forkIO $ runLoggingEnv (_nodeDataSource_logger nds) $
     importSnapshotData appConfig nds sm smId False
 
@@ -158,12 +166,38 @@ cleanupDir dir = do
 -- Jul  6 19:45:46 - shell.snapshots: Successful import from file ./.kiln/snapshots/main.snapshot
 
 handleSnapshotDownload
-  :: forall m. (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m, MonadUnliftIO m)
+  :: forall m.
+  ( MonadLogger m
+  , MonadLoggerIO m
+  , MonadIO m
+  , MonadMask m
+  , MonadBaseNoPureAborts IO m
+  , MonadUnliftIO m
+  )
   => AppConfig
   -> NodeDataSource
   -> URI
   -> m ()
-handleSnapshotDownload appConfig nds snapshotURI = void $ liftIO $ forkIO $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+handleSnapshotDownload appConfig nds snapshotURI =
+  void $ liftIO $ forkIO $ runLoggingEnv (_nodeDataSource_logger nds) $ do
+    snapshotMeta <- initSnapshotMeta appConfig Nothing nds (Just snapshotURI)
+    downloadSnapshot appConfig nds snapshotURI snapshotMeta
+
+downloadSnapshot
+  :: forall m.
+  ( MonadLogger m
+  , MonadLoggerIO m
+  , MonadIO m
+  , MonadMask m
+  , MonadBaseNoPureAborts IO m
+  , MonadUnliftIO m
+  )
+  => AppConfig
+  -> NodeDataSource
+  -> URI
+  -> (SnapshotMetaId, SnapshotMeta)
+  -> m ()
+downloadSnapshot appConfig nds snapshotURI (smId, sm) = do
   let db = _nodeDataSource_pool nds
       logger = _nodeDataSource_logger nds
       dataDir = nodeDataDir appConfig
@@ -173,21 +207,14 @@ handleSnapshotDownload appConfig nds snapshotURI = void $ liftIO $ forkIO $ runL
     , NodeInternal_dataField ~> DeletableRow_dataSelector
     ) CondEmpty
   for_ nodePPid $ \(nid, pid) -> do
-    (smId, sm) <- initSnapshotMeta snapshotFileName storePath nds (Just snapshotURI)
     downloaderThread <- liftIO $ forkIO $ do
       res <- try $ do
-        request <- parseRequest $ renderStr snapshotURI
-        runResourceT $ httpSink request $ \_ -> sinkFileCautious storePath
+        request <- Http.parseRequest $ renderStr snapshotURI
+        runResourceT $ Http.httpSink request $ \_ -> sinkFileCautious storePath
       case res of
-        Left (e :: HttpException) -> runLoggingEnv logger $ do
+        Left (e :: Http.HttpException) ->
           let errText = T.pack (show e)
-          $(logError) $ "Snapshot download failed with:" <> errText
-          runDb (Identity db) $ do
-            update [ SnapshotMeta_downloadErrorField =. Just errText ] (AutoKeyField ==. smId)
-            traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
-            updateProcessState pid
-              (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
-              (ProcessState_Node NodeProcessState_DownloadFailed)
+          in handleSnapshotDownloadFailure nds smId errText
         Right _ -> runLoggingEnv logger $ runDb (Identity db) $
           updateProcessState pid
             (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
@@ -211,16 +238,15 @@ handleSnapshotDownload appConfig nds snapshotURI = void $ liftIO $ forkIO $ runL
           _ -> threadDelay' 1 >> go
     go
   where
-    snapshotFileName = "snapshot"
-    storeLocation = _appConfig_kilnDataDir appConfig <> "/snapshots/"
-    storePath = storeLocation <> snapshotFileName
+    storeLocation = snapshotStorePath appConfig
+    storePath = storeLocation <> defaultSnapshotFileName
 
 importSnapshotData
   :: (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
   => AppConfig
   -> NodeDataSource
   -> SnapshotMeta
-  -> Key SnapshotMeta BackendSpecific
+  -> SnapshotMetaId
   -> Bool
   -> m ()
 importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
@@ -336,12 +362,14 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
 
 initSnapshotMeta
   :: MonadLoggerIO m
-  => FilePath
-  -> FilePath
+  => AppConfig
+  -> Maybe FilePath
   -> NodeDataSource
   -> Maybe URI
-  -> m (Key SnapshotMeta BackendSpecific, SnapshotMeta)
-initSnapshotMeta fileName storePath nds mbUri = runDb (Identity $ _nodeDataSource_pool nds) $ do
+  -> m (SnapshotMetaId, SnapshotMeta)
+initSnapshotMeta appConfig mbStorePath nds mbUri = runDb (Identity $ _nodeDataSource_pool nds) $ do
+  let storePath = mbStorePath ?: snapshotStorePath appConfig <> defaultSnapshotFileName
+      fileName  = maybe defaultSnapshotFileName takeFileName mbStorePath
   now <- getTime
   let
     sm = SnapshotMeta
@@ -369,7 +397,7 @@ updateSnapshotMeta
   => Maybe BlockHash
   -> Maybe RawLevel
   -> Maybe UTCTime
-  -> Key SnapshotMeta BackendSpecific
+  -> SnapshotMetaId
   -> m ()
 updateSnapshotMeta mbBlockHash mbLevel mbTimestamp smId = do
   now <- getTime
@@ -385,7 +413,7 @@ updateSnapshotMeta mbBlockHash mbLevel mbTimestamp smId = do
 updateSnapshotMetaImportLog
   :: (PersistBackend m)
   => Text
-  -> Key SnapshotMeta BackendSpecific
+  -> SnapshotMetaId
   -> m ()
 updateSnapshotMetaImportLog importLog smId = do
   update [SnapshotMeta_importLogField =. Just importLog] (AutoKeyField ==. smId)
@@ -393,3 +421,100 @@ updateSnapshotMetaImportLog importLog smId = do
 
 removeFileLogging :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 removeFileLogging f = liftIO (removeFile f) `catch` \(e :: IOException) -> $(logError) $ "Failed to remove file: " <> T.pack f <> ": " <> tshow e
+
+-- | URI of xtz-shots snapshot metadata.
+xtzShotsMetadataUri :: URI
+xtzShotsMetadataUri = [uri|https://xtz-shots.io/tezos-snapshots.json|]
+
+-- | The path where the node snapshot is stored.
+snapshotStorePath :: AppConfig -> FilePath
+snapshotStorePath appConfig = _appConfig_kilnDataDir appConfig <> "/snapshots/"
+
+-- | Default name of node snapshot file which is used when the file isn't
+-- uploaded by user.
+defaultSnapshotFileName :: FilePath
+defaultSnapshotFileName = "snapshot"
+
+-- | Handle internal node bootstrap using the @SnapshotImportSource_XtzShotsMetadataSource@
+-- option. This function downloads latest rolling snapshot from xtz-shots.io by parsing
+-- the metadata from @xtzShotsMetadataUri@.
+handleDownloadXtzShotsMetadata
+  :: (MonadIO m)
+  => AppConfig
+  -> NodeDataSource
+  -> m ()
+handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggingEnv logger $ do
+  (smId, sm) <- initSnapshotMeta appConfig Nothing nds Nothing
+  let handleFetchMetadataError = handleSnapshotDownloadFailure nds smId errText
+  latestSnapshotUri <- flip onException handleFetchMetadataError $ do
+    metadata <- downloadXtzShotsMetadata httpMgr
+    findLatestSnapshotUri appConfig metadata
+  $(logDebug) $ "Found latest snapshot url " <> T.pack (renderStr latestSnapshotUri)
+  runDb (Identity db) $ do
+    update
+      [SnapshotMeta_mbUriField =. Just latestSnapshotUri]
+      (AutoKeyField ==. smId)
+    traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
+  let updatedSnapshotMeta = sm { _snapshotMeta_mbUri = Just latestSnapshotUri }
+  downloadSnapshot appConfig nds latestSnapshotUri (smId, updatedSnapshotMeta)
+  where
+    logger = _nodeDataSource_logger nds
+    db = _nodeDataSource_pool nds
+    httpMgr = _nodeDataSource_httpMgr nds
+    errText = "Unable to download latest snapshot from xtz-shots. Please choose another option."
+
+-- | Download the list of snapshot metadata from @xtzShotsMetadataUri@.
+downloadXtzShotsMetadata :: (MonadIO m, MonadThrow m) => Http.Manager -> m [XtzShotsMetadata]
+downloadXtzShotsMetadata mgr = do
+  resp <- doRequestLBSThrows mgr (renderStr xtzShotsMetadataUri)
+  let body = Http.getResponseBody resp
+  either throwString pure $ eitherDecode body
+
+-- | Given the list of snapshot metadata fetched from @xtzShotsMetadataUri@
+-- find the latest rolling snapshot url.
+findLatestSnapshotUri :: (MonadThrow m) => AppConfig -> [XtzShotsMetadata] -> m URI
+findLatestSnapshotUri _ [] = throwString "Got empty metadata list from xtz-shots"
+findLatestSnapshotUri appConfig metadata = do
+  let mbChainName = showNamedChain <$> identifyChain chainId
+  chainName <- maybe (throwString "xtz-shots doesn't support custom chains") pure mbChainName
+  let
+    isNeededChain m = m ^. xtzShotsMetadata_chainName == chainName
+    filteredMetadata = flip filter metadata $ \m ->
+      isNeededChain m && isRolling m && isTezosSnapshot m
+  when (null filteredMetadata) $
+    throwString "There is no rolling tezos snapshot in xtz-shots metadata"
+  filteredMetadata
+    & maximumBy byBlockHeight
+    & view xtzShotsMetadata_url
+    & mkURI
+  where
+    chainId = _appConfig_chainId appConfig
+    isRolling m = m ^. xtzShotsMetadata_historyMode
+      == XtzShotsSnapshotHistoryMode_Rolling
+    isTezosSnapshot m = m ^. xtzShotsMetadata_artifactType
+      == XtzShotsArtifactType_TezosSnapshot
+    byBlockHeight m1 m2 = compare
+      (m1 ^. xtzShotsMetadata_blockHeight)
+      (m2 ^. xtzShotsMetadata_blockHeight)
+
+-- | Update the 'SnapshotMeta' table and set the correct internal node's
+-- process state in case of snapshot download error.
+handleSnapshotDownloadFailure
+  :: (MonadIO m)
+  => NodeDataSource
+  -> SnapshotMetaId
+  -> Text
+  -> m ()
+handleSnapshotDownloadFailure nds smId errText = runLoggingEnv logger $ do
+  $(logError) $ "Snapshot download failed with:" <> errText
+  runDb (Identity db) $ do
+    mbInternalNodeData <- getInternalNode
+    for_ mbInternalNodeData $ \(nodeId, pid) -> do
+      update [ SnapshotMeta_downloadErrorField =. Just errText ] (AutoKeyField ==. smId)
+      traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
+      updateProcessState (_deletableRow_data pid)
+        (Just (\pd -> (NotifyTag_NodeInternal, (nodeId, pd))))
+        (ProcessState_Node NodeProcessState_DownloadFailed)
+  where
+    logger = _nodeDataSource_logger nds
+    db = _nodeDataSource_pool nds
