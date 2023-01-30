@@ -119,8 +119,10 @@ library
 
   exposed-modules:
     Backend
+    Backend.Config
     Backend.Process.Baker
     Backend.Workers.Block
+    Backend.Snapshot
 
   other-modules:
     Paths_backend
@@ -133,7 +135,6 @@ library
     Backend.Common.Node
     Backend.Common.TezosRelease
     Backend.Common.Worker
-    Backend.Config
     Backend.DB.Utils
     Backend.Http
     Backend.IndexQueries
@@ -143,7 +144,6 @@ library
     Backend.Process.Node
     Backend.RequestHandler
     Backend.Schema
-    Backend.Snapshot
     Backend.STM
     Backend.Supervisor
     Backend.Telegram
@@ -184,6 +184,7 @@ test-suite test
   main-is: Main.hs
   other-modules:
     Accusation
+    XtzShotsMetadata
   build-depends:
       aeson
     , base >= 4 && < 5
@@ -193,3 +194,4 @@ test-suite test
     , tasty
     , tasty-hunit
     , tezos-rpc-bindings
+    , time

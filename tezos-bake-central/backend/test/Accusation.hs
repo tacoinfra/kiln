@@ -44,7 +44,7 @@ testDoubleBakingEvidence013 = baseAccusationTest
   "Double baking evidence 013"
   (toList . Lima._doubleBakingEvidenceMetadata_balanceUpdates . Lima._operationContentsDoubleBakingEvidence_metadata)
   -- https://ithacanet.tzkt.io/opX2JykJaQ96Mt8dK4sTcjVuRbNJTJrJVBy36Xj6cGFUBne4uBX
-  "test/Accusations/013/double_baking_evidence.json"
+  "test/resources/double_baking_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"
 
 testDoublePreendorsementEvidence013 :: TestTree
@@ -52,5 +52,5 @@ testDoublePreendorsementEvidence013 = baseAccusationTest
   "Double preendorsement evidence 013"
   (toList . Lima._doublePreendorsementEvidenceMetadata_balanceUpdates . Lima._operationContentsDoublePreendorsementEvidence_metadata)
   -- https://ithacanet.tzkt.io/ooUXVJPkfZpMy3LQshGGoJTAJCkzTEozWCk5rJK9MUBTWzaRnhw
-  "test/Accusations/013/double_preendorsement_evidence.json"
+  "test/resources/double_preendorsement_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"
