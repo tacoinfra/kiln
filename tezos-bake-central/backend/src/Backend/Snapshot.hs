@@ -11,6 +11,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RecordWildCards #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -69,6 +70,18 @@ import ExtraPrelude
 -- | Type alias for the default key of 'SnapshotMeta' table defined for convenience.
 type SnapshotMetaId = Key SnapshotMeta BackendSpecific
 
+-- | Auxiliary data type which represents the snapshot import options
+-- that depend on the snapshot import source:
+--
+-- e.g we don't need to remove the snapshot file if this is the
+-- file uploaded by user and we don't ask user to verify the
+-- snapshot downloaded from xtz-shots metadata because it could
+-- be done automatically since snapshot's head block is known
+data SnapshotImportOptions = SnapshotImportOptions
+  { sioRemoveSnapshotFile :: Bool
+  , sioVerifySnapshot :: Bool
+  }
+
 handleSnapshotUpload
   :: AppConfig
   -> NodeDataSource
@@ -108,7 +121,12 @@ handleSnapshotUpload appConfig nds lockMVar = do
             renameFile fp storePath
             forkIO $ withLockRelease $ runLoggingEnv logger $ do
               (smId, sm) <- initSnapshotMeta appConfig (Just storePath) nds Nothing
-              importSnapshotData appConfig nds sm smId True
+              let
+                importOptions = SnapshotImportOptions
+                  { sioRemoveSnapshotFile = True
+                  , sioVerifySnapshot = True
+                  }
+              importSnapshotData appConfig nds sm smId importOptions
 
 validateSnapshotFilePath
   :: (MonadIO m, MonadLogger m)
@@ -146,8 +164,13 @@ handleSnapshotFilePathImport
   -> m ()
 handleSnapshotFilePathImport appConfig nds fp = do
   (smId, sm) <- initSnapshotMeta appConfig (Just fp) nds Nothing
+  let
+    importOptions = SnapshotImportOptions
+      { sioRemoveSnapshotFile = False
+      , sioVerifySnapshot = True
+      }
   void $ liftIO $ forkIO $ runLoggingEnv (_nodeDataSource_logger nds) $
-    importSnapshotData appConfig nds sm smId False
+    importSnapshotData appConfig nds sm smId importOptions
 
 cleanupDir :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 cleanupDir dir = do
@@ -181,7 +204,12 @@ handleSnapshotDownload
 handleSnapshotDownload appConfig nds snapshotURI =
   void $ liftIO $ forkIO $ runLoggingEnv (_nodeDataSource_logger nds) $ do
     snapshotMeta <- initSnapshotMeta appConfig Nothing nds (Just snapshotURI)
-    downloadSnapshot appConfig nds snapshotURI snapshotMeta
+    let
+      importOptions = SnapshotImportOptions
+        { sioRemoveSnapshotFile = True
+        , sioVerifySnapshot = True
+        }
+    downloadSnapshot appConfig nds snapshotURI snapshotMeta importOptions
 
 downloadSnapshot
   :: forall m.
@@ -196,8 +224,9 @@ downloadSnapshot
   -> NodeDataSource
   -> URI
   -> (SnapshotMetaId, SnapshotMeta)
+  -> SnapshotImportOptions
   -> m ()
-downloadSnapshot appConfig nds snapshotURI (smId, sm) = do
+downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
   let db = _nodeDataSource_pool nds
       logger = _nodeDataSource_logger nds
       dataDir = nodeDataDir appConfig
@@ -228,7 +257,7 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) = do
         ps <- fmap headMay $ runDb (Identity db) $ project ProcessData_stateField (AutoKeyField ==. fromId pid)
         case ps of
           (Just (ProcessState_Node NodeProcessState_DownloadComplete)) -> do
-            importSnapshotData appConfig nds sm smId True
+            importSnapshotData appConfig nds sm smId importOptions
           (Just (ProcessState_Node NodeProcessState_DownloadCanceled)) -> do
             liftIO $ killThread downloaderThread
             cleanUpNode
@@ -247,9 +276,9 @@ importSnapshotData
   -> NodeDataSource
   -> SnapshotMeta
   -> SnapshotMetaId
-  -> Bool
+  -> SnapshotImportOptions
   -> m ()
-importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
+importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
   let
     logger = _nodeDataSource_logger nds
     nodePath = maybe nixNodePath _binaryPaths_nodePath $ _appConfig_binaryPaths appConfig
@@ -283,11 +312,20 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
       updateState NodeProcessState_ImportFailed
 
-    procSpec configFile = (Process.proc nodePath
-      ["snapshot", "import", storePath, "--data-dir", dataDir,"--config-file", configFile, "--progress-display-mode", "always"])
-        { Process.std_out = Process.CreatePipe
-        , Process.std_err = Process.CreatePipe
-        }
+    procSpec configFile = let
+      blockArg = flip (maybe []) (sm ^. snapshotMeta_headBlock) $ \bh ->
+        [ "--block"
+        , T.unpack $ blockHashToBase58Text bh
+        ]
+      args =
+        [ "snapshot", "import", storePath
+        , "--data-dir", dataDir
+        , "--config-file", configFile
+        , "--progress-display-mode", "always"
+        ] <> blockArg
+      cp = Process.proc nodePath args
+      in cp { Process.std_out = Process.CreatePipe, Process.std_err = Process.CreatePipe }
+
     procMonitorStream cp = runLoggingEnv logger $ do
       stderrLogVar :: TVar ByteString <- liftIO $ newTVarIO ""
       let logStderrLine stderrLine = liftIO $ atomically $ modifyTVar stderrLogVar (<> stderrLine)
@@ -342,14 +380,17 @@ importSnapshotData appConfig nds sm smId shouldRemoveSnapshotFile = do
                         nodeQueryDataSourceSafe $ nodeQuery_BlockHeader blkHash
                       inDb $ do
                         updateSnapshotMeta mBlkHash mLevel (mBlk ^? _Right . timestamp) smId
-                  inDb $ updateState NodeProcessState_ImportComplete
+                  inDb $
+                    if sioVerifySnapshot
+                    then updateState NodeProcessState_ImportComplete
+                    else startNodeDaemon
                 ExitFailure _ -> inDb $ importFailed "importSnapshotData failed: " stderr
 
   liftIO $ withNodeConfig appConfig $ \configFile -> do
     runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec configFile)
     procMonitorStream (procSpec configFile)
 
-  when shouldRemoveSnapshotFile $
+  when sioRemoveSnapshotFile $
     removeFileLogging storePath
 
   -- Do cleanup after cancel import
@@ -455,8 +496,13 @@ handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggi
       [SnapshotMeta_mbUriField =. Just latestSnapshotUri]
       (AutoKeyField ==. smId)
     traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
-  let updatedSnapshotMeta = sm { _snapshotMeta_mbUri = Just latestSnapshotUri }
-  downloadSnapshot appConfig nds latestSnapshotUri (smId, updatedSnapshotMeta)
+  let
+    updatedSnapshotMeta = sm { _snapshotMeta_mbUri = Just latestSnapshotUri }
+    importOptions = SnapshotImportOptions
+      { sioRemoveSnapshotFile = True
+      , sioVerifySnapshot = False
+      }
+  downloadSnapshot appConfig nds latestSnapshotUri (smId, updatedSnapshotMeta) importOptions
   where
     logger = _nodeDataSource_logger nds
     db = _nodeDataSource_pool nds
