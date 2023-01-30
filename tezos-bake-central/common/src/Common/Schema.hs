@@ -1001,6 +1001,8 @@ instance FromJSON XtzShotsSnapshotHistoryMode where
 
 data XtzShotsMetadata = XtzShotsMetadata
   { _xtzShotsMetadata_blockHeight :: RawLevel
+  , _xtzShotsMetadata_blockHash :: BlockHash
+  , _xtzShotsMetadata_blockTimestamp :: UTCTime
   , _xtzShotsMetadata_url :: Text
   , _xtzShotsMetadata_chainName :: Text
   , _xtzShotsMetadata_historyMode :: XtzShotsSnapshotHistoryMode

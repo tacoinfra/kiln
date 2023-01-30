@@ -362,24 +362,8 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
                   $(logDebug) $ "importSnapshotData success: stderr: " <> stderr
                   (infoExitCode, infoStdout, _) <- liftIO $ Process.readProcessWithExitCode nodePath ["snapshot", "info", storePath] ""
                   when (infoExitCode == ExitSuccess) $ do
-                    let
-                      blockHashRegex, levelRegex :: String
-                      blockHashRegex = "block hash ([A-Za-z0-9]*)"
-                      levelRegex = "at level ([0-9]*)"
-
-                      extractFromSnapshotInfo :: String -> String -> (String -> Maybe a) -> Maybe a
-                      extractFromSnapshotInfo source regex parse =
-                        let (_, _, _, matches) = source =~ regex :: (String, String, String, [String]) in
-                          parse =<< listToMaybe matches
-
-                      mBlkHash = BlockHash <$> extractFromSnapshotInfo infoStdout blockHashRegex
-                        (either (const Nothing) Just . fromBase58 . fromString)
-                      mLevel = extractFromSnapshotInfo infoStdout levelRegex (fmap fromIntegral . readMaybe @Int32)
-                    whenJust mBlkHash $ \blkHash -> void $ do
-                      mBlk <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ do
-                        nodeQueryDataSourceSafe $ nodeQuery_BlockHeader blkHash
-                      inDb $ do
-                        updateSnapshotMeta mBlkHash mLevel (mBlk ^? _Right . timestamp) smId
+                    (mBlkHash, mLevel, mTimestamp) <- getSnapshotInfo infoStdout sm
+                    inDb $ updateSnapshotMeta mBlkHash mLevel mTimestamp smId
                   inDb $
                     if sioVerifySnapshot
                     then updateState NodeProcessState_ImportComplete
@@ -400,6 +384,53 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
       inDb $ removeNodeDbImpl (Right ())
       liftIO $ removeDirectoryRecursive dataDir
     _ -> pure ()
+  where
+    -- | Get snapshot's block hash, level and timestamp either from
+    -- @SnapshotMeta@ if they're already known or from 'octez-node snapshot info'
+    -- command's stdout.
+    --
+    -- This data is already known in case when we downloaded the snapshot from
+    -- xtz-shots metadata which provides the hash, level and timestamp as well.
+    getSnapshotInfo
+      :: ( MonadLoggerIO m
+         , MonadBaseNoPureAborts IO m
+         )
+      => String
+      -> SnapshotMeta
+      -> m ( Maybe BlockHash
+           , Maybe RawLevel
+           , Maybe UTCTime
+           )
+    getSnapshotInfo stdout snapshotMeta = do
+      let
+        mBlkHashFromStdout = extractBlockHash stdout
+        mLevelFromStdout   = extractLevel stdout
+
+        mBlkHash = snapshotMeta ^. snapshotMeta_headBlock <|> mBlkHashFromStdout
+        mLevel   = snapshotMeta ^. snapshotMeta_headBlockLevel <|> mLevelFromStdout
+      mTimestamp <- case snapshotMeta ^. snapshotMeta_headBlockBakeTime of
+        Nothing -> fmap join $ for mBlkHash $ \blkHash -> do
+          mBlk <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $
+            nodeQueryDataSourceSafe $ nodeQuery_BlockHeader blkHash
+          pure $ mBlk ^? _Right . timestamp
+        t -> pure t
+      pure (mBlkHash, mLevel, mTimestamp)
+      where
+        blockHashRegex, levelRegex :: String
+        blockHashRegex = "block hash ([A-Za-z0-9]*)"
+        levelRegex = "at level ([0-9]*)"
+
+        extractFromStdout :: String -> String -> (String -> Maybe a) -> Maybe a
+        extractFromStdout source regex parse =
+          let (_, _, _, matches) = source =~ regex :: (String, String, String, [String]) in
+            parse =<< listToMaybe matches
+
+        extractBlockHash :: String -> Maybe BlockHash
+        extractBlockHash src = BlockHash <$> extractFromStdout src blockHashRegex
+          (either (const Nothing) Just . fromBase58 . fromString)
+
+        extractLevel :: String -> Maybe RawLevel
+        extractLevel src = extractFromStdout src levelRegex (fmap fromIntegral . readMaybe @Int32)
 
 initSnapshotMeta
   :: MonadLoggerIO m
@@ -485,19 +516,15 @@ handleDownloadXtzShotsMetadata
   -> NodeDataSource
   -> m ()
 handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggingEnv logger $ do
-  (smId, sm) <- initSnapshotMeta appConfig Nothing nds Nothing
+  (smId, _) <- initSnapshotMeta appConfig Nothing nds Nothing
   let handleFetchMetadataError = handleSnapshotDownloadFailure nds smId errText
-  latestSnapshotUri <- flip onException handleFetchMetadataError $ do
+  latestSnapshotMetadata <- flip onException handleFetchMetadataError $ do
     metadata <- downloadXtzShotsMetadata httpMgr
-    findLatestSnapshotUri appConfig metadata
+    findLatestSnapshot appConfig metadata
+  latestSnapshotUri <- mkURI $ latestSnapshotMetadata ^. xtzShotsMetadata_url
   $(logDebug) $ "Found latest snapshot url " <> T.pack (renderStr latestSnapshotUri)
-  runDb (Identity db) $ do
-    update
-      [SnapshotMeta_mbUriField =. Just latestSnapshotUri]
-      (AutoKeyField ==. smId)
-    traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
+  updatedSnapshotMeta <- updateSnapshotMeta' latestSnapshotMetadata smId latestSnapshotUri
   let
-    updatedSnapshotMeta = sm { _snapshotMeta_mbUri = Just latestSnapshotUri }
     importOptions = SnapshotImportOptions
       { sioRemoveSnapshotFile = True
       , sioVerifySnapshot = False
@@ -509,6 +536,25 @@ handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggi
     httpMgr = _nodeDataSource_httpMgr nds
     errText = "Unable to download latest snapshot from xtz-shots. Please choose another option."
 
+    updateSnapshotMeta'
+      :: (MonadLoggerIO m)
+      => XtzShotsMetadata
+      -> SnapshotMetaId
+      -> URI
+      -> m SnapshotMeta
+    updateSnapshotMeta' m smId url = runDb (Identity db) $ do
+      update
+        [ SnapshotMeta_mbUriField =. Just url
+        , SnapshotMeta_headBlockField =. (Just $ m ^. xtzShotsMetadata_blockHash :: Maybe BlockHash)
+        , SnapshotMeta_headBlockLevelField =. (Just $ m ^. xtzShotsMetadata_blockHeight :: Maybe RawLevel)
+        , SnapshotMeta_headBlockBakeTimeField =. (Just $ m ^. xtzShotsMetadata_blockTimestamp :: Maybe UTCTime)
+        ] (AutoKeyField ==. smId)
+      mbUpdatedSnapshotMeta <- get smId
+      let errMsg = "Inconsistent db state: SnapshotMeta not found"
+          updatedSnapshotMeta = mbUpdatedSnapshotMeta ?: error errMsg
+      notify NotifyTag_SnapshotMeta updatedSnapshotMeta
+      pure updatedSnapshotMeta
+
 -- | Download the list of snapshot metadata from @xtzShotsMetadataUri@.
 downloadXtzShotsMetadata :: (MonadIO m, MonadThrow m) => Http.Manager -> m [XtzShotsMetadata]
 downloadXtzShotsMetadata mgr = do
@@ -518,9 +564,9 @@ downloadXtzShotsMetadata mgr = do
 
 -- | Given the list of snapshot metadata fetched from @xtzShotsMetadataUri@
 -- find the latest rolling snapshot url.
-findLatestSnapshotUri :: (MonadThrow m) => AppConfig -> [XtzShotsMetadata] -> m URI
-findLatestSnapshotUri _ [] = throwString "Got empty metadata list from xtz-shots"
-findLatestSnapshotUri appConfig metadata = do
+findLatestSnapshot :: (MonadThrow m) => AppConfig -> [XtzShotsMetadata] -> m XtzShotsMetadata
+findLatestSnapshot _ [] = throwString "Got empty metadata list from xtz-shots"
+findLatestSnapshot appConfig metadata = do
   let mbChainName = showNamedChain <$> identifyChain chainId
   chainName <- maybe (throwString "xtz-shots doesn't support custom chains") pure mbChainName
   let
@@ -529,10 +575,7 @@ findLatestSnapshotUri appConfig metadata = do
       isNeededChain m && isRolling m && isTezosSnapshot m
   when (null filteredMetadata) $
     throwString "There is no rolling tezos snapshot in xtz-shots metadata"
-  filteredMetadata
-    & maximumBy byBlockHeight
-    & view xtzShotsMetadata_url
-    & mkURI
+  pure $ maximumBy byBlockHeight filteredMetadata
   where
     chainId = _appConfig_chainId appConfig
     isRolling m = m ^. xtzShotsMetadata_historyMode
