@@ -99,6 +99,8 @@ data PublicRequest a where
     -> Id PeriodProposal
     -> Maybe Ballot -- When 'Nothing', vote for proposal rather than submitting a ballot
     -> PublicRequest ()
+  PublicRequest_RestartKilnBaker
+    :: PublicRequest ()
 
 data PrivateRequest a where
   PrivateRequest_NoOp :: PrivateRequest ()

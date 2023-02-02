@@ -169,7 +169,7 @@ h6.ui.header {
     font-weight: bold;
     text-align: center;
   }
-  .looking-tezos-wallet {
+  .looking-ledger-app {
     .header {
       font-size: @20px;
       padding: @10px;

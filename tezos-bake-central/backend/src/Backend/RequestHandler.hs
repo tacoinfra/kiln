@@ -478,6 +478,8 @@ requestHandler appConfig nds =
       PublicRequest_DoVote sk p b ->
         queryLedger $ submitVote appConfig db nds sk p b
 
+      PublicRequest_RestartKilnBaker -> inDb restartBakerDaemon
+
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()
 
