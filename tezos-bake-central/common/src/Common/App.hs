@@ -94,6 +94,14 @@ calculatePeriodProgress currentTime startTime endTime = (ellapsedFraction, remai
     remaining = endTime `diffUTCTime` currentTime
     ellapsedFraction = realToFrac ellapsed / realToFrac (ellapsed + remaining)
 
+isVotingPeriod :: VotingPeriodKind -> Bool
+isVotingPeriod = \case
+  VotingPeriodKind_Proposal -> True
+  VotingPeriodKind_Exploration -> True
+  VotingPeriodKind_Cooldown -> False
+  VotingPeriodKind_Promotion -> True
+  VotingPeriodKind_Adoption -> False
+
 type Deletable a = First (Maybe a)
 
 type Deletable' e a = Validation (First e) a

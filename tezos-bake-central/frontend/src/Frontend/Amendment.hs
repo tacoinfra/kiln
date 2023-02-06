@@ -62,13 +62,6 @@ textPeriod = \case
   VotingPeriodKind_Promotion -> "Promotion"
   VotingPeriodKind_Adoption -> "Adoption"
 
-isVotingPeriod :: VotingPeriodKind -> Bool
-isVotingPeriod = \case
-  VotingPeriodKind_Proposal -> True
-  VotingPeriodKind_Exploration -> True
-  VotingPeriodKind_Cooldown -> False
-  VotingPeriodKind_Promotion -> True
-  VotingPeriodKind_Adoption -> False
 
 calcAmendmentPeriodBounds
   :: Amendment
