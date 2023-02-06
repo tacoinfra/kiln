@@ -2667,14 +2667,12 @@ bakersTab =
               removeEntry $ removeItemModal "baker"
             Right bid -> do
               mPeriodKind_amendment <- maybeDyn . fmap Map.lookupMax =<< watchAmendment
+              mbBakerVoteDyn <- watchBakerVote
               whenJustDyn mPeriodKind_amendment $ \periodKind_amendment -> do
-                let testingOrAdoption = \case
-                        VotingPeriodKind_Cooldown -> True
-                        VotingPeriodKind_Adoption -> True
-                        _ -> False
-                isTestingOrAdoptionPeriod <- holdUniqDyn $ testingOrAdoption . fst <$> periodKind_amendment
-                dyn_ $ ffor isTestingOrAdoptionPeriod $ \case
+                isTestingOrAdoptionPeriod <- holdUniqDyn $ not . isVotingPeriod . fst <$> periodKind_amendment
+                dyn_ $ ffor2 isTestingOrAdoptionPeriod mbBakerVoteDyn $ \cond mbBakerVote -> case cond of
                   True -> pure ()
+                  False | isJust mbBakerVote -> pure ()
                   False -> do
                     open <- tileMenuEntry "Vote"
                     let amendment = snd <$> periodKind_amendment
