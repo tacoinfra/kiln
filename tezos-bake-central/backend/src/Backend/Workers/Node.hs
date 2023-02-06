@@ -547,7 +547,11 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
 
     singleVotePeriod pkh periodKindOffset mkVotingState = do
       let blk = latestHead ^.hash
-      mBallot <- runMaybe $ nodeQueryDataSource $ nodeQuery_Ballot blk pkh
+      ballotList <- throwing $ nodeQueryDataSource $ nodeQuery_BallotList blk
+      let
+        mBallot = ballotList
+           &  find (\b -> b ^. ballotListItem_pkh == pkh)
+          <&> view ballotListItem_ballot
       -- The voting period of the last proposal period
       let amendmentPeriod = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo .
             votingPeriodInfo_votingPeriod . votingPeriod_index - periodKindOffset
