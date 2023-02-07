@@ -602,6 +602,12 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
             Just proposals
               | length (NE.filter (isJust . snd . snd) proposals) >= maxProposalUpvotes ->
                 pure ProposalVotingState_OutOfUpvotes
+              -- Latest block in proposal period doesn't provide the information about
+              -- proposal votes, so we just mark the baker as caught up in this case.
+              --
+              -- Moreover, notifying user at the last block in voting period doesn't make
+              -- much sense.
+              | isLastBlockOfPeriod latestBlock -> pure ProposalVotingState_CaughtUp
               | otherwise -> case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
                 Nothing -> pure ProposalVotingState_NoPreviousVote
                 Just lastAttempt -> do
