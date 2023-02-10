@@ -283,6 +283,11 @@ data VoteStep
 instance FromJSON VoteStep
 instance ToJSON VoteStep
 
+data LedgerApp
+  = LedgerApp_Baking
+  | LedgerApp_Wallet
+  deriving (Show, Eq)
+
 data VoteState = VoteState
   { _voteState_step :: Maybe (First VoteStep)
   } deriving (Eq, Ord, Show, Typeable, Generic)

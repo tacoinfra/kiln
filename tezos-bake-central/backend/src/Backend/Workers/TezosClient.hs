@@ -58,7 +58,7 @@ import Backend.Common
 import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI', kilnNodeRpcURI, BinaryPaths(..))
 import Backend.NodeRPC
 import Backend.Schema
-import Common.App (ImportSecretKeyStep(..), SetupLedgerToBakeStep(..), RegisterStep(..), SetupState(..), SetHWMStep(..), VoteState(..), VoteStep(..))
+import Common.App
 import Common.Schema
 import Common.URI (Port)
 import ExtraPrelude
@@ -137,11 +137,6 @@ To use keys at BIP32 path m/44'/1729'/0'/0' (default Tezos key path), use one of
  tezos-client import secret key ledger_tom "ledger://odd-himalayan-lustrous-falcon/secp256k1/0'/0'"
  tezos-client import secret key ledger_tom "ledger://odd-himalayan-lustrous-falcon/P-256/0'/0'"
 -}
-
-data LedgerApp
-  = LedgerApp_Baking
-  | LedgerApp_Wallet
-  deriving (Show, Eq)
 
 defaultTimeout :: Maybe (NominalDiffTime, ClientError)
 defaultTimeout = Just (5, ClientError_Timeout)
