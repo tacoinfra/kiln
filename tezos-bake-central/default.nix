@@ -1,4 +1,4 @@
-{ system ? builtins.currentSystem
+{ system ? if builtins.currentSystem == "aarch64-darwin" then "x86_64-darwin" else builtins.currentSystem
 , supportGargoyle ? true  # This must default to `true` for 'ob run' to work.
 , profiling ? false
 , distMethod ? null
