@@ -85,7 +85,7 @@ obelisk.project ./. ({ pkgs, ... }@args:
           terminal-progress-bar = self.callHackage "terminal-progress-bar" "0.2" {};
           };
 
-        postgresql-override = pkgs.postgresql.overrideAttrs (oldAttrs:
+        postgresql-override = pkgs.postgresql_9_6.overrideAttrs (oldAttrs:
             let libxml2-noPythonSupport = pkgs.libxml2.override { pythonSupport = false;};
             in { buildInputs = builtins.filter (x: ! (pkgs.lib.hasPrefix "libxml2" x.name)) oldAttrs.buildInputs ++ [libxml2-noPythonSupport]; }
             );
