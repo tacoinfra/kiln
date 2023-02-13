@@ -297,16 +297,11 @@ data LedgerApp
   deriving (Show, Eq)
 
 data VoteState = VoteState
-  { _voteState_step :: Maybe (First VoteStep)
+  { _voteState_step :: Maybe VoteStep
+  , _voteState_errLog :: Text
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON VoteState
 instance ToJSON VoteState
-instance Monoid VoteState where
-  mempty = VoteState Nothing
-instance Semigroup VoteState where
-  s1 <> s2 = VoteState
-    { _voteState_step = _voteState_step s1 <> _voteState_step s2
-    }
 
 instance FromJSONKey (DSum LogTag (Const ()))
 instance ToJSONKey (DSum LogTag (Const ()))

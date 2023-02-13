@@ -348,7 +348,7 @@ runClientCommand'
   -> Maybe (NominalDiffTime, e)
   -> [String]
   -> ([Text] -> [Text] -> Either e Text)
-  -> ExceptT e m Text
+  -> ExceptT (e, [Text]) m Text
 runClientCommand' nodeRpcURI clientDataDir maybePaths mTimeout args handleError = do
   liftIO $ createDirectoryIfMissing True clientDataDir
   le <- askLoggerIO
@@ -358,7 +358,7 @@ runClientCommand' nodeRpcURI clientDataDir maybePaths mTimeout args handleError 
         Just v -> handle v
         Nothing -> do
           $(logInfo) "runClientCommand Timedout"
-          throwError err
+          throwError (err, [])
   withTimeout runProc $ \(exitCode, stdout, stderr) -> case exitCode of
     ExitSuccess -> pure $ T.strip stdout
     ExitFailure _ -> do
@@ -367,12 +367,26 @@ runClientCommand' nodeRpcURI clientDataDir maybePaths mTimeout args handleError 
           warnings = takeWhile (/= "Error:") $ drop 1 $ dropWhile (/= "Warning:") strippedLines
           errors = filter (/= "Error:") $ dropWhile (/= "Error:") strippedLines
           fatal = drop 1 $ dropWhile (/= "Fatal error:") $ fmap T.strip $ T.lines stdout -- yes, fatal errors go to stdout
-      case handleError warnings (fatal ++ errors) of
+          allErrors = fatal ++ errors
+      case handleError warnings allErrors of
         Right t -> pure t
         Left e -> do
           $(logInfo) $ T.pack $ show e
-          throwError e
+          throwError (e, allErrors)
 
+-- | Specialized version of @runClientCommand'@ that also
+-- returns command's stderr in addition to the error itself.
+runClientCommandReturnsStderr
+  :: (MonadLoggerIO m, Show e)
+  => AppConfig
+  -> Maybe (NominalDiffTime, e)
+  -> [String]
+  -> ([Text] -> [Text] -> Either e Text)
+  -> ExceptT (e, [Text]) m Text
+runClientCommandReturnsStderr appConfig = runClientCommand'
+  (kilnNodeRpcURI appConfig)
+  (tezosClientDataDir appConfig)
+  (_appConfig_binaryPaths appConfig)
 
 runClientCommand
   :: (MonadLoggerIO m, Show e)
@@ -381,19 +395,31 @@ runClientCommand
   -> [String]
   -> ([Text] -> [Text] -> Either e Text)
   -> ExceptT e m Text
-runClientCommand appConfig = runClientCommand' (kilnNodeRpcURI appConfig) (tezosClientDataDir appConfig) (_appConfig_binaryPaths appConfig)
+runClientCommand appConfig mTimeout args handler = withExceptT fst $ runClientCommand'
+  (kilnNodeRpcURI appConfig)
+  (tezosClientDataDir appConfig)
+  (_appConfig_binaryPaths appConfig)
+  mTimeout
+  args
+  handler
 
-computeChainId :: (MonadLoggerIO m) => Port -> FilePath -> Maybe BinaryPaths -> Aeson.Value -> m (Either Text ChainId)
+computeChainId
+  :: (MonadLoggerIO m)
+  => Port
+  -> FilePath
+  -> Maybe BinaryPaths
+  -> Aeson.Value
+  -> m (Either Text ChainId)
 computeChainId port kilnDataDir maybePaths json = do
     e <- runExceptT $ ExceptT (pure eCommand) >>= \command -> runClientCommand' (kilnNodeRpcURI' port) kilnDataDir maybePaths noTimeout command $ \_warnings errors -> if
       | "Wrong value for command line option --protocol" : _ <- errors -> Left "Wrong Protocol"
       | otherwise -> Left $ "'tezos-client compute chain id' failed with the following error: " <> unwords (map T.unpack errors)
-    pure $ first T.pack e >>= first tshow . fromBase58 . TE.encodeUtf8
+    pure $ first (T.pack . fst) e >>= first tshow . fromBase58 . TE.encodeUtf8
   where
-    note key' = maybe (Left $ printf "key %s not available" key') (Right . T.unpack)
+    note key' = maybe (Left (printf "key %s not available" key', [])) (Right . T.unpack)
     protocol = note ("protocol" :: String) $ json ^? key "network" . key "genesis" . key "protocol" . _String
     genesisBlock = note ("block" :: String) $ json ^? key "network" . key "genesis" . key "block" . _String
-    eCommand :: Either String [String]
+    eCommand :: Either (String, [Text]) [String]
     eCommand =
       liftA2 (\p gb -> words $ printf "--protocol %s compute chain id from block hash %s" p gb) protocol genesisBlock
 
@@ -532,7 +558,7 @@ setHighWaterMark appConfig db sk bl = LedgerQuery LedgerQueryType_SetHWM $
 submitVote :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> Id PeriodProposal -> Maybe Ballot -> LedgerQuery m
 submitVote appConfig db nds sk p b = LedgerQuery LedgerQueryType_Vote $ do
   withDbAndConfig db appConfig $
-    notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First VoteStep_Prompting })
+    notify NotifyTag_VotePrompting (sk, Just $ VoteState (Just VoteStep_Prompting) mempty)
   dsh <- liftIO $ atomically $ dataSourceFinalHead nds
   let attempted = view hash <$> dsh
   (mbProposal :: Maybe PeriodProposal) <- withDbAndConfig db appConfig $ selectSingle (AutoKeyField ==. fromId p)
@@ -540,9 +566,9 @@ submitVote appConfig db nds sk p b = LedgerQuery LedgerQueryType_Vote $ do
     withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
   for_ mla $ \la -> for_ (_ledgerAccount_publicKeyHash la) $ \pkh -> for_ mbProposal $ \proposal -> do
     let proposalHash = proposal ^. periodProposal_hash
-    vs <- case b of
+    (vs, errLog) <- case b of
       Nothing -> do
-        vs <- submitProposals appConfig [proposalHash]
+        (vs, stderr) <- submitProposals appConfig [proposalHash]
         when (vs == VoteStep_Done) $ withDbAndConfig db appConfig $ do
           _ <- [executeQ|
             INSERT INTO "BakerProposal" (pkh, proposal, included, attempted)
@@ -550,9 +576,9 @@ submitVote appConfig db nds sk p b = LedgerQuery LedgerQueryType_Vote $ do
             ON CONFLICT DO NOTHING
           |]
           notify NotifyTag_Proposals (p, Just (proposal, Just False))
-        pure vs
+        pure (vs, T.unlines stderr)
       Just ballot -> do
-        vs <- submitBallot appConfig proposalHash ballot
+        (vs, stderr) <- submitBallot appConfig proposalHash ballot
         when (vs == VoteStep_Done) $ withDbAndConfig db appConfig $ do
           let bv = BakerVote
                 { _bakerVote_pkh = pkh
@@ -563,13 +589,13 @@ submitVote appConfig db nds sk p b = LedgerQuery LedgerQueryType_Vote $ do
                 }
           insert_ bv
           notify NotifyTag_BakerVote $ Just bv
-        pure vs
+        pure (vs, T.unlines stderr)
     withDbAndConfig db appConfig $
-      notify NotifyTag_VotePrompting (sk, Just $ mempty { _voteState_step = Just $ First vs })
+      notify NotifyTag_VotePrompting (sk, Just $ VoteState (Just vs) errLog)
 
-submitProposals :: (MonadLoggerIO m) => AppConfig -> [ProtocolHash] -> m VoteStep
+submitProposals :: (MonadLoggerIO m) => AppConfig -> [ProtocolHash] -> m (VoteStep, [Text])
 submitProposals appConfig proposals = do
-  e <- runExceptT $ runClientCommand appConfig noTimeout (["submit", "proposals", "for", T.unpack kilnLedgerAlias] ++ map (T.unpack . toBase58Text) proposals) $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommandReturnsStderr appConfig noTimeout (["submit", "proposals", "for", T.unpack kilnLedgerAlias] ++ map (T.unpack . toBase58Text) proposals) $ \_warnings errors -> if
     | "Submission failed because of invalid proposals." : _ <- errors -> Left $ VoteStep_Failed "Invalid proposals"
     | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
     | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
@@ -578,11 +604,11 @@ submitProposals appConfig proposals = do
     | "Ledger Transport level error:" : _ <- errors -> Left VoteStep_Disconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left VoteStep_Disconnected
     | otherwise -> Left $ VoteStep_Failed $ T.unlines errors
-  pure $ fromLeft VoteStep_Done e
+  pure $ fromLeft (VoteStep_Done, []) e
 
-submitBallot :: (MonadLoggerIO m) => AppConfig -> ProtocolHash -> Ballot -> m VoteStep
+submitBallot :: (MonadLoggerIO m) => AppConfig -> ProtocolHash -> Ballot -> m (VoteStep, [Text])
 submitBallot appConfig proposal ballot = do
-  e <- runExceptT $ runClientCommand appConfig noTimeout ["submit", "ballot", "for", T.unpack kilnLedgerAlias, T.unpack (toBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommandReturnsStderr appConfig noTimeout ["submit", "ballot", "for", T.unpack kilnLedgerAlias, T.unpack (toBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
     | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
     | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
     | "Unauthorized ballot" : _ <- errors -> Left $ VoteStep_Failed "Unauthorized ballot"
@@ -590,7 +616,7 @@ submitBallot appConfig proposal ballot = do
     | "Ledger Transport level error:" : _ <- errors -> Left VoteStep_Disconnected
     | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left VoteStep_Disconnected
     | otherwise -> Left $ VoteStep_Failed $ T.unlines errors
-  pure $ fromLeft VoteStep_Done e
+  pure $ fromLeft (VoteStep_Done, []) e
   where
     ballotText = \case
       Ballot_Yay -> "yay"

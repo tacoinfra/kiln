@@ -394,7 +394,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           pure $ fmapMaybe (fmap fst . Map.minViewWithKey) voteE
         elDynAttr "div" (ffor proposals $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
           text "No proposals have been submitted for this voting period yet."
-        pure (never, waitForWalletAppFlow . castVoteFlow False Nothing <$> vote)
+        pure (never, waitForWalletAppFlow . castVoteFlow False Nothing mempty <$> vote)
 
     explorationFlow :: Workflow t m (Event t ())
     explorationFlow = someVotingPeriodFlow "Exploration Period"
@@ -432,7 +432,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             text $ "Promote this proposal to " <> promote <> "?"
           let ballotButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
           vote <- divClass "vote-buttons" $ leftmost <$> traverse ballotButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
-          pure $ attachWith (\((pid, pp), _) b -> castVoteFlow False (Just b) (pid, _periodProposal_hash pp)) (current pv) vote
+          pure $ attachWith (\((pid, pp), _) b -> castVoteFlow False (Just b) mempty (pid, _periodProposal_hash pp)) (current pv) vote
       pure (never, waitForWalletAppFlow <$> vote)
 
     waitForWalletAppFlow
@@ -472,8 +472,13 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       _ <- requestingIdentity $ public PublicRequest_RestartKilnBaker <$ bakingReady
       pure (never, nextFlow <$ bakingReady)
 
-    castVoteFlow :: Bool -> Maybe Ballot -> (Id PeriodProposal, ProtocolHash) -> Workflow t m (Event t ())
-    castVoteFlow isTimedOut mBallot (proposalId, proposalHash) = Workflow $ do
+    castVoteFlow
+      :: Bool
+      -> Maybe Ballot
+      -> Text
+      -> (Id PeriodProposal, ProtocolHash)
+      -> Workflow t m (Event t ())
+    castVoteFlow isTimedOut mBallot errLog (proposalId, proposalHash) = Workflow $ do
       ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet
       when isTimedOut $ do
         divClass "ui message" $ do
@@ -481,6 +486,9 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             icon "icon-x red"
           divClass "title" $ do
             text "The Ledger prompt was rejected or timed out. Please try again."
+        unless (T.null errLog) $ do
+          divClass "bigtitle" $ text "Octez-client error log:"
+          elClass "div" "vote-error-log monospaced-text" $ text errLog
       divClass "bigtitle" $ text $ case mBallot of
         Nothing -> "Cast a vote for this proposal?"
         Just ballot -> "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
@@ -488,7 +496,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       cast <- voteButton "Cast Vote"
       _ <- requestingIdentity $ public (PublicRequest_DoVote sk proposalId mBallot) <$ cast
       let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
-          retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot (proposalId, proposalHash)
+          retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot errLog (proposalId, proposalHash)
       pure (never, leftmost [respondToPromptFlow retryFlow (proposalId, proposalHash) mBallot <$ cast, ledgerDisconnectedFlow retryFlow <$ appLost])
 
     respondToPromptFlow
@@ -501,14 +509,16 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       promptStep <- watchVotePrompting sk
       let changed = leftmost [updated promptStep, tag (current promptStep) pb]
           next = fforMaybe changed $ \case
-            Just vs | Just (First step) <- _voteState_step vs -> case step of
-              -- TODO: go to proper flow
-              VoteStep_Done -> Just $ waitForBakingAppFlow $ voteCastSuccessfullyFlow $ Left ()
-              VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow retryFlow
-              VoteStep_Declined -> Just $ castVoteFlow True mBallot proposal
-              VoteStep_Failed _ -> Just $ castVoteFlow True mBallot proposal
-              VoteStep_Prompting -> Nothing
-              VoteStep_WrongPeriod -> Just $ castVoteFlow True mBallot proposal -- This case should be caught by the outer runWithReplace
+            Just vs | Just step <- _voteState_step vs ->
+              let errLog = _voteState_errLog vs
+              in case step of
+                -- TODO: go to proper flow
+                VoteStep_Done -> Just $ waitForBakingAppFlow $ voteCastSuccessfullyFlow $ Left ()
+                VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow retryFlow
+                VoteStep_Declined -> Just $ castVoteFlow True mBallot errLog proposal
+                VoteStep_Failed _ -> Just $ castVoteFlow True mBallot errLog proposal
+                VoteStep_Prompting -> Nothing
+                VoteStep_WrongPeriod -> Just $ castVoteFlow True mBallot errLog proposal -- This case should be caught by the outer runWithReplace
             _ -> Nothing
       divClass "bigtitle" $ do
         elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
