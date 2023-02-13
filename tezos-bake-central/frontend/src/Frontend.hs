@@ -1511,6 +1511,7 @@ data NodeBootstrapMethod
   | NodeBootstrapMethod_SnapshotFile (Maybe File.File)
   | NodeBootstrapMethod_SnapshotFilePath (Maybe FilePath)
   | NodeBootstrapMethod_SnapshotURI (Maybe URI)
+  | NodeBootstrapMethod_XtzShotsMetadata
 
 startNodeWorkflow :: forall m t js.
   ( MonadAppWidget js t m
@@ -1531,17 +1532,28 @@ startNodeWorkflow backWF close = Workflow $ do
         , useSnapshotFileEv
         , useSnapshotPeerToPeerEv
         , useSnapshotFilePathEv
+        , useXtzShotsMetadataEv
         ]
 
-    useSnapshotURI      <- isRadioItemSelected radioItems useSnapshotUriEv True
+    useXtzShotsMetadata <- isRadioItemSelected radioItems useXtzShotsMetadataEv True
+    useSnapshotURI      <- isRadioItemSelected radioItems useSnapshotUriEv False
     useSnapshotFile     <- isRadioItemSelected radioItems useSnapshotFileEv False
     useSnapshotFilePath <- isRadioItemSelected radioItems useSnapshotFilePathEv False
 
-    ((useSnapshotUriEv, mSnapshotURI), (useSnapshotFileEv, mSelectedSnapshot)) <- divClass "column" $ do
-      (useSnapshotUriEv', mSnapshotURI') <- fakeRadioItem useSnapshotURI $ el "div" $ do
-        el "div" $ text "Provide snapshot URL (Recommended)"
+    (useXtzShotsMetadataEv, (useSnapshotUriEv, mSnapshotURI)) <- divClass "column" $ do
+
+      (useXtzShotsMetadataEv', _) <- fakeRadioItem useXtzShotsMetadata $ el "div" $ do
+        el "div" $ text "Download latest rolling snapshot from xtz-shots (Recommended)"
         divClass "explanation" $ do
           el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
+          el "p" $ do
+            el "span" $ text "You can download the latest rolling snapshot from "
+            hrefLink "https://xtz-shots.io/" $ text "xtz-shots.io"
+
+      (useSnapshotUriEv', mSnapshotURI') <- fakeRadioItem useSnapshotURI $ el "div" $ do
+        el "div" $ text "Provide snapshot URL"
+        divClass "explanation" $ do
+          el "p" $ text "As an alternative you can download the snapshot from given URL."
           el "p" $ text "Make sure that you're using a snapshot from a trusted provider."
           el "p" $ text "You can find a link to the snapshot on one of the providers websites listed on"
           el "p" $ hrefLink "https://tezos-kiln.org/" $ text "tezos-kiln.org"
@@ -1551,22 +1563,9 @@ startNodeWorkflow backWF close = Workflow $ do
               Left _ -> Nothing
         return mUri
 
-      (useSnapshotFileEv', mSelectedSnapshot') <- fakeRadioItem useSnapshotFile $ el "div" $ do
-          el "div" $ text "Provide snapshot file stored locally"
-          divClass "explanation" $ do
-            el "p" $ text "As an alternative you can provide a snapshot file that is stored locally."
-          divClass "file-selection" $ do
-            rec
-              let fileName = headMay <$> _inputElement_files fi
-              dyn_ $ ffor fileName $ mapM $ \file -> do
-                name <- liftJSM $ File.getName file
-                divClass "file-name" $ text name
-              elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
-              fi <- fileInput' $ constDyn ("id" =: "fileId")
-            pure fileName
-      pure ((useSnapshotUriEv', mSnapshotURI'), (useSnapshotFileEv', mSelectedSnapshot'))
+      pure (useXtzShotsMetadataEv', (useSnapshotUriEv', mSnapshotURI'))
 
-    ((useSnapshotFilePathEv, mSnapshotFilePath), useSnapshotPeerToPeerEv)
+    ((useSnapshotFilePathEv, mSnapshotFilePath), useSnapshotPeerToPeerEv, (useSnapshotFileEv, mSelectedSnapshot))
       <- divClass "column" $ do
         (useSnapshotFilePathEv', mSnapshotFilePath') <- fakeRadioItem useSnapshotFilePath $ el "div" $ do
           el "div" $ text "Provide path to snapshot file"
@@ -1583,14 +1582,30 @@ startNodeWorkflow backWF close = Workflow $ do
             useSnapshotFile' <- useSnapshotFile
             useSnapshotURI' <- useSnapshotURI
             useSnapshotFilePath' <- useSnapshotFilePath
-            return $ not $ useSnapshotFile' || useSnapshotURI' || useSnapshotFilePath'
+            useXtzShotsMetadata' <- useXtzShotsMetadata
+            return $ not $ useSnapshotFile' || useSnapshotURI' || useSnapshotFilePath' || useXtzShotsMetadata'
+
+        (useSnapshotFileEv', mSelectedSnapshot') <- fakeRadioItem useSnapshotFile $ el "div" $ do
+          el "div" $ text "Provide snapshot file stored locally"
+          divClass "explanation" $ do
+            el "p" $ text "As an alternative you can provide a snapshot file that is stored locally."
+          divClass "file-selection" $ do
+            rec
+              let fileName = headMay <$> _inputElement_files fi
+              dyn_ $ ffor fileName $ mapM $ \file -> do
+                name <- liftJSM $ File.getName file
+                divClass "file-name" $ text name
+              elAttr "label" ("for" =: "fileId" <> "class" =: "ui button") $ text "Select Snapshot File"
+              fi <- fileInput' $ constDyn ("id" =: "fileId")
+            pure fileName
+
         (useSnapshotPeerToPeerEv', _) <- fakeRadioItem usep2p $
           divClass "" $ do
             divClass "" $ text "Peer to Peer Download"
             divClass "explanation" $ do
               el "p" $ text "Download the chain history from Genesis to the current head via peer to peer download (as nodes normally communicate on the blockchain)."
               el "p" $ text "Note that it may take a long time."
-        pure ((useSnapshotFilePathEv', mSnapshotFilePath'), useSnapshotPeerToPeerEv')
+        pure ((useSnapshotFilePathEv', mSnapshotFilePath'), useSnapshotPeerToPeerEv', (useSnapshotFileEv', mSelectedSnapshot'))
 
   let
     selectedMethodDyn :: Dynamic t NodeBootstrapMethod
@@ -1598,12 +1613,15 @@ startNodeWorkflow backWF close = Workflow $ do
       useSnapshotFile' <- useSnapshotFile
       useSnapshotURI' <- useSnapshotURI
       useSnapshotFilePath' <- useSnapshotFilePath
+      useXtzShotsMetadata' <- useXtzShotsMetadata
       if useSnapshotFile'
       then NodeBootstrapMethod_SnapshotFile <$> mSelectedSnapshot
       else if useSnapshotURI'
       then NodeBootstrapMethod_SnapshotURI <$> mSnapshotURI
       else if useSnapshotFilePath'
       then NodeBootstrapMethod_SnapshotFilePath . fmap T.unpack <$> mSnapshotFilePath
+      else if useXtzShotsMetadata'
+      then return NodeBootstrapMethod_XtzShotsMetadata
       else return NodeBootstrapMethod_PeerToPeer
 
     disabledFlag :: Dynamic t Text
@@ -1614,6 +1632,7 @@ startNodeWorkflow backWF close = Workflow $ do
         NodeBootstrapMethod_SnapshotFile (Just _) -> ""
         NodeBootstrapMethod_SnapshotFilePath (Just _) -> ""
         NodeBootstrapMethod_SnapshotURI (Just _) -> ""
+        NodeBootstrapMethod_XtzShotsMetadata -> ""
         _ -> "disabled"
 
   rec
@@ -1648,6 +1667,9 @@ startNodeWorkflow backWF close = Workflow $ do
       downloadSnapshotEv = flip mapMaybe selectedMethodEv $ \case
         NodeBootstrapMethod_SnapshotURI u -> u
         _ -> Nothing
+      downloadXtzShotsMetadataEv = flip mapMaybe selectedMethodEv $ \case
+        NodeBootstrapMethod_XtzShotsMetadata -> Just ()
+        _ -> Nothing
 
     formEv <- performEvent $ ffor uploadSnapshotEv fileToFormValue
 
@@ -1663,9 +1685,9 @@ startNodeWorkflow backWF close = Workflow $ do
       requestingIdentity $ ffor uploadSnapshotFromPathEv $ \fp ->
       public (PublicRequest_AddInternalNode (Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp)))
     startNodePeerToPeerResEv <- requestingIdentity $ startNodePeerToPeerEv $> public (PublicRequest_AddInternalNode Nothing)
-
+    downloadXtzShotsMetadataResEv <- requestingIdentity $ downloadXtzShotsMetadataEv $> public (PublicRequest_AddInternalNode $ Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_XtzShotsMetadataSource))
     let
-      events = map void [startNodePeerToPeerResEv, uploadSnapshotResEv, downloadSnapshotResEv]
+      events = map void [startNodePeerToPeerResEv, uploadSnapshotResEv, downloadSnapshotResEv, downloadXtzShotsMetadataResEv]
         <> [uploadSnapshotFromPathResEv]
 
   pure ( (["start-node"], leftmost events <> close)

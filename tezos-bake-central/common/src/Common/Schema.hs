@@ -20,6 +20,8 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- Needed for nested `deriveArgDict`
 {-# LANGUAGE UndecidableInstances #-}
@@ -44,6 +46,7 @@ import Control.Applicative
 import Control.Exception.Safe (Exception, SomeException)
 import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
+import Data.Aeson (FromJSON (..), ToJSON (..), withObject, (.:))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -967,6 +970,7 @@ data SnapshotImportSource
   = SnapshotImportSource_FileSource
   | SnapshotImportSource_FilePathSource FilePath
   | SnapshotImportSource_UriSource URI
+  | SnapshotImportSource_XtzShotsMetadataSource
   deriving (Eq, Generic, Ord, Show, Typeable)
 
 data SnapshotImportError
@@ -974,6 +978,48 @@ data SnapshotImportError
   | SnapshotImportError_InvalidSnapshot
   | SnapshotImportError_PermissionDenied
   deriving (Eq, Generic, Ord, Show, Typeable)
+
+data XtzShotsArtifactType
+  = XtzShotsArtifactType_TezosSnapshot
+  | XtzShotsArtifactType_Other
+  deriving (Eq, Generic, Ord, Show, Typeable)
+
+instance FromJSON XtzShotsArtifactType where
+  parseJSON = \case
+    Aeson.String "tezos-snapshot" -> pure XtzShotsArtifactType_TezosSnapshot
+    _ -> pure XtzShotsArtifactType_Other
+
+data XtzShotsSnapshotHistoryMode
+  = XtzShotsSnapshotHistoryMode_Rolling
+  | XtzShotsSnapshotHistoryMode_Other
+  deriving (Eq, Generic, Ord, Show, Typeable)
+
+instance FromJSON XtzShotsSnapshotHistoryMode where
+  parseJSON = \case
+    Aeson.String "rolling" -> pure XtzShotsSnapshotHistoryMode_Rolling
+    _ -> pure XtzShotsSnapshotHistoryMode_Other
+
+data XtzShotsMetadata = XtzShotsMetadata
+  { _xtzShotsMetadata_blockHeight :: RawLevel
+  , _xtzShotsMetadata_blockHash :: BlockHash
+  , _xtzShotsMetadata_blockTimestamp :: UTCTime
+  , _xtzShotsMetadata_url :: Text
+  , _xtzShotsMetadata_chainName :: Text
+  , _xtzShotsMetadata_historyMode :: XtzShotsSnapshotHistoryMode
+  , _xtzShotsMetadata_artifactType :: XtzShotsArtifactType
+  } deriving (Eq, Generic, Ord, Show, Typeable)
+
+instance FromJSON XtzShotsMetadata where
+  parseJSON = withObject "XtzShotsMetadata" $ \o -> do
+    _xtzShotsMetadata_blockHeight    <- o .: "block_height" <|>
+      fmap (RawLevel . read) (o .: "block_height")
+    _xtzShotsMetadata_blockHash      <- o .: "block_hash"
+    _xtzShotsMetadata_blockTimestamp <- o .: "block_timestamp"
+    _xtzShotsMetadata_url            <- o .: "url"
+    _xtzShotsMetadata_chainName      <- o .: "chain_name"
+    _xtzShotsMetadata_historyMode    <- o .: "history_mode"
+    _xtzShotsMetadata_artifactType   <- o .: "artifact_type"
+    pure $ XtzShotsMetadata{..}
 
 data AddInternalNodeError
   = AddInternalNodeError_SnapshotImportError SnapshotImportError
@@ -1144,6 +1190,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'TelegramMessageQueue
   , 'TelegramRecipient
   , 'UpstreamVersion
+  , 'XtzShotsMetadata
   ] ++ map makePrisms
   [ ''ErrorLogInternalNodeFailed
   , ''UpgradeCheckError

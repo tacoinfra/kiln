@@ -54,7 +54,7 @@ import Backend.Config (AppConfig (..), nodeDataDir)
 import Backend.Http (runHttpT)
 import Backend.NodeRPC (NodeDataSource (..))
 import Backend.Schema
-import Backend.Snapshot (handleSnapshotDownload, handleSnapshotFilePathImport, validateSnapshotFilePath)
+import Backend.Snapshot
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Workers.Process (updateProcessState)
@@ -152,6 +152,8 @@ requestHandler appConfig nds =
         case mNodeProcessState of
           Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_UriSource u) ->
             handleSnapshotDownload appConfig nds u
+          Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_XtzShotsMetadataSource) ->
+            handleDownloadXtzShotsMetadata appConfig nds
           Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp) ->
             handleSnapshotFilePathImport appConfig nds fp
           Nothing ->
