@@ -62,13 +62,6 @@ textPeriod = \case
   VotingPeriodKind_Promotion -> "Promotion"
   VotingPeriodKind_Adoption -> "Adoption"
 
-isVotingPeriod :: VotingPeriodKind -> Bool
-isVotingPeriod = \case
-  VotingPeriodKind_Proposal -> True
-  VotingPeriodKind_Exploration -> True
-  VotingPeriodKind_Cooldown -> False
-  VotingPeriodKind_Promotion -> True
-  VotingPeriodKind_Adoption -> False
 
 calcAmendmentPeriodBounds
   :: Amendment
@@ -405,8 +398,8 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
 
     explorationFlow :: Workflow t m (Event t ())
     explorationFlow = someVotingPeriodFlow "Exploration Period"
-      "Votes in this period will decide if the proposal under consideration should be tested in an immediately following Test Period. If it does not pass, Promotion Period will begin again."
-      "Test Period"
+      "Votes in this period will decide if the proposal under consideration should be tested in an immediately following Cooldown Period. If it does not pass, Promotion Period will begin again."
+      "Cooldown Period"
       (maybeDyn =<< watchPeriodTestingVote)
 
     promotionFlow :: Workflow t m (Event t ())

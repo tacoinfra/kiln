@@ -79,7 +79,7 @@ import Backend.NodeRPC
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.ViewSelectorHandler (getProposals)
-import Common.App (getEndTimeForPeriod)
+import Common.App (getEndTimeForPeriod, isVotingPeriod)
 import Common.Schema
 import ExtraPrelude
 
@@ -547,29 +547,29 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
 
     singleVotePeriod pkh periodKindOffset mkVotingState = do
       let blk = latestHead ^.hash
-      mBallot <- runMaybe $ nodeQueryDataSource $ nodeQuery_Ballot blk pkh
+      ballotList <- throwing $ nodeQueryDataSource $ nodeQuery_BallotList blk
+      let
+        mBallot = ballotList
+           &  find (\b -> b ^. ballotListItem_pkh == pkh)
+          <&> view ballotListItem_ballot
       -- The voting period of the last proposal period
       let amendmentPeriod = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo .
             votingPeriodInfo_votingPeriod . votingPeriod_index - periodKindOffset
 
-      runDb (Identity db) $ case mBallot of
-        Nothing -> do
-          deleteAll' @BakerVote Proxy
-          notify NotifyTag_BakerVote Nothing
-        Just ballot -> do
-          pps <- [queryQ|
-            UPDATE "BakerVote" SET included = ?blk
-            FROM "PeriodProposal" pp
-            WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
-            RETURNING proposal, attempted
-          |]
-          for_ pps $ \(proposal, attempted) -> notify NotifyTag_BakerVote $ Just $ BakerVote
-            { _bakerVote_pkh = pkh
-            , _bakerVote_proposal = proposal
-            , _bakerVote_ballot = ballot
-            , _bakerVote_included = Just blk
-            , _bakerVote_attempted = attempted
-            }
+      runDb (Identity db) $ for_ mBallot $ \ballot -> do
+        pps <- [queryQ|
+          UPDATE "BakerVote" SET included = ?blk
+          FROM "PeriodProposal" pp
+          WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
+          RETURNING proposal, attempted
+        |]
+        for_ pps $ \(proposal, attempted) -> notify NotifyTag_BakerVote $ Just $ BakerVote
+          { _bakerVote_pkh = pkh
+          , _bakerVote_proposal = proposal
+          , _bakerVote_ballot = ballot
+          , _bakerVote_included = Just blk
+          , _bakerVote_attempted = attempted
+          }
 
       pure $ mkVotingState $ isJust mBallot
 
@@ -602,6 +602,12 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
             Just proposals
               | length (NE.filter (isJust . snd . snd) proposals) >= maxProposalUpvotes ->
                 pure ProposalVotingState_OutOfUpvotes
+              -- Latest block in proposal period doesn't provide the information about
+              -- proposal votes, so we just mark the baker as caught up in this case.
+              --
+              -- Moreover, notifying user at the last block in voting period doesn't make
+              -- much sense.
+              | isLastBlockOfPeriod latestBlock -> pure ProposalVotingState_CaughtUp
               | otherwise -> case maximumMay $ fmapMaybe (\(_,_,_,_,_,attempted) -> attempted) pps of
                 Nothing -> pure ProposalVotingState_NoPreviousVote
                 Just lastAttempt -> do
@@ -649,6 +655,14 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
           BakerVotingState_Promotion previouslyVoted -> singleVotePhase previouslyVoted
           BakerVotingState_Adoption -> clearAllErrors -- TODO: Make
           -- sure this makes sense!
+
+  -- We need the value in 'BakerVote' table only in
+  -- periods when user is able to vote.
+  --
+  -- Since this table is used for both expolration and
+  -- promotion periods, we clean it to make it empty for
+  -- the next voting period.
+  unless (isVotingPeriod currentPeriodKind) clearBakerVote
 
   -- Any *lesser* periods should be updated to the values at the block level of the end of the given period.
   -- Current period should be updated to the values of the latest block.
@@ -816,6 +830,10 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
                 }
           insert_ $ f pid pv
           notify n $ Just $ f pid pv
+
+    clearBakerVote :: (MonadLoggerIO m) => m ()
+    clearBakerVote = runDb (Identity db) $
+      deleteAll' @BakerVote Proxy >> notify NotifyTag_BakerVote Nothing
 
 -- Monitors changes in protocol/voting period, and manages the baker daemon if running
 protocolMonitorWorker

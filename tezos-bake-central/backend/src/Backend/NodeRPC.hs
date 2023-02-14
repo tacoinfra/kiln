@@ -126,7 +126,7 @@ data NodeQuery a where
   NodeQuery_EndorsingRights   :: BlockQuery -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
   NodeQuery_Account           :: BlockQuery -> ContractId -> NodeQuery AccountCrossCompat
   NodeQuery_Ballots           :: BlockQuery -> NodeQuery BallotsCrossCompat
-  NodeQuery_Ballot            :: BlockQuery -> PublicKeyHash -> NodeQuery (Maybe Ballot)
+  NodeQuery_BallotList        :: BlockQuery -> NodeQuery BallotList
   NodeQuery_ProposalVote      :: BlockQuery -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
   NodeQuery_Listings          :: BlockQuery -> NodeQuery VoterListingsCrossCompat
   NodeQuery_Proposals         :: BlockQuery -> NodeQuery ProposalVotesListCrossCompat
@@ -151,7 +151,7 @@ nodeQuery_BakingRights      :: ToBlockQuery blk => blk -> Set RawLevel -> NodeQu
 nodeQuery_EndorsingRights   :: ToBlockQuery blk => blk -> Set RawLevel -> NodeQuery (Seq EndorsingRightsCrossCompat)
 nodeQuery_Account           :: ToBlockQuery blk => blk -> ContractId -> NodeQuery AccountCrossCompat
 nodeQuery_Ballots           :: ToBlockQuery blk => blk -> NodeQuery BallotsCrossCompat
-nodeQuery_Ballot            :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Maybe Ballot)
+nodeQuery_BallotList        :: ToBlockQuery blk => blk -> NodeQuery BallotList
 nodeQuery_ProposalVote      :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Set ProtocolHash)
 nodeQuery_Listings          :: ToBlockQuery blk => blk -> NodeQuery VoterListingsCrossCompat
 nodeQuery_Proposals         :: ToBlockQuery blk => blk -> NodeQuery ProposalVotesListCrossCompat
@@ -168,7 +168,7 @@ nodeQuery_BakingRights blk = NodeQuery_BakingRights (toBlockQuery blk)
 nodeQuery_EndorsingRights blk = NodeQuery_EndorsingRights (toBlockQuery blk)
 nodeQuery_Account blk = NodeQuery_Account (toBlockQuery blk)
 nodeQuery_Ballots blk = NodeQuery_Ballots (toBlockQuery blk)
-nodeQuery_Ballot blk = NodeQuery_Ballot (toBlockQuery blk)
+nodeQuery_BallotList blk = NodeQuery_BallotList (toBlockQuery blk)
 nodeQuery_ProposalVote blk = NodeQuery_ProposalVote (toBlockQuery blk)
 nodeQuery_Listings blk = NodeQuery_Listings (toBlockQuery blk)
 nodeQuery_Proposals blk = NodeQuery_Proposals (toBlockQuery blk)
@@ -798,7 +798,7 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
   NodeQuery_Account branch contractId ->
     nodeRPC' $ rContract contractId (toChain chainId) branch
   NodeQuery_Ballots branch -> nodeRPC' $ rBallots chainId branch
-  NodeQuery_Ballot branch pkh -> nodeRPC' $ rBallot chainId branch pkh
+  NodeQuery_BallotList branch -> nodeRPC' $ rBallotList chainId branch
   NodeQuery_ProposalVote branch pkh -> nodeRPC' $ rProposalVote chainId branch pkh
   NodeQuery_Listings branch -> nodeRPC' $ rListings chainId branch
   NodeQuery_Proposals branch -> nodeRPC' $ rProposals chainId branch

@@ -74,11 +74,11 @@ class QueryHistory repr where -- blockscale
   rContract :: ContractId -> ChainType repr -> BlockQuery -> repr AccountCrossCompat
 
   rBallots :: ChainId -> BlockQuery -> repr BallotsCrossCompat
+  rBallotList :: ChainId -> BlockQuery -> repr BallotList
   rListings :: ChainId -> BlockQuery -> repr VoterListingsCrossCompat
   rProposals :: ChainId -> BlockQuery -> repr ProposalVotesListCrossCompat
   rCurrentProposal :: ChainId -> BlockQuery -> repr (Maybe ProtocolHash)
   rCurrentQuorum :: ChainId -> BlockQuery -> repr Int
-  rBallot :: ChainId -> BlockQuery -> PublicKeyHash -> repr (Maybe Ballot)
   rProposalVote :: ChainId -> BlockQuery -> PublicKeyHash -> repr (Set ProtocolHash)
 
   -- This only produces results when the cycles requested are between within
@@ -109,11 +109,11 @@ instance QueryHistory RpcQuery where
   rProtoConstants = blockAPI "/context/constants"
   rContract contractId = blockAPI' ("/context/contracts/" <> toContractIdText contractId)
   rBallots = blockAPI "/votes/ballots/"
+  rBallotList = blockAPI "/votes/ballot_list"
   rListings = blockAPI "/votes/listings/"
   rProposals = blockAPI "/votes/proposals/"
   rCurrentProposal = blockAPI "/votes/current_proposal/"
   rCurrentQuorum = blockAPI "/votes/current_quorum/"
-  rBallot chain block pkh = blockAPI ("/context/raw/json/votes/ballots/" <> toPublicKeyHashText pkh) chain block
   rProposalVote chain block pkh = S.fromList . map fst . filter (elem @[] pkh . snd) <$> blockAPI "/context/raw/json/votes/proposals?depth=1" chain block
   rBakingRights params = blockAPI $ "/helpers/baking_rights"
     <> (if null params then "" else "?" <> rightsLevelsOrCycleToQueryArgs params)
