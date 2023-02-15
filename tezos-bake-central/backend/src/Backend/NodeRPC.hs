@@ -82,7 +82,6 @@ import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Database.Id.Class
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple.LargeObjects as PG
@@ -1061,7 +1060,7 @@ buildProtocolIndex branch protoHash = do
           )
         when (join mp == Nothing) $ do
           insert protoIndex
-          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash)
+          notifyDefault protoIndex
 
       maybe (nqThrowError KilnRpcError_NoKnownHeads) pure $
         find ((protoHash ==) . view protocolHash) protoIndexes

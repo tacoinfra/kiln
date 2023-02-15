@@ -18,10 +18,10 @@ import qualified Data.Map.Monoidal as MMap
 import Data.Semigroup (sconcat)
 import Data.Some (Some (..))
 import Data.Validation (liftError)
-import Database.Groundhog.Postgresql (PersistBackend(..), Postgresql(..), get, (&&.), (==.), Cond(..))
+import Database.Groundhog.Postgresql (PersistBackend(..), Postgresql(..), get, Cond(..))
 import Database.Id.Class
 import Database.Id.Groundhog
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap', selectSingle)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap')
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw(..))
 import Rhyolite.Backend.Listen (DbNotification (..))
 import Rhyolite.Backend.Logging (runLoggingEnv)
@@ -134,15 +134,14 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
 
     paramsVS = _bakeViewSelector_parameters aggVS
 
-    handleParameters :: PersistBackend m' => Id ProtocolIndex -> m' (BakeView a)
-    handleParameters (Id (chainId, protoHash)) = whenM (viewSelects protoHash paramsVS) $ do
-      newProto :: Maybe ProtocolIndex <- selectSingle $
-        ProtocolIndex_hashField ==. protoHash &&.
-        ProtocolIndex_chainIdField ==. chainId
-      pure mempty
-        { _bakeView_parameters = MapView $ mempty $
-          liftA2 (\v p -> MMap.singleton protoHash (First p, v)) (MMap.lookup protoHash $ unMapSelector paramsVS) newProto
-        }
+    handleParameters :: PersistBackend m' => ProtocolIndex -> m' (BakeView a)
+    handleParameters protocolIndex = do
+      let protoHash = protocolIndex ^. protocolIndex_hash
+      whenM (viewSelects protoHash paramsVS) $
+        pure mempty
+          { _bakeView_parameters = MapView $ mempty $
+            liftA2 (\v p -> MMap.singleton protoHash (First p, v)) (MMap.lookup protoHash $ unMapSelector paramsVS) (Just protocolIndex)
+          }
 
     nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a
     nodeAddressesVS = _bakeViewSelector_nodeAddresses aggVS
