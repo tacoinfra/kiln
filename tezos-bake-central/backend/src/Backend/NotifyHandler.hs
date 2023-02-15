@@ -139,8 +139,10 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
       let protoHash = protocolIndex ^. protocolIndex_hash
       whenM (viewSelects protoHash paramsVS) $
         pure mempty
-          { _bakeView_parameters = MapView $ mempty $
-            liftA2 (\v p -> MMap.singleton protoHash (First p, v)) (MMap.lookup protoHash $ unMapSelector paramsVS) (Just protocolIndex)
+          { _bakeView_parameters = MapView $ MMap.singleton protoHash
+              ( First protocolIndex
+              , fromMaybe mempty . MMap.lookup protoHash $ unMapSelector paramsVS
+              )
           }
 
     nodeAddressesVS :: RangeSelector' (Id Node) (Deletable NodeSummary) a

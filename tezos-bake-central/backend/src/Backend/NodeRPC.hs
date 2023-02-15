@@ -1151,6 +1151,7 @@ fetchProtocolForBlock chainId blkHash = do
           , _protocolIndex_firstBlockCycle = Nothing
           }
   insert p
+  notifyDefault p
   pure p
 
 deriveGEq ''NodeQuery
