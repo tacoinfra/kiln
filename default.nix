@@ -1,4 +1,4 @@
-{ system ? builtins.currentSystem
+{ system ? if builtins.currentSystem == "aarch64-darwin" then "x86_64-darwin" else builtins.currentSystem
 , obelisk ? (import tezos-bake-central/.obelisk/impl { inherit system; })
 , pkgs ? obelisk.reflex-platform.nixpkgs
   # can be set to "SIMPLE", "ADVANCED" or null
