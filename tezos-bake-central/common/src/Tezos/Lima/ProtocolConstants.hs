@@ -2,6 +2,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Tezos.Lima.ProtocolConstants where
 
 import Control.Applicative (Alternative (..))
@@ -50,18 +51,13 @@ getCyclesPerVotingPeriod protoInfo = case (_protoInfo_blocksPerVotingPeriod prot
 
 instance FromJSON ProtoInfo where
   parseJSON = withObject "ProtoInfo" $ \v -> do
-    preservedCycles   :: Cycle    <- v .: "preserved_cycles"
-    blocksPerCycle    :: RawLevel <- v .: "blocks_per_cycle"
-    blocksPerVP       :: Maybe RawLevel <-  v .:? "blocks_per_voting_period"
-    cyclesPerVP       :: Maybe RawLevel <- v .:? "cycles_per_voting_period"
-    -- In Lima protocol 'tokens_per_roll' constant was renamed to 'minimal_stake'.
-    -- In order to avoid creating cross-compat data type only for this change, we
-    -- try to parse both these constants there.
-    --
-    -- TODO: remove when Lima is activated on mainnet.
-    minimalStake      :: Tez <- v .: "tokens_per_roll" <|> v .: "minimal_stake"
-    minimalBlockDelay :: TezosWord64 <- v .: "minimal_block_delay"
-    pure $ ProtoInfo preservedCycles blocksPerCycle blocksPerVP cyclesPerVP minimalStake minimalBlockDelay
+    _protoInfo_preservedCycles       <- v .: "preserved_cycles"
+    _protoInfo_blocksPerCycle        <- v .: "blocks_per_cycle"
+    _protoInfo_blocksPerVotingPeriod <- v .:? "blocks_per_voting_period"
+    _protoInfo_cyclesPerVotingPeriod <- v .:? "cycles_per_voting_period"
+    _protoInfo_minimalStake          <- v .: "minimal_stake"
+    _protoInfo_minimalBlockDelay     <- v .: "minimal_block_delay"
+    pure $ ProtoInfo {..}
 
 deriveTezosToJson ''ProtoInfo
 makeLenses ''ProtoInfo

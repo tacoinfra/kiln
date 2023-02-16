@@ -76,8 +76,7 @@ data DelegateInfo = DelegateInfo
   , _delegateInfo_delegatedBalance      :: Tez
   , _delegateInfo_deactivated           :: Bool
   , _delegateInfo_gracePeriod           :: Cycle
-  -- TODO: remove 'Maybe' after Lima is activated on mainnet.
-  , _delegateInfo_activeConsensusKey    :: Maybe PublicKeyHash
+  , _delegateInfo_activeConsensusKey    :: PublicKeyHash
   , _delegateInfo_pendingConsensusKeys  :: [PendingConsensusKey]
   }
 
@@ -90,7 +89,7 @@ instance FromJSON DelegateInfo where
     _delegateInfo_delegatedBalance      <- o .: "delegated_balance"
     _delegateInfo_deactivated           <- o .: "deactivated"
     _delegateInfo_gracePeriod           <- o .: "grace_period"
-    _delegateInfo_activeConsensusKey    <- o .:? "active_consensus_key"
+    _delegateInfo_activeConsensusKey    <- o .: "active_consensus_key"
 
     mbPendingConsensusKeys <- o .:? "pending_consensus_keys"
     let _delegateInfo_pendingConsensusKeys = fromMaybe [] mbPendingConsensusKeys
