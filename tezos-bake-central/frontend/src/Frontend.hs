@@ -2749,7 +2749,7 @@ bakersTab =
 
         el "dl" $ do
           (latestHead, knownProto) <- watchHeadWithProtocol
-          protoHashDyn <- watchLatestProtocolHash
+          let protoHashDyn = view protocolIndex_hash <$$> knownProto
           -- TODO: remove when Lima is activated on mainnet.
           dyn_ $ ffor protoHashDyn $ \case
             Just LimaProtocolHash ->

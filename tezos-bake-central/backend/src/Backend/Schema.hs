@@ -110,7 +110,7 @@ data NotifyTag a where
   NotifyTag_BakerDetails :: NotifyTag BakerDetails
   NotifyTag_BakerRightsProgress :: NotifyTag (Id BakerRightsProgress, BakerRightsProgress, [BakerRight])
   NotifyTag_ErrorLog :: LogTag b -> NotifyTag (Id b)
-  NotifyTag_ProtocolIndex :: NotifyTag (Id ProtocolIndex)
+  NotifyTag_ProtocolIndex :: NotifyTag ProtocolIndex
   NotifyTag_UpstreamVersion :: NotifyTag (Id UpstreamVersion, UpstreamVersion)
   NotifyTag_MailServerConfig :: NotifyTag (Id MailServerConfig, MailServerConfig)
   NotifyTag_NodeExternal :: NotifyTag (Id Node, Maybe NodeExternalData)
@@ -206,10 +206,9 @@ instance HasDefaultNotify (Id ErrorLogNodeWrongChain)
 instance HasDefaultNotify (Id ErrorLogVotingReminder)
 instance HasDefaultNotify (Id ErrorLogBakerMissedEndorsementBonus)
 instance HasDefaultNotify (Id ErrorLogBakerNeedToResetHWM)
-instance HasDefaultNotify (Id ProtocolIndex)
 
-instance HasNotification NotifyTag ProtocolIndex where
-  notification _ = NotifyTag_ProtocolIndex
+instance HasDefaultNotify ProtocolIndex where
+  mkDefaultNotify = mkNotify NotifyTag_ProtocolIndex
 
 instance HasNotification NotifyTag ErrorLogNodeWrongChain where
   notification _ = mkNodeNotify NodeLogTag_NodeWrongChain
@@ -1462,7 +1461,7 @@ instance ArgDict c NotifyTag where
     , c (Id ErrorLogVotingReminder)
     , c (Id UpstreamVersion, UpstreamVersion)
     , c (Id MailServerConfig, MailServerConfig)
-    , c (Id ProtocolIndex)
+    , c ProtocolIndex
     , c (Id Node, Maybe NodeExternalData)
     , c (Id Node, Maybe ProcessData)
     , c (Id Node, Maybe NodeDetailsData)

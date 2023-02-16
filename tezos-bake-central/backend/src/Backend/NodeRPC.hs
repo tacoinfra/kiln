@@ -63,17 +63,12 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
-import Data.Either (rights)
 import Data.Foldable (find, minimumBy)
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
 import Data.Int (Int32)
-import Data.List (sortOn)
-import qualified Data.List.NonEmpty as NE
-import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
-import Data.Ord (Down(..))
 import Data.Pool (Pool)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq (singleton, (<|))
@@ -82,14 +77,12 @@ import Data.String.Here.Interpolated (i)
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Database.Id.Class
 import Database.Groundhog.Core
 import Database.Groundhog.Postgresql
 import qualified Database.PostgreSQL.Simple.LargeObjects as PG
 import qualified Database.PostgreSQL.Simple as PG
-import Named
 import qualified Network.HTTP.Client as Http
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, project1)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject, withLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeMany, queryQ, sql)
 import Rhyolite.Backend.DB.Serializable
@@ -990,141 +983,11 @@ getProtocolIndex branch protoHash = do
 
   case headMay existingEntries of
     Just existing -> pure existing
-    Nothing -> nqTry (buildProtocolIndex branch protoHash) >>= \case
-      Right p' -> do
-        pure p'
-      Left e -> do
-        -- as a last measure just fetch the protocol constants without building the index
-        p <- fetchProtocolForBlock chainId branch
-        if p ^. protocolIndex_hash == protoHash
-          then pure p
-          else nqThrowError e
-
-buildProtocolIndex
-  :: forall m
-   . (MonadNodeQuery (NodeQueryT m), MonadMask m, PersistBackend m)
-  => BlockHash -> ProtocolHash -> NodeQueryT m ProtocolIndex
-buildProtocolIndex branch protoHash = do
-  chainId <- asksNodeDataSource _nodeDataSource_chain
-  -- Search until we have the history up to the desired protocol.
-  (protocolFirstBlocksHistory, protocolLastBlocksHistory) <- buildProtocolHistoryUntil
-    ! #predicate (\blk -> blk ^. protocolHash == protoHash)
-    ! #branch branch
-
-  case NE.nonEmpty $ sortOn (Down . (^. _2 . level)) $ Map.toList protocolFirstBlocksHistory of
-    Nothing -> nqThrowError KilnRpcError_NoKnownHeads
-    Just orderedFirstBlocksWithProto -> do
-      -- To increase likelihood that a node knows the answer, we will use the *last* block
-      -- in a protocol to get it's constants (the most recent block possible). To do this we
-      -- pair up the protocols with the block immediately *prior* to the first block in the
-      -- next protocol. For the most recent protocol, we will use 'branch' as the query block.
-      branchBlock <- nodeQueryDataSourceSafe $ nodeQuery_Block branch
-      let initOrderedLastBlocks = flip NE.map orderedFirstBlocksWithProto $ \(proto, _) ->
-            -- The only protocol for which we know the first but don't know the last block is the current protocol.
-            -- For it we use current @branch@ as the last block
-            fromMaybe branchBlock $ Map.lookup proto protocolLastBlocksHistory
-          protocolQueryBlockMap = NE.zip (NE.map snd orderedFirstBlocksWithProto) initOrderedLastBlocks
-
-      protoIndexes :: [ProtocolIndex] <- fmap (rights . toList) $
-        for protocolQueryBlockMap $ \(firstBlock, queryBlock') -> nqTry $ do
-          -- Before using the query block instead of 'firstBlock', make sure it's protocol really is
-          -- the same. If not, fall back to 'firstBlock'.
-          -- While this situation shouldn't happen, it's possible for protocols to be introduced
-          -- apart from the amendment process. In this case we may actually skip one
-          -- in the scan which would cause this logic to pair the wrong constants with a
-          -- protocol hash--and that's just too scary to think about.
-          let
-            actualQueryBlockHash = case queryBlock' of
-              queryBlock | queryBlock ^. protocolHash == firstBlock ^. protocolHash -> queryBlock ^. hash
-              _ -> firstBlock ^. hash
-          constants <- nodeQueryDataSourceSafe' $ nodeQuery_ProtocolConstants actualQueryBlockHash
-          pure ProtocolIndex
-            { _protocolIndex_chainId = chainId
-            , _protocolIndex_hash = firstBlock ^. protocolHash
-            , _protocolIndex_proto = firstBlock ^. blockHeaderFull . blockHeaderFull_proto
-            , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw constants) of
-                                               Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
-                                               Right x -> x
-            , _protocolIndex_constants = _rpcResult_value constants
-            , _protocolIndex_firstBlockHash = Just $ firstBlock ^. hash
-            , _protocolIndex_firstBlockPredecessor = Just $ firstBlock ^. predecessor
-            , _protocolIndex_firstBlockLevel = Just $ firstBlock ^. level
-            , _protocolIndex_firstBlockFitness = Just $ firstBlock ^. fitness
-            , _protocolIndex_firstBlockTimestamp = Just $ firstBlock ^. timestamp
-            , _protocolIndex_firstBlockCycle = Just $ firstBlock ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
-            }
-
-      for_ protoIndexes $ \protoIndex -> do
-        mp :: Maybe (Maybe BlockHash) <- project1 ProtocolIndex_firstBlockHashField
-          (( ProtocolIndex_hashField ==. protoIndex ^. protocolIndex_hash )
-            &&. (ProtocolIndex_chainIdField ==. chainId)
-          )
-        when (join mp == Nothing) $ do
-          insert protoIndex
-          notifyDefault $ Id @ProtocolIndex (protoIndex ^. protocolIndex_chainId, protoIndex ^. protocolHash)
-
-      maybe (nqThrowError KilnRpcError_NoKnownHeads) pure $
-        find ((protoHash ==) . view protocolHash) protoIndexes
-
--- | For each found protocol in the blockchain history we return
--- its first and last blocks.
-buildProtocolHistoryUntil
-  :: forall m
-   . (MonadNodeQuery (NodeQueryT m), MonadMask m)
-  => "predicate" :! (BlockCrossCompat -> Bool)
-  -> "branch" :! BlockHash
-  -> NodeQueryT m (Map ProtocolHash BlockCrossCompat, Map ProtocolHash BlockCrossCompat)
-  -- Turns this into table, ProtocolHash
-buildProtocolHistoryUntil (Arg predicate) (Arg branch) = do
-  branchBlock <- nodeQueryDataSourceSafe $ nodeQuery_Block branch
-  go ! #currentBlock branchBlock
-     ! #currentProtocol (branchBlock ^. protocolHash)
-     ! #protocolFirstBlocksHistory mempty
-     ! #protocolLastBlocksHistory mempty
-  where
-    levelsBefore :: BlockCrossCompat -> RawLevel -> NodeQueryT m BlockCrossCompat
-    levelsBefore blk lvls = nodeQueryDataSourceSafe $ nodeQuery_Block $ (blk ^. hash) ~~ lvls
-
-    votingPeriodPosition = blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
-
-    go :: "currentBlock" :! BlockCrossCompat
-       -> "currentProtocol" :! ProtocolHash
-       -> "protocolFirstBlocksHistory" :! Map ProtocolHash BlockCrossCompat
-       -> "protocolLastBlocksHistory" :! Map ProtocolHash BlockCrossCompat
-       -> NodeQueryT m (Map ProtocolHash BlockCrossCompat, Map ProtocolHash BlockCrossCompat)
-    go (Arg currentBlock) (Arg currentProtocol) (Arg protocolFirstBlocksHistory) (Arg protocolLastBlocksHistory) =
-      case currentBlock ^. level == 1 of
-        True -> do
-          $(logDebug) [i|Got to the root searching for protocol: ${currentProtocol}|]
-          -- If 'currentBlock' is at the minimum level, we call it the beginning of 'currentProtocol'.
-          pure (Map.insert currentProtocol currentBlock protocolFirstBlocksHistory, protocolLastBlocksHistory)
-        False -> do
-          lastBlockInPreviousVotingPeriod <- levelsBefore currentBlock (currentBlock ^. votingPeriodPosition + 1)
-          case currentProtocol == lastBlockInPreviousVotingPeriod ^. protocolHash of
-            True -> do
-              $(logDebug) [i|Found another voting period with the same protocol ${currentProtocol} - ${lastBlockInPreviousVotingPeriod ^. hash}|]
-              go ! #currentBlock lastBlockInPreviousVotingPeriod
-                 ! #currentProtocol currentProtocol
-                 ! #protocolFirstBlocksHistory protocolFirstBlocksHistory
-                 ! #protocolLastBlocksHistory protocolLastBlocksHistory
-            False -> do
-              $(logDebug) [i|Found a transition for ${currentProtocol} at ${lastBlockInPreviousVotingPeriod ^. hash}|]
-              firstBlockInVotingPeriod <- levelsBefore currentBlock (currentBlock ^. votingPeriodPosition)
-
-              (lastBlockInPreviousProtocol, firstBlockInProtocol) <- case currentProtocol == firstBlockInVotingPeriod ^. protocolHash of
-                True -> pure (lastBlockInPreviousVotingPeriod, firstBlockInVotingPeriod)
-                False -> do
-                  $(logError) [i|Couldn't build ProtocolIndex for the protocol ${currentProtocol}|]
-                  nqThrowError $ KilnRpcError_UnknownProtocol currentProtocol
-
-              let protocolFirstBlocksHistory' = Map.insert currentProtocol firstBlockInProtocol protocolFirstBlocksHistory
-                  protocolLastBlocksHistory' = Map.insert (lastBlockInPreviousProtocol ^. protocolHash) lastBlockInPreviousProtocol protocolLastBlocksHistory
-              case predicate firstBlockInProtocol of
-                True -> pure (protocolFirstBlocksHistory', protocolLastBlocksHistory') -- We finished searching.
-                False -> go ! #currentBlock lastBlockInPreviousProtocol
-                            ! #currentProtocol (lastBlockInPreviousProtocol ^. protocolHash)
-                            ! #protocolFirstBlocksHistory protocolFirstBlocksHistory'
-                            ! #protocolLastBlocksHistory protocolLastBlocksHistory'
+    Nothing -> do
+      p <- fetchProtocolForBlock chainId branch
+      if p ^. protocolIndex_hash == protoHash
+        then pure p
+        else nqThrowError $ KilnRpcError_UnknownProtocol protoHash
 
 fetchProtocolForBlock
   :: forall m
@@ -1152,6 +1015,7 @@ fetchProtocolForBlock chainId blkHash = do
           , _protocolIndex_firstBlockCycle = Nothing
           }
   insert p
+  notifyDefault p
   pure p
 
 deriveGEq ''NodeQuery
