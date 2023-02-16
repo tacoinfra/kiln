@@ -2749,28 +2749,21 @@ bakersTab =
 
         el "dl" $ do
           (latestHead, knownProto) <- watchHeadWithProtocol
-          let protoHashDyn = view protocolIndex_hash <$$> knownProto
-          -- TODO: remove when Lima is activated on mainnet.
-          dyn_ $ ffor protoHashDyn $ \case
-            Just LimaProtocolHash ->
-              let
-                mbActiveConsensusPkhDyn = ffor dmDelegateInfo $ \mDelegateInfo ->
-                  mDelegateInfo >>= _cacheDelegateInfo_activeConsensusKey
-                mbPendingConsensusPkhDyn = ffor dmDelegateInfo $ \mDelegateInfo ->
-                  mDelegateInfo >>= _cacheDelegateInfo_pendingConsensusKey
-              in do
-                whenJustDyn mbActiveConsensusPkhDyn $ \activeConsensusPkh -> el "div" $ do
-                  el "dt" (text "Active consensus key")
-                  elClass "dd" "monospaced-text" $ text $ toPublicKeyHashText activeConsensusPkh
-                whenJustDyn mbPendingConsensusPkhDyn $ \PendingConsensusKey{..} -> el "div" $ do
-                  el "dt" (text "Pending consensus key")
-                  let cycleText = tshow $ unCycle _pendingConsensusKey_cycle
-                  el "dd" $ do
-                    tooltipped TooltipPos_BottomCenter (pkhTooltip pkh) $
-                      elClass "span" "monospaced-text" $ text $ shortenPkh _pendingConsensusKey_pkh
-                    el "span" $ text $ " at cycle " <> cycleText
-            _ -> blank
-
+          let
+            mbActiveConsensusPkhDyn = ffor dmDelegateInfo $ \mDelegateInfo ->
+              mDelegateInfo >>= _cacheDelegateInfo_activeConsensusKey
+            mbPendingConsensusPkhDyn = ffor dmDelegateInfo $ \mDelegateInfo ->
+              mDelegateInfo >>= _cacheDelegateInfo_pendingConsensusKey
+          whenJustDyn mbActiveConsensusPkhDyn $ \activeConsensusPkh -> el "div" $ do
+            el "dt" (text "Active consensus key")
+            elClass "dd" "monospaced-text" $ text $ toPublicKeyHashText activeConsensusPkh
+          whenJustDyn mbPendingConsensusPkhDyn $ \PendingConsensusKey{..} -> el "div" $ do
+            el "dt" (text "Pending consensus key")
+            let cycleText = tshow $ unCycle _pendingConsensusKey_cycle
+            el "dd" $ do
+              tooltipped TooltipPos_BottomCenter (pkhTooltip pkh) $
+                elClass "span" "monospaced-text" $ text $ shortenPkh _pendingConsensusKey_pkh
+              el "span" $ text $ " at cycle " <> cycleText
           el "div" $ do
             el "dt" (text "Next Bake")
             elClass "dd" "monospaced-text" $ dyn_ $ ffor nextRightTxt $ \case

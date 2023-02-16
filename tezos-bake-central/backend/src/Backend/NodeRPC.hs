@@ -184,8 +184,8 @@ nodeQueryIx_EndorsingRights :: ToBlockQuery blk => blk -> Set RawLevel -> NodeQu
 nodeQueryIx_BakingRights blk = NodeQueryIx_BakingRights (toBlockQuery blk)
 nodeQueryIx_EndorsingRights blk = NodeQueryIx_EndorsingRights (toBlockQuery blk)
 
-toCacheDelegateInfo :: PublicKeyHash -> DelegateInfoCrossCompat -> CacheDelegateInfo
-toCacheDelegateInfo pkh di = CacheDelegateInfo
+toCacheDelegateInfo :: DelegateInfoCrossCompat -> CacheDelegateInfo
+toCacheDelegateInfo di = CacheDelegateInfo
   { _cacheDelegateInfo_balance = di ^. delegateInfoCrossCompat_balance
   , _cacheDelegateInfo_frozenBalance = di ^. delegateInfoCrossCompat_frozenBalance
   , _cacheDelegateInfo_stakingBalance = di ^. delegateInfoCrossCompat_stakingBalance
@@ -193,7 +193,7 @@ toCacheDelegateInfo pkh di = CacheDelegateInfo
   , _cacheDelegateInfo_delegatedBalance = di ^. delegateInfoCrossCompat_delegatedBalance
   , _cacheDelegateInfo_deactivated = di ^. delegateInfoCrossCompat_deactivated
   , _cacheDelegateInfo_gracePeriod = di ^. delegateInfoCrossCompat_gracePeriod
-  , _cacheDelegateInfo_activeConsensusKey = di ^. delegateInfoCrossCompat_activeConsensusKey <|> Just pkh
+  , _cacheDelegateInfo_activeConsensusKey = Just $ di ^. delegateInfoCrossCompat_activeConsensusKey
   , _cacheDelegateInfo_pendingConsensusKey = mbClosestPendingPkh
   }
   where
@@ -799,7 +799,7 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
   NodeQuery_CurrentQuorum branch -> nodeRPC' $ rCurrentQuorum chainId branch
   NodeQuery_Block branch -> nodeRPC' $ rBlock (toChain chainId) branch
   NodeQuery_BlockHeader branch -> nodeRPC' $ rBlockHeader (toChain chainId) branch
-  NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap $ toCacheDelegateInfo pkh) $ nodeRPC' $ rDelegateInfo pkh chainId branch
+  NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_ParticipationInfo branch _lvl pkh -> nodeRPC' $ rParticipationInfo pkh chainId branch
   NodeQuery_Balance branch _lvl pkh -> nodeRPC' $ rBalance pkh chainId branch
   NodeQuery_Blocks branch length' -> do
