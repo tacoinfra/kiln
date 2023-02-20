@@ -5,7 +5,6 @@
 {-# LANGUAGE RecordWildCards #-}
 module Tezos.Lima.ProtocolConstants where
 
-import Control.Applicative (Alternative (..))
 import Control.DeepSeq (NFData)
 import Control.Lens ((^.))
 import Control.Lens.TH (makeLenses)

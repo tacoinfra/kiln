@@ -24,7 +24,6 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 
-import Tezos.Common.Ballot
 import Tezos.Common.Base58Check (BlockHash(..), blockHashToBase58Text)
 import Tezos.Common.Contract
 import Tezos.Common.Level
