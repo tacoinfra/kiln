@@ -585,6 +585,7 @@ downloadXtzShotsMetadata mgr = do
     _ -> do
       $(logError) statusLogText
       $(logError) $ "Response body: " <> T.decodeUtf8 (LBS.toStrict body)
+      throwString $ "Expected metadata response status to be 200, but got " <> show statusCode
   either throwString (pure . unXtzShotsMetadataList) $ eitherDecode body
 
 -- | Given the list of snapshot metadata fetched from @xtzShotsMetadataUri@
