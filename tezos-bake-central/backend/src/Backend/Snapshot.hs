@@ -19,13 +19,14 @@ module Backend.Snapshot where
 
 import Control.Concurrent
 import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception.Safe (IOException, MonadThrow, throwString, try)
+import Control.Exception.Safe (IOException, MonadThrow, SomeException (..), handle, throw, throwString, try)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Trans.Resource (runResourceT)
 import Control.Monad.Logger
 import Data.Aeson (eitherDecode)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Conduit.Binary (sinkFileCautious)
 import qualified Data.Conduit.List as CL
 import Data.Conduit.Process (getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
@@ -227,6 +228,8 @@ downloadSnapshot
   -> SnapshotImportOptions
   -> m ()
 downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
+  let snapshotUriStr = renderStr snapshotURI
+  $(logDebug) $ "Downloading node snapshot from " <> T.pack snapshotUriStr
   let db = _nodeDataSource_pool nds
       logger = _nodeDataSource_logger nds
       dataDir = nodeDataDir appConfig
@@ -238,12 +241,21 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
   for_ nodePPid $ \(nid, pid) -> do
     downloaderThread <- liftIO $ forkIO $ do
       res <- try $ do
-        request <- Http.parseRequest $ renderStr snapshotURI
-        runResourceT $ Http.httpSink request $ \_ -> sinkFileCautious storePath
+        request <- Http.parseRequest snapshotUriStr
+        runResourceT $ Http.httpSink request $ \resp -> do
+          let status = Http.getResponseStatusCode resp
+              statusLogText = T.pack snapshotUriStr <> " responded with status " <> tshow status
+          runLoggingEnv logger $ case status of
+            200 -> $(logDebug) statusLogText
+            _   -> $(logError) statusLogText
+          sinkFileCautious storePath
       case res of
         Left (e :: Http.HttpException) ->
           let errText = T.pack (show e)
-          in handleSnapshotDownloadFailure nds smId errText
+          in do
+            runLoggingEnv logger $
+              $(logError) $ "Snapshot download failed with: " <> errText
+            handleSnapshotDownloadFailure nds smId errText
         Right _ -> runLoggingEnv logger $ runDb (Identity db) $
           updateProcessState pid
             (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
@@ -517,8 +529,13 @@ handleDownloadXtzShotsMetadata
   -> m ()
 handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggingEnv logger $ do
   (smId, _) <- initSnapshotMeta appConfig Nothing nds Nothing
-  let handleFetchMetadataError = handleSnapshotDownloadFailure nds smId errText
-  latestSnapshotMetadata <- flip onException handleFetchMetadataError $ do
+  let
+    handleFetchMetadataError (e :: SomeException) = do
+      $(logError) $ "Snapshot download failed with: " <> tshow e
+      handleSnapshotDownloadFailure nds smId errText
+      throw e
+  $(logDebug) $ "Downloading snapshot metadata from " <> T.pack (renderStr xtzShotsMetadataUri)
+  latestSnapshotMetadata <- handle handleFetchMetadataError $ do
     metadata <- downloadXtzShotsMetadata httpMgr
     findLatestSnapshot appConfig metadata
   latestSnapshotUri <- mkURI $ latestSnapshotMetadata ^. xtzShotsMetadata_url
@@ -556,10 +573,19 @@ handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggi
       pure updatedSnapshotMeta
 
 -- | Download the list of snapshot metadata from @xtzShotsMetadataUri@.
-downloadXtzShotsMetadata :: (MonadIO m, MonadThrow m) => Http.Manager -> m [XtzShotsMetadata]
+downloadXtzShotsMetadata :: (MonadLoggerIO m, MonadThrow m) => Http.Manager -> m [XtzShotsMetadata]
 downloadXtzShotsMetadata mgr = do
-  resp <- doRequestLBSThrows mgr (renderStr xtzShotsMetadataUri)
+  let uriStr = renderStr xtzShotsMetadataUri
+  resp <- doRequestLBSThrows mgr uriStr
   let body = Http.getResponseBody resp
+      statusCode = Http.getResponseStatusCode resp
+      statusLogText = T.pack uriStr <> " responded with status " <> tshow statusCode
+  case statusCode of
+    200 -> $(logDebug) statusLogText
+    _ -> do
+      $(logError) statusLogText
+      $(logError) $ "Response body: " <> T.decodeUtf8 (LBS.toStrict body)
+      throwString $ "Expected metadata response status to be 200, but got " <> show statusCode
   either throwString (pure . unXtzShotsMetadataList) $ eitherDecode body
 
 -- | Given the list of snapshot metadata fetched from @xtzShotsMetadataUri@
@@ -595,7 +621,6 @@ handleSnapshotDownloadFailure
   -> Text
   -> m ()
 handleSnapshotDownloadFailure nds smId errText = runLoggingEnv logger $ do
-  $(logError) $ "Snapshot download failed with:" <> errText
   runDb (Identity db) $ do
     mbInternalNodeData <- getInternalNode
     for_ mbInternalNodeData $ \(nodeId, pid) -> do
