@@ -12,7 +12,7 @@ import Test.Tasty.HUnit
 
 import Backend.Config (AppConfig (..))
 import Backend.Snapshot (findLatestSnapshot)
-import Common.Schema (XtzShotsSnapshotHistoryMode (..), XtzShotsArtifactType (..), XtzShotsMetadata (..))
+import Common.Schema
 import Tezos.Types
 
 testXtzShotsMetadata :: TestTree
@@ -24,15 +24,15 @@ testFindLatestRollingSnapshot :: TestTree
 testFindLatestRollingSnapshot =
   testCase "Find the latest rolling limanet snapshot in xtz-shots metadata" $ do
     rawMetadata <- LBS.readFile "test/resources/metadata.json"
-    let metadata = either (error "Can't parse metadata") id $ eitherDecode rawMetadata
+    let metadata = either (error "Can't parse metadata") unXtzShotsMetadataList $ eitherDecode rawMetadata
     actual <- findLatestSnapshot dummyAppConfig metadata
     let
       parseTime = parseTimeOrError True defaultTimeLocale "%Y-%m-%dT%H:%M:%S"
       expected = XtzShotsMetadata
-        { _xtzShotsMetadata_blockHeight = 595013
-        , _xtzShotsMetadata_blockHash = BlockHash "BMSxux2SLrsdJnz2fiVZQQkzUytBWK4d7hixPSkZPr3Z534i7Ut"
-        , _xtzShotsMetadata_blockTimestamp = parseTime "2023-01-30T04:19:10"
-        , _xtzShotsMetadata_url = "https://limanet-v15.xtz-shots.io/limanet-595013.rolling"
+        { _xtzShotsMetadata_blockHeight = 713191
+        , _xtzShotsMetadata_blockHash = BlockHash "BKufiNaeX8TcB2sP43rFWyh8GNDxpq1VPNJLjdKWupSKS9Q4DvH"
+        , _xtzShotsMetadata_blockTimestamp = parseTime "2023-02-20T10:43:15"
+        , _xtzShotsMetadata_url = "https://limanet-v15.xtz-shots.io/limanet-713191.rolling"
         , _xtzShotsMetadata_chainName = "limanet"
         , _xtzShotsMetadata_historyMode = XtzShotsSnapshotHistoryMode_Rolling
         , _xtzShotsMetadata_artifactType = XtzShotsArtifactType_TezosSnapshot

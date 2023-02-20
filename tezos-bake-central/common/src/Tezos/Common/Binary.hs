@@ -6,6 +6,7 @@
 module Tezos.Common.Binary where
 
 import Control.Applicative (many)
+import Control.Monad (when)
 import Data.Binary.Builder
 import Data.Binary.Get
 import Data.Bits (Bits, (.&.), (.|.), bit, setBit, shift, testBit, zeroBits)
@@ -103,7 +104,7 @@ instance TezosBinary Int64 where
 readZ :: (Num a, Bits a) => Int -> a -> Get a
 readZ offset n = do
   b <- getWord8
-  if (b == 0) && (offset > 0) then fail "trailing zero" else pure ()
+  when (b == 0 && offset > 0) $ fail "trailing zero"
   let n' = (fromIntegral (b .&. 0x7f) `shift` offset) .|. n
   if b `testBit` 7 then readZ (offset + 7) n' else pure n'
 

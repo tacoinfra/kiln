@@ -560,7 +560,7 @@ downloadXtzShotsMetadata :: (MonadIO m, MonadThrow m) => Http.Manager -> m [XtzS
 downloadXtzShotsMetadata mgr = do
   resp <- doRequestLBSThrows mgr (renderStr xtzShotsMetadataUri)
   let body = Http.getResponseBody resp
-  either throwString pure $ eitherDecode body
+  either throwString (pure . unXtzShotsMetadataList) $ eitherDecode body
 
 -- | Given the list of snapshot metadata fetched from @xtzShotsMetadataUri@
 -- find the latest rolling snapshot url.

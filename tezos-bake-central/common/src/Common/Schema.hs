@@ -1021,6 +1021,14 @@ instance FromJSON XtzShotsMetadata where
     _xtzShotsMetadata_artifactType   <- o .: "artifact_type"
     pure $ XtzShotsMetadata{..}
 
+newtype XtzShotsMetadataList = XtzShotsMetadataList
+  { unXtzShotsMetadataList :: [XtzShotsMetadata] }
+  deriving (Eq, Generic, Ord, Show, Typeable)
+
+instance FromJSON XtzShotsMetadataList where
+  parseJSON = withObject "XtzShotsMetadataList" $ \o ->
+    XtzShotsMetadataList <$> o .: "data"
+
 data AddInternalNodeError
   = AddInternalNodeError_SnapshotImportError SnapshotImportError
   deriving (Eq, Generic, Ord, Show, Typeable)
