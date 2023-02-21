@@ -10,7 +10,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-module Tezos.Lima.Operation where
+module Tezos.Mumbai.Operation where
 
 import Control.Lens (traversed, (^.), (^..))
 import Control.Lens.TH (makeLenses, makePrisms)

@@ -112,8 +112,8 @@ instance ToJSON e => ToJSON a => ToJSON (Validation e a)
 pattern LimaProtocolHash :: ProtocolHash
 pattern LimaProtocolHash = "PtLimaPtLMwfNinJi9rCfDPWea8dFgTZ1MeJ9f1m2SRic6ayiwW"
 
-pattern KathmanduProtocolHash :: ProtocolHash
-pattern KathmanduProtocolHash = "PtKathmankSpLLDALzWw7CGD2j2MtyveTwboEYokqUCP4a1LxMg"
+pattern MumbaiProtocolHash :: ProtocolHash
+pattern MumbaiProtocolHash = "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
 
 data WorkerType
   = WorkerType_Node
