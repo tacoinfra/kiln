@@ -452,7 +452,7 @@ initSnapshotMeta
   -> Maybe URI
   -> m (SnapshotMetaId, SnapshotMeta)
 initSnapshotMeta appConfig mbStorePath nds mbUri = runDb (Identity $ _nodeDataSource_pool nds) $ do
-  let storePath = mbStorePath ?: snapshotStorePath appConfig <> defaultSnapshotFileName
+  let storePath = mbStorePath ?: (snapshotStorePath appConfig <> defaultSnapshotFileName)
       fileName  = maybe defaultSnapshotFileName takeFileName mbStorePath
   now <- getTime
   let
