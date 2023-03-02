@@ -17,11 +17,14 @@
 
 module Backend.Workers.Node where
 
-import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, readMVar)
-import Control.Concurrent.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar, retry)
+import UnliftIO.MVar (MVar, modifyMVar_, newMVar, readMVar)
+import UnliftIO.STM (atomically, readTVar, readTVarIO, writeTQueue, writeTVar)
+import Control.Monad.STM (retry)
 import Control.Lens (set)
 import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
+import Control.Monad.Fail (MonadFail)
+import Control.Monad.IO.Unlift (MonadUnliftIO (..))
 import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logInfo)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
@@ -78,6 +81,7 @@ import Backend.Http (doRequestLBS)
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.Supervisor (withTermination)
+import Backend.STM (MonadSTM)
 import Backend.ViewSelectorHandler (getProposals)
 import Common.App (getEndTimeForPeriod, isVotingPeriod)
 import Common.Schema
@@ -120,7 +124,17 @@ haveNewHead nds nodeAddr headBlockInfo = runLoggingEnv (_nodeDataSource_logger n
             else pure Nothing
         for_ updatedLevel $ \lev -> $(logDebug) $ "Saw more recent head: " <> tshow (unRawLevel lev)
 
-nodeMonitor :: (BlockLike blk, Show blk) => NodeDataSource -> AppConfig -> URI -> Id Node -> blk -> IO ()
+nodeMonitor
+  :: ( BlockLike blk
+     , Show blk
+     , MonadUnliftIO m
+     )
+  => NodeDataSource
+  -> AppConfig
+  -> URI
+  -> Id Node
+  -> blk
+  -> m ()
 nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
   let db = _nodeDataSource_pool nds
   runLoggingEnv (_nodeDataSource_logger nds) . runDb (Identity db) . flip runReaderT appConfig $ do
@@ -163,7 +177,7 @@ nodeMonitor nds appConfig nodeAddr nodeId headBlockInfo = do
     writeTQueue (_nodeDataSource_ioQueue nds) $ haveNewHead nds nodeAddr headBlockInfo
 
 
-nodeVersionMonitor :: NodeDataSource -> URI -> Id Node -> IO ()
+nodeVersionMonitor :: (MonadUnliftIO m) => NodeDataSource -> URI -> Id Node -> m ()
 nodeVersionMonitor nds nodeAddr nodeId = do
   let db = _nodeDataSource_pool nds
       httpMgr = _nodeDataSource_httpMgr nds
@@ -405,11 +419,16 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
         | otherwise -> reportNodeWrongChainError nodeId chainId (view chainIdL block)
 
     handleNewHead
-      :: (BlockLike blk, Show blk)
+      :: ( MonadUnliftIO m
+         , MonadBaseNoPureAborts IO m
+         , BlockLike blk
+         , Show blk
+         , MonadFail m
+         )
       => URI
       -> Id Node
       -> blk
-      -> IO ()
+      -> m ()
     handleNewHead nodeAddr nodeId block = do
       runLoggingEnv (_nodeDataSource_logger nds) $ inDb $ do
         clearInaccessibleNodeError nodeId
@@ -420,14 +439,18 @@ nodeWorker delay nds appConfig db = runLoggingEnv (_nodeDataSource_logger nds) $
 
 -- Send a 'bad branch' alert if 'is_bootstrapped' response isn't bootstrapped and synced.
 nodeAlertMonitor
-  :: BlockLike blk
+  :: ( MonadUnliftIO m
+     , BlockLike blk
+     , MonadBaseNoPureAborts IO m
+     , MonadFail m
+     )
   => NodeDataSource
   -> AppConfig
   -> Pool Postgresql
   -> URI
   -> Id Node
   -> blk
-  -> IO ()
+  -> m ()
 nodeAlertMonitor nds appConfig db nodeAddr nodeId nodeHead = runLoggingEnv (_nodeDataSource_logger nds) $ do
   let httpMgr = nds ^. nodeDataSource_httpMgr
       chainId = nds ^. nodeDataSource_chain
@@ -522,10 +545,17 @@ data ProposalVoteState
 {-# ANN amendmentProcessWorker ("HLint: ignore Redundant fmap" :: String) #-}
 -- Monitors the amendment process
 amendmentProcessWorker
-  :: AppConfig
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadSTM m
+     , MonadBaseNoPureAborts IO m
+     , MonadThrow m
+     , MonadMask m
+     )
+  => AppConfig
   -> NodeDataSource
   -> Pool Postgresql
-  -> IO (IO ())
+  -> m (w ())
 amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ waitForNewFinalHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   (latestBlock, protoInfo) <- throwing $ runNodeQueryT $ liftA2 (,)
     (nodeQueryDataSourceSafe $ nodeQuery_Block (latestHead ^. hash))
@@ -806,7 +836,15 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
         VotingPeriodKind_Promotion -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
         VotingPeriodKind_Adoption -> handleVotingPeriod predBlk PeriodAdoption NotifyTag_PeriodAdoption
 
-    handleVotingPeriod :: (PersistEntity a, BlockLike blk) => blk -> (Id PeriodProposal -> PeriodVote -> a) -> NotifyTag (Maybe a) -> LoggingT IO ()
+    handleVotingPeriod
+      :: ( PersistEntity a
+         , BlockLike blk
+         , MonadUnliftIO w
+         )
+      => blk
+      -> (Id PeriodProposal -> PeriodVote -> a)
+      -> NotifyTag (Maybe a)
+      -> LoggingT w ()
     handleVotingPeriod blk f n = do
       mpv <- runMaybe $ do
         mProposal <- nodeQueryDataSource $ nodeQuery_CurrentProposal (blk ^. hash)
@@ -837,9 +875,15 @@ amendmentProcessWorker appConfig nds db = worker' "amendmentProcessWorker" $ wai
 
 -- Monitors changes in protocol/voting period, and manages the baker daemon if running
 protocolMonitorWorker
-  :: NodeDataSource
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadBaseNoPureAborts IO m
+     , MonadSTM m
+     , MonadMask m
+     )
+  => NodeDataSource
   -> Pool Postgresql
-  -> IO (IO ())
+  -> m (w ())
 protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinalHead nds >>= \latestHead -> runLoggingEnv (_nodeDataSource_logger nds) $ do
   $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
   let
@@ -890,7 +934,6 @@ protocolMonitorWorker nds db = worker' "protocolMonitorWorker" $ waitForNewFinal
   (mainProto, altProto) <- getProtocol
 
   let
-    inDb :: Serializable a -> LoggingT IO a
     inDb = runDb (Identity db)
     setControl c p = update
       [ ProcessData_controlField =. c

@@ -15,7 +15,8 @@
 module Backend.Workers.Block where
 
 import Control.Monad.Base (MonadBase)
-import Control.Monad.Catch (MonadMask, throwM, try)
+import Control.Monad.Catch (MonadCatch, MonadMask, throwM, try)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Data.Either.Combinators (whenLeft, whenRight)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.List.NonEmpty (nonEmpty)
@@ -24,7 +25,7 @@ import qualified Data.Sequence as Seq
 import Data.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Database.Groundhog.Core (PhantomDb, PersistBackend)
 import Database.Groundhog.Postgresql (Postgresql(..), SqlDb)
-import Rhyolite.Backend.DB (runDb)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, fromOnly, queryQ)
 import Rhyolite.Backend.DB.Serializable (Serializable)
@@ -44,11 +45,16 @@ import Common.Schema
 import ExtraPrelude
 
 blockWorker
-  :: NominalDiffTime -- delay between checking for updates
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadBaseNoPureAborts IO m
+     , MonadCatch m
+     )
+  => NominalDiffTime -- delay between checking for updates
   -> NodeDataSource
   -> AppConfig
   -> Pool Postgresql
-  -> IO (IO ())
+  -> m (w ())
 blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   headBlockOrErr <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ fmap fst getLatestProtocolConstants
   whenRight headBlockOrErr $ \headBlock -> do

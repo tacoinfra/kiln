@@ -16,12 +16,13 @@ import Prelude hiding (cycle)
 
 import Control.Arrow ((&&&))
 import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex, (^..))
-import Control.Exception (handle, SomeException)
-import Control.Concurrent.STM (atomically)
+import UnliftIO.Exception (handle, SomeException)
+import UnliftIO.STM (atomically)
 import Control.Monad (guard, mzero)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logErrorSH, LoggingT(..))
 import Control.Monad.Reader (ReaderT (..), lift)
 import Control.Monad.State (MonadState, execStateT, gets, modify)
@@ -64,7 +65,7 @@ import Backend.Common (worker', AppSerializable)
 import Backend.IndexQueries (endOfPreservedCycles, levelToCycle, getLatestProtocolConstants)
 import Backend.NodeRPC
 import Backend.Schema
-import Backend.STM (atomicallyWith)
+import Backend.STM (MonadSTM, atomicallyWith)
 import Common (curryMap)
 import Common.Schema
 import ExtraPrelude
@@ -75,10 +76,15 @@ import Data.These (These(..), these)
 -- TODO: This only loops through one cycle at a time, per block;  we don't need to wait that long (although it may still end up doing the right thing eventually)
 
 bakerRightsWorker
-  :: forall m. MonadIO m
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadUnliftIO m
+     , MonadSTM m
+     , MonadBaseNoPureAborts IO m
+     )
   => NodeDataSource
   -> Int
-  -> m (IO ())
+  -> m (w ())
 bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* waitForNewFinalHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   res :: Either KilnRpcError () <- flip runReaderT nds $ runExceptT $ do
     (latestBranchInfo, protocolConstants) <- runNodeQueryT getLatestProtocolConstants
@@ -238,11 +244,16 @@ bakerRightsWorker nds rightsHistoryWindow = worker' "bakerRightsWorker" $ (<* wa
   $(logDebug) $ "BAKERRIGHTSWORKER STEP" <> tshow res
 
 bakerWorker
-  :: forall m. MonadIO m
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadSTM m
+     , MonadBaseNoPureAborts IO m
+     , MonadMask m
+     )
   => AppConfig
   -> NodeDataSource
   -> Int
-  -> m (IO ())
+  -> m (w ())
 bakerWorker appConfig nds rightsHistoryWindow = worker' "bakerWorker" $ (<* waitForNewFinalHead nds) $ runLoggingEnv (_nodeDataSource_logger nds) $ do
   let db = _nodeDataSource_pool nds
 

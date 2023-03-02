@@ -32,16 +32,8 @@ module Backend.NodeRPC where
 
 import Prelude hiding (cycle, round)
 import Control.Arrow (left)
-import Control.Concurrent.STM (
-    STM,
-    TQueue,
-    TVar,
-    atomically,
-    readTVar,
-    retry,
-    writeTQueue,
-  )
-
+import UnliftIO.STM (STM, TQueue, TVar, atomically, readTVar, writeTQueue)
+import Control.Monad.STM (retry)
 import Control.Exception.Safe (Exception, MonadMask, withException)
 import Control.Lens (re, review, (<>~))
 import Control.Lens.TH (makeLenses)
@@ -50,6 +42,7 @@ import Control.Monad.Base (MonadBase(..), liftBaseDefault)
 import Control.Monad.Catch (ExitCase (..), MonadCatch, MonadThrow, bracket, catch, generalBracket, mask, throwM, uninterruptibleMask)
 import Control.Monad.Error.Lens (catching)
 import Control.Monad.Except (ExceptT (..), MonadError, catchError, liftEither, runExceptT, throwError)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logError, monadLoggerLog)
 import Control.Monad.Reader (local, reader)
 import qualified Control.Monad.State as S
@@ -593,7 +586,7 @@ tryNodeQueryT f = do
 -- | Blocks until a new head is seen.
 --
 -- Returns most recently seen head.
-waitForNewFinalHead :: (HasNodeDataSource nds) => nds -> IO VeryBlockLike
+waitForNewFinalHead :: (HasNodeDataSource nds, MonadUnliftIO m, MonadSTM m) => nds -> m VeryBlockLike
 waitForNewFinalHead nds = do
   oldHead <- view hash <<$>> dataSourceFinalHead nds
 

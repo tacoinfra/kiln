@@ -18,6 +18,7 @@ module Backend.Upgrade where
 import Control.Error hiding (err, isRight)
 import Control.Monad
 import Control.Monad.Except (MonadError, runExceptT, throwError)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logError, logInfo)
 import Data.Aeson.Lens
 import Data.Pool (Pool)
@@ -48,7 +49,10 @@ import Tezos.Types
 import Orphans.Instances ()
 
 upgradeCheckWorker
-  :: MonadIO m
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadBaseNoPureAborts IO m
+     )
   => NamedChain
   -> Maybe Text
   -> Text
@@ -57,7 +61,7 @@ upgradeCheckWorker
   -> Http.Manager
   -> Pool Postgresql
   -> AppConfig
-  -> m (IO ())
+  -> m (w ())
 upgradeCheckWorker chain mrelease gitLabProjectId delay logger httpMgr db appConfig = do
   liftIO $ runLoggingEnv logger $ runDb (Identity db) $ clearUnrelatedNetworkUpdateError chain
   workerWithDelay "upgradeCheckWorker" (pure delay) $ const $ runLoggingEnv logger $ do

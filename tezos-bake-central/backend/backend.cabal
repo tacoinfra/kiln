@@ -110,6 +110,7 @@ library
     , transformers-base
     , unix
     , universe
+    , unliftio
     , unliftio-core
     , unordered-containers
     , uri-encode
