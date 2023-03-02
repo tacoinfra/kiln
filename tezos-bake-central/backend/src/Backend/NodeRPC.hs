@@ -586,8 +586,15 @@ tryNodeQueryT f = do
 -- | Blocks until a new head is seen.
 --
 -- Returns most recently seen head.
-waitForNewFinalHead :: (HasNodeDataSource nds, MonadUnliftIO m, MonadSTM m) => nds -> m VeryBlockLike
-waitForNewFinalHead nds = do
+waitForNewFinalHead
+  :: ( MonadUnliftIO m
+     , MonadSTM m
+     , MonadReader e m
+     , HasNodeDataSource e
+     )
+  => m VeryBlockLike
+waitForNewFinalHead = do
+  nds <- asks (view nodeDataSource)
   oldHead <- view hash <<$>> dataSourceFinalHead nds
 
   atomically $ do
