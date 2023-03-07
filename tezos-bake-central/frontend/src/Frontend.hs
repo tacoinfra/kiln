@@ -452,10 +452,18 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       dHasLedgerConnectedChecks <- fmap (maybe False _frontendConfig_ledgerConnectedChecks) <$> watchFrontendConfig
 
       dyn_ $ ffor2 internalBakerMayDyn dHasLedgerConnectedChecks $ \internalBakerMay hasLedgerConnectedChecks -> do
-        when (isJust internalBakerMay && hasLedgerConnectedChecks) $ do
+        whenJust internalBakerMay $ \(intBakerPkh, _) -> when hasLedgerConnectedChecks $ do
           elAttr "div" ("class" =: "item" <> "style" =: "position: relative") $ divClass "content" $ do
-            dCl <- watchConnectedLedger
-            let dIsLedgerConnected = isJust . (_connectedLedger_ledgerIdentifier =<<) <$> dCl
+            bakerAlertsDyn <- watchBakerAlerts
+            let
+              -- We treat ledger as connected if there are no unresolved ledger disconnection alerts
+              disconnectionAlertsDyn = ffor bakerAlertsDyn $ \bakerAlertsMap ->
+                case MMap.lookup intBakerPkh bakerAlertsMap of
+                  Nothing -> []
+                  Just alertsList -> flip filter (toList alertsList) $ \case
+                    BakerAlert_Alert (BakerLogTag_BakerLedgerDisconnected :=> _) -> True
+                    _ -> False
+            let dIsLedgerConnected = null <$> disconnectionAlertsDyn
             divClass "header" $ do
               iconDyn $ ffor dIsLedgerConnected $ bool "red x" "green check"
               elAttr "img" ("src" =: $(static "images/ledger.svg") <> "class" =: "ledger") blank
