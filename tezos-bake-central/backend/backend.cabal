@@ -110,6 +110,7 @@ library
     , transformers-base
     , unix
     , universe
+    , unliftio
     , unliftio-core
     , unordered-containers
     , uri-encode
@@ -136,6 +137,7 @@ library
     Backend.Common.TezosRelease
     Backend.Common.Worker
     Backend.DB.Utils
+    Backend.Env
     Backend.Http
     Backend.IndexQueries
     Backend.Migrations

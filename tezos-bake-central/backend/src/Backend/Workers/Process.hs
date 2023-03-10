@@ -20,12 +20,12 @@
 -- Kiln managed process/daemon
 module Backend.Workers.Process where
 
-import Control.Concurrent (forkIO, killThread)
-import Control.Concurrent.Async (Concurrently(..), runConcurrently)
-import Control.Concurrent.STM (TBQueue, atomically, flushTBQueue, isFullTBQueue, newTBQueueIO, readTBQueue, writeTBQueue)
-import Control.Exception.Safe (finally, onException, throwIO)
-import Control.Monad.Catch (Handler (..), bracket, catches)
-import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
+import UnliftIO.Concurrent (forkIO, killThread)
+import UnliftIO.Async (Concurrently(..), runConcurrently)
+import UnliftIO.STM (TBQueue, atomically, isFullTBQueue, newTBQueueIO, readTBQueue, writeTBQueue)
+import Control.Concurrent.STM (flushTBQueue)
+import UnliftIO.Exception (Handler (..), bracket, catches, finally, onException, throwIO)
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logDebugSH, logInfoNS, logInfoSH, logWarn, logWarnSH)
 import Control.Monad.IO.Unlift (MonadUnliftIO, withUnliftIO, unliftIO)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -49,11 +49,12 @@ import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.DB.Serializable
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import System.Posix.Signals (signalProcess, sigKILL)
-import qualified System.Process as Proc
+import qualified UnliftIO.Process as Proc
+import System.Process (getPid)
 import System.Exit (ExitCode(..))
-import System.Environment (getEnvironment)
+import UnliftIO.Environment (getEnvironment)
 import System.FilePath ((</>))
-import System.IO (Handle, IOMode(..), hClose, hFlush, withFile)
+import UnliftIO.IO (Handle, IOMode(..), hClose, hFlush, withFile)
 
 import Backend.Alerts (reportInternalNodeFailed)
 import Backend.Common
@@ -85,18 +86,21 @@ import Orphans.Instances ()
 --     Also monitors if process terminates unexpectedly.
 
 processWorker
-  :: (MonadIO m)
-  => ((ProcessState -> IO ()) -> IO a)
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadBaseNoPureAborts IO m
+     )
+  => ((ProcessState -> m ()) -> m a)
   -> "logger" :! LoggingEnv
   -> "db" :! Pool Postgresql
   -> "config" :! AppConfig
   -> "logNamespace" :! Text
-  -> "mkProcess" :! (a -> IO (Either DaemonBootstrapError CreateProcess))
+  -> "mkProcess" :! (a -> m (Either DaemonBootstrapError CreateProcess))
   -> "pid" :! Id ProcessData
   -> "prestartCheck" :! IO Bool
   -> "mkNotify" :! Maybe (Maybe ProcessData -> (NotifyTag n, n))
-  -> "jsonErrorLogsHandler" :! Maybe (Handle -> IO ())
-  -> m (IO ())
+  -> "jsonErrorLogsHandler" :! Maybe (Handle -> m ())
+  -> m (w ())
 processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) (Arg mkProcess) (Arg pid) (Arg prestartCheck) (Arg makeNotify)
   (Arg jsonErrorLogsHandler) = worker' "processWorker" $ do
   waitUntilShouldRun
@@ -119,7 +123,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
         case jsonErrorLogsHandler of
           Nothing -> startProcMonitor procHandler []
           Just handler -> bracket Proc.createPipe (\(h1, h2) -> hClose h1 >> hClose h2) $ \(readHandle, writeHandle) -> do
-            writeFD <- handleToFd writeHandle
+            writeFD <- liftIO $ handleToFd writeHandle
             handlerThreadId <- forkIO $ handler readHandle
             let
               -- Logging env variables below are set based on the logging documentation from
@@ -150,7 +154,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
     backend_ = ProcessData_backendField
     control_ = ProcessData_controlField
 
-    startProcMonitor :: CreateProcess -> [(String, String)] -> IO ()
+    startProcMonitor :: (MonadUnliftIO m, MonadBaseNoPureAborts IO m) => CreateProcess -> [(String, String)] -> m ()
     startProcMonitor procHandler env = do
       currentEnv <- getEnvironment
       let proc' = procHandler
@@ -162,6 +166,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
       procMonitor proc'
       threadDelay' 10
 
+    waitUntilShouldRun :: MonadUnliftIO m => m ()
     waitUntilShouldRun = do
       canRun <- runLoggingEnv logger $ runDb (Identity db) $ do
         isStopped <- all (== ProcessControl_Stop) <$> project control_ (AutoKeyField ==. fromId pid)
@@ -172,6 +177,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
         pure $ not isStopped && hasEmptyErrorLog && runPrestartCheck
       unless canRun $ threadDelay' 1 *> waitUntilShouldRun
 
+    obtainLock :: MonadUnliftIO m => m ()
     obtainLock = runLoggingEnv logger $ do
       lockId :: Int <- runDb (Identity db) $
         [queryQ| SELECT nextval('"ProcessLockUniqueId"') |] <&> fromOnly . head
@@ -197,6 +203,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
       claim
       return ()
 
+    freeLock :: MonadUnliftIO m => () -> m ()
     freeLock _ = runLoggingEnv logger $ do
       $(logDebugSH) ("Freeing lock for process:" :: Text, pid)
       now <- liftIO getCurrentTime
@@ -204,11 +211,12 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
         update [updated_ =. Just now, backend_ =. (Nothing :: Maybe Int)]
           (AutoKeyField ==. fromId pid)
 
+    procMonitor :: (MonadUnliftIO m, MonadBaseNoPureAborts IO m) => CreateProcess -> m ()
     procMonitor cp = do
       let errorLogBufferSize = 30
       -- Buffer containing the last few lines of stderr.
       -- Needed to correctly display the error message in case of a process fail.
-      errorLogBuffer <- newTBQueueIO @Text errorLogBufferSize
+      errorLogBuffer <- newTBQueueIO @_ @Text errorLogBufferSize
 
       ph <- runLoggingEnv logger $ createProcessWithStreams cp (return ())
         (CL.mapM_ $ logInfoNS namespace . decodeUtf8)
@@ -217,7 +225,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
               logInfoNS namespace decodedLine *> writeBuffer decodedLine errorLogBuffer)
       runLoggingEnv logger $ go Nothing errorLogBuffer ph
       where
-        writeBuffer :: Text -> TBQueue Text -> LoggingT IO ()
+        writeBuffer :: MonadUnliftIO m => Text -> TBQueue Text -> m ()
         writeBuffer line buffer = liftIO $ atomically $ do
           isFull <- isFullTBQueue buffer
           when isFull $
@@ -248,7 +256,7 @@ processWorker initialize' (Arg logger) (Arg db) (Arg appConfig) (Arg namespace) 
               liftIO $ when stop $ do
                 if mCount < Just (ceiling $ fromIntegral timeoutInSec / delayInSec)
                   then terminateProcess rawPh
-                  else Proc.getPid rawPh >>= traverse_ (signalProcess sigKILL)
+                  else getPid rawPh >>= traverse_ (signalProcess sigKILL)
               threadDelay' delayInSec *> go (if stop then Just (maybe 1 (+ 1) mCount) else Nothing) buffer ph
             Just _ -> case procControl of
               ProcessControl_Stop -> do
@@ -293,9 +301,9 @@ updateProcessState pid makeNotify state = do
             , _processData_updated = Just now
             }
 
-withNodeConfig :: AppConfig -> (FilePath -> IO a) -> IO a
+withNodeConfig :: MonadUnliftIO m => AppConfig -> (FilePath -> m a) -> m a
 withNodeConfig appConfig f = withFile (nodeDataDir appConfig </> "config.json") ReadWriteMode $ \nodeConfigHandle -> do
-  LBS.hPut nodeConfigHandle $ either Aeson.encode Aeson.encode $ _appConfig_kilnNodeConfig appConfig
+  liftIO $ LBS.hPut nodeConfigHandle $ either Aeson.encode Aeson.encode $ _appConfig_kilnNodeConfig appConfig
   hFlush nodeConfigHandle
   f $ nodeDataDir appConfig </> "config.json"
 

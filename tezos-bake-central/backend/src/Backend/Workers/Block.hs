@@ -15,20 +15,19 @@
 module Backend.Workers.Block where
 
 import Control.Monad.Base (MonadBase)
-import Control.Monad.Catch (MonadMask, throwM, try)
+import Control.Monad.Catch (MonadCatch, MonadMask, throwM, try)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Data.Either.Combinators (whenLeft, whenRight)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.List.NonEmpty (nonEmpty)
-import Data.Pool (Pool)
 import qualified Data.Sequence as Seq
 import Data.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Database.Groundhog.Core (PhantomDb, PersistBackend)
-import Database.Groundhog.Postgresql (Postgresql(..), SqlDb)
-import Rhyolite.Backend.DB (runDb)
+import Database.Groundhog.Postgresql (SqlDb)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
 import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
 import Rhyolite.Backend.DB.PsqlSimple (executeQ, fromOnly, queryQ)
 import Rhyolite.Backend.DB.Serializable (Serializable)
-import Rhyolite.Backend.Logging (runLoggingEnv)
 import Safe (headMay)
 
 import Tezos.CrossCompat.Block (BlockCrossCompat(..))
@@ -38,19 +37,24 @@ import Tezos.Types
 import Backend.Alerts (reportAccusation)
 import Backend.Common (workerWithDelay)
 import Backend.Config (AppConfig (..))
+import Backend.Env
 import Backend.IndexQueries (getLatestProtocolConstants, levelToCycle)
 import Backend.NodeRPC
 import Common.Schema
 import ExtraPrelude
 
 blockWorker
-  :: NominalDiffTime -- delay between checking for updates
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadBaseNoPureAborts IO m
+     , MonadCatch m
+     )
+  => NominalDiffTime -- delay between checking for updates
   -> NodeDataSource
   -> AppConfig
-  -> Pool Postgresql
-  -> IO (IO ())
-blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-  headBlockOrErr <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ fmap fst getLatestProtocolConstants
+  -> m (w ())
+blockWorker delay nds appConfig = mkWorker $ do
+  headBlockOrErr <- runExceptT @KilnRpcError $ runNodeQueryT $ fmap fst getLatestProtocolConstants
   whenRight headBlockOrErr $ \headBlock -> do
     now <- liftIO getCurrentTime
     let headBlockTime = headBlock ^. timestamp
@@ -77,18 +81,18 @@ blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) 
     -- Note that this could also be achieved by checking the @is_bootstrapped@
     -- node endpoint, but that would be too strict and much more time consuming.
     when isRecentHeadBlock $ do
-      (mbLargestParsedLvl :: Maybe RawLevel) <- fmap (headMay . fmap fromOnly) $ runDb (Identity db) [queryQ|
+      (mbLargestParsedLvl :: Maybe RawLevel) <- fmap (headMay . fmap fromOnly) $ runTransaction [queryQ|
         select "level" from "AccusationBlock" where "chain" = ?chainId order by "level" desc limit 1
       |]
       let blockQueryLength = min historyLength $ headBlockLevel - fromMaybe 0 mbLargestParsedLvl
       blocksOrErr <- if blockQueryLength > 0
-        then flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash blockQueryLength
+        then runExceptT @KilnRpcError $ runNodeQueryT $ nodeQueryDataSourceSafe $ NodeQuery_Blocks headBlockHash blockQueryLength
         else return $ Right mempty
 
       whenRight blocksOrErr $ \blocks -> do
         -- note: we want to clear old entries first because the loop just below
         -- may be interrupted before finishing
-        void $ runDb (Identity db) [executeQ|
+        void $ runTransaction [executeQ|
           delete from "AccusationBlock" where "level" < ?cutoffLevel and "chain" = ?chainId;
         |]
 
@@ -97,7 +101,7 @@ blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) 
         -- that still needs to be handled.
         -- Note that the loop runs in 'ExceptT' so no computation will follow
         -- the first one throwing an error/'Left'.
-        loopResult <- try $ flip runReaderT nds $
+        loopResult <- try $
           for_ (Seq.reverse blocks) $ \blockHash -> do
             blockOrErr <- runExceptT @KilnRpcError $ runNodeQueryT $ do
               block <- nodeQueryDataSourceSafe $ nodeQuery_Block blockHash
@@ -106,7 +110,7 @@ blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) 
             case blockOrErr of
               Right block -> do
                 let blockLevel = block ^. level
-                void $ runDb (Identity db) [executeQ|
+                void $ runTransaction [executeQ|
                   insert into "AccusationBlock" ("hash", "level", "chain")
                   values (?blockHash, ?blockLevel, ?chainId)
                 |]
@@ -131,6 +135,9 @@ blockWorker delay nds appConfig db = workerWithDelay "blockWorker" (pure delay) 
           _ -> do
             logKilnRpcError "blockWorker" e
             throwM e
+  where
+    mkWorker act = workerWithDelay "blockWorker" (pure delay) $ \_ ->
+      flip runReaderT (KilnEnv appConfig nds) $ runLogger act
 
 parseAndReportAccusations
   :: ( MonadIO m, MonadReader s m, HasNodeDataSource s, MonadError e m, AsKilnRpcError e

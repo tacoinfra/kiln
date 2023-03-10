@@ -8,6 +8,7 @@ module Backend.Workers.TezosRelease where
 
 import Control.Lens
 import Control.Monad.IO.Class
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Logger (logDebug)
 import Data.Foldable
 import Data.Pool (Pool)
@@ -28,12 +29,15 @@ import Backend.Schema
 import Common.Schema
 
 latestTezosReleaseWorker
-  :: NominalDiffTime
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     )
+  => NominalDiffTime
   -> Text
   -> Maybe Text
   -> NodeDataSource
   -> Pool Postgresql
-  -> IO (IO ())
+  -> m (w ())
 latestTezosReleaseWorker delay projId mRelease nds db =
     workerWithDelay "latestTezosReleaseWorker" (pure delay) $ const $ runLoggingEnv (_nodeDataSource_logger nds) $  runDb (Identity db) $ do
       $(logDebug) $ fold

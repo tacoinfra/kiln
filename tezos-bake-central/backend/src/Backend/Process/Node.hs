@@ -14,7 +14,8 @@
 
 module Backend.Process.Node where
 
-import Control.Exception.Safe (throwIO, tryJust)
+import UnliftIO.Exception (throwIO, tryJust)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logWarn, logError, logErrorNS)
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
@@ -30,10 +31,10 @@ import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removePathForcibly)
+import UnliftIO.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removePathForcibly)
 import System.Exit (ExitCode(..))
 import qualified System.FilePath as FilePath
-import System.Process as Proc
+import UnliftIO.Process as Proc
 import System.IO (hGetContents)
 import System.IO.Error (isEOFError)
 import qualified System.IO.Streams as Streams
@@ -55,8 +56,16 @@ needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 nixNodePath :: FilePath
 nixNodePath = $(staticWhich "tezos-node")
 
-internalNodeWorker :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> LoggingEnv -> Pool Postgresql -> Maybe BinaryPaths -> m (IO ())
+internalNodeWorker
+  :: ( MonadUnliftIO w
+     , MonadUnliftIO m
+     , MonadBaseNoPureAborts IO m
+     )
+  => AppConfig
+  -> LoggingEnv
+  -> Pool Postgresql
+  -> Maybe BinaryPaths
+  -> m (w ())
 internalNodeWorker appConfig logger db maybePaths = do
   -- Always create a NodeInternal and corresponsing ProcessData
   (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
@@ -122,13 +131,14 @@ getKilnNodeVersion versionFile = liftIO $ do
   pure $ parse =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
 
 initNode
-  :: "logger" :! LoggingEnv
+  :: MonadUnliftIO m
+  => "logger" :! LoggingEnv
   -> "config" :! AppConfig
   -> "nodePath" :! FilePath
   -> "configFile" :! FilePath
   -> "db" :! Pool Postgresql
-  -> "updateState" :! (ProcessState -> IO ())
-  -> IO (FilePath, [String])
+  -> "updateState" :! (ProcessState -> m ())
+  -> m (FilePath, [String])
 initNode (Arg logger) (Arg appConfig) (Arg nodePath) (Arg nodeConfigPath) _ (Arg updateState) = runLoggingEnv logger $ do
   let dataDir = nodeDataDir appConfig
   let identityFile = dataDir `FilePath.combine` "identity.json"

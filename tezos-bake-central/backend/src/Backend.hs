@@ -418,9 +418,9 @@ backendImpl cfg serve = do
       addFinalizer wsFinalizer
 
       addFinalizer =<< nodeWorker 10 dataSrc appConfig db
-      addFinalizer =<< bakerRightsWorker dataSrc rightsHistoryWindow
+      addFinalizer =<< bakerRightsWorker appConfig dataSrc rightsHistoryWindow
       addFinalizer =<< bakerWorker appConfig dataSrc rightsHistoryWindow
-      addFinalizer =<< blockWorker 0.3 dataSrc appConfig db
+      addFinalizer =<< blockWorker 0.3 dataSrc appConfig
       addFinalizer =<< amendmentProcessWorker appConfig dataSrc db
       addFinalizer =<< latestTezosReleaseWorker nominalDay networkGitLabProjectId tezosReleaseTag dataSrc db
         -- TODO: also make all the other workers have irrational ratios with each other to avoid resonance.
@@ -430,7 +430,7 @@ backendImpl cfg serve = do
         addFinalizer =<< upgradeCheckWorker namedChain tezosReleaseTag networkGitLabProjectId (60 * 60) logger httpMgr db appConfig
 
       addFinalizer =<< internalNodeWorker appConfig logger db binaryPaths
-      addFinalizer =<< protocolMonitorWorker dataSrc db
+      addFinalizer =<< protocolMonitorWorker appConfig dataSrc
       addFinalizer =<< bakerDaemonProcess appConfig dataSrc logger db binaryPaths
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar

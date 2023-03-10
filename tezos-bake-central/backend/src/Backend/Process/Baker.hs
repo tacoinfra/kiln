@@ -16,10 +16,10 @@
 module Backend.Process.Baker where
 
 import Conduit (runConduit, sourceHandle, (.|))
-import Control.Concurrent.STM (atomically)
-import Control.Concurrent.STM.TQueue (writeTQueue)
+import UnliftIO.STM (atomically, writeTQueue)
 import Control.Monad (liftM2)
-import Control.Monad.Logger (LoggingT, logDebug, logError)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
+import Control.Monad.Logger (MonadLoggerIO, logDebug, logError)
 import qualified Data.Aeson as Aeson
 import qualified Data.Conduit.List as CL
 import Data.Either.Combinators (maybeToRight)
@@ -32,8 +32,8 @@ import Fmt (pretty)
 import Named
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime, runDb, project1)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
-import System.Process as Proc
-import System.IO (Handle)
+import UnliftIO.Process as Proc
+import UnliftIO.IO (Handle)
 import System.Which (staticWhich)
 import Text.URI (render)
 import qualified Data.Text as T
@@ -73,8 +73,18 @@ defaultBakerPaths = NonEmpty.fromList [limaPath, kathmanduPath]
       }
 
 -- Start Baker and Endorser
-bakerDaemonProcess :: (MonadIO m, MonadBaseNoPureAborts IO m)
-  => AppConfig -> NodeDataSource -> LoggingEnv -> Pool Postgresql -> Maybe BinaryPaths -> m (IO ())
+bakerDaemonProcess
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadBaseNoPureAborts IO m
+     , MonadBaseNoPureAborts IO w
+     )
+  => AppConfig
+  -> NodeDataSource
+  -> LoggingEnv
+  -> Pool Postgresql
+  -> Maybe BinaryPaths
+  -> m (w ())
 bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
   bdid <- runLoggingEnv logger $ runDb (Identity db) $ do
     project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
@@ -117,14 +127,14 @@ bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
     -- tezos-node needs some time before it becomes able to respond to RPC queries.
     -- Due to this, daemons may fail with connection timeout. So we check that node
     -- is actually able to respond to requests before starting the baker.
-    checkKilnNodeAvailability :: IO Bool
+    checkKilnNodeAvailability :: MonadUnliftIO m => m Bool
     checkKilnNodeAvailability = isRight <$> do
       runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
         runLoggingEnv logger $ nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
 
     -- to initialize baker process we need to get its extra arguments from the database
     -- for this we need to make sure that its public key hash presents in 'BakerDaemonInternal' table
-    checkBakerPkhPresence :: IO Bool
+    checkBakerPkhPresence :: MonadUnliftIO m => m Bool
     checkBakerPkhPresence = isJust . join <$> do
       runLoggingEnv logger $ runDb (Identity db) $ project1
         (  BakerDaemonInternal_dataField
@@ -132,7 +142,7 @@ bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
         ~> BakerDaemonInternalData_publicKeyHashSelector
         ) CondEmpty
 
-    bakerPrestartCheck :: IO Bool
+    bakerPrestartCheck :: MonadUnliftIO m => m Bool
     bakerPrestartCheck = liftM2 (&&) checkKilnNodeAvailability checkBakerPkhPresence
 
     pw mkProcess pid  = processWorker
@@ -145,7 +155,7 @@ bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
       ! #prestartCheck bakerPrestartCheck
       ! #mkNotify Nothing
 
-    jsonLogsConsumer :: Handle -> IO ()
+    jsonLogsConsumer :: MonadUnliftIO m => Handle -> m ()
     jsonLogsConsumer h = runConduit $ sourceHandle h .| CL.mapM_ (\errlogLine -> runLoggingEnv logger $ do
         case Aeson.eitherDecodeStrict errlogLine of
           Left decodingErr ->
@@ -155,7 +165,7 @@ bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
             handleDaemonErrorEvent ev
       )
 
-    handleDaemonErrorEvent :: ErrorEvent -> LoggingT IO ()
+    handleDaemonErrorEvent :: (MonadUnliftIO m, MonadLoggerIO m) => ErrorEvent -> m ()
     handleDaemonErrorEvent e = do
       let trace = _errorEvent_trace e
           isLedgerNotFound = \case
@@ -202,7 +212,8 @@ bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
 -- protocol is a variable field, and therefore it is fetched everytime we restart process
 fetchProtocol
   :: (PersistBackend m)
-  => Id ProcessData -> m (Maybe ProtocolHash)
+  => Id ProcessData
+  -> m (Maybe ProtocolHash)
 fetchProtocol pid =
   project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
     Nothing -> error "BakerDaemonInternal table empty"
@@ -214,12 +225,13 @@ fetchProtocol pid =
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
 
 createBakerProcess
-  :: AppConfig
+  :: MonadUnliftIO m
+  => AppConfig
   -> LoggingEnv
   -> Pool Postgresql
   -> NonEmpty BakerPath
   -> Maybe ProtocolHash
-  -> IO (Either DaemonBootstrapError CreateProcess)
+  -> m (Either DaemonBootstrapError CreateProcess)
 createBakerProcess appConfig logger db paths mbProto = do
   let bakerPath = getBakerPath paths mbProto
   bakerArgs <- getBakerArgs appConfig logger db
@@ -242,10 +254,11 @@ createDaemonProcess path args daemonName mbProto = do
   pure $ proc binaryPath binaryArgs
 
 getBakerArgs
-  :: AppConfig
+  :: MonadUnliftIO m
+  => AppConfig
   -> LoggingEnv
   -> Pool Postgresql
-  -> IO (Either DaemonBootstrapError [String])
+  -> m (Either DaemonBootstrapError [String])
 getBakerArgs appConfig logger db = do
   mbBakerData <- runLoggingEnv logger $ runDb (Identity db) $ project1
     (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
