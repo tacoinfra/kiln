@@ -908,6 +908,11 @@ protocolMonitorWorker appConfig nds = mkWorker $
       hangzhouHax "PtHangzHogokSuiMHemCuowEavgYTP8J5qQ9fQS793MHYFpCY3r" = "PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
       hangzhouHax ph = ph
 
+      -- Yet another hardfork happened on mumbai, so we should follow it as well
+      mumbaiHax :: ProtocolHash -> ProtocolHash
+      mumbaiHax "PtMumbaiiFFEGbew1rRjzSPyzRbA51Tm3RVZL5suHPxSZYDhCEc" = "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
+      mumbaiHax ph = ph
+
       getProtocol' = runExceptT @KilnRpcError $ do
         blk <- nodeQueryDataSource $ nodeQuery_Block (latestHead ^. hash)
         let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
@@ -930,7 +935,7 @@ protocolMonitorWorker appConfig nds = mkWorker $
                 -- TODO: re-check this condition later and make it more strict.
                 | remainingBlocksInVotingPeriod <= 1 = latestHead ^. predecessor
                 | otherwise = latestHead ^. hash
-            in fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (nodeQuery_CurrentProposal queryBlockHash)
+            in fmap (mumbaiHax . hangzhouHax . babyHax) <$> nodeQueryDataSource (nodeQuery_CurrentProposal queryBlockHash)
           else return Nothing
         return (blk ^. blockMetadata . blockMetadata_protocol, tp)
 
