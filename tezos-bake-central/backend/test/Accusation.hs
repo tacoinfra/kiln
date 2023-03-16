@@ -12,13 +12,13 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Backend.Workers.Block (getAccusedBaker)
-import Tezos.Lima.Types
-import qualified Tezos.Lima.Types as Lima
+import Tezos.Mumbai.Types
+import qualified Tezos.Mumbai.Types as Mumbai
 
 
 testAccusations :: TestTree
 testAccusations = testGroup "Accusations"
-  [ testGroup "013"
+  [ testGroup "Mumbai"
     [ testDoubleBakingEvidence013
     , testDoublePreendorsementEvidence013
     ]
@@ -41,16 +41,16 @@ baseAccusationTest testName getBalanceUpdates path expected = testCase testName 
 
 testDoubleBakingEvidence013 :: TestTree
 testDoubleBakingEvidence013 = baseAccusationTest
-  "Double baking evidence 013"
-  (toList . Lima._doubleBakingEvidenceMetadata_balanceUpdates . Lima._operationContentsDoubleBakingEvidence_metadata)
+  "Double baking evidence"
+  (toList . Mumbai._doubleBakingEvidenceMetadata_balanceUpdates . Mumbai._operationContentsDoubleBakingEvidence_metadata)
   -- https://ithacanet.tzkt.io/opX2JykJaQ96Mt8dK4sTcjVuRbNJTJrJVBy36Xj6cGFUBne4uBX
   "test/resources/double_baking_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"
 
 testDoublePreendorsementEvidence013 :: TestTree
 testDoublePreendorsementEvidence013 = baseAccusationTest
-  "Double preendorsement evidence 013"
-  (toList . Lima._doublePreendorsementEvidenceMetadata_balanceUpdates . Lima._operationContentsDoublePreendorsementEvidence_metadata)
+  "Double preendorsement evidence"
+  (toList . Mumbai._doublePreendorsementEvidenceMetadata_balanceUpdates . Mumbai._operationContentsDoublePreendorsementEvidence_metadata)
   -- https://ithacanet.tzkt.io/ooUXVJPkfZpMy3LQshGGoJTAJCkzTEozWCk5rJK9MUBTWzaRnhw
   "test/resources/double_preendorsement_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"

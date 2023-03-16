@@ -10,7 +10,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-module Tezos.Lima.Operation where
+module Tezos.Mumbai.Operation where
 
 import Control.Lens (traversed, (^.), (^..))
 import Control.Lens.TH (makeLenses, makePrisms)
@@ -172,6 +172,18 @@ instance FromJSON OperationContents where
       "event"                          -> pure OperationContents_Unknown
       "update_consensus_key"           -> pure OperationContents_Unknown
       "drain_delegate"                 -> pure OperationContents_Unknown
+      "smart_rollup_originate"         -> pure OperationContents_Unknown
+      "smart_rollup_add_messages"      -> pure OperationContents_Unknown
+      "smart_rollup_execute_outbox_message" -> pure OperationContents_Unknown
+      "smart_rollup_publish"           -> pure OperationContents_Unknown
+      "smart_rollup_refute"            -> pure OperationContents_Unknown
+      "smart_rollup_cement"            -> pure OperationContents_Unknown
+      "smart_rollup_timeout"           -> pure OperationContents_Unknown
+      "smart_rollup_recover_bond"      -> pure OperationContents_Unknown
+      "zk_rollup_origination"          -> pure OperationContents_Unknown
+      "zk_rollup_publish"              -> pure OperationContents_Unknown
+      "zk_rollup_update"               -> pure OperationContents_Unknown
+
       unknown -> trace ("Warning: Unknown operation kind " <> T.unpack unknown) $ pure OperationContents_Unknown
 
 concat <$> traverse deriveTezosFromJson

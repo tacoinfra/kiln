@@ -4,7 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Tezos.Lima.Vote where
+module Tezos.Mumbai.Vote where
 
 import Control.Lens.TH (makeLenses)
 import Data.Aeson

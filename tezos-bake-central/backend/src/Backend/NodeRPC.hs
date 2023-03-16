@@ -87,7 +87,7 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
-import qualified Tezos.Lima.Types as Lima
+import qualified Tezos.Mumbai.Types as Mumbai
 
 import Backend.Common (LedgerQuery, timeout')
 import Backend.Schema
@@ -857,7 +857,7 @@ nodeQueryIx q = $(logDebugSH) ("nodeQueryIx called" :: Text, q) *> case q of
       |]
       for cachedRights $ \(lvl, delegate, round, estimatedTime) ->
         let
-          bakingRight = BakingRightsLima $ Lima.BakingRights
+          bakingRight = BakingRightsMumbai $ Mumbai.BakingRights
             { _bakingRights_level = lvl
             , _bakingRights_delegate = delegate
             , _bakingRights_round = round

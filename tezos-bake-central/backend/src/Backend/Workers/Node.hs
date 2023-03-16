@@ -66,7 +66,7 @@ import qualified Text.URI as Uri
 import Tezos.NodeRPC
 import Tezos.Types hiding (toBlockHeader)
 import qualified Tezos.Unsafe as Unsafe
-import qualified Tezos.Lima.Vote as Lima
+import qualified Tezos.Mumbai.Vote as Mumbai
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -814,7 +814,7 @@ amendmentProcessWorker appConfig nds db = mkWorker $
               |]
               for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
               let (protoAgnosticProposals :: [(ProtocolHash, ProtoAgnosticVotingPower)]) = toList $ case proposals of
-                    ProposalVotesListLima l -> fmap (\(Lima.ProposalVotes (pHash, votingPower)) ->
+                    ProposalVotesListMumbai l -> fmap (\(Mumbai.ProposalVotes (pHash, votingPower)) ->
                       (pHash, tezToProtoAgnosticVotingPower votingPower)) l
               inserted <- returning [sql|
                 INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
@@ -855,12 +855,12 @@ amendmentProcessWorker appConfig nds db = mkWorker $
         quorum <- nodeQueryDataSource $ nodeQuery_CurrentQuorum (blk ^. hash)
         listings <- nodeQueryDataSource $ nodeQuery_Listings (blk ^. hash)
         let totalVotingPower = case listings of
-              VoterListingsLima l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap Lima._voterDelegate_votingPower l
+              VoterListingsMumbai l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap Mumbai._voterDelegate_votingPower l
         pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalVotingPower)
 
       for_ mpv $ \(proposal, ballots, quorum, totalVotingPower) -> runDb (Identity db) $ do
         let protoAgnosticBallots = case ballots of
-              BallotsLima (Lima.Ballots yay nay pass) ->
+              BallotsMumbai (Mumbai.Ballots yay nay pass) ->
                 ProtoAgnosticBallots (tezToProtoAgnosticVotingPower yay) (tezToProtoAgnosticVotingPower nay) (tezToProtoAgnosticVotingPower pass)
         mPid <- (fmap . fmap) toId $ project1 AutoKeyField $ PeriodProposal_hashField ==. proposal
         for_ mPid $ \pid -> do
@@ -908,6 +908,11 @@ protocolMonitorWorker appConfig nds = mkWorker $
       hangzhouHax "PtHangzHogokSuiMHemCuowEavgYTP8J5qQ9fQS793MHYFpCY3r" = "PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
       hangzhouHax ph = ph
 
+      -- Yet another hardfork happened on mumbai, so we should follow it as well
+      mumbaiHax :: ProtocolHash -> ProtocolHash
+      mumbaiHax "PtMumbaiiFFEGbew1rRjzSPyzRbA51Tm3RVZL5suHPxSZYDhCEc" = "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
+      mumbaiHax ph = ph
+
       getProtocol' = runExceptT @KilnRpcError $ do
         blk <- nodeQueryDataSource $ nodeQuery_Block (latestHead ^. hash)
         let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
@@ -930,7 +935,7 @@ protocolMonitorWorker appConfig nds = mkWorker $
                 -- TODO: re-check this condition later and make it more strict.
                 | remainingBlocksInVotingPeriod <= 1 = latestHead ^. predecessor
                 | otherwise = latestHead ^. hash
-            in fmap (hangzhouHax . babyHax) <$> nodeQueryDataSource (nodeQuery_CurrentProposal queryBlockHash)
+            in fmap (mumbaiHax . hangzhouHax . babyHax) <$> nodeQueryDataSource (nodeQuery_CurrentProposal queryBlockHash)
           else return Nothing
         return (blk ^. blockMetadata . blockMetadata_protocol, tp)
 

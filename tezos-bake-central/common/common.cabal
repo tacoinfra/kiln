@@ -130,14 +130,14 @@ library
 
     Tezos.Genesis.Block
 
-    Tezos.Lima.Account
-    Tezos.Lima.Block
-    Tezos.Lima.Level
-    Tezos.Lima.Operation
-    Tezos.Lima.ProtocolConstants
-    Tezos.Lima.Types
-    Tezos.Lima.Unsafe
-    Tezos.Lima.Vote
+    Tezos.Mumbai.Account
+    Tezos.Mumbai.Block
+    Tezos.Mumbai.Level
+    Tezos.Mumbai.Operation
+    Tezos.Mumbai.ProtocolConstants
+    Tezos.Mumbai.Types
+    Tezos.Mumbai.Unsafe
+    Tezos.Mumbai.Vote
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
 
