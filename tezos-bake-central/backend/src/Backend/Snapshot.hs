@@ -599,8 +599,8 @@ findLatestSnapshot appConfig metadata = do
     isNeededChain m = m ^. xtzShotsMetadata_chainName == chainName
     filteredMetadata = flip filter metadata $ \m ->
       isNeededChain m && isRolling m && isTezosSnapshot m
-  when (null filteredMetadata) $
-    throwString "There is no rolling tezos snapshot in xtz-shots metadata"
+  when (null filteredMetadata) $ throwString $
+    "There is no rolling tezos snapshot in xtz-shots metadata for " <> T.unpack chainName
   pure $ maximumBy byBlockHeight filteredMetadata
   where
     chainId = _appConfig_chainId appConfig
