@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 
 module Tezos.Common.Chain where
 
@@ -21,19 +22,7 @@ import Tezos.Common.Base58Check (ChainId, HashBase58Error, fromBase58, toBase58T
 
 data NamedChain
   = NamedChain_Mainnet
-  | NamedChain_Zeronet
-  | NamedChain_Babylonnet
-  | NamedChain_Carthagenet
-  | NamedChain_Delphinet
-  | NamedChain_Edonet
-  | NamedChain_Edo2net
-  | NamedChain_Florencenet
-  | NamedChain_Granadanet
-  | NamedChain_Hangzhounet
-  | NamedChain_Ithacanet
-  | NamedChain_Jakartanet
   | NamedChain_Ghostnet
-  | NamedChain_Kathmandunet
   | NamedChain_Limanet
   | NamedChain_Mumbainet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
@@ -42,20 +31,8 @@ instance ToJSON NamedChain
 
 showNamedChain :: NamedChain -> Text
 showNamedChain = \case
-  NamedChain_Zeronet -> "zeronet"
   NamedChain_Mainnet -> "mainnet"
-  NamedChain_Babylonnet -> "babylonnet"
-  NamedChain_Carthagenet -> "carthagenet"
-  NamedChain_Delphinet -> "delphinet"
-  NamedChain_Edonet -> "edonet"
-  NamedChain_Edo2net -> "edo2net"
-  NamedChain_Florencenet -> "florencenet"
-  NamedChain_Granadanet -> "granadanet"
-  NamedChain_Hangzhounet -> "hangzhounet"
-  NamedChain_Ithacanet -> "ithacanet"
-  NamedChain_Jakartanet -> "jakartanet"
   NamedChain_Ghostnet -> "ghostnet"
-  NamedChain_Kathmandunet -> "kathmandunet"
   NamedChain_Limanet -> "limanet"
   NamedChain_Mumbainet -> "mumbainet"
 
@@ -74,19 +51,7 @@ parseChain x = case parseNamedChain x of
 getNamedChainId :: NamedChain -> Maybe ChainId
 getNamedChainId = \case
   NamedChain_Mainnet -> Just "NetXdQprcVkpaWU"
-  NamedChain_Zeronet -> Nothing  -- changes unpredictably each reset
-  NamedChain_Babylonnet -> Just "NetXUdfLh6Gm88t"
-  NamedChain_Carthagenet -> Just "NetXjD3HPJJjmcd"
-  NamedChain_Delphinet -> Just "NetXm8tYqnMWky1"
-  NamedChain_Edonet -> Just "NetXdQprcVkpaWU"
-  NamedChain_Edo2net -> Just "NetXSgo1ZT2DRUG"
-  NamedChain_Florencenet -> Just "NetXxkAx4woPLyu"
-  NamedChain_Granadanet -> Just "NetXz969SFaFn8k"
-  NamedChain_Hangzhounet -> Just "NetXZSsxBpMQeAT"
-  NamedChain_Ithacanet -> Just "NetXnHfVqm9iesp"
-  NamedChain_Jakartanet -> Just "NetXLH1uAxK7CCh"
   NamedChain_Ghostnet -> Just "NetXnHfVqm9iesp"
-  NamedChain_Kathmandunet -> Just "NetXi2ZagzEsXbZ"
   NamedChain_Limanet -> Just "NetXizpkH94bocH"
   NamedChain_Mumbainet -> Just "NetXgbcrNtXD2yA"
 
@@ -94,7 +59,7 @@ identifyChain :: ChainId -> Maybe NamedChain
 identifyChain cid = lookup cid namedChainAssoc
   where
     namedChainAssoc :: [(ChainId, NamedChain)]
-    namedChainAssoc = mapMaybe (\x -> fmap (flip (,) x) (getNamedChainId x)) $ enumFrom minBound
+    namedChainAssoc = mapMaybe (\nc -> (,nc) <$> getNamedChainId nc) $ enumFrom minBound
 
 data ChainTag
   = ChainTag_Main

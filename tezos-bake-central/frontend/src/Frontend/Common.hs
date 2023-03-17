@@ -420,20 +420,8 @@ validateBakerAddr = Validator.Validator
 
 tzStatsBlockUri :: NamedChain -> Text -> Maybe Uri.URI
 tzStatsBlockUri chain path = (`appendPaths` [path]) $ case chain of
-  NamedChain_Babylonnet -> [uri|http://babylonnet.tzstats.com/|]
-  NamedChain_Carthagenet -> [uri|http://carthagenet.tzstats.com/|]
-  NamedChain_Zeronet -> [uri|http://zeronet.tzstats.com/|]
   NamedChain_Mainnet -> [uri|http://tzstats.com/|]
-  NamedChain_Delphinet -> [uri|http://delphinet.tzstats.com/|]
-  NamedChain_Edonet -> [uri|https://edo.tzstats.com|] -- this will produce a Nothing value,
-  NamedChain_Edo2net -> [uri|https://edo.tzstats.com|] -- this will produce a Nothing value,
-  NamedChain_Florencenet -> [uri|https://florence.tzstats.com|] -- this will produce a Nothing value,
-  NamedChain_Granadanet -> [uri|https://granada.tzstats.com/|]
-  NamedChain_Hangzhounet ->[uri|https://hangzhou.tzstats.com/|]
-  NamedChain_Ithacanet -> [uri|https://ithaca.tzstats.com/|] -- this will produce a Nothing value
-  NamedChain_Jakartanet -> [uri|https://jakarta.tzstats.com/|] -- this will produce a Nothing value
   NamedChain_Ghostnet -> [uri|https://ghost.tzstats.com/|]
-  NamedChain_Kathmandunet -> [uri|https://kathmandu.tzstats.com/|] -- this will produce a Nothing value
   NamedChain_Limanet -> [uri|https://lima.tzstats.com/|] -- this will produce a Nothing value
   NamedChain_Mumbainet -> [uri|https://mumbai.tzstats.com/|] -- this will produce a Nothing value
 
