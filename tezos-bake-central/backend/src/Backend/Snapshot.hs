@@ -12,11 +12,13 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 module Backend.Snapshot where
 
+import Control.Applicative (optional)
 import Control.Concurrent
 import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO)
 import Control.Exception.Safe (IOException, MonadThrow, SomeException (..), handle, throw, throwString, try)
@@ -24,15 +26,15 @@ import Control.Monad.Catch (MonadMask, catch, finally, onException)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Trans.Resource (runResourceT)
 import Control.Monad.Logger
-import Data.Aeson (eitherDecode)
+import Data.Aeson (FromJSON (..), eitherDecode, withObject, (.:))
+import qualified Data.Attoparsec.Text as P
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
+import Data.Char (isSpace)
 import Data.Conduit.Binary (sinkFileCautious)
 import qualified Data.Conduit.List as CL
-import Data.Conduit.Process (getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
+import Data.Conduit.Process (StreamingProcessHandle, getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
 import Data.Foldable (maximumBy)
-import Data.Int (Int32)
-import Data.String (IsString(..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Clock (NominalDiffTime, UTCTime)
@@ -50,9 +52,8 @@ import Snap.Util.FileUploads
 import System.Directory
 import System.Exit (ExitCode(..))
 import System.FilePath.Posix (takeFileName)
+import System.Process (CreateProcess)
 import qualified System.Process as Process
-import Text.Read (readMaybe)
-import Text.Regex.TDFA ((=~))
 import Text.URI (URI, mkURI, renderStr)
 import Text.URI.QQ (uri)
 
@@ -82,6 +83,46 @@ data SnapshotImportOptions = SnapshotImportOptions
   { sioRemoveSnapshotFile :: Bool
   , sioVerifySnapshot :: Bool
   }
+
+-- | Auxiliary data type which represents
+-- 'octez-node snapshot info <path> --json' result.
+data SnapshotInfoResult = SnapshotInfoResult
+  { sirVersion :: Int
+  , sirBlockHash :: BlockHash
+  , sirLevel :: RawLevel
+  , sirTimestamp :: UTCTime
+  } deriving (Show, Eq, Generic)
+
+instance FromJSON SnapshotInfoResult where
+  parseJSON = withObject "SnapshotInfoResult" $ \o -> do
+    h <- o .: "snapshot_header"
+    sirVersion   <- h .: "version"
+    sirBlockHash <- h .: "block_hash"
+    sirLevel     <- h .: "level"
+    sirTimestamp <- h .: "timestamp"
+    pure $ SnapshotInfoResult {..}
+
+-- | Execute the 'octez-node snapshot info <path> --json' command and
+-- return either @SnapshotInfoResult@ or error message in case of
+-- command execution/result decoding error.
+execSnapshotInfo :: MonadLoggerIO m => String -> String -> m (Either Text SnapshotInfoResult)
+execSnapshotInfo storePath nodePath = do
+  (infoExitCode, infoStdout, infoStderr) <- liftIO $ Process.readProcessWithExitCode nodePath
+    [ "snapshot"
+    , "info"
+    , storePath
+    , "--json"
+    ] ""
+  let parse = eitherDecode . LBS.fromStrict . T.encodeUtf8 . T.pack
+      mkErrMsg s = "Unexpected result of 'snapshot info' command: " <> T.pack s
+  pure $ case infoExitCode of
+    ExitFailure c -> Left $ T.unlines
+      [ "'octez-node snapshot info' failed with exit code "
+      , tshow c
+      , ": "
+      , T.pack infoStderr
+      ]
+    ExitSuccess -> first mkErrMsg $ parse infoStdout
 
 handleSnapshotUpload
   :: AppConfig
@@ -318,8 +359,8 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
     updateState :: (MonadLogger m1, PersistBackend m1, MonadIO m1) => NodeProcessState -> m1 ()
     updateState = updateState' nodePPid
 
-    importFailed msg stderr = do
-      $(logError) msg
+    importFailed stderr = do
+      $(logError) "importSnapshotData failed: "
       update [ SnapshotMeta_importErrorField =. Just stderr ] (AutoKeyField ==. smId)
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
       updateState NodeProcessState_ImportFailed
@@ -338,17 +379,9 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
       cp = Process.proc nodePath args
       in cp { Process.std_out = Process.CreatePipe, Process.std_err = Process.CreatePipe }
 
-    procMonitorStream cp = runLoggingEnv logger $ do
+    procMonitorStream cp sir@SnapshotInfoResult{..} = runLoggingEnv logger $ do
       stderrLogVar :: TVar ByteString <- liftIO $ newTVarIO ""
-      let logStderrLine stderrLine = liftIO $ atomically $ modifyTVar stderrLogVar (<> stderrLine)
-          updateImportProgress stdoutLine = do
-            -- Progress output has some additional characters that are used to
-            -- animate the progress. These characters shoudn't be displayed in Kiln UI,
-            -- so we drop the prefix of the @stdoutLine@.
-            let line = T.drop 5 $ T.decodeUtf8 stdoutLine
-            runLoggingEnv logger $ inDb $ updateSnapshotMetaImportLog line smId
-      ph <- liftIO $
-        createProcessWithStreams cp (return ()) (CL.mapM_ updateImportProgress) (CL.mapM_ logStderrLine)
+      ph <- liftIO $ mkSnapshotImportStreamingProcess cp sir stderrLogVar
       go ph stderrLogVar
       where
         {-# INLINE go #-}
@@ -372,19 +405,19 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
               case exitCode of
                 ExitSuccess -> void $ do
                   $(logDebug) $ "importSnapshotData success: stderr: " <> stderr
-                  (infoExitCode, infoStdout, _) <- liftIO $ Process.readProcessWithExitCode nodePath ["snapshot", "info", storePath] ""
-                  when (infoExitCode == ExitSuccess) $ do
-                    (mBlkHash, mLevel, mTimestamp) <- getSnapshotInfo infoStdout sm
-                    inDb $ updateSnapshotMeta mBlkHash mLevel mTimestamp smId
+                  inDb $ updateSnapshotMeta sirBlockHash sirLevel sirTimestamp smId
                   inDb $
                     if sioVerifySnapshot
                     then updateState NodeProcessState_ImportComplete
                     else startNodeDaemon
-                ExitFailure _ -> inDb $ importFailed "importSnapshotData failed: " stderr
+                ExitFailure _ -> inDb $ importFailed stderr
 
   liftIO $ withNodeConfig appConfig $ \configFile -> do
     runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec configFile)
-    procMonitorStream (procSpec configFile)
+    mbSnapshotInfoResult <- runLoggingEnv logger $ execSnapshotInfo storePath nodePath
+    case mbSnapshotInfoResult of
+      Left err -> runLoggingEnv logger $ inDb $ importFailed err
+      Right snapshotInfoResult -> procMonitorStream (procSpec configFile) snapshotInfoResult
 
   when sioRemoveSnapshotFile $
     removeFileLogging storePath
@@ -397,52 +430,58 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
       liftIO $ removeDirectoryRecursive dataDir
     _ -> pure ()
   where
-    -- | Get snapshot's block hash, level and timestamp either from
-    -- @SnapshotMeta@ if they're already known or from 'octez-node snapshot info'
-    -- command's stdout.
-    --
-    -- This data is already known in case when we downloaded the snapshot from
-    -- xtz-shots metadata which provides the hash, level and timestamp as well.
-    getSnapshotInfo
-      :: ( MonadLoggerIO m
-         , MonadBaseNoPureAborts IO m
-         )
-      => String
-      -> SnapshotMeta
-      -> m ( Maybe BlockHash
-           , Maybe RawLevel
-           , Maybe UTCTime
-           )
-    getSnapshotInfo stdout snapshotMeta = do
-      let
-        mBlkHashFromStdout = extractBlockHash stdout
-        mLevelFromStdout   = extractLevel stdout
+    mkSnapshotImportStreamingProcess
+      :: (MonadUnliftIO m)
+      => CreateProcess      -- ^ Process to run in the streaming mode
+      -> SnapshotInfoResult -- ^ Result of 'snapshot info' command (see [Note])
+      -> TVar ByteString    -- ^ @TVar@ for collecting process error output
+      -> m StreamingProcessHandle
+    mkSnapshotImportStreamingProcess cp SnapshotInfoResult{..} stderrLogVar = do
+      let logger = _nodeDataSource_logger nds
+          db     = _nodeDataSource_pool nds
+          logStderrLine stderrLine = liftIO $ atomically $ modifyTVar stderrLogVar (<> stderrLine)
 
-        mBlkHash = snapshotMeta ^. snapshotMeta_headBlock <|> mBlkHashFromStdout
-        mLevel   = snapshotMeta ^. snapshotMeta_headBlockLevel <|> mLevelFromStdout
-      mTimestamp <- case snapshotMeta ^. snapshotMeta_headBlockBakeTime of
-        Nothing -> fmap join $ for mBlkHash $ \blkHash -> do
-          mBlk <- flip runReaderT nds $ runExceptT @KilnRpcError $ runNodeQueryT $
-            nodeQueryDataSourceSafe $ nodeQuery_BlockHeader blkHash
-          pure $ mBlk ^? _Right . timestamp
-        t -> pure t
-      pure (mBlkHash, mLevel, mTimestamp)
-      where
-        blockHashRegex, levelRegex :: String
-        blockHashRegex = "block hash ([A-Za-z0-9]*)"
-        levelRegex = "at level ([0-9]*)"
-
-        extractFromStdout :: String -> String -> (String -> Maybe a) -> Maybe a
-        extractFromStdout source regex parse =
-          let (_, _, _, matches) = source =~ regex :: (String, String, String, [String]) in
-            parse =<< listToMaybe matches
-
-        extractBlockHash :: String -> Maybe BlockHash
-        extractBlockHash src = BlockHash <$> extractFromStdout src blockHashRegex
-          (either (const Nothing) Just . fromBase58 . fromString)
-
-        extractLevel :: String -> Maybe RawLevel
-        extractLevel src = extractFromStdout src levelRegex (fmap fromIntegral . readMaybe @Int32)
+      -- [Note]
+      -- Tezos snapshots of version 5 (IOW, snaphots that are exported with Octez 16 binaries)
+      -- has the different output of 'octez-node snapshot import' command comparing to the
+      -- previous versions. Namely, the import progress is logged to 'stderr' instead 'stdout'
+      -- and has the different format.
+      --
+      -- Since now we need to support both v5 snapshots and older ones, we use the separate
+      -- process output handling for them depending on the snapshot version.
+      --
+      -- TODO: remove the first case below when Mumbai is activated on mainnet and older
+      -- snapshots won't be supported by Octez binaries.
+      case sirVersion of
+        4 -> do
+          let
+            updateImportProgress stdoutLine = do
+              -- Progress output has some additional characters that are used to
+              -- animate the progress. These characters shoudn't be displayed in Kiln UI,
+              -- so we drop the prefix of the @stdoutLine@.
+              let line = T.drop 5 $ T.decodeUtf8 stdoutLine
+              runLoggingEnv logger $ runDb (Identity db) $ updateSnapshotMetaImportLog line smId
+          createProcessWithStreams cp (return ()) (CL.mapM_ updateImportProgress) (CL.mapM_ logStderrLine)
+        _ -> do
+          let
+            -- Since 'stderr' may contain not only import progress, but also
+            -- import errors and warnings, we have the parser to distinguish
+            -- the import progress lines:
+            -- Example progress line: "645k contents / 717k nodes / 1 commits"
+            progressLogParser = do
+              let keywords = P.string <$> ["contents", "nodes", "commits"]
+                  space    = P.skipWhile isSpace
+                  sep      = space >> P.char '/' >> space
+                  countK   = P.decimal @Int >> optional (P.char 'k')
+                  entry    = countK >> space >> P.choice keywords
+              void $ entry >> P.count 2 (sep >> entry)
+            updateImportProgress stderrLine = do
+              let line = T.strip $ T.decodeUtf8 stderrLine
+                  isProgressLine = isRight . P.parseOnly progressLogParser
+              when (isProgressLine line) $
+                runLoggingEnv logger $ runDb (Identity db) $ updateSnapshotMetaImportLog line smId
+          createProcessWithStreams cp (return ()) (return ()) (CL.mapM_ $ \line ->
+            updateImportProgress line *> logStderrLine line)
 
 initSnapshotMeta
   :: MonadLoggerIO m
@@ -478,17 +517,17 @@ initSnapshotMeta appConfig mbStorePath nds mbUri = runDb (Identity $ _nodeDataSo
 
 updateSnapshotMeta
   :: (PersistBackend m)
-  => Maybe BlockHash
-  -> Maybe RawLevel
-  -> Maybe UTCTime
+  => BlockHash
+  -> RawLevel
+  -> UTCTime
   -> SnapshotMetaId
   -> m ()
 updateSnapshotMeta mbBlockHash mbLevel mbTimestamp smId = do
   now <- getTime
   update
-    [ SnapshotMeta_headBlockField =. mbBlockHash
-    , SnapshotMeta_headBlockLevelField =. mbLevel
-    , SnapshotMeta_headBlockBakeTimeField =. mbTimestamp
+    [ SnapshotMeta_headBlockField =. Just mbBlockHash
+    , SnapshotMeta_headBlockLevelField =. Just mbLevel
+    , SnapshotMeta_headBlockBakeTimeField =. Just mbTimestamp
     , SnapshotMeta_importCompleteTimeField =. Just now
     ]
     (AutoKeyField ==. smId)
