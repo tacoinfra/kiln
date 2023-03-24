@@ -2,11 +2,11 @@
 
 stdenv.mkDerivation rec {
   name = "tezos-${version}";
-  version = "16.0-1";
+  version = "16.1-1";
 
   src = fetchzip {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v${version}/binaries-${version}.tar.gz";
-      sha256 = "sha256-m9D/SJRFCKugJ69hqfgYliWYp0zc29EvwCWSg7r+044=";
+      sha256 = "sha256-l1D+4OmqN9tQnpMBp9vk4IfXhf9fHxGap3z0A63n72g=";
       stripRoot = false;
       };
   binaries = ["octez-client" "octez-node" "octez-baker-*" "octez-admin-client"];
