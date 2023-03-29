@@ -18,8 +18,10 @@ module Backend.Process.Baker where
 import Conduit (runConduit, sourceHandle, (.|))
 import UnliftIO.STM (atomically, writeTQueue)
 import Control.Monad (liftM2)
+import Control.Monad.Error.Class (liftEither)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Logger (MonadLogger, MonadLoggerIO, logDebug, logError)
+import Control.Monad.Trans (lift)
 import qualified Data.Aeson as Aeson
 import qualified Data.Conduit.List as CL
 import Data.Either.Combinators (maybeToRight)
@@ -56,12 +58,14 @@ import Common.App
 import Common.Schema
 import ExtraPrelude
 
-getBakerPath :: NonEmpty BakerPath -> Maybe ProtocolHash -> Maybe FilePath
-getBakerPath paths = \case
-  Nothing -> _bakerPath_path $ NonEmpty.head paths
-  Just protoHash ->
-    let err = error ("tezos-baker is not available for the given protocol: " <> T.unpack (toBase58Text protoHash))
-    in maybe err _bakerPath_path $ find (\bp -> _bakerPath_proto bp == protoHash) paths
+getBakerPath
+  :: NonEmpty BakerPath
+  -> Maybe ProtocolHash
+  -> Either BakerBootstrapError FilePath
+getBakerPath paths mbProto =
+  maybeToRight (BakerBootstrapError mbProto) $ case mbProto of
+    Nothing -> _bakerPath_path $ NonEmpty.head paths
+    Just protoHash -> _bakerPath_path =<< find (\bp -> _bakerPath_proto bp == protoHash) paths
 
 defaultBakerPaths :: NonEmpty BakerPath
 defaultBakerPaths = NonEmpty.fromList [limaPath, mumbaiPath]
@@ -162,14 +166,11 @@ createBakerProcess
      )
   => NonEmpty BakerPath
   -> Maybe ProtocolHash
-  -> m (Either DaemonBootstrapError CreateProcess)
-createBakerProcess paths mbProto =
-  let mbBakerPath = getBakerPath paths mbProto in
-  case mbBakerPath of
-    Nothing -> pure $ Left $ DaemonBootstrapError_NoBinary "tezos-baker" mbProto
-    Just bakerPath -> do
-      bakerArgs <- getBakerArgs
-      pure $ Right $ proc bakerPath bakerArgs
+  -> m (Either BakerBootstrapError CreateProcess)
+createBakerProcess paths mbProto = runExceptT $ do
+  bakerPath <- liftEither $ getBakerPath paths mbProto
+  bakerArgs <- lift getBakerArgs
+  pure $ proc bakerPath bakerArgs
 
 getBakerArgs
   :: ( MonadUnliftIO m
@@ -259,30 +260,6 @@ updateBakerProcessState
   -> m ()
 updateBakerProcessState pid ps = updateProcessState pid Nothing ps
 
-handleCreateBakerProcessError
-  :: ( MonadLoggerIO m
-     , MonadUnliftIO m
-     , MonadReader e m
-     , HasNodeDataSource e
-     , HasAppConfig e
-     )
-  => Id ProcessData
-  -> DaemonBootstrapError
-  -> m ()
-handleCreateBakerProcessError pid err =
-  let
-    updatesList =
-      [ ProcessData_errorLogField =. Just (T.pack $ pretty err)
-      , ProcessData_stateField =. ProcessState_Stopped
-      ]
-    -- In case of some errors (e.g when the daemon doesn't exist for this protocol)
-    -- we don't want to try to restart the binary.
-    stopControl = [ProcessData_controlField =. ProcessControl_Stop]
-    cond = AutoKeyField ==. fromId pid
-  in runTransaction $ case err of
-    DaemonBootstrapError_NoBinary {} -> update (updatesList <> stopControl) cond
-    DaemonBootstrapError_UnknownProtocol {} -> update (updatesList <> stopControl) cond
-
 jsonLogsConsumer
   :: ( MonadUnliftIO m
      , MonadLoggerIO m
@@ -360,7 +337,11 @@ bakerProcessWorker appConfig nds pid paths = mkWorker $ do
     runTransaction $ updateState ProcessState_Starting
     eiProcHandler <- createBakerProcess paths mbProtoHash
     case eiProcHandler of
-      Left err -> handleCreateBakerProcessError pid err
+      Left err -> runTransaction $ update
+        [ ProcessData_errorLogField =. Just (T.pack $ pretty err)
+        , ProcessData_stateField =. ProcessState_Stopped
+        , ProcessData_controlField =. ProcessControl_Stop
+        ] $ AutoKeyField ==. fromId pid
       Right procHandler ->
         let closeHandles (h1, h2) = hClose h1 >> hClose h2
             withReadWriteHandles = bracket Proc.createPipe closeHandles

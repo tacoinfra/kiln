@@ -5,7 +5,7 @@
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 module Backend.Process.Errors
-  ( DaemonBootstrapError (..)
+  ( BakerBootstrapError (..)
   , ErrorEvent (..)
   , ErrorEventType (..)
   , ErrorTrace (..)
@@ -21,17 +21,13 @@ import Fmt (Buildable(..), blockListF, (+|), (|+))
 
 import Tezos.Types
 
-data DaemonBootstrapError
-  = DaemonBootstrapError_NoBinary Text (Maybe ProtocolHash)
-  | DaemonBootstrapError_UnknownProtocol (Maybe ProtocolHash)
+data BakerBootstrapError
+  = BakerBootstrapError (Maybe ProtocolHash)
 
-instance Buildable DaemonBootstrapError where
+instance Buildable BakerBootstrapError where
   build = \case
-    DaemonBootstrapError_NoBinary daemonName mbProto ->
-      daemonName |+ " is not available for the given protocol: " +| build (maybe "<unknown protocol>" toBase58Text mbProto)
-    DaemonBootstrapError_UnknownProtocol mbProto -> case mbProto of
-      Nothing -> "Unknown protocol"
-      Just proto -> "Unknown protocol: " +| build (toBase58Text proto) +| ""
+    BakerBootstrapError mbProto ->
+      "tezos-baker is not available for the given protocol: " +| build (maybe "<unknown protocol>" toBase58Text mbProto)
 
 data ErrorTrace
   = ErrorTrace_LedgerNotFound
