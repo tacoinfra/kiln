@@ -19,21 +19,22 @@ import Conduit (runConduit, sourceHandle, (.|))
 import UnliftIO.STM (atomically, writeTQueue)
 import Control.Monad (liftM2)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
-import Control.Monad.Logger (MonadLoggerIO, logDebug, logError)
+import Control.Monad.Logger (MonadLogger, MonadLoggerIO, logDebug, logError)
 import qualified Data.Aeson as Aeson
 import qualified Data.Conduit.List as CL
 import Data.Either.Combinators (maybeToRight)
-import Data.Pool (Pool)
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
+import Database.Id.Groundhog (fromId)
 import Database.Groundhog.Postgresql
 import Fmt (pretty)
-import Named
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime, runDb, project1)
-import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import GHC.IO.Handle.FD (handleToFd)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime, project1)
+import UnliftIO.Concurrent (forkIO, killThread)
+import UnliftIO.Exception (bracket, finally)
 import UnliftIO.Process as Proc
-import UnliftIO.IO (Handle)
+import UnliftIO.IO (Handle, hClose)
 import System.Which (staticWhich)
 import Text.URI (render)
 import qualified Data.Text as T
@@ -43,11 +44,13 @@ import Tezos.Types
 
 import Backend.Alerts (reportLedgerDisconnection)
 import Backend.Common.Baker
-import Backend.Config (AppConfig (..),  BinaryPaths(..), BakerPath(..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir)
+import Backend.Common.Worker (worker')
+import Backend.Config (AppConfig (..),  BinaryPaths(..), BakerPath(..), HasAppConfig (..), kilnNodeRpcURI, nodeDataDir, tezosClientDataDir)
+import Backend.Env
 import Backend.NodeRPC
+import Backend.Process.Common
 import Backend.Process.Errors
 import Backend.Schema
-import Backend.Workers.Process
 import Backend.Workers.TezosClient (checkLedgerHighWatermark)
 import Common.App
 import Common.Schema
@@ -72,7 +75,6 @@ defaultBakerPaths = NonEmpty.fromList [limaPath, mumbaiPath]
       , _bakerPath_path = Just $(staticWhich "tezos-baker-PtMumbai")
       }
 
--- Start Baker and Endorser
 bakerDaemonProcess
   :: ( MonadUnliftIO m
      , MonadUnliftIO w
@@ -81,14 +83,12 @@ bakerDaemonProcess
      )
   => AppConfig
   -> NodeDataSource
-  -> LoggingEnv
-  -> Pool Postgresql
   -> Maybe BinaryPaths
   -> m (w ())
-bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
-  bdid <- runLoggingEnv logger $ runDb (Identity db) $ do
+bakerDaemonProcess appConfig nds mbCustomPaths = runLoggerWithEnv $ do
+  bdid <- runTransaction $ do
     project1 (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
-      (Just bdid) -> return bdid
+      Just bdid -> return bdid
       Nothing -> do
         let processData = ProcessData
               { _processData_control = ProcessControl_Stop
@@ -123,91 +123,20 @@ bakerDaemonProcess appConfig nds logger db mbCustomPaths = do
   let
     bpid1 = _bakerDaemonInternalData_bakerProcessData bdid
     bpid2 = _bakerDaemonInternalData_altBakerProcessData bdid
-
-    -- tezos-node needs some time before it becomes able to respond to RPC queries.
-    -- Due to this, daemons may fail with connection timeout. So we check that node
-    -- is actually able to respond to requests before starting the baker.
-    checkKilnNodeAvailability :: MonadUnliftIO m => m Bool
-    checkKilnNodeAvailability = isRight <$> do
-      runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
-        runLoggingEnv logger $ nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
-
-    -- to initialize baker process we need to get its extra arguments from the database
-    -- for this we need to make sure that its public key hash presents in 'BakerDaemonInternal' table
-    checkBakerPkhPresence :: MonadUnliftIO m => m Bool
-    checkBakerPkhPresence = isJust . join <$> do
-      runLoggingEnv logger $ runDb (Identity db) $ project1
-        (  BakerDaemonInternal_dataField
-        ~> DeletableRow_dataSelector
-        ~> BakerDaemonInternalData_publicKeyHashSelector
-        ) CondEmpty
-
-    bakerPrestartCheck :: MonadUnliftIO m => m Bool
-    bakerPrestartCheck = liftM2 (&&) checkKilnNodeAvailability checkBakerPkhPresence
-
-    pw mkProcess pid  = processWorker
-      (\_ -> runLoggingEnv logger $ runDb (Identity db) $ fetchProtocol pid)
-      ! #logger logger
-      ! #db db
-      ! #config appConfig
-      ! #mkProcess mkProcess
-      ! #pid pid
-      ! #prestartCheck bakerPrestartCheck
-      ! #mkNotify Nothing
-
-    jsonLogsConsumer :: MonadUnliftIO m => Handle -> m ()
-    jsonLogsConsumer h = runConduit $ sourceHandle h .| CL.mapM_ (\errlogLine -> runLoggingEnv logger $ do
-        case Aeson.eitherDecodeStrict errlogLine of
-          Left decodingErr ->
-            $(logError) $ "Failed to decode error reported by baker daemons: " <> T.pack decodingErr
-          Right ev -> do
-            $(logError) $ "Baker daemon reported an error: " <> pretty ev
-            handleDaemonErrorEvent ev
-      )
-
-    handleDaemonErrorEvent :: (MonadUnliftIO m, MonadLoggerIO m) => ErrorEvent -> m ()
-    handleDaemonErrorEvent e = do
-      let trace = _errorEvent_trace e
-          isLedgerNotFound = \case
-            ErrorTrace_LedgerNotFound -> True
-            _ -> False
-          isWrongApp = \case
-            ErrorTrace_LedgerError msg | "Application level error (sign-with-hash): Parse error" `T.isPrefixOf` msg -> True
-            _ -> False
-          isWrongHWM = \case
-            ErrorTrace_LedgerError msg | "Application level error (sign-with-hash): Incorrect data" `T.isPrefixOf` msg -> True
-            _ -> False
-          hasLedgerDisconnection = any isLedgerNotFound trace
-          hasWrongApp = any isWrongApp trace
-          needToResetHWM = any isWrongHWM trace
-      when (hasLedgerDisconnection || hasWrongApp) $ reportLedgerDisconnection db appConfig hasWrongApp
-      when hasLedgerDisconnection $ runDb (Identity db) $ do
-        mbConnectedLedger :: Maybe ConnectedLedger <- fmap listToMaybe $ select CondEmpty
-        for_ mbConnectedLedger $ \connectedLedger -> do
-          now <- getTime
-          update
-            [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
-            , ConnectedLedger_updatedField =. Just now
-            ] CondEmpty
-          notify NotifyTag_ConnectedLedger $ Just $ connectedLedger { _connectedLedger_ledgerIdentifier = Nothing }
-      when needToResetHWM $ do
-        let ledgerIOQueue = _nodeDataSource_ledgerIOQueue nds
-        liftIO $ atomically $ writeTQueue ledgerIOQueue $ checkLedgerHighWatermark appConfig nds
-
     paths = maybe defaultBakerPaths _binaryPaths_bakerPaths mbCustomPaths
+    mkBakerWorker pid = bakerProcessWorker appConfig nds pid paths
 
-    mkBakerProcess = createBakerProcess appConfig logger db paths
-    bakerPw = pw mkBakerProcess ! #logNamespace "kiln-baker" ! #jsonErrorLogsHandler (Just jsonLogsConsumer)
-
-  -- We run two sets of ProcessWorkers, which one actually runs the main baker/alt baker
+  -- We run two sets of bakerProcessWorkers, which one actually runs the main baker/alt baker
   -- depends upon the protocol set for that PID.
   -- This allows us to switch a 'alt baker' to 'main baker' without actually restarting the baker
   -- ie bp1 starts as main baker, bp2 as alt baker
   -- after voting period ends, we simply stop the bp1 and set bpid2 as 'bakerProcessData'
   -- So bp2 process keeps on running but is now identified as 'main baker'
-  bp1 <- bakerPw bpid1
-  bp2 <- bakerPw bpid2
+  bp1 <- mkBakerWorker bpid1
+  bp2 <- mkBakerWorker bpid2
   return (bp1 *> bp2)
+  where
+    runLoggerWithEnv act = flip runReaderT (KilnEnv appConfig nds) $ runLogger act
 
 -- protocol is a variable field, and therefore it is fetched everytime we restart process
 fetchProtocol
@@ -225,63 +154,232 @@ fetchProtocol pid =
         else return $ Just $ _bakerDaemonInternalData_protocol bdid
 
 createBakerProcess
-  :: MonadUnliftIO m
-  => AppConfig
-  -> LoggingEnv
-  -> Pool Postgresql
-  -> NonEmpty BakerPath
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => NonEmpty BakerPath
   -> Maybe ProtocolHash
   -> m (Either DaemonBootstrapError CreateProcess)
-createBakerProcess appConfig logger db paths mbProto = do
-  let bakerPath = getBakerPath paths mbProto
-  bakerArgs <- getBakerArgs appConfig logger db
-  pure $ createDaemonProcess bakerPath bakerArgs "tezos-baker" mbProto
-
--- | Creates daemon process from the binary path and arguments.
--- Returns either 'CreateProcess' or error message if path or arguments
--- are not specified.
-createDaemonProcess
- :: Maybe FilePath
- -> Either DaemonBootstrapError [String]
- -> Text
- -> Maybe ProtocolHash
- -> Either DaemonBootstrapError CreateProcess
-createDaemonProcess path args daemonName mbProto = do
-  let
-    eiBinaryPath = maybeToRight (DaemonBootstrapError_NoBinary daemonName mbProto) path
-  binaryPath <- eiBinaryPath
-  binaryArgs <- args
-  pure $ proc binaryPath binaryArgs
+createBakerProcess paths mbProto =
+  let mbBakerPath = getBakerPath paths mbProto in
+  case mbBakerPath of
+    Nothing -> pure $ Left $ DaemonBootstrapError_NoBinary "tezos-baker" mbProto
+    Just bakerPath -> do
+      bakerArgs <- getBakerArgs
+      pure $ Right $ proc bakerPath bakerArgs
 
 getBakerArgs
-  :: MonadUnliftIO m
-  => AppConfig
-  -> LoggingEnv
-  -> Pool Postgresql
-  -> m (Either DaemonBootstrapError [String])
-getBakerArgs appConfig logger db = do
-  mbBakerData <- runLoggingEnv logger $ runDb (Identity db) $ project1
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => m [String]
+getBakerArgs = do
+  mbBakerData <- runTransaction $ project1
     (BakerDaemonInternal_dataField ~> DeletableRow_dataSelector) CondEmpty
+  chainId <- askChainId
+  appConfig <- askAppConfig
   let
     bakerData = case mbBakerData of
       Nothing -> error "'getBakerArgs': 'BakerDaemonInternalData' is 'Nothing'."
       Just bd -> bd
     pkh = flip fromMaybe (_bakerDaemonInternalData_publicKeyHash bakerData) $
         error "'getBakerArgs': baker public key hash is 'Nothing'."
-    chainId = _appConfig_chainId appConfig
     alias = T.unpack $ _bakerDaemonInternalData_alias bakerData
-  extraArgs <- runLoggingEnv logger $ runDb (Identity db) $ select $
-    BakerExtraArgs_publicKeyHashField ==. pkh &&.
-    BakerExtraArgs_chainIdField ==. chainId
-  runLoggingEnv logger $
-    $(logDebug) $ "Baker extra args: " <> tshow extraArgs
-  let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
-  bakerCustomArgs <- runLoggingEnv logger $ getKilnBakerCustomArgs appConfig
-  pure $ Right $ protocolAgnosticArgs alias <> bakerCustomArgs <> extraArgsCmd
-  where
-    protocolAgnosticArgs alias =
+    protocolAgnosticArgs =
       [ "--endpoint", T.unpack $ render $ kilnNodeRpcURI appConfig
       , "--base-dir", tezosClientDataDir appConfig
       , "run", "with", "local", "node", nodeDataDir appConfig
       , alias
       ]
+  extraArgs <- runTransaction $ select $
+    BakerExtraArgs_publicKeyHashField ==. pkh &&.
+    BakerExtraArgs_chainIdField ==. chainId
+  $(logDebug) $ "Baker extra args: " <> tshow extraArgs
+  let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
+  bakerCustomArgs <- getKilnBakerCustomArgs
+  pure $ protocolAgnosticArgs <> bakerCustomArgs <> extraArgsCmd
+
+-- | Octez-node needs some time before it becomes able to respond to RPC queries.
+-- Due to this, daemons may fail with connection timeout. So we check that node
+-- is actually able to respond to requests before starting the baker.
+checkKilnNodeAvailability
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasNodeDataSource e
+     , HasAppConfig e
+     )
+  => m Bool
+checkKilnNodeAvailability = isRight <$> do
+  appConfig <- askAppConfig
+  nds <- asks (view nodeDataSource)
+  runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
+    nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
+
+-- | To initialize baker process we need to get its extra arguments from the database
+-- for this we need to make sure that its public key hash presents in 'BakerDaemonInternal' table
+checkBakerPkhPresence
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasNodeDataSource e
+     , HasAppConfig e
+     )
+  => m Bool
+checkBakerPkhPresence = isJust . join <$> do
+  runTransaction $ project1
+    (  BakerDaemonInternal_dataField
+    ~> DeletableRow_dataSelector
+    ~> BakerDaemonInternalData_publicKeyHashSelector
+    ) CondEmpty
+
+bakerPrestartCheck
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasNodeDataSource e
+     , HasAppConfig e
+     )
+  => m Bool
+bakerPrestartCheck = liftM2 (&&) checkKilnNodeAvailability checkBakerPkhPresence
+
+updateBakerProcessState
+  :: ( MonadLogger m
+     , PersistBackend m
+     , MonadIO m
+     )
+  => Id ProcessData
+  -> ProcessState
+  -> m ()
+updateBakerProcessState pid ps = updateProcessState pid Nothing ps
+
+handleCreateBakerProcessError
+  :: ( MonadLoggerIO m
+     , MonadUnliftIO m
+     , MonadReader e m
+     , HasNodeDataSource e
+     , HasAppConfig e
+     )
+  => Id ProcessData
+  -> DaemonBootstrapError
+  -> m ()
+handleCreateBakerProcessError pid err =
+  let
+    updatesList =
+      [ ProcessData_errorLogField =. Just (T.pack $ pretty err)
+      , ProcessData_stateField =. ProcessState_Stopped
+      ]
+    -- In case of some errors (e.g when the daemon doesn't exist for this protocol)
+    -- we don't want to try to restart the binary.
+    stopControl = [ProcessData_controlField =. ProcessControl_Stop]
+    cond = AutoKeyField ==. fromId pid
+  in runTransaction $ case err of
+    DaemonBootstrapError_NoBinary {} -> update (updatesList <> stopControl) cond
+    DaemonBootstrapError_UnknownProtocol {} -> update (updatesList <> stopControl) cond
+
+jsonLogsConsumer
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => Handle
+  -> m ()
+jsonLogsConsumer h = runConduit $ sourceHandle h .| CL.mapM_ (\errlogLine -> runLogger $ do
+    case Aeson.eitherDecodeStrict errlogLine of
+      Left decodingErr ->
+        $(logError) $ "Failed to decode error reported by baker daemons: " <> T.pack decodingErr
+      Right ev -> do
+        $(logError) $ "Baker daemon reported an error: " <> pretty ev
+        handleDaemonErrorEvent ev
+  )
+
+handleDaemonErrorEvent
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => ErrorEvent
+  -> m ()
+handleDaemonErrorEvent e = do
+  db <- askPool
+  appConfig <- askAppConfig
+  nds <- asks (view nodeDataSource)
+  let trace = _errorEvent_trace e
+      isLedgerNotFound = \case
+        ErrorTrace_LedgerNotFound -> True
+        _ -> False
+      isWrongApp = \case
+        ErrorTrace_LedgerError msg | "Application level error (sign-with-hash): Parse error" `T.isPrefixOf` msg -> True
+        _ -> False
+      isWrongHWM = \case
+        ErrorTrace_LedgerError msg | "Application level error (sign-with-hash): Incorrect data" `T.isPrefixOf` msg -> True
+        _ -> False
+      hasLedgerDisconnection = any isLedgerNotFound trace
+      hasWrongApp = any isWrongApp trace
+      needToResetHWM = any isWrongHWM trace
+  when (hasLedgerDisconnection || hasWrongApp) $ reportLedgerDisconnection db appConfig hasWrongApp
+  when hasLedgerDisconnection $ runTransaction $ do
+    mbConnectedLedger :: Maybe ConnectedLedger <- fmap listToMaybe $ select CondEmpty
+    for_ mbConnectedLedger $ \connectedLedger -> do
+      now <- getTime
+      update
+        [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
+        , ConnectedLedger_updatedField =. Just now
+        ] CondEmpty
+      notify NotifyTag_ConnectedLedger $ Just $ connectedLedger { _connectedLedger_ledgerIdentifier = Nothing }
+  when needToResetHWM $ do
+    let ledgerIOQueue = _nodeDataSource_ledgerIOQueue nds
+    liftIO $ atomically $ writeTQueue ledgerIOQueue $ checkLedgerHighWatermark appConfig nds
+
+bakerProcessWorker
+  :: ( MonadUnliftIO m
+     , MonadUnliftIO w
+     , MonadBaseNoPureAborts IO m
+     )
+  => AppConfig
+  -> NodeDataSource
+  -> Id ProcessData
+  -> NonEmpty BakerPath
+  -> m (w ())
+bakerProcessWorker appConfig nds pid paths = mkWorker $ do
+  let updateState = updateBakerProcessState pid
+  waitUntilShouldRun pid bakerPrestartCheck
+  withProcessLock pid $ do
+    runTransaction $ updateState ProcessState_Initializing
+    mbProtoHash <- runTransaction $ fetchProtocol pid
+    runTransaction $ updateState ProcessState_Starting
+    eiProcHandler <- createBakerProcess paths mbProtoHash
+    case eiProcHandler of
+      Left err -> handleCreateBakerProcessError pid err
+      Right procHandler ->
+        let closeHandles (h1, h2) = hClose h1 >> hClose h2
+            withReadWriteHandles = bracket Proc.createPipe closeHandles
+        in
+        withReadWriteHandles $ \(readHandle, writeHandle) -> do
+          writeFD <- liftIO $ handleToFd writeHandle
+          handlerThreadId <- forkIO $ jsonLogsConsumer readHandle
+          let
+            -- Logging env variables below are set based on the logging documentation from
+            -- https://tezos.gitlab.io/user/logging.html#file-descriptor-sinks
+            envVarName = "TEZOS_EVENTS_CONFIG"
+            envVarValue = mconcat
+              [ "file-descriptor-path:///dev/fd/"
+              , show writeFD
+              , "?format=one-per-line&level-at-least=error"
+              ]
+            tezosLogEnv = [(envVarName, envVarValue)]
+          startProcMonitor procHandler tezosLogEnv "kiln-baker" pid updateState
+            `finally` killThread handlerThreadId
+  where
+    mkWorker act = worker' "bakerProcessWorker" $
+      flip runReaderT (KilnEnv appConfig nds) $ runLogger act

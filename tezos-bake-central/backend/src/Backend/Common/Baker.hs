@@ -20,7 +20,7 @@ import Database.Id.Groundhog
 import Rhyolite.Backend.DB (project1)
 import Tezos.Types (ChainId, PublicKeyHash)
 
-import Backend.Config (AppConfig (..))
+import Backend.Config (AppConfig (..), HasAppConfig (..))
 import Backend.Schema
 import Common.App
 import Common.Schema
@@ -106,8 +106,14 @@ updateBakerDaemon control = do
         , ProcessData_errorLogField =. (Nothing :: Maybe Text)
         ] (AutoKeyField ==. fromId bPid))
 
-getKilnBakerCustomArgs :: (MonadLoggerIO m) => AppConfig -> m [String]
-getKilnBakerCustomArgs appConfig = do
+getKilnBakerCustomArgs
+  :: ( MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     )
+  => m [String]
+getKilnBakerCustomArgs = do
+  appConfig <- asks (view getAppConfig)
   let fullArgs = maybe [] (words . T.unpack) (_appConfig_kilnBakerCustomArgs appConfig)
   case span (/= liquidityBakingArg) fullArgs of
     (xs, _ : y : ys) | isCorrectLiquidityBakingValue y -> do

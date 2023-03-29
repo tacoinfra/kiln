@@ -429,9 +429,9 @@ backendImpl cfg serve = do
       when checkForUpgrade $ for_ maybeNamedChain $ \namedChain -> do
         addFinalizer =<< upgradeCheckWorker namedChain tezosReleaseTag networkGitLabProjectId (60 * 60) logger httpMgr db appConfig
 
-      addFinalizer =<< internalNodeWorker appConfig logger db binaryPaths
+      addFinalizer =<< internalNodeWorker appConfig dataSrc binaryPaths
       addFinalizer =<< protocolMonitorWorker appConfig dataSrc
-      addFinalizer =<< bakerDaemonProcess appConfig dataSrc logger db binaryPaths
+      addFinalizer =<< bakerDaemonProcess appConfig dataSrc binaryPaths
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case
