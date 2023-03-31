@@ -3,10 +3,6 @@ with pkgs;
 let
   outer-version = "v16.1-1";
   macos_version = "big_sur";
-    tezos-admin-client = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-admin-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "057g22p1mm4jgsip5d9fjl4h0113ljx180dn5lqihw9qvbbzdh8q";
-    };
     tezos-baker-PtLimaPt = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-PtLimaPt-${outer-version}.${macos_version}.bottle.tar.gz";
       sha256 = "0g6qs4xkb4grh16fz59609swg6fj43nxg1rwahqz9dwg39618w7j";
@@ -31,9 +27,6 @@ in stdenv.mkDerivation rec {
 
   installPhase = ''
   mkdir -p $out/bin
-
-  cp ${tezos-admin-client}/${outer-version}/bin/tezos-admin-client $out/bin/tezos-admin-client
-  chmod +x $out/bin/tezos-admin-client
 
   cp ${tezos-baker-PtLimaPt}/${outer-version}/bin/tezos-baker-PtLimaPt $out/bin/tezos-baker-PtLimaPt
   chmod +x $out/bin/tezos-baker-PtLimaPt

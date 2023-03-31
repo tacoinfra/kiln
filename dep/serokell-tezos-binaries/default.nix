@@ -9,7 +9,7 @@ stdenv.mkDerivation rec {
       sha256 = "sha256-l1D+4OmqN9tQnpMBp9vk4IfXhf9fHxGap3z0A63n72g=";
       stripRoot = false;
       };
-  binaries = ["octez-client" "octez-node" "octez-baker-*" "octez-admin-client"];
+  binaries = ["octez-client" "octez-node" "octez-baker-*"];
   # Since 'tezos-*' binaries were renamed to 'octez-*' in v15.0 Octez release
   # but Kiln uses the old names, we rename them to 'tezos-*' while copying so
   # not to make Kiln source depend on binaries names update.
