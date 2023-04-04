@@ -61,7 +61,7 @@ instance NFData BranchInfo
 data VotingPeriodInfo = VotingPeriodInfo
   { _votingPeriodInfo_votingPeriod :: VotingPeriod -- "voting_period" : { ... },
   , _votingPeriodInfo_position :: RawLevel -- "position": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-  , _votingPeriodInfo_remaining :: Maybe RawLevel -- "remaining": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+  , _votingPeriodInfo_remaining :: RawLevel -- "remaining": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
   } deriving (Show, Eq, Ord, Generic, Typeable)
 
 data VotingPeriod = VotingPeriod
