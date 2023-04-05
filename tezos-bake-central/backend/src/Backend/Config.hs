@@ -87,6 +87,8 @@ validateTrulyCustom json =
             validationNel $ maybe (Left "network.genesis.sandboxed_chain_name unavailable") Right (network ^? key "sandboxed_chain_name")
             pure json
 
+-- TODO: replace all usages with monadic analogue below
+-- and remove this function.
 nodeDataDir :: AppConfig -> FilePath
 nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
     </> case _appConfig_kilnNodeConfig appConfig of
@@ -94,6 +96,13 @@ nodeDataDir appConfig = _appConfig_kilnDataDir appConfig
           Right ncf -> fromMaybe "tezos-node" (_nodeConfigFile_dataDir ncf) </> T.unpack (toBase58Text $ _appConfig_chainId appConfig)
   where
     getDataDir json = T.unpack <$> json ^? key "data-dir" . _String
+
+getKilnNodeDataDir
+  :: ( MonadReader e m
+     , HasAppConfig e
+     )
+  => m FilePath
+getKilnNodeDataDir = asks $ views getAppConfig nodeDataDir
 
 tezosClientDataDir :: AppConfig -> FilePath
 tezosClientDataDir appConfig = _appConfig_kilnDataDir appConfig </> "tezos-client"

@@ -57,7 +57,7 @@ import Backend.Schema
 import Backend.Snapshot
 import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
-import Backend.Workers.Process (updateProcessState)
+import Backend.Process.Common (updateProcessState)
 import Backend.Workers.TezosClient
   (importSecretKey, isKnownLedgerPkh, fetchBalances, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
   showLedger, submitVote, updateConnectedLedgerViaGetConnectedLedger)

@@ -142,6 +142,7 @@ library
     Backend.IndexQueries
     Backend.Migrations
     Backend.NotifyHandler
+    Backend.Process.Common
     Backend.Process.Errors
     Backend.Process.Node
     Backend.RequestHandler
@@ -154,7 +155,6 @@ library
     Backend.ViewSelectorHandler
     Backend.Workers.Baker
     Backend.Workers.Node
-    Backend.Workers.Process
     Backend.Workers.TezosClient
     Backend.Workers.TezosRelease
     System.Which

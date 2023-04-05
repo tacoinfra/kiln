@@ -14,26 +14,24 @@
 
 module Backend.Process.Node where
 
-import UnliftIO.Exception (throwIO, tryJust)
+import UnliftIO.Exception (Handler (..), catches, throwIO, tryJust)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
-import Control.Monad.Logger (MonadLogger, logInfoNS, logDebug, logWarn, logError, logErrorNS)
-import Control.Monad.Trans (lift)
+import Control.Monad.Logger (MonadLogger, MonadLoggerIO, logInfoNS, logDebug, logWarn, logError, logErrorNS)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Builder as Builder
 import Data.Dependent.Sum (DSum (..))
 import qualified Data.HashMap.Lazy as HashMap
-import Data.Pool (Pool)
 import Data.List (isInfixOf)
 import Data.Version
+import Database.Id.Groundhog (fromId)
 import Database.Groundhog.Postgresql
-import Named
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, project1)
-import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, project1)
+import Rhyolite.Backend.Logging (runLoggingEnv)
 import Snap.Core (addToOutput, MonadSnap)
 import UnliftIO.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removePathForcibly)
 import System.Exit (ExitCode(..))
-import qualified System.FilePath as FilePath
+import System.FilePath ((</>))
 import UnliftIO.Process as Proc
 import System.IO (hGetContents)
 import System.IO.Error (isEOFError)
@@ -42,10 +40,13 @@ import System.Which (staticWhich)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
-import Backend.Config (AppConfig (..), nodeDataDir, BinaryPaths(..))
+import Backend.Alerts (reportInternalNodeFailed)
+import Backend.Common.Worker (worker')
+import Backend.Config (AppConfig (..), BinaryPaths (..), HasAppConfig, getKilnNodeDataDir)
+import Backend.Env
 import Backend.NodeRPC
+import Backend.Process.Common
 import Backend.Schema
-import Backend.Workers.Process
 import Common.Route (ExportLog(..))
 import Common.Schema
 import ExtraPrelude
@@ -62,13 +63,12 @@ internalNodeWorker
      , MonadBaseNoPureAborts IO m
      )
   => AppConfig
-  -> LoggingEnv
-  -> Pool Postgresql
+  -> NodeDataSource
   -> Maybe BinaryPaths
   -> m (w ())
-internalNodeWorker appConfig logger db maybePaths = do
+internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
   -- Always create a NodeInternal and corresponsing ProcessData
-  (nid, pid) <- runLoggingEnv logger $ runDb (Identity db) $ do
+  (nid, pid) <- runTransaction $ do
     project1 (NodeInternal_idField, NodeInternal_dataField ~> DeletableRow_dataSelector) CondEmpty >>= \case
       (Just v) -> return v
       Nothing -> do
@@ -107,21 +107,36 @@ internalNodeWorker appConfig logger db maybePaths = do
         "--net-addr", "0.0.0.0:" <> nodeNetPort
       ]
       ++ nodeExtraArgs
-  liftIO $ createDirectoryIfMissing True (nodeDataDir appConfig)
-  processWorker
-    (\updateState -> withNodeConfig appConfig $ \nodeConfigPath ->
-      initNode ! #logger logger ! #config appConfig ! #nodePath nodePath ! #configFile nodeConfigPath ! #db db ! #updateState updateState
-    )
-    ! #logger logger
-    ! #db db
-    ! #config appConfig
-    ! #logNamespace "kiln-node"
-    ! #mkProcess (\(dataDir, extraArgs) -> withNodeConfig appConfig $ \nodeConfigPath ->
-                    return $ Right $ proc nodePath (nodeArgs nodeConfigPath dataDir ++ extraArgs))
-    ! #pid pid
-    ! #prestartCheck (pure True)
-    ! #mkNotify (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
-    ! #jsonErrorLogsHandler Nothing
+  nodeDirPath <- getKilnNodeDataDir
+  liftIO $ createDirectoryIfMissing True nodeDirPath
+
+  mkWorker $ do
+    let runPrestartCheck = pure True -- We don't have a prestart check for the node process
+        updateState = updateNodeProcessState pid nid
+        initFailed = do
+          update
+            [ ProcessData_controlField =. ProcessControl_Stop
+            ] (AutoKeyField ==. fromId pid)
+          updateState ProcessState_Failed
+    waitUntilShouldRun pid runPrestartCheck
+    withProcessLock pid $ do
+      runTransaction $ updateState ProcessState_Initializing
+      let
+        initNodeProcess = withNodeConfig appConfig $ \nodeConfigPath ->
+          initNode nodePath nodeConfigPath nid pid
+      dataDir <- catches initNodeProcess
+        [ Handler $ \(e :: InternalNodeFailureReason) ->
+            runTransaction (initFailed *> runReaderT (reportInternalNodeFailed pid e) appConfig) *> throwIO e
+        , Handler $ \(e :: ExitCode) -> runTransaction initFailed *> throwIO e
+        ]
+      runTransaction $ updateState ProcessState_Starting
+      procHandler <- withNodeConfig appConfig $ \nodeConfigPath ->
+        pure $ proc nodePath (nodeArgs nodeConfigPath dataDir)
+      startProcMonitor procHandler [] "kiln-node" pid updateState
+  where
+    mkWorker act = worker' "nodeProcessWorker" $
+      flip runReaderT (KilnEnv appConfig nds) $ runLogger act
+    runLoggerWithEnv act = flip runReaderT (KilnEnv appConfig nds) $ runLogger act
 
 getKilnNodeVersion :: MonadIO m => FilePath -> m (Maybe Version)
 getKilnNodeVersion versionFile = liftIO $ do
@@ -131,19 +146,22 @@ getKilnNodeVersion versionFile = liftIO $ do
   pure $ parse =<< HashMap.lookup ("version" :: Text) =<< Aeson.decode vf
 
 initNode
-  :: MonadUnliftIO m
-  => "logger" :! LoggingEnv
-  -> "config" :! AppConfig
-  -> "nodePath" :! FilePath
-  -> "configFile" :! FilePath
-  -> "db" :! Pool Postgresql
-  -> "updateState" :! (ProcessState -> m ())
-  -> m (FilePath, [String])
-initNode (Arg logger) (Arg appConfig) (Arg nodePath) (Arg nodeConfigPath) _ (Arg updateState) = runLoggingEnv logger $ do
-  let dataDir = nodeDataDir appConfig
-  let identityFile = dataDir `FilePath.combine` "identity.json"
-      versionFile  = dataDir `FilePath.combine` "version.json"
-      storeFolder  = dataDir `FilePath.combine` "store"
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasNodeDataSource e
+     , HasAppConfig e
+     )
+  => FilePath
+  -> FilePath
+  -> Id Node
+  -> Id ProcessData
+  -> m FilePath
+initNode nodePath nodeConfigPath nodeId pid = do
+  dataDir <- getKilnNodeDataDir
+  let identityFile = dataDir </> "identity.json"
+      versionFile  = dataDir </> "version.json"
+      storeFolder  = dataDir </> "store"
 
   versionFileExists <- liftIO $ doesFileExist versionFile
   mVersion <- if not versionFileExists then pure Nothing else getKilnNodeVersion versionFile
@@ -152,7 +170,7 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) (Arg nodeConfigPath) _ (Arg
   identityFileExists <- liftIO $ doesFileExist identityFile
   unless identityFileExists $ do
     -- Generate Identity
-    lift $ updateState (ProcessState_Node NodeProcessState_GeneratingIdentity)
+    runTransaction $ updateNodeProcessState pid nodeId (ProcessState_Node NodeProcessState_GeneratingIdentity)
     runCommandWithLogging nodePath ["identity", "generate", "--config-file", T.pack nodeConfigPath, "--data-dir", T.pack dataDir]
   storeExists <- liftIO $ doesDirectoryExist storeFolder
   -- If there is some data in the storage, we try to upgrade it in case upgrade
@@ -161,23 +179,15 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) (Arg nodeConfigPath) _ (Arg
     -- In case node storage is up to date this is essentially a no-op
     (exitCode, out', err') <- liftIO $ readProcessWithExitCode nodePath
       ["upgrade", "--data-dir", dataDir, "--config-file", nodeConfigPath, "storage"] ""
-    -- Currently there is no nice way to check whether upgrade was successful, see
-    -- https://gitlab.com/tezos/tezos/-/issues/1687.
-    -- However, we still do this check and hope that the aformentioned issue
-    -- will be resolved in the future release.
     case exitCode of
       ExitSuccess ->
         unless ("node dir is up-to-date" `isInfixOf` out') $ do
-          liftIO $ removePathForcibly $ dataDir `FilePath.combine` "lmdb_store_to_remove"
+          liftIO $ removePathForcibly $ dataDir </> "lmdb_store_to_remove"
           logInfoNS "kiln-node" "Kiln node storage was successfully upgraded"
       _ -> do
         logErrorNS "kiln-node" $ "Kiln node storage upgrade failed with: " <> T.pack err'
         liftIO $ throwIO exitCode
-  let useArchiveMode = False
-      extraArgs = if useArchiveMode
-        then ["--history-mode", "archive"]
-        else []
-  return (dataDir, extraArgs)
+  return dataDir
   where
     runCommandWithLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m ()
     runCommandWithLogging cmd args = do
@@ -191,6 +201,19 @@ initNode (Arg logger) (Arg appConfig) (Arg nodePath) (Arg nodeConfigPath) _ (Arg
         else do
           logErrorNS "kiln-node" $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> "\n<STDOUT>\n" <> out <> "\n<STDERR>\n" <> err
           liftIO $ throwIO exitCode
+
+updateNodeProcessState
+  :: ( MonadLogger m
+     , PersistBackend m
+     , MonadIO m
+     )
+  => Id ProcessData
+  -> Id Node
+  -> ProcessState
+  -> m ()
+updateNodeProcessState pid nodeId ps =
+  let mkNotification = Just $ \pd -> (NotifyTag_NodeInternal, (nodeId, pd))
+  in updateProcessState pid mkNotification ps
 
 handleExportLogs :: MonadSnap m => NodeDataSource -> DSum ExportLog Identity -> m ()
 handleExportLogs nds lType = do

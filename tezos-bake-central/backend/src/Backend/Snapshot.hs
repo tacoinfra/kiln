@@ -63,9 +63,9 @@ import Backend.Common
 import Backend.Config
 import Backend.Http (doRequestLBSThrows)
 import Backend.NodeRPC
+import Backend.Process.Common
 import Backend.Process.Node (nixNodePath)
 import Backend.Schema
-import Backend.Workers.Process
 import Common.Schema
 import ExtraPrelude
 
