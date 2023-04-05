@@ -59,7 +59,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Process.Common (updateProcessState)
 import Backend.Workers.TezosClient
-  (importSecretKey, isKnownLedgerPkh, fetchBalances, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
+  (importSecretKey, isKnownLedgerPkh, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
   showLedger, submitVote, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -496,7 +496,6 @@ requestHandler appConfig nds =
       for_ (reverse sks) $ \sk -> do
         isKnown <- isKnownLedgerPkh appConfig db sk
         unless isKnown $ queryLedger $ showLedger appConfig db nds sk
-      fetchBalances appConfig db nds (reverse sks)
 
 getDefaultMailServer :: PersistBackend m => m (Maybe (Id MailServerConfig, MailServerConfig))
 getDefaultMailServer =

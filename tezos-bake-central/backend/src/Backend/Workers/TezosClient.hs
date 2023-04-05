@@ -257,8 +257,7 @@ isKnownLedgerPkh appConfig db sk = do
   withDbAndConfig db appConfig $ do
     existing <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
     case existing of
-      Just la -> do
-        update [LedgerAccount_balanceField =. (Nothing :: Maybe Tez)] $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+      Just la ->
         pure $ isJust (_ledgerAccount_publicKeyHash la) || _ledgerAccount_requested la
       Nothing -> do
         let la = LedgerAccount
@@ -272,23 +271,32 @@ isKnownLedgerPkh appConfig db sk = do
         insert la
         pure False
 
-fetchBalances :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> [SecretKey] -> m ()
-fetchBalances appConfig db nds sks = withDbAndConfig db appConfig $ for_ sks $ \sk -> do
-  mla <- selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-  for_ mla $ \la -> case _ledgerAccount_publicKeyHash la of
-    -- pkh is not yet known, balance will be fetched later
-    Nothing -> pure ()
-    Just pkh -> do
-      balanceOrErr <- flip runReaderT nds . runExceptT @KilnRpcError $ do
-        mbHeadBlock <- ask >>= liftIO . atomically . dataSourceFinalHead
-        case mbHeadBlock of
-          Nothing -> ExceptT $ pure $ Left KilnRpcError_NoKnownHeads
-          Just headBlock -> nodeQueryDataSource $ nodeQuery_Balance (headBlock ^. hash) (headBlock ^. level) pkh
-      case balanceOrErr of
-        Left err -> $(logError) $ "Failed to get balance of account " <> toPublicKeyHashText pkh <> " due to: " <> prettyKilnRpcError err
-        Right balance -> do
-          update [LedgerAccount_balanceField =. Just balance] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-          notify NotifyTag_ShowLedger (sk, Right (pkh, Just balance))
+fetchBalance
+  :: (MonadLoggerIO m, MonadIO m)
+  => AppConfig
+  -> Pool Postgresql
+  -> NodeDataSource
+  -> (SecretKey, PublicKeyHash)
+  -> m ()
+fetchBalance appConfig db nds (sk, pkh) = withDbAndConfig db appConfig $ do
+  balanceOrErr <- flip runReaderT nds . runExceptT @KilnRpcError $
+    ask >>= liftIO . atomically . dataSourceFinalHead >>= \case
+      Nothing -> ExceptT $ pure $ Left KilnRpcError_NoKnownHeads
+      Just headBlock -> nodeQueryDataSource $
+        nodeQuery_Balance (headBlock ^. hash) (headBlock ^. level) pkh
+
+  case balanceOrErr of
+    Left err -> $(logError) $ T.concat
+      [ "Failed to get balance of account "
+      , toPublicKeyHashText pkh
+      , " due to: "
+      , prettyKilnRpcError err
+      ]
+    Right balance -> do
+      update
+        [LedgerAccount_balanceField =. Just balance]
+        (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+      notify NotifyTag_ShowLedger (sk, Right (pkh, Just balance))
 
 showLedger
   :: ( MonadLoggerIO m
@@ -356,6 +364,7 @@ showLedgerImpl appConfig db nds sk = do
       runLoggingEnv logger $ runDb (Identity db) $ flip runReaderT appConfig $ do
         update [LedgerAccount_publicKeyHashField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
         notify NotifyTag_ShowLedger (sk, Right (pkh, Nothing))
+      runLoggingEnv logger $ fetchBalance appConfig db nds (sk, pkh)
   where
     getPublicKeyHashZeronet = \case
       foundApp : _manufacturer: _product: _application: _curve: _path: _pk : pkh' : _
