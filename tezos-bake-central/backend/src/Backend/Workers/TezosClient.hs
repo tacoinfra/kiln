@@ -141,7 +141,7 @@ To use keys at BIP32 path m/44'/1729'/0'/0' (default Tezos key path), use one of
 -}
 
 defaultTimeout :: Maybe (NominalDiffTime, ClientError)
-defaultTimeout = Just (5, ClientError_Timeout)
+defaultTimeout = Just (20, ClientError_Timeout)
 
 noTimeout :: Maybe (NominalDiffTime, e)
 noTimeout = Nothing
