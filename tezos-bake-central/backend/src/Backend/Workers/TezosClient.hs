@@ -13,6 +13,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -24,6 +25,7 @@ import Control.Monad.Except
 import Control.Monad.Logger
 import Data.Aeson.Lens
 import Data.Either (fromLeft)
+import Data.Either.Combinators (whenLeft)
 import Data.Int (Int32)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime)
@@ -288,9 +290,58 @@ fetchBalances appConfig db nds sks = withDbAndConfig db appConfig $ for_ sks $ \
           update [LedgerAccount_balanceField =. Just balance] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
           notify NotifyTag_ShowLedger (sk, Right (pkh, Just balance))
 
-showLedger :: (MonadLoggerIO m, MonadIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> LedgerQuery m
-showLedger appConfig db _nds sk = LedgerQuery LedgerQueryType_ShowLedger $ do
-  pkhOrErr <- runExceptT $ do
+showLedger
+  :: ( MonadLoggerIO m
+     , MonadIO m
+     )
+  => AppConfig
+  -> Pool Postgresql
+  -> NodeDataSource
+  -> SecretKey
+  -> LedgerQuery m
+showLedger appConfig db nds sk = LedgerQuery LedgerQueryType_ShowLedger $
+  showLedgerWithRetry appConfig db nds sk 3
+
+showLedgerWithRetry
+  :: ( MonadLoggerIO m
+     , MonadIO m
+     )
+  => AppConfig
+  -> Pool Postgresql
+  -> NodeDataSource
+  -> SecretKey
+  -> Int
+  -> m ()
+showLedgerWithRetry appConfig db nds sk numRetries = do
+  resOrErr <- runExceptT $ showLedgerImpl appConfig db nds sk
+  whenLeft resOrErr $ \err -> do
+    if numRetries <= 0
+    then handleClientError err
+    else showLedgerWithRetry appConfig db nds sk (numRetries - 1)
+  where
+    handleClientError = \case
+      err@ClientError_PublicKeyHashNotFound -> withDbAndConfig db appConfig $ do
+        -- If we failed to fetch pkh, we'll attempt once again on the next iteration
+        update [LedgerAccount_requestedField =. False] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
+        notify NotifyTag_ShowLedger (sk, Left $ prettyClientError err)
+      err -> do
+        withDbAndConfig db appConfig $ do
+          delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
+          notify NotifyTag_ShowLedger (sk, Left $ prettyClientError err)
+        $(logError) $ "showLedgerWithRetry: " <> prettyClientError err
+
+showLedgerImpl
+  :: ( MonadIO m
+     , MonadLoggerIO m
+     )
+  => AppConfig
+  -> Pool Postgresql
+  -> NodeDataSource
+  -> SecretKey
+  -> ExceptT ClientError m ()
+showLedgerImpl appConfig db nds sk = do
+  let logger = _nodeDataSource_logger nds
+  mbPkh <- do
     stdout <- runClientCommand appConfig defaultTimeout ["show", "ledger", T.unpack $ toSecretKeyText sk] $ \_warnings errors -> if
       | e : _ <- errors, Just _sk' <- T.stripPrefix "No ledger found for " e -> Left ClientError_LedgerDisconnected
       | "Ledger Transport level error:" : _ <- errors -> Left ClientError_LedgerDisconnected
@@ -299,18 +350,10 @@ showLedger appConfig db _nds sk = LedgerQuery LedgerQueryType_ShowLedger $ do
     let pkh = getPublicKeyHash (T.lines stdout)
     when (isNothing pkh) $ $(logWarn) $ "showLedger: failed to find public key hash from: " <> stdout
     pure pkh
-  case pkhOrErr of
-    Left err -> do
-      withDbAndConfig db appConfig $ do
-        delete $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-        notify NotifyTag_ShowLedger (sk, Left (T.pack $ show err))
-      $(logError) (T.pack (show err))
-    Right Nothing -> withDbAndConfig db appConfig $ do
-      -- If we failed to fetch pkh, we'll attempt once again on the next iteration
-      update [LedgerAccount_requestedField =. False] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
-      notify NotifyTag_ShowLedger (sk, Left "tezosClientWorker:showLedger: public key hash unavailable")
-    Right (Just pkh) -> do
-      withDbAndConfig db appConfig $ do
+  case mbPkh of
+    Nothing -> throwError ClientError_PublicKeyHashNotFound
+    Just pkh -> withDbAndConfig db appConfig $ do
+      runLoggingEnv logger $ runDb (Identity db) $ flip runReaderT appConfig $ do
         update [LedgerAccount_publicKeyHashField =. Just pkh] (embeddedSecretKeyEquals LedgerAccount_secretKeyField sk)
         notify NotifyTag_ShowLedger (sk, Right (pkh, Nothing))
   where
@@ -622,3 +665,12 @@ submitBallot appConfig proposal ballot = do
       Ballot_Yay -> "yay"
       Ballot_Nay -> "nay"
       Ballot_Pass -> "pass"
+
+prettyClientError :: ClientError -> Text
+prettyClientError = \case
+  ClientError_NodeNotReady -> "Kiln node should be synced to run octez-client command"
+  ClientError_RequestDeclinedByLedger -> "Octez-client command has been declined by ledger"
+  ClientError_LedgerDisconnected -> "Ledger device is disconnected"
+  ClientError_Timeout -> "Timeout while executing octez-client command"
+  ClientError_PublicKeyHashNotFound -> "Public key hash is unavailable"
+  ClientError_Other desc -> "Octez-client command failed: " <> desc

@@ -92,6 +92,7 @@ data ClientError
   | ClientError_RequestDeclinedByLedger
   | ClientError_LedgerDisconnected
   | ClientError_Timeout
+  | ClientError_PublicKeyHashNotFound
   | ClientError_Other Text
   deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ClientError
