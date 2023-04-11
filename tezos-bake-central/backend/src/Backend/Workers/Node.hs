@@ -25,7 +25,7 @@ import Control.Monad.Catch (MonadMask, MonadThrow, throwM)
 import Control.Monad.Except (ExceptT, runExceptT, unless)
 import Control.Monad.Fail (MonadFail)
 import Control.Monad.IO.Unlift (MonadUnliftIO (..))
-import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logDebugSH, logInfo)
+import Control.Monad.Logger (LoggingT, MonadLoggerIO, MonadLogger, logDebug, logInfo)
 import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson (decode')
@@ -75,11 +75,12 @@ import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearN
                        clearPastVotingPeriodErrors, reportVotingReminderError)
 import Backend.Common (AppSerializable, threadDelay', unsupervisedWorkerWithDelay, worker', workerWithDelay)
 import Backend.Common.Node (isNodeSynced)
-import Backend.Config (AppConfig (..), kilnNodeRpcURI)
+import Backend.Config (AppConfig (..), BakerPath (..), BinaryPaths (..), HasAppConfig (..), appConfig_binaryPaths, kilnNodeRpcURI)
 import Backend.Env
 import Backend.IndexQueries
 import Backend.Http (doRequestLBS)
 import Backend.NodeRPC
+import Backend.Process.Baker
 import Backend.Schema
 import Backend.Supervisor (withTermination)
 import Backend.STM (MonadSTM)
@@ -888,66 +889,20 @@ protocolMonitorWorker
   -> m (w ())
 protocolMonitorWorker appConfig nds = mkWorker $
   waitForNewFinalHead >>= \latestHead -> runLogger $ do
-    $(logDebugSH) ("protocolMonitorWorker: Started"::Text,())
-    let
-      getProtocol = getProtocol' >>= \case
-        Right p -> return p
-        Left e -> do
-          logKilnRpcError "protocolMonitorWorker: fetch protocol" e
-          threadDelay' 1
-          getProtocol
-
-      -- There is a hardfork for babylon where if our node sees BABY5H promoted it'll get upgraded to BabyM1.
-      -- So if we see BABY5H about to be promoted, we actually want to start the PsBabyM1 alt baker instead.
-      babyHax :: ProtocolHash -> ProtocolHash
-      babyHax "PsBABY5HQTSkA4297zNHfsZNKtxULfL18y95qb3m53QJiXGmrbU" = "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS"
-      babyHax ph = ph
-
-      -- Yet another hardfork happened on hangzhou, so we should follow it as well
-      hangzhouHax :: ProtocolHash -> ProtocolHash
-      hangzhouHax "PtHangzHogokSuiMHemCuowEavgYTP8J5qQ9fQS793MHYFpCY3r" = "PtHangz2aRngywmSRGGvrcTyMbbdpWdpFKuS4uMWxg2RaH9i1qx"
-      hangzhouHax ph = ph
-
-      -- Yet another hardfork happened on mumbai, so we should follow it as well
-      mumbaiHax :: ProtocolHash -> ProtocolHash
-      mumbaiHax "PtMumbaiiFFEGbew1rRjzSPyzRbA51Tm3RVZL5suHPxSZYDhCEc" = "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
-      mumbaiHax ph = ph
-
-      getProtocol' = runExceptT @KilnRpcError $ do
-        blk <- nodeQueryDataSource $ nodeQuery_Block (latestHead ^. hash)
-        let vp = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
-            currentProtocol = blk ^. blockMetadata . blockMetadata_protocol
-        remainingBlocksInVotingPeriod <- case blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_remaining of
-          Just remaining -> return remaining
-          Nothing -> do
-            let votingPeriodPosition = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_position
-            protoConstants <- runNodeQueryT $ getProtocolConstants $ Right currentProtocol
-            return $ getBlocksPerVotingPeriod protoConstants - votingPeriodPosition - 1
-        -- This will trigger daemons for the upcoming protocol to start, so we start them
-        -- on the last voting period 100 blocks prior to the protocol upgrade.
-        tp <- if vp == VotingPeriodKind_Adoption && remainingBlocksInVotingPeriod < 100
-          then
-            let
-              queryBlockHash
-                -- For some reason since Ithaca, the last block in adoption period doesn't contain
-                -- information about proposals. So in this case we fetch the proposal hash from its
-                -- predecessor.
-                -- TODO: re-check this condition later and make it more strict.
-                | remainingBlocksInVotingPeriod <= 1 = latestHead ^. predecessor
-                | otherwise = latestHead ^. hash
-            in fmap (mumbaiHax . hangzhouHax . babyHax) <$> nodeQueryDataSource (nodeQuery_CurrentProposal queryBlockHash)
-          else return Nothing
-        return (blk ^. blockMetadata . blockMetadata_protocol, tp)
-
-    (mainProto, altProto) <- getProtocol
-
+    $(logDebug) $ "protocolMonitorWorker: started at block " <> tshow (unRawLevel $ latestHead ^. level)
+    (mainProto, altProto) <- getProtocolWithRetry latestHead
     let
       setControl c p = update
         [ ProcessData_controlField =. c
         , ProcessData_errorLogField =. (Nothing :: Maybe Text)
         ] (AutoKeyField ==. fromId p)
 
-    $(logDebugSH) ("protocolMonitorWorker: setting protocol"::Text, mainProto, altProto)
+    $(logDebug) $ T.concat
+      [ "protocolMonitorWorker: setting protocol. mainProto = "
+      , toBase58Text mainProto
+      , "altProto = "
+      , tshow $ toBase58Text <$> altProto
+      ]
     let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
     runTransaction $ project1 ds CondEmpty >>= \case
       Nothing -> return ()
@@ -970,14 +925,14 @@ protocolMonitorWorker appConfig nds = mkWorker $
                 update [ds ~> BakerDaemonInternalData_altProtocolSelector =. Just p] CondEmpty
                 when isRunning $ setControl ProcessControl_Restart tbpid
           stopMain = do
-            $(logDebugSH) ("protocolMonitorWorker: stopping main protocol baker"::Text, mainProto)
+            $(logDebug) $ "protocolMonitorWorker: stopping maing protocol baker " <> toBase58Text mainProto
             setControl ProcessControl_Stop bpid
           stopAlt = do
-            $(logDebugSH) ("protocolMonitorWorker: stopping alternate protocol baker"::Text, mainProto)
+            $(logDebug) $ "protocolMonitorWorker: stopping alternate protocol baker " <> toBase58Text mainProto
             setControl ProcessControl_Stop tbpid
           -- stop main and swap pids
           altToMain = do
-            $(logDebugSH) ("protocolMonitorWorker: swapping processes"::Text, mainProto)
+            $(logDebug) $ "protocolMonitorWorker: swapping processes " <> toBase58Text mainProto
             stopMain
             update [ ds ~> BakerDaemonInternalData_protocolSelector =. mainProto
                   , ds ~> BakerDaemonInternalData_bakerProcessDataSelector =. tbpid
@@ -992,10 +947,53 @@ protocolMonitorWorker appConfig nds = mkWorker $
             | otherwise -> stopAlt >> setMainProto
 
     -- Wait till the end of this cycle
-    $(logDebugSH) ("protocolMonitorWorker: waiting for next cycle"::Text)
+    $(logDebug) "protocolMonitorWorker: waiting for next cycle"
     waitTillEndOfCycle latestHead
   where
     mkWorker act = worker' "protocolMonitorWorker" $ runReaderT act (KilnEnv appConfig nds)
+
+getProtocolWithRetry
+  :: ( MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => VeryBlockLike
+  -> m (ProtocolHash, Maybe ProtocolHash)
+getProtocolWithRetry latestHead = getProtocol latestHead >>= \case
+  Right p -> return p
+  Left e -> do
+    logKilnRpcError "protocolMonitorWorker: fetch protocol" e
+    threadDelay' 1
+    getProtocolWithRetry latestHead
+
+getProtocol
+  :: ( MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => VeryBlockLike
+  -> m (Either KilnRpcError (ProtocolHash, Maybe ProtocolHash))
+getProtocol latestHead = runExceptT @KilnRpcError $ do
+  blk <- nodeQueryDataSource $ nodeQuery_Block (latestHead ^. hash)
+  let currentProtocol = blk ^. blockMetadata . blockMetadata_protocol
+      remainingBlocksInVotingPeriod = blk ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_remaining
+      queryBlockHash
+        -- For some reason since Ithaca, the last block in adoption period doesn't contain
+        -- information about proposals. So in this case we fetch the proposal hash from its
+        -- predecessor.
+        -- TODO: re-check this condition later and make it more strict.
+        | remainingBlocksInVotingPeriod <= 1 = latestHead ^. predecessor
+        | otherwise = latestHead ^. hash
+  mbCurrentProposal <- nodeQueryDataSource (nodeQuery_CurrentProposal queryBlockHash)
+  mbCustomPaths <- asks (view $ getAppConfig . appConfig_binaryPaths)
+  let
+    protos = NE.map _bakerPath_proto $ maybe defaultBakerPaths _binaryPaths_bakerPaths mbCustomPaths
+    -- This will trigger daemon for the upcoming protocol to start, so we start them
+    -- once the baker binary for the next protocol is available.
+    nextProto = mbCurrentProposal >>= guard . (`elem` protos) >> mbCurrentProposal
+  return (currentProtocol, nextProto)
 
 waitTillEndOfCycle
   :: ( MonadIO m

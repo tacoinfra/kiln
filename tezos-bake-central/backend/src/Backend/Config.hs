@@ -15,6 +15,7 @@
 module Backend.Config where
 
 import Control.Lens (Lens', view)
+import Control.Lens.TH (makeLenses)
 import Control.Monad.Reader (MonadReader, asks)
 import Data.Aeson (FromJSON(..), Value(..), withObject, (.:))
 import qualified Data.Aeson as Aeson
@@ -294,3 +295,5 @@ Aeson.deriveToJSON tezosJsonOptions
     . Aeson.fieldLabelModifier tezosJsonOptions
   , Aeson.omitNothingFields = True
   } ''BakerPath
+
+makeLenses ''AppConfig
