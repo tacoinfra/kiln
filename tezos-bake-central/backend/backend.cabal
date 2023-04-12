@@ -154,6 +154,7 @@ library
     Backend.Version
     Backend.ViewSelectorHandler
     Backend.Workers.Baker
+    Backend.Workers.LedgerPolling
     Backend.Workers.Node
     Backend.Workers.TezosClient
     Backend.Workers.TezosRelease

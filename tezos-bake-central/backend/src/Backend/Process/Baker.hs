@@ -32,7 +32,7 @@ import Database.Id.Groundhog (fromId)
 import Database.Groundhog.Postgresql
 import Fmt (pretty)
 import GHC.IO.Handle.FD (handleToFd)
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts, getTime, project1)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, project1)
 import UnliftIO.Concurrent (forkIO, killThread)
 import UnliftIO.Exception (bracket, finally)
 import UnliftIO.Process as Proc
@@ -308,10 +308,8 @@ handleDaemonErrorEvent e = do
   when hasLedgerDisconnection $ runTransaction $ do
     mbConnectedLedger :: Maybe ConnectedLedger <- fmap listToMaybe $ select CondEmpty
     for_ mbConnectedLedger $ \connectedLedger -> do
-      now <- getTime
       update
         [ ConnectedLedger_ledgerIdentifierField =. (Nothing :: Maybe LedgerIdentifier)
-        , ConnectedLedger_updatedField =. Just now
         ] CondEmpty
       notify NotifyTag_ConnectedLedger $ Just $ connectedLedger { _connectedLedger_ledgerIdentifier = Nothing }
   when needToResetHWM $ do

@@ -97,6 +97,7 @@ import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
+import Backend.Workers.LedgerPolling
 import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
 import Backend.Workers.TezosClient (computeChainId)
 import Backend.Workers.TezosRelease
@@ -432,6 +433,9 @@ backendImpl cfg serve = do
       addFinalizer =<< internalNodeWorker appConfig dataSrc binaryPaths
       addFinalizer =<< protocolMonitorWorker appConfig dataSrc
       addFinalizer =<< bakerDaemonProcess appConfig dataSrc binaryPaths
+
+      addFinalizer =<< ledgerPollingStateWorker 1 appConfig dataSrc
+      addFinalizer =<< ledgerConnectivityCheckWorker 5 dataSrc appConfig
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case

@@ -111,14 +111,14 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db = LedgerQuery LedgerQuer
     -- is this what we want?
     updateConnectedLedger mliv = do
       withDbAndConfig db appConfig $ do
+        oldPollingState :: Maybe LedgerPollingState <- project1 ConnectedLedger_ledgerPollingStateField CondEmpty
+        let pollingState = oldPollingState ?: LedgerPollingState_Unknown
         $(logDebug) ("Updating connectedledger: " <> tshow mliv)
-        now <- getTime
         let connectedLedger = ConnectedLedger
               { _connectedLedger_ledgerIdentifier = fmap (view _1) mliv
               , _connectedLedger_bakingAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Baking)
               , _connectedLedger_walletAppVersion = mliv >>= \(_, app, version) -> version <$ guard (app == LedgerApp_Wallet)
-              , _connectedLedger_forceConnectivityCheck = False
-              , _connectedLedger_updated = Just now
+              , _connectedLedger_ledgerPollingState = pollingState
               }
         deleteAll' @ConnectedLedger Proxy
         insert connectedLedger
