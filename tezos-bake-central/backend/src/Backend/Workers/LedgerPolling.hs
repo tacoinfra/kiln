@@ -40,6 +40,7 @@ ledgerConnectivityCheckWorker
   => NominalDiffTime
   -> NodeDataSource
   -> AppConfig
+  -> Bool
   -> m (w ())
 ledgerConnectivityCheckWorker delay nds appConfig pollingEnabled = do
   createDirectoryIfMissing True (tezosClientDataDir appConfig)

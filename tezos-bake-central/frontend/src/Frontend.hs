@@ -449,10 +449,21 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
 
       internalBakerMayDyn <- watchInternalBaker
 
+      mbConnectedLedgerDyn <- watchConnectedLedger
       dHasLedgerConnectedChecks <- fmap (maybe False _frontendConfig_ledgerConnectedChecks) <$> watchFrontendConfig
+      let mbLedgerPollingStateDyn = _connectedLedger_ledgerPollingState <$$> mbConnectedLedgerDyn
+          showLedgerIndicatorDyn  = ffor2 dHasLedgerConnectedChecks mbLedgerPollingStateDyn $
+            \hasLedgerConnectedChecks mbLedgerPollingState ->
+              -- If ledger polling is disabled, we show ledger indicator only while Kiln Baker
+              -- is baking to be sure that it displays the correct info (see #186)
+              --
+              -- Having 'ledgerPollingState == Just LedgerPollingState_Disabled' indicates that
+              -- Kiln Baker is baking now.
+              -- For more context, see 'Backend.Workers.LedgerPolling.ledgerPollingStateWorker'.
+              hasLedgerConnectedChecks || mbLedgerPollingState == Just LedgerPollingState_Disabled
 
-      dyn_ $ ffor2 internalBakerMayDyn dHasLedgerConnectedChecks $ \internalBakerMay hasLedgerConnectedChecks -> do
-        whenJust internalBakerMay $ \(intBakerPkh, _) -> when hasLedgerConnectedChecks $ do
+      dyn_ $ ffor2 internalBakerMayDyn showLedgerIndicatorDyn $ \internalBakerMay showLedgerIndicator -> do
+        whenJust internalBakerMay $ \(intBakerPkh, _) -> when showLedgerIndicator $ do
           elAttr "div" ("class" =: "item" <> "style" =: "position: relative") $ divClass "content" $ do
             bakerAlertsDyn <- watchBakerAlerts
             let
