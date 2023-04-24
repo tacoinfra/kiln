@@ -134,6 +134,7 @@ preMigrate chainId =
   >=> dropTableIfExists False (QualifiedIdentifier Nothing "CacheEndorsingRights")
   >=> renameColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "constants#tokensPerRoll" "constants#minimalStake"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ConnectedLedger") "forceConnectivityCheck"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ConnectedLedger") "updated"
   >=> migrateConnectedLedgerAddPollingState
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
@@ -982,7 +983,7 @@ migrateLedgerAccountAddRequested ta = do
 
 migrateConnectedLedgerAddPollingState :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateConnectedLedgerAddPollingState ta = do
-  let table = (Nothing, "ConncetedLedger")
+  let table = (Nothing, "ConnectedLedger")
   analyzeTable ta table >>= \case
     Just analyzedTable | all ((/= "ledgerPollingState") . colName) $ tableColumns analyzedTable -> do
       void [traceExecuteQ|
