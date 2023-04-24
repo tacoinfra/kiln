@@ -167,12 +167,19 @@ data BakerDaemonInternal = BakerDaemonInternal
 instance HasId BakerDaemonInternal where
   type IdData BakerDaemonInternal = Id BakerDaemon
 
+data LedgerPollingState
+  = LedgerPollingState_Unknown
+  | LedgerPollingState_Enabled
+  | LedgerPollingState_Disabled
+  deriving (Eq, Ord, Show, Generic, Typeable, Read)
+instance Aeson.ToJSON LedgerPollingState
+instance Aeson.FromJSON LedgerPollingState
+
 data ConnectedLedger = ConnectedLedger
   { _connectedLedger_ledgerIdentifier :: Maybe LedgerIdentifier
   , _connectedLedger_bakingAppVersion :: Maybe Text
   , _connectedLedger_walletAppVersion :: Maybe Text
-  , _connectedLedger_forceConnectivityCheck :: Bool
-  , _connectedLedger_updated :: Maybe UTCTime
+  , _connectedLedger_ledgerPollingState :: LedgerPollingState
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance Aeson.ToJSON ConnectedLedger
 instance Aeson.FromJSON ConnectedLedger

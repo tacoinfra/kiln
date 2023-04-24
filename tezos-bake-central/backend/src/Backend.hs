@@ -97,6 +97,7 @@ import Backend.Version (version)
 import Backend.ViewSelectorHandler (viewSelectorHandler)
 import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
+import Backend.Workers.LedgerPolling
 import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
 import Backend.Workers.TezosClient (computeChainId)
 import Backend.Workers.TezosRelease
@@ -227,6 +228,11 @@ backendImpl cfg serve = do
   !(bakers :: Maybe (Map.Map PublicKeyHash (Maybe Text))) <- combineConfigs
     (getOption $ _opts_bakers cfg)
     (getConfigFromFile (Just . Config.parseBakersUnsafe) $ configPath Config.bakers)
+
+  !(checkLedgerConnection :: Bool) <- fmap (fromMaybe Config.defaultCheckLedgerConnection) $ combineConfigs
+    (_opts_checkLedgerConnection cfg)
+    (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkLedgerConnection)
+  liftIO $ print checkLedgerConnection
 
   let computeChainId' bins json =
         runNoLoggingT
@@ -388,7 +394,7 @@ backendImpl cfg serve = do
           , Config._frontendConfig_appVersion = version
           , Config._frontendConfig_usingNodeOption = join $ (Config.UsingCustomNode <$> nodeConfigFile) <$ customChainId
           , Config._frontendConfig_logExportAvailable = logExportAvailable
-          , Config._frontendConfig_ledgerConnectedChecks = True
+          , Config._frontendConfig_ledgerConnectedChecks = checkLedgerConnection
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
           , Config._frontendConfig_tezosRelease = tezosReleaseTag
           }
@@ -432,6 +438,9 @@ backendImpl cfg serve = do
       addFinalizer =<< internalNodeWorker appConfig dataSrc binaryPaths
       addFinalizer =<< protocolMonitorWorker appConfig dataSrc
       addFinalizer =<< bakerDaemonProcess appConfig dataSrc binaryPaths
+
+      addFinalizer =<< ledgerPollingStateWorker 1 appConfig dataSrc
+      addFinalizer =<< ledgerConnectivityCheckWorker 5 dataSrc appConfig checkLedgerConnection
 
       snapshotUploadLock :: MVar () <- liftIO newEmptyMVar
       liftIO $ serve $ \case
@@ -512,6 +521,7 @@ data Opts = Opts
   , _opts_binaryPaths :: Maybe Text
   , _opts_nodeConfigFile :: Maybe FilePath
   , _opts_rightsHistoryWindow :: Maybe Int
+  , _opts_checkLedgerConnection :: Maybe Bool
   }
 makeLenses ''Opts
 
@@ -536,6 +546,7 @@ instance Semigroup Opts where
     , _opts_binaryPaths = rightBiased (<|>) _opts_binaryPaths
     , _opts_nodeConfigFile = rightBiased (<|>) _opts_nodeConfigFile
     , _opts_rightsHistoryWindow = rightBiased (<|>) _opts_rightsHistoryWindow
+    , _opts_checkLedgerConnection = rightBiased (<|>) _opts_checkLedgerConnection
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
@@ -562,6 +573,7 @@ instance Monoid Opts where
       , _opts_binaryPaths = Nothing
       , _opts_nodeConfigFile = Nothing
       , _opts_rightsHistoryWindow = Nothing
+      , _opts_checkLedgerConnection = Nothing
       }
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -621,6 +633,12 @@ optsArgDescr =
   , mkReqArg Config.rightsHistoryWindow "INT" (set opts_rightsHistoryWindow . Just . read . T.unpack) $
       "How much baking and endorsing rights will be gathered from the past in blocks. Defaults to " <>
         show Config.defaultRightsHistoryWindow <> " blocks."
+
+  , mkReqArg Config.checkLedgerConnection "BOOL" (set opts_checkLedgerConnection . Just . Config.parseBool) $
+      "Enable/disable ledger connection checks when Kiln Baker doesn't have rights. If blank, use contents of '"
+      <> configPath Config.checkLedgerConnection <> "'. If that is blank, default to "
+      <> bool "disabled" "enabled" Config.defaultCheckLedgerConnection <> ". If this option is disabled, " <>
+      "the ledger indicator on the header will be shown only if Kiln Baker has baking rights."
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

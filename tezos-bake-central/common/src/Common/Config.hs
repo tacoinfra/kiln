@@ -175,6 +175,12 @@ defaultRightsHistoryWindow = 720
 rightsHistoryWindow :: FilePath
 rightsHistoryWindow = "rights-history-window"
 
+checkLedgerConnection :: FilePath
+checkLedgerConnection = "check-ledger-connection"
+
+defaultCheckLedgerConnection :: Bool
+defaultCheckLedgerConnection = True
+
 singleQuoted :: (IsString a, Semigroup a) => a -> a
 singleQuoted s = "'" <> s <> "'"
 

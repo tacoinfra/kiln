@@ -854,10 +854,6 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     autoKey: null
     constructors:
       - name: ConnectedLedger
-        fields:
-          - name: _connectedLedger_forceConnectivityCheck
-            type: Bool
-            default: "False"
   - embedded: SecretKey
   - entity: LedgerAccount
     autoKey: null
@@ -1005,6 +1001,7 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: _mailServerConfig_enabled
             type: Bool
             default: "True"
+  - primitive: LedgerPollingState
   - primitive: RightKind
   - primitive: UpgradeCheckError
   - primitive: NamedChain

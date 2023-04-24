@@ -85,6 +85,15 @@ Custom arguments for the Kiln Node.
 
 Custom arguments for the Kiln baker daemon.
 
+## check-ledger-connection BOOL
+
+Enable/disable ledger connection checks when Kiln Baker doesn't have rights.
+If blank, use contents of 'config/check-ledger-connection'. If that is blank,
+default to enabled.
+
+If this option is disabled, the ledger indicator on the header will be shown
+only if Kiln Baker has baking rights.
+
 ## binary-paths
 
 Create a file named `binary-paths` in the `config` directory adjacent
