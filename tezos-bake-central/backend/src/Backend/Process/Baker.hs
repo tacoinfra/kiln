@@ -40,6 +40,7 @@ import UnliftIO.IO (Handle, hClose)
 import System.Which (staticWhich)
 import Text.URI (render)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 
 import Tezos.NodeRPC (NodeRPCContext(..), QueryNode(rIsBootstrapped), RpcError, nodeRPC)
 import Tezos.Types
@@ -272,7 +273,10 @@ jsonLogsConsumer
 jsonLogsConsumer h = runConduit $ sourceHandle h .| CL.mapM_ (\errlogLine -> runLogger $ do
     case Aeson.eitherDecodeStrict errlogLine of
       Left decodingErr ->
-        $(logError) $ "Failed to decode error reported by baker daemons: " <> T.pack decodingErr
+        $(logError) $ T.unlines
+          [ "Failed to decode error reported by baker daemons: " <> T.pack decodingErr
+          , "Error: " <> T.decodeUtf8 errlogLine
+          ]
       Right ev -> do
         $(logError) $ "Baker daemon reported an error: " <> pretty ev
         handleDaemonErrorEvent ev
