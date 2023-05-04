@@ -44,8 +44,8 @@ emailFromAddress = "email-from"
 chain :: FilePath
 chain = "network"
 
-defaultChain :: Either NamedChain ChainId
-defaultChain = Left NamedChain_Mainnet
+defaultChain :: NamedChain
+defaultChain = NamedChain_Mainnet
 
 checkForUpgrade :: FilePath
 checkForUpgrade = "check-for-upgrade"

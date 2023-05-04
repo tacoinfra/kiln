@@ -71,13 +71,8 @@ kilnNodeRpcURI' port = fromRight $(QQ.quoteExp Uri.uri $ "http://127.0.0.1:" <> 
 (>>=?) :: Validation e a -> (a -> Validation e b) -> Validation e b
 v >>=? f = bindValidation v f
 
-validateNodeConfigFile :: NodeConfigFile -> Validation (NonEmpty Text) NodeConfigFile
-validateNodeConfigFile = \case
-  Right r -> pure $ Right r
-  Left json -> Left <$> validateTrulyCustom json
-
-validateTrulyCustom :: Value -> Validation (NonEmpty Text) Value
-validateTrulyCustom json =
+validateNodeConfigFile :: Value -> Validation (NonEmpty Text) Value
+validateNodeConfigFile json =
    validationNel (maybe (Left "network unavailable") Right (json ^? key "network" . _Object)) >>=? \(Object -> network) ->
        validationNel (maybe (Left "network.genesis unavailable") Right (network ^? key "genesis" . _Object)) >>=? \(Object -> genesis) ->
           do

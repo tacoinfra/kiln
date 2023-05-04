@@ -23,7 +23,6 @@ import Control.Concurrent.STM (atomically, flushTQueue)
 import Control.Exception (catchJust)
 import Control.Monad.Except
 import Control.Monad.Logger
-import Data.Aeson.Lens
 import Data.Either (fromLeft)
 import Data.Either.Combinators (whenLeft)
 import Data.Int (Int32)
@@ -42,10 +41,8 @@ import System.Exit (ExitCode(..))
 import System.IO (hIsEOF)
 import System.IO.Error (isEOFError)
 import System.Which
-import Text.Printf (printf)
 import Text.Read (readMaybe)
 import Text.URI (render, URI)
-import qualified Data.Aeson as Aeson
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as TE
@@ -61,8 +58,8 @@ import Backend.Config (AppConfig (..), tezosClientDataDir, kilnNodeRpcURI', kiln
 import Backend.NodeRPC
 import Backend.Schema
 import Common.App
+import Common.Config (defaultKilnDataDir, defaultKilnNodeRpcPort)
 import Common.Schema
-import Common.URI (Port)
 import ExtraPrelude
 import Tezos.Common.PublicKeyHash (PublicKeyHash)
 
@@ -457,23 +454,27 @@ runClientCommand appConfig mTimeout args handler = withExceptT fst $ runClientCo
 
 computeChainId
   :: (MonadLoggerIO m)
-  => Port
-  -> FilePath
-  -> Maybe BinaryPaths
-  -> Aeson.Value
+  => Maybe BinaryPaths
+  -> ProtocolHash
+  -> BlockHash
   -> m (Either Text ChainId)
-computeChainId port kilnDataDir maybePaths json = do
-    e <- runExceptT $ ExceptT (pure eCommand) >>= \command -> runClientCommand' (kilnNodeRpcURI' port) kilnDataDir maybePaths noTimeout command $ \_warnings errors -> if
-      | "Wrong value for command line option --protocol" : _ <- errors -> Left "Wrong Protocol"
-      | otherwise -> Left $ "'tezos-client compute chain id' failed with the following error: " <> unwords (map T.unpack errors)
-    pure $ first (T.pack . fst) e >>= first tshow . fromBase58 . TE.encodeUtf8
-  where
-    note key' = maybe (Left (printf "key %s not available" key', [])) (Right . T.unpack)
-    protocol = note ("protocol" :: String) $ json ^? key "network" . key "genesis" . key "protocol" . _String
-    genesisBlock = note ("block" :: String) $ json ^? key "network" . key "genesis" . key "block" . _String
-    eCommand :: Either (String, [Text]) [String]
-    eCommand =
-      liftA2 (\p gb -> words $ printf "--protocol %s compute chain id from block hash %s" p gb) protocol genesisBlock
+computeChainId maybePaths protoHash blkHash = do
+  let
+    cmdArgs =
+      [ "--protocol"
+      , T.unpack $ toBase58Text protoHash
+      , "compute"
+      , "chain"
+      , "id"
+      , "from"
+      , "block"
+      , "hash"
+      , T.unpack $ blockHashToBase58Text blkHash
+      ]
+  e <- runExceptT $ runClientCommand' (kilnNodeRpcURI' defaultKilnNodeRpcPort) defaultKilnDataDir maybePaths noTimeout cmdArgs $ \_warnings errors -> if
+    | "Wrong value for command line option --protocol" : _ <- errors -> Left "Wrong Protocol"
+    | otherwise -> Left $ "'tezos-client compute chain id' failed with the following error: " <> unwords (map T.unpack errors)
+  pure $ first (T.pack . fst) e >>= first tshow . fromBase58 . TE.encodeUtf8
 
 setupLedgerToBake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> LedgerQuery m
 setupLedgerToBake appConfig db nds sk = LedgerQuery LedgerQueryType_SetupToBake $ do

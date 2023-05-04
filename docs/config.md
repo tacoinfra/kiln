@@ -37,8 +37,8 @@ Upstream Git branch to use for checking upgrades. If blank, use contents of
 
 ## network NETWORK
 
-Name of a network (mainnet, babylonnet, zeronet) or a network ID to monitor. If
-blank, use contents of 'config/network'. If also blank, default to 'mainnet'.
+Name of a network (e.g mainnet, mumbainet), url of network config or network ID
+to monitor. If blank, use contents of 'config/network'. If also blank, default to 'mainnet'.
 
 ## tzscan-api-uri URL
 
