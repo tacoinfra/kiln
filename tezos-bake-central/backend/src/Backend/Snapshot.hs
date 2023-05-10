@@ -379,9 +379,9 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
       cp = Process.proc nodePath args
       in cp { Process.std_out = Process.CreatePipe, Process.std_err = Process.CreatePipe }
 
-    procMonitorStream cp sir@SnapshotInfoResult{..} = runLoggingEnv logger $ do
+    procMonitorStream cp SnapshotInfoResult{..} = runLoggingEnv logger $ do
       stderrLogVar :: TVar ByteString <- liftIO $ newTVarIO ""
-      ph <- liftIO $ mkSnapshotImportStreamingProcess cp sir stderrLogVar
+      ph <- liftIO $ mkSnapshotImportStreamingProcess cp stderrLogVar
       go ph stderrLogVar
       where
         {-# INLINE go #-}
@@ -433,55 +433,34 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
     mkSnapshotImportStreamingProcess
       :: (MonadUnliftIO m)
       => CreateProcess      -- ^ Process to run in the streaming mode
-      -> SnapshotInfoResult -- ^ Result of 'snapshot info' command (see [Note])
       -> TVar ByteString    -- ^ @TVar@ for collecting process error output
       -> m StreamingProcessHandle
-    mkSnapshotImportStreamingProcess cp SnapshotInfoResult{..} stderrLogVar = do
+    mkSnapshotImportStreamingProcess cp stderrLogVar = do
       let logger = _nodeDataSource_logger nds
           db     = _nodeDataSource_pool nds
           logStderrLine stderrLine = liftIO $ atomically $ modifyTVar stderrLogVar (<> stderrLine)
-
-      -- [Note]
-      -- Tezos snapshots of version 5 (IOW, snaphots that are exported with Octez 16 binaries)
-      -- has the different output of 'octez-node snapshot import' command comparing to the
-      -- previous versions. Namely, the import progress is logged to 'stderr' instead 'stdout'
-      -- and has the different format.
-      --
-      -- Since now we need to support both v5 snapshots and older ones, we use the separate
-      -- process output handling for them depending on the snapshot version.
-      --
-      -- TODO: remove the first case below when Mumbai is activated on mainnet and older
-      -- snapshots won't be supported by Octez binaries.
-      case sirVersion of
-        4 -> do
-          let
-            updateImportProgress stdoutLine = do
-              -- Progress output has some additional characters that are used to
-              -- animate the progress. These characters shoudn't be displayed in Kiln UI,
-              -- so we drop the prefix of the @stdoutLine@.
-              let line = T.drop 5 $ T.decodeUtf8 stdoutLine
-              runLoggingEnv logger $ runDb (Identity db) $ updateSnapshotMetaImportLog line smId
-          createProcessWithStreams cp (return ()) (CL.mapM_ updateImportProgress) (CL.mapM_ logStderrLine)
-        _ -> do
-          let
-            -- Since 'stderr' may contain not only import progress, but also
-            -- import errors and warnings, we have the parser to distinguish
-            -- the import progress lines:
-            -- Example progress line: "645k contents / 717k nodes / 1 commits"
-            progressLogParser = do
-              let keywords = P.string <$> ["contents", "nodes", "commits"]
-                  space    = P.skipWhile isSpace
-                  sep      = space >> P.char '/' >> space
-                  countK   = P.decimal @Int >> optional (P.char 'k')
-                  entry    = countK >> space >> P.choice keywords
-              void $ entry >> P.count 2 (sep >> entry)
-            updateImportProgress stderrLine = do
-              let line = T.strip $ T.decodeUtf8 stderrLine
-                  isProgressLine = isRight . P.parseOnly progressLogParser
-              when (isProgressLine line) $
-                runLoggingEnv logger $ runDb (Identity db) $ updateSnapshotMetaImportLog line smId
-          createProcessWithStreams cp (return ()) (return ()) (CL.mapM_ $ \line ->
-            updateImportProgress line *> logStderrLine line)
+      let
+        -- Starting from the version 5 of Tezos node snapshots, the progress log
+        -- is printed to 'stderr'. For more context, see tezos/#5213.
+        --
+        -- Since 'stderr' may contain not only import progress, but also
+        -- import errors and warnings, we have the parser to distinguish
+        -- the import progress lines:
+        -- Example progress line: "645k contents / 717k nodes / 1 commits"
+        progressLogParser = do
+          let keywords = P.string <$> ["contents", "nodes", "commits"]
+              space    = P.skipWhile isSpace
+              sep      = space >> P.char '/' >> space
+              countK   = P.decimal @Int >> optional (P.char 'k')
+              entry    = countK >> space >> P.choice keywords
+          void $ entry >> P.count 2 (sep >> entry)
+        updateImportProgress stderrLine = do
+          let line = T.strip $ T.decodeUtf8 stderrLine
+              isProgressLine = isRight . P.parseOnly progressLogParser
+          when (isProgressLine line) $
+            runLoggingEnv logger $ runDb (Identity db) $ updateSnapshotMetaImportLog line smId
+      createProcessWithStreams cp (return ()) (return ()) (CL.mapM_ $ \line ->
+        updateImportProgress line *> logStderrLine line)
 
 initSnapshotMeta
   :: MonadLoggerIO m
