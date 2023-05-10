@@ -11,99 +11,99 @@ import Data.Aeson
 import qualified Data.Sequence as Seq
 import Data.Time
 
-import qualified Tezos.Mumbai.Account as Mumbai
+import qualified Tezos.Nairobi.Account as Nairobi
 import Tezos.Common.Level
 import Tezos.Common.PublicKeyHash
 import Tezos.Common.Tez
 
 data AccountCrossCompat
-  = AccountMumbai Mumbai.Account
+  = AccountNairobi Nairobi.Account
 
 accountCrossCompat_delegatePkh :: Getter AccountCrossCompat (Maybe PublicKeyHash)
 accountCrossCompat_delegatePkh = to $ \case
-  AccountMumbai a -> a ^. Mumbai.account_delegate
+  AccountNairobi a -> a ^. Nairobi.account_delegate
 
 instance FromJSON AccountCrossCompat where
   parseJSON jv =
-    AccountMumbai <$> parseJSON jv
+    AccountNairobi <$> parseJSON jv
 
 data DelegateInfoCrossCompat
-  = DelegateInfoMumbai Mumbai.DelegateInfo
+  = DelegateInfoNairobi Nairobi.DelegateInfo
 
 instance FromJSON DelegateInfoCrossCompat where
   parseJSON jv =
-    DelegateInfoMumbai <$> parseJSON jv
+    DelegateInfoNairobi <$> parseJSON jv
 
 delegateInfoCrossCompat_balance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_balance = to $ \case
-  DelegateInfoMumbai di -> di ^. Mumbai.delegateInfo_fullBalance
+  DelegateInfoNairobi di -> di ^. Nairobi.delegateInfo_fullBalance
 
 delegateInfoCrossCompat_frozenBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_frozenBalance = to $ \case
-  DelegateInfoMumbai di -> di ^. Mumbai.delegateInfo_frozenDeposits
+  DelegateInfoNairobi di -> di ^. Nairobi.delegateInfo_frozenDeposits
 
 delegateInfoCrossCompat_stakingBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_stakingBalance = to $ \case
-  DelegateInfoMumbai di -> di ^. Mumbai.delegateInfo_stakingBalance
+  DelegateInfoNairobi di -> di ^. Nairobi.delegateInfo_stakingBalance
 
 delegateInfoCrossCompat_delegatedBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_delegatedBalance = to $ \case
-  DelegateInfoMumbai di -> di ^. Mumbai.delegateInfo_delegatedBalance
+  DelegateInfoNairobi di -> di ^. Nairobi.delegateInfo_delegatedBalance
 
 delegateInfoCrossCompat_gracePeriod :: Getter DelegateInfoCrossCompat Cycle
 delegateInfoCrossCompat_gracePeriod = to $ \case
-  DelegateInfoMumbai di -> di ^. Mumbai.delegateInfo_gracePeriod
+  DelegateInfoNairobi di -> di ^. Nairobi.delegateInfo_gracePeriod
 
 delegateInfoCrossCompat_deactivated :: Getter DelegateInfoCrossCompat Bool
 delegateInfoCrossCompat_deactivated = to $ \case
-  DelegateInfoMumbai di -> di ^. Mumbai.delegateInfo_deactivated
+  DelegateInfoNairobi di -> di ^. Nairobi.delegateInfo_deactivated
 
 delegateInfoCrossCompat_activeConsensusKey :: Getter DelegateInfoCrossCompat PublicKeyHash
 delegateInfoCrossCompat_activeConsensusKey = to $ \case
-  DelegateInfoMumbai di -> di ^. Mumbai.delegateInfo_activeConsensusKey
+  DelegateInfoNairobi di -> di ^. Nairobi.delegateInfo_activeConsensusKey
 
-delegateInfoCrossCompat_pendingConsensusKeys :: Getter DelegateInfoCrossCompat [Mumbai.PendingConsensusKey]
+delegateInfoCrossCompat_pendingConsensusKeys :: Getter DelegateInfoCrossCompat [Nairobi.PendingConsensusKey]
 delegateInfoCrossCompat_pendingConsensusKeys = to $ \case
-  DelegateInfoMumbai di -> di ^. Mumbai.delegateInfo_pendingConsensusKeys
+  DelegateInfoNairobi di -> di ^. Nairobi.delegateInfo_pendingConsensusKeys
 
 data BakingRightsCrossCompat
-  = BakingRightsMumbai Mumbai.BakingRights
+  = BakingRightsNairobi Nairobi.BakingRights
 
 instance FromJSON BakingRightsCrossCompat where
   parseJSON jv =
-    BakingRightsMumbai <$> parseJSON jv
+    BakingRightsNairobi <$> parseJSON jv
 
 bakingRightsCrossCompat_level :: Getter BakingRightsCrossCompat RawLevel
 bakingRightsCrossCompat_level = to $ \case
-  BakingRightsMumbai e -> e ^. Mumbai.bakingRights_level
+  BakingRightsNairobi e -> e ^. Nairobi.bakingRights_level
 
 bakingRightsCrossCompat_delegate :: Getter BakingRightsCrossCompat PublicKeyHash
 bakingRightsCrossCompat_delegate = to $ \case
-  BakingRightsMumbai e -> e ^. Mumbai.bakingRights_delegate
+  BakingRightsNairobi e -> e ^. Nairobi.bakingRights_delegate
 
-bakingRightsCrossCompat_round :: Getter BakingRightsCrossCompat Mumbai.Round
+bakingRightsCrossCompat_round :: Getter BakingRightsCrossCompat Nairobi.Round
 bakingRightsCrossCompat_round = to $ \case
-  BakingRightsMumbai e -> e ^. Mumbai.bakingRights_round
+  BakingRightsNairobi e -> e ^. Nairobi.bakingRights_round
 
 bakingRightsCrossCompat_estimatedTime :: Getter BakingRightsCrossCompat (Maybe UTCTime)
 bakingRightsCrossCompat_estimatedTime = to $ \case
-  BakingRightsMumbai e -> e ^. Mumbai.bakingRights_estimatedTime
+  BakingRightsNairobi e -> e ^. Nairobi.bakingRights_estimatedTime
 
 data EndorsingRightsCrossCompat
-  = EndorsingRightsMumbai Mumbai.EndorsingRights
+  = EndorsingRightsNairobi Nairobi.EndorsingRights
 
 instance FromJSON EndorsingRightsCrossCompat where
   parseJSON jv =
-    EndorsingRightsMumbai <$> parseJSON jv
+    EndorsingRightsNairobi <$> parseJSON jv
 
 instance ToJSON EndorsingRightsCrossCompat where
   toJSON = \case
-    EndorsingRightsMumbai er -> toJSON er
+    EndorsingRightsNairobi er -> toJSON er
 
 endorsingRightsCrossCompat_level :: Getter EndorsingRightsCrossCompat RawLevel
 endorsingRightsCrossCompat_level = to $ \case
-  EndorsingRightsMumbai e -> e ^. Mumbai.endorsingRights_level
+  EndorsingRightsNairobi e -> e ^. Nairobi.endorsingRights_level
 
 endorsingRightsCrossCompat_delegates :: Getter EndorsingRightsCrossCompat (Seq.Seq PublicKeyHash)
 endorsingRightsCrossCompat_delegates = to $ \case
-  EndorsingRightsMumbai e -> view Mumbai.endorsingRightsDelegateInfo_delegate <$> e ^. Mumbai.endorsingRights_delegates
+  EndorsingRightsNairobi e -> view Nairobi.endorsingRightsDelegateInfo_delegate <$> e ^. Nairobi.endorsingRights_delegates

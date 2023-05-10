@@ -5,7 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Tezos.Mumbai.Account where
+module Tezos.Nairobi.Account where
 
 import Control.DeepSeq (NFData)
 import Control.Lens.TH (makeLenses)

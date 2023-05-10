@@ -1,3 +1,3 @@
 module Tezos.Types (module Latest) where
 
-import Tezos.Mumbai.Types as Latest
+import Tezos.Nairobi.Types as Latest
