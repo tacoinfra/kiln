@@ -46,7 +46,7 @@ xrefcheck:
   rules: *if_merge_request
   allow_failure: true
   script:
-    - nix run -f ./dep/xrefcheck -c xrefcheck
+    - nix shell -f ./dep/xrefcheck -c xrefcheck
   retry:
     max: 2
     when: script_failure
