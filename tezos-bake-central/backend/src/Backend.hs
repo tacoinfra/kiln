@@ -23,12 +23,11 @@ import Control.Concurrent.STM (atomically, newTQueueIO, newTVarIO, readTQueue)
 import Control.Exception.Safe (catch, throwIO, throwString)
 import Control.Lens (set)
 import Control.Lens.TH (makeLenses)
-import Control.Monad.Logger (NoLoggingT(..), LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn)
+import Control.Monad.Logger (LoggingT (..), MonadLoggerIO, MonadLogger, logError, logInfo, logWarn)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coerce (coerce)
 import Data.Dependent.Sum (DSum (..))
-import Data.Either (fromRight)
 import qualified Data.Map as Map
 import Data.Pool (Pool)
 import qualified Data.Set as Set
@@ -36,7 +35,6 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Time.Clock (nominalDay)
-import Data.Validation
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
 import Gargoyle.PostgreSQL.Connect (withDb)
@@ -80,8 +78,8 @@ import Tezos.Types
 
 import Backend.Common (LedgerQuery(..), worker', workerWithDelay)
 import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
-                      , _nodeConfigFile_network, validateNodeConfigFile)
-import Backend.Http (runHttpT)
+                      , _nodeConfigFile_network)
+import Backend.Config.Node (computeChainIdFromConfigFile, createNodeConfigByUrl, fetchChainIdByUrl)
 import Backend.Migrations (migrateKiln)
 import Backend.NodeRPC (NodeDataSource (..))
 import Backend.NotifyHandler (notifyHandler)
@@ -99,7 +97,6 @@ import Backend.Workers.Baker (bakerRightsWorker, bakerWorker)
 import Backend.Workers.Block (blockWorker)
 import Backend.Workers.LedgerPolling
 import Backend.Workers.Node (amendmentProcessWorker, nodeWorker, protocolMonitorWorker)
-import Backend.Workers.TezosClient (computeChainId)
 import Backend.Workers.TezosRelease
 import Common.Config (combineConfigs)
 import qualified Common.Config as Config
@@ -117,10 +114,10 @@ import Orphans.Instances ()
 askLogger :: Monad m => LoggingT m LoggingEnv
 askLogger = LoggingT $ return . LoggingEnv
 
-resolveKnownChains :: Either NamedChain ChainId -> Either NamedChain ChainId
+resolveKnownChains :: NetworkOption -> NetworkOption
 resolveKnownChains = \case
-  Right chainId
-    | Just chain <- identifyChain chainId -> Left chain
+  NetworkOption_ChainId chainId
+    | Just chain <- identifyChain chainId -> NetworkOption_NamedChain chain
   x -> x
 
 backendImpl :: Opts -> ((R BackendRoute -> Snap.Snap ()) -> IO ()) -> IO ()
@@ -169,9 +166,10 @@ backendImpl cfg serve = do
     (maybe (pure Nothing) (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8)) $ _opts_nodeConfigFile cfg)
     (getConfigFromFile' (Aeson.eitherDecodeStrict' . T.encodeUtf8) $ configPath Config.nodeConfigFile)
 
-  !(configChain :: Either NamedChain ChainId) <- fmap (resolveKnownChains . fromMaybe Config.defaultChain) $ combineConfigs
-    (_opts_chain cfg)
-    (getConfigFromFile (Just . parseChainOrError) $ configPath Config.chain)
+  !(configChain :: NetworkOption) <-
+    fmap (resolveKnownChains . fromMaybe (NetworkOption_NamedChain Config.defaultChain)) $ combineConfigs
+      (_opts_chain cfg)
+      (getConfigFromFile (Just . parseNetworkOption) $ configPath Config.chain)
 
   !(checkForUpgrade :: Bool) <- fmap (fromMaybe Config.checkForUpgradeDefault) $ combineConfigs
     (_opts_checkForUpgrade cfg)
@@ -232,37 +230,36 @@ backendImpl cfg serve = do
   !(checkLedgerConnection :: Bool) <- fmap (fromMaybe Config.defaultCheckLedgerConnection) $ combineConfigs
     (_opts_checkLedgerConnection cfg)
     (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkLedgerConnection)
-  liftIO $ print checkLedgerConnection
-
-  let computeChainId' bins json =
-        runNoLoggingT
-        $ computeChainId Config.defaultKilnNodeRpcPort Config.defaultKilnDataDir bins json
-        <&> \e ->
-          toEither
-          $ let f = first toList
-              in f $ validateNodeConfigFile (Left json) *> validationNel e
-
-  -- error out if chain id is invalaid
-  customChainId <- for nodeConfigFile (computeChainId' binaryPaths) >>= \case
-      Nothing -> pure Nothing
-      Just e -> either (throwString . T.unpack . T.intercalate ":") (pure . Just . Right) e
-  let
-    chain = fromMaybe configChain customChainId
-
-    maybeNamedChain = either Just (const Nothing) chain
-
-    !dbSpec = fromMaybe Config.db pgConnStringFile
 
   httpMgr <- Http.newManager Https.tlsManagerSettings
+  let
+    withLogger :: (LoggingEnv -> LoggingT IO a) -> IO a
+    withLogger f = withLoggingMinLevel Nothing loggingConfig $ askLogger >>= f
 
-  chainId <- runHttpT httpMgr $ case chain of
-    Right chainId -> pure chainId
+  -- If user provided the node config file, we compute the chain id from it
+  -- or throw the error if given config file is invalid
+  mbCustomChainId <- withLogger $ \logger -> runLoggingEnv logger $
+    for nodeConfigFile (computeChainIdFromConfigFile binaryPaths)
+  -- Chain id computed from the config file takes precendence over chain id
+  -- specified by '--network' option.
+  let networkOption = maybe configChain NetworkOption_ChainId mbCustomChainId
+  chain <- case networkOption of
+    NetworkOption_ChainId c -> pure $ Right c
+    NetworkOption_NamedChain c -> pure $ Left c
+    NetworkOption_Url u -> withLogger $ \logger -> do
+      cid <- runLoggingEnv logger $ fetchChainIdByUrl httpMgr u binaryPaths
+      -- If we know the name of this chain, we use it instead of chain id.
+      pure $ maybe (Right cid) Left $ identifyChain cid
+
+  let !dbSpec = fromMaybe Config.db pgConnStringFile
+
+  (chainId, maybeNamedChain) <- case chain of
+    Right chainId -> pure (chainId, Nothing)
     Left chainName -> case getNamedChainId chainName of
-      Just chainId -> pure chainId
-      Nothing -> throwString $" Unable to fetch chain ID chain " <> T.unpack (showChain chain)
+      Just chainId -> pure (chainId, Just chainName)
+      Nothing -> throwString $ "Unable to fetch chain ID for " <> T.unpack (showChain chain)
 
-  withDb dbSpec $ \(coerce -> db) -> withLoggingMinLevel Nothing loggingConfig $ do
-    logger <- askLogger
+  withDb dbSpec $ \(coerce -> db) -> withLogger $ \logger -> do
     $(logInfo) $ "Monitoring network " <> toBase58Text chainId
 
     runDb (Identity db) $ do
@@ -339,27 +336,34 @@ backendImpl cfg serve = do
     tezosNodeEnvVar <- liftIO $ lookupEnv "TEZOS_NODE_DIR"
 
     let
-
       networkName :: Maybe Text
       networkName = case chain of
         Left namedChain -> pure $ showNamedChain namedChain
         Right chainId' -> fmap showNamedChain $ identifyChain chainId'
 
+    kilnNodeConfig <- case nodeConfigFile of
+      Just cf -> pure $ Left cf -- If node config file is provided in Kiln config, we just use it
+      Nothing -> case networkOption of
+        -- If the network is specified by url, we create the node config file using
+        -- 'octez-node config init' command. We do it because 'defaultNodeConfigFile'
+        -- isn't enough for non-named networks.
+        NetworkOption_Url uri -> fmap Left $ createNodeConfigByUrl kilnDataDir uri binaryPaths
+        -- If network is specified by name, we create the default node config file
+        _ -> pure $ Right $ defaultNodeConfigFile { _nodeConfigFile_network = networkName }
+
+    let
       appConfig = AppConfig
         { _appConfig_emailFromAddress = emailFromAddress
         , _appConfig_kilnNodeRpcPort = kilnNodeRpcPort
         , _appConfig_kilnNodeNetPort = kilnNodeNetPort
         , _appConfig_kilnDataDir = kilnDataDir
-        , _appConfig_kilnNodeConfig =
-          maybe (Right $ defaultNodeConfigFile {_nodeConfigFile_network = networkName}) Left nodeConfigFile
-
+        , _appConfig_kilnNodeConfig = kilnNodeConfig
         , _appConfig_chainId = chainId
         , _appConfig_kilnNodeCustomArgs = kilnNodeCustomArgs
         , _appConfig_kilnBakerCustomArgs = kilnBakerCustomArgs
         , _appConfig_binaryPaths = binaryPaths
         , _appConfig_tezosNodeEnvVar = tezosNodeEnvVar
         }
-
 
     dataSrc <- liftIO $ do
       latestFinalHead <- newTVarIO Nothing
@@ -388,11 +392,11 @@ backendImpl cfg serve = do
 
       let
         frontendConfig = Config.FrontendConfig
-          { Config._frontendConfig_chain = fromMaybe chain customChainId
-          , Config._frontendConfig_chainId = maybe chainId (fromRight (error "impossible")) customChainId
+          { Config._frontendConfig_chain = chain
+          , Config._frontendConfig_chainId = chainId
           , Config._frontendConfig_checkForUpgrade = checkForUpgrade
           , Config._frontendConfig_appVersion = version
-          , Config._frontendConfig_usingNodeOption = join $ (Config.UsingCustomNode <$> nodeConfigFile) <$ customChainId
+          , Config._frontendConfig_usingNodeOption = join $ (Config.UsingCustomNode <$> nodeConfigFile) <$ mbCustomChainId
           , Config._frontendConfig_logExportAvailable = logExportAvailable
           , Config._frontendConfig_ledgerConnectedChecks = checkLedgerConnection
           , Config._frontendConfig_tezosGitlabProjectId = networkGitLabProjectId
@@ -505,7 +509,7 @@ data Opts = Opts
   { _opts_pgConnectionString :: Maybe Text
   , _opts_route :: Maybe URI
   , _opts_emailFromAddress :: Maybe Text
-  , _opts_chain :: Maybe (Either NamedChain ChainId)
+  , _opts_chain :: Maybe NetworkOption
   , _opts_checkForUpgrade :: Maybe Bool
   , _opts_tzscanApiUri     :: Option (NonEmpty URI)
   , _opts_blockscaleApiUri :: Option (NonEmpty URI)
@@ -590,9 +594,10 @@ optsArgDescr =
       "Enable/disable upgrade checks. If blank, use contents of '" <> configPath Config.checkForUpgrade <>
       "'. If that is blank, default to " <> (if Config.checkForUpgradeDefault then "enabled" else "disabled") <> "."
 
-  , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseChainOrError) $
-      "Name of a network (mainnet, babylonnet, carthagenet, zeronet) or a network ID to monitor. If blank, use contents of '" <> configPath Config.chain <>
-      "'. If also blank, default to '" <> T.unpack (showChain Config.defaultChain) <> "'."
+  , mkReqArg Config.chain "NETWORK" (set opts_chain . Just . parseNetworkOption) $
+      "Name of a network (e.g mainnet, mumbainet), url of network config or network ID to monitor."  <>
+      "If blank, use contents of '" <> configPath Config.chain <>
+      "'. If also blank, default to '" <> T.unpack (showChain $ Left Config.defaultChain) <> "'."
 
   , mkReqArg Config.tzscanApiUri "URL" (set opts_tzscanApiUri . pure . pure . Config.parseRootURIUnsafe)
       "Custom tzscan API URL.  Default none."

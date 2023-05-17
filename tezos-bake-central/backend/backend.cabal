@@ -136,6 +136,7 @@ library
     Backend.Common.Node
     Backend.Common.TezosRelease
     Backend.Common.Worker
+    Backend.Config.Node
     Backend.DB.Utils
     Backend.Env
     Backend.Http

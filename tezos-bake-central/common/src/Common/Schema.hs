@@ -425,6 +425,15 @@ getNodeHeadBlock n = VeryBlockLike
   <*> _nodeDetailsData_headBlockBakedAt n
 
 --------------------------------------------------------------------------------
+data NetworkOption
+  = NetworkOption_NamedChain NamedChain
+  | NetworkOption_ChainId ChainId
+  | NetworkOption_Url URI
+
+parseNetworkOption :: Text -> NetworkOption
+parseNetworkOption t = case Uri.mkURI t of
+  Just uri | Uri.isPathAbsolute uri -> NetworkOption_Url uri
+  _ -> either NetworkOption_NamedChain NetworkOption_ChainId (parseChainOrError t)
 
 parseChainOrError :: Text -> Either NamedChain ChainId
 parseChainOrError x = case runExcept (parseChain x) :: Either Text (Either NamedChain ChainId) of
