@@ -79,7 +79,7 @@ import Tezos.Types
 import Backend.Common (LedgerQuery(..), worker', workerWithDelay)
 import Backend.Config (AppConfig (..), BinaryPaths (..), defaultNodeConfigFile, kilnNodeRpcURI, nodeDataDir
                       , _nodeConfigFile_network)
-import Backend.Config.Node (computeChainIdFromConfigFile, createNodeConfigByUrl, fetchChainIdByUrl)
+import Backend.Config.Node
 import Backend.Migrations (migrateKiln)
 import Backend.NodeRPC (NodeDataSource (..))
 import Backend.NotifyHandler (notifyHandler)
@@ -242,7 +242,7 @@ backendImpl cfg serve = do
     for nodeConfigFile (computeChainIdFromConfigFile binaryPaths)
   -- Chain id computed from the config file takes precendence over chain id
   -- specified by '--network' option.
-  let networkOption = maybe configChain NetworkOption_ChainId mbCustomChainId
+  networkOption <- asNamedChain $ maybe configChain NetworkOption_ChainId mbCustomChainId
   chain <- case networkOption of
     NetworkOption_ChainId c -> pure $ Right c
     NetworkOption_NamedChain c -> pure $ Left c
