@@ -2,7 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Tezos.Mumbai.Level where
+module Tezos.Nairobi.Level where
 
 import Control.DeepSeq (NFData)
 import Control.Lens.TH (makeLenses)

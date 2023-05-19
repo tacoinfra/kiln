@@ -1,3 +1,3 @@
 module Tezos.Unsafe (module Latest) where
 
-import Tezos.Mumbai.Unsafe as Latest
+import Tezos.Nairobi.Unsafe as Latest

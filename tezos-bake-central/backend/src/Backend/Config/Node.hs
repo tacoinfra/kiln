@@ -3,11 +3,14 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Backend.Config.Node
-  ( computeChainIdFromConfigFile
+  ( asNamedChain
+  , computeChainIdFromConfigFile
   , createNodeConfigByUrl
   , fetchChainIdByUrl
+  , mkTeztnetsUrl
   ) where
 
 import Control.Exception.Safe (throwString)
@@ -23,11 +26,11 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Either.Combinators (whenLeft)
 import Data.Foldable (toList)
 import qualified Data.Text as T
-import Data.Text.Encoding (encodeUtf8, decodeUtf8)
+import Data.Text.Encoding (encodeUtf8)
 import Data.Validation (toEither)
 import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
-import Text.URI (URI, renderStr)
+import Text.URI (URI, mkURI, renderStr)
 import UnliftIO.Exception (bracket_)
 import UnliftIO.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
 import UnliftIO.Process (readProcessWithExitCode)
@@ -38,6 +41,7 @@ import Backend.Config (BinaryPaths (..), validateNodeConfigFile)
 import Backend.Http (doRequestLBSThrows)
 import Backend.Process.Node (nixNodePath)
 import Backend.Workers.TezosClient (computeChainId)
+import Common.Schema (NetworkOption (..))
 import Tezos.Common.Base58Check (IsBase58Hash)
 import Tezos.Types
 
@@ -162,3 +166,21 @@ getRawGenesisValue (Object -> genesis) keyName =
       , "' isn't present in the network config"
       ]
   in maybe (throwString errMsg) pure mbRawValue
+
+-- | Given the chain name, creates the URI of the network config
+-- corresponding to this chain.
+mkTeztnetsUrl :: MonadThrow m => Text -> m URI
+mkTeztnetsUrl chainName = mkURI $ "https://teztnets.xyz/" <> chainName
+
+-- | 'octez-node' doesn't recognize 'nairobinet' as a named network
+-- and expects the network config url instead.
+--
+-- Since we want to give the Kiln users an opportunity to
+-- use the '--network nairobinet' option, we convert the
+-- network name to the network config url and pass it to
+-- 'octez-node'.
+asNamedChain :: MonadThrow m => NetworkOption -> m NetworkOption
+asNamedChain = \case
+  NetworkOption_NamedChain c@NamedChain_Nairobinet ->
+    NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
+  n -> pure n

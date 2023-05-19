@@ -66,7 +66,7 @@ import qualified Text.URI as Uri
 import Tezos.NodeRPC
 import Tezos.Types hiding (toBlockHeader)
 import qualified Tezos.Unsafe as Unsafe
-import qualified Tezos.Mumbai.Vote as Mumbai
+import qualified Tezos.Nairobi.Vote as Nairobi
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -815,7 +815,7 @@ amendmentProcessWorker appConfig nds db = mkWorker $
               |]
               for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
               let (protoAgnosticProposals :: [(ProtocolHash, ProtoAgnosticVotingPower)]) = toList $ case proposals of
-                    ProposalVotesListMumbai l -> fmap (\(Mumbai.ProposalVotes (pHash, votingPower)) ->
+                    ProposalVotesListNairobi l -> fmap (\(Nairobi.ProposalVotes (pHash, votingPower)) ->
                       (pHash, tezToProtoAgnosticVotingPower votingPower)) l
               inserted <- returning [sql|
                 INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
@@ -856,12 +856,12 @@ amendmentProcessWorker appConfig nds db = mkWorker $
         quorum <- nodeQueryDataSource $ nodeQuery_CurrentQuorum (blk ^. hash)
         listings <- nodeQueryDataSource $ nodeQuery_Listings (blk ^. hash)
         let totalVotingPower = case listings of
-              VoterListingsMumbai l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap Mumbai._voterDelegate_votingPower l
+              VoterListingsNairobi l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap Nairobi._voterDelegate_votingPower l
         pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalVotingPower)
 
       for_ mpv $ \(proposal, ballots, quorum, totalVotingPower) -> runDb (Identity db) $ do
         let protoAgnosticBallots = case ballots of
-              BallotsMumbai (Mumbai.Ballots yay nay pass) ->
+              BallotsNairobi (Nairobi.Ballots yay nay pass) ->
                 ProtoAgnosticBallots (tezToProtoAgnosticVotingPower yay) (tezToProtoAgnosticVotingPower nay) (tezToProtoAgnosticVotingPower pass)
         mPid <- (fmap . fmap) toId $ project1 AutoKeyField $ PeriodProposal_hashField ==. proposal
         for_ mPid $ \pid -> do

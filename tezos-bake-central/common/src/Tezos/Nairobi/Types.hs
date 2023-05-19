@@ -1,4 +1,4 @@
-module Tezos.Mumbai.Types (module X) where
+module Tezos.Nairobi.Types (module X) where
 
 import Tezos.Common.ShortByteString as X
 import Tezos.Common.Base16ByteString as X
@@ -30,9 +30,9 @@ import Tezos.Common.PublicKey as X
 import Tezos.Common.PublicKeyHash as X
 import Tezos.Common.Tez as X
 
-import Tezos.Mumbai.Account as X
-import Tezos.Mumbai.Block as X
-import Tezos.Mumbai.Level as X
-import Tezos.Mumbai.Operation as X
-import Tezos.Mumbai.ProtocolConstants as X hiding (unsafeEstimatePastTimestamp)
-import Tezos.Mumbai.Vote as X
+import Tezos.Nairobi.Account as X
+import Tezos.Nairobi.Block as X
+import Tezos.Nairobi.Level as X
+import Tezos.Nairobi.Operation as X
+import Tezos.Nairobi.ProtocolConstants as X hiding (unsafeEstimatePastTimestamp)
+import Tezos.Nairobi.Vote as X

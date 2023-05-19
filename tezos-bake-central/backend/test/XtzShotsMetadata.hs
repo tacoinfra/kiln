@@ -22,18 +22,18 @@ testXtzShotsMetadata = testGroup "xtz-shots metadata"
 
 testFindLatestRollingSnapshot :: TestTree
 testFindLatestRollingSnapshot =
-  testCase "Find the latest rolling limanet snapshot in xtz-shots metadata" $ do
+  testCase "Find the latest rolling mainnet snapshot in xtz-shots metadata" $ do
     rawMetadata <- LBS.readFile "test/resources/metadata.json"
     let metadata = either (error "Can't parse metadata") unXtzShotsMetadataList $ eitherDecode rawMetadata
     actual <- findLatestSnapshot dummyAppConfig metadata
     let
       parseTime = parseTimeOrError True defaultTimeLocale "%Y-%m-%dT%H:%M:%S"
       expected = XtzShotsMetadata
-        { _xtzShotsMetadata_blockHeight = 713191
-        , _xtzShotsMetadata_blockHash = BlockHash "BKufiNaeX8TcB2sP43rFWyh8GNDxpq1VPNJLjdKWupSKS9Q4DvH"
-        , _xtzShotsMetadata_blockTimestamp = parseTime "2023-02-20T10:43:15"
-        , _xtzShotsMetadata_url = "https://limanet-v15.xtz-shots.io/limanet-713191.rolling"
-        , _xtzShotsMetadata_chainName = "limanet"
+        { _xtzShotsMetadata_blockHeight = 3505126
+        , _xtzShotsMetadata_blockHash = BlockHash "BL8gHjhuS19unbYxMjtD83wMxgUWZz39oCSPYAKg2YJRhKHpfHy"
+        , _xtzShotsMetadata_blockTimestamp = parseTime "2023-05-10T05:35:44"
+        , _xtzShotsMetadata_url = "https://mainnet-v16-shots.nyc3.digitaloceanspaces.com/mainnet-3505126.rolling"
+        , _xtzShotsMetadata_chainName = "mainnet"
         , _xtzShotsMetadata_historyMode = XtzShotsSnapshotHistoryMode_Rolling
         , _xtzShotsMetadata_artifactType = XtzShotsArtifactType_TezosSnapshot
         }
@@ -46,7 +46,7 @@ dummyAppConfig = AppConfig
   , _appConfig_kilnNodeNetPort = 0
   , _appConfig_kilnDataDir = ""
   , _appConfig_kilnNodeConfig = dummyNodeConfigFile
-  , _appConfig_chainId = "NetXizpkH94bocH" -- limanet
+  , _appConfig_chainId = "NetXdQprcVkpaWU" -- mainnet
   , _appConfig_kilnNodeCustomArgs = Nothing
   , _appConfig_kilnBakerCustomArgs = Nothing
   , _appConfig_binaryPaths = Nothing
