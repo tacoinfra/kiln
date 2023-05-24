@@ -524,9 +524,19 @@ updateSnapshotMetaImportLog importLog smId = do
 removeFileLogging :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 removeFileLogging f = liftIO (removeFile f) `catch` \(e :: IOException) -> $(logError) $ "Failed to remove file: " <> T.pack f <> ": " <> tshow e
 
--- | URI of xtz-shots snapshot metadata.
+snapshotProviderUri :: SnapshotProvider -> URI
+snapshotProviderUri = \case
+  SnapshotProvider_XtzShots -> xtzShotsMetadataUri
+  SnapshotProvider_Marigold -> marigoldMetadataUri
+  SnapshotProvider_Custom url -> url ?: error "Snapshot provider url is 'Nothing'"
+
+-- | URI of Xtz-shots snapshot metadata.
 xtzShotsMetadataUri :: URI
 xtzShotsMetadataUri = [uri|https://xtz-shots.io/tezos-snapshots.json|]
+
+-- | URI of Marigold snapshot metadata.
+marigoldMetadataUri :: URI
+marigoldMetadataUri = [uri|https://snapshots.tezos.marigold.dev/api/tezos-snapshots.json|]
 
 -- | The path where the node snapshot is stored.
 snapshotStorePath :: AppConfig -> FilePath
@@ -537,26 +547,28 @@ snapshotStorePath appConfig = _appConfig_kilnDataDir appConfig <> "/snapshots/"
 defaultSnapshotFileName :: FilePath
 defaultSnapshotFileName = "snapshot"
 
--- | Handle internal node bootstrap using the @SnapshotImportSource_XtzShotsMetadataSource@
--- option. This function downloads latest rolling snapshot from xtz-shots.io by parsing
--- the metadata from @xtzShotsMetadataUri@.
-handleDownloadXtzShotsMetadata
+-- | Handle internal node bootstrap using the @SnapshotImportSource_SnapshotProviderSource@
+-- option. This function downloads latest rolling snapshot from the given snapshot provider by parsing
+-- the metadata from the provider URL.
+handleDownloadSnapshotFromProvider
   :: (MonadIO m)
   => AppConfig
   -> NodeDataSource
+  -> SnapshotProvider
   -> m ()
-handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggingEnv logger $ do
+handleDownloadSnapshotFromProvider appConfig nds provider = void $ liftIO $ forkIO $ runLoggingEnv logger $ do
+  let providerUrl = snapshotProviderUri provider
   (smId, _) <- initSnapshotMeta appConfig Nothing nds Nothing
   let
     handleFetchMetadataError (e :: SomeException) = do
       $(logError) $ "Snapshot download failed with: " <> tshow e
       handleSnapshotDownloadFailure nds smId errText
       throw e
-  $(logDebug) $ "Downloading snapshot metadata from " <> T.pack (renderStr xtzShotsMetadataUri)
+  $(logDebug) $ "Downloading snapshot metadata from " <> T.pack (renderStr providerUrl)
   latestSnapshotMetadata <- handle handleFetchMetadataError $ do
-    metadata <- downloadXtzShotsMetadata httpMgr
+    metadata <- downloadSnapshotMetadata httpMgr providerUrl
     findLatestSnapshot appConfig metadata
-  latestSnapshotUri <- mkURI $ latestSnapshotMetadata ^. xtzShotsMetadata_url
+  latestSnapshotUri <- mkURI $ latestSnapshotMetadata ^. snapshotMetadata_url
   $(logDebug) $ "Found latest snapshot url " <> T.pack (renderStr latestSnapshotUri)
   updatedSnapshotMeta <- updateSnapshotMeta' latestSnapshotMetadata smId latestSnapshotUri
   let
@@ -573,16 +585,16 @@ handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggi
 
     updateSnapshotMeta'
       :: (MonadLoggerIO m)
-      => XtzShotsMetadata
+      => SnapshotMetadata
       -> SnapshotMetaId
       -> URI
       -> m SnapshotMeta
     updateSnapshotMeta' m smId url = runDb (Identity db) $ do
       update
         [ SnapshotMeta_mbUriField =. Just url
-        , SnapshotMeta_headBlockField =. (Just $ m ^. xtzShotsMetadata_blockHash :: Maybe BlockHash)
-        , SnapshotMeta_headBlockLevelField =. (Just $ m ^. xtzShotsMetadata_blockHeight :: Maybe RawLevel)
-        , SnapshotMeta_headBlockBakeTimeField =. (Just $ m ^. xtzShotsMetadata_blockTimestamp :: Maybe UTCTime)
+        , SnapshotMeta_headBlockField =. (Just $ m ^. snapshotMetadata_blockHash :: Maybe BlockHash)
+        , SnapshotMeta_headBlockLevelField =. (Just $ m ^. snapshotMetadata_blockHeight :: Maybe RawLevel)
+        , SnapshotMeta_headBlockBakeTimeField =. (Just $ m ^. snapshotMetadata_blockTimestamp :: Maybe UTCTime)
         ] (AutoKeyField ==. smId)
       mbUpdatedSnapshotMeta <- get smId
       let errMsg = "Inconsistent db state: SnapshotMeta not found"
@@ -590,10 +602,16 @@ handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggi
       notify NotifyTag_SnapshotMeta updatedSnapshotMeta
       pure updatedSnapshotMeta
 
--- | Download the list of snapshot metadata from @xtzShotsMetadataUri@.
-downloadXtzShotsMetadata :: (MonadLoggerIO m, MonadThrow m) => Http.Manager -> m [XtzShotsMetadata]
-downloadXtzShotsMetadata mgr = do
-  let uriStr = renderStr xtzShotsMetadataUri
+-- | Download the list of snapshot metadata from the given provider url.
+downloadSnapshotMetadata
+  :: ( MonadLoggerIO m
+     , MonadThrow m
+     )
+  => Http.Manager
+  -> URI
+  -> m [SnapshotMetadata]
+downloadSnapshotMetadata mgr providerUri = do
+  let uriStr = renderStr providerUri
   resp <- doRequestLBSThrows mgr uriStr
   let body = Http.getResponseBody resp
       statusCode = Http.getResponseStatusCode resp
@@ -604,17 +622,16 @@ downloadXtzShotsMetadata mgr = do
       $(logError) statusLogText
       $(logError) $ "Response body: " <> T.decodeUtf8 (LBS.toStrict body)
       throwString $ "Expected metadata response status to be 200, but got " <> show statusCode
-  either throwString (pure . unXtzShotsMetadataList) $ eitherDecode body
+  either throwString (pure . unSnapshotMetadataList) $ eitherDecode body
 
--- | Given the list of snapshot metadata fetched from @xtzShotsMetadataUri@
--- find the latest rolling snapshot url.
-findLatestSnapshot :: (MonadThrow m) => AppConfig -> [XtzShotsMetadata] -> m XtzShotsMetadata
+-- | Given the list of snapshot metadata, find the latest rolling snapshot url.
+findLatestSnapshot :: (MonadThrow m) => AppConfig -> [SnapshotMetadata] -> m SnapshotMetadata
 findLatestSnapshot _ [] = throwString "Got empty metadata list from xtz-shots"
 findLatestSnapshot appConfig metadata = do
   let mbChainName = showNamedChain <$> identifyChain chainId
   chainName <- maybe (throwString "xtz-shots doesn't support custom chains") pure mbChainName
   let
-    isNeededChain m = m ^. xtzShotsMetadata_chainName == chainName
+    isNeededChain m = m ^. snapshotMetadata_chainName == chainName
     filteredMetadata = flip filter metadata $ \m ->
       isNeededChain m && isRolling m && isTezosSnapshot m
   when (null filteredMetadata) $ throwString $
@@ -622,13 +639,13 @@ findLatestSnapshot appConfig metadata = do
   pure $ maximumBy byBlockHeight filteredMetadata
   where
     chainId = _appConfig_chainId appConfig
-    isRolling m = m ^. xtzShotsMetadata_historyMode
-      == XtzShotsSnapshotHistoryMode_Rolling
-    isTezosSnapshot m = m ^. xtzShotsMetadata_artifactType
-      == XtzShotsArtifactType_TezosSnapshot
+    isRolling m = m ^. snapshotMetadata_historyMode
+      == SnapshotHistoryMode_Rolling
+    isTezosSnapshot m = m ^. snapshotMetadata_artifactType
+      == SnapshotArtifactType_TezosSnapshot
     byBlockHeight m1 m2 = compare
-      (m1 ^. xtzShotsMetadata_blockHeight)
-      (m2 ^. xtzShotsMetadata_blockHeight)
+      (m1 ^. snapshotMetadata_blockHeight)
+      (m2 ^. snapshotMetadata_blockHeight)
 
 -- | Update the 'SnapshotMeta' table and set the correct internal node's
 -- process state in case of snapshot download error.

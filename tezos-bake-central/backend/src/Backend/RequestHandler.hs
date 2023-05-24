@@ -152,8 +152,9 @@ requestHandler appConfig nds =
         case mNodeProcessState of
           Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_UriSource u) ->
             handleSnapshotDownload appConfig nds u
-          Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_XtzShotsMetadataSource) ->
-            handleDownloadXtzShotsMetadata appConfig nds
+          Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_SnapshotProviderSource p) -> do
+            liftIO $ print p
+            handleDownloadSnapshotFromProvider appConfig nds p
           Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp) ->
             handleSnapshotFilePathImport appConfig nds fp
           Nothing ->

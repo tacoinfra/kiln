@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module XtzShotsMetadata
-  ( testXtzShotsMetadata
+module SnapshotMetadata
+  ( testSnapshotMetadata
   ) where
 
 import Data.Aeson
@@ -15,8 +15,8 @@ import Backend.Snapshot (findLatestSnapshot)
 import Common.Schema
 import Tezos.Types
 
-testXtzShotsMetadata :: TestTree
-testXtzShotsMetadata = testGroup "xtz-shots metadata"
+testSnapshotMetadata :: TestTree
+testSnapshotMetadata = testGroup "Snapshot metadata"
   [ testFindLatestRollingSnapshot
   ]
 
@@ -24,18 +24,18 @@ testFindLatestRollingSnapshot :: TestTree
 testFindLatestRollingSnapshot =
   testCase "Find the latest rolling mainnet snapshot in xtz-shots metadata" $ do
     rawMetadata <- LBS.readFile "test/resources/metadata.json"
-    let metadata = either (error "Can't parse metadata") unXtzShotsMetadataList $ eitherDecode rawMetadata
+    let metadata = either (error "Can't parse metadata") unSnapshotMetadataList $ eitherDecode rawMetadata
     actual <- findLatestSnapshot dummyAppConfig metadata
     let
       parseTime = parseTimeOrError True defaultTimeLocale "%Y-%m-%dT%H:%M:%S"
-      expected = XtzShotsMetadata
-        { _xtzShotsMetadata_blockHeight = 3505126
-        , _xtzShotsMetadata_blockHash = BlockHash "BL8gHjhuS19unbYxMjtD83wMxgUWZz39oCSPYAKg2YJRhKHpfHy"
-        , _xtzShotsMetadata_blockTimestamp = parseTime "2023-05-10T05:35:44"
-        , _xtzShotsMetadata_url = "https://mainnet-v16-shots.nyc3.digitaloceanspaces.com/mainnet-3505126.rolling"
-        , _xtzShotsMetadata_chainName = "mainnet"
-        , _xtzShotsMetadata_historyMode = XtzShotsSnapshotHistoryMode_Rolling
-        , _xtzShotsMetadata_artifactType = XtzShotsArtifactType_TezosSnapshot
+      expected = SnapshotMetadata
+        { _snapshotMetadata_blockHeight = 3505126
+        , _snapshotMetadata_blockHash = BlockHash "BL8gHjhuS19unbYxMjtD83wMxgUWZz39oCSPYAKg2YJRhKHpfHy"
+        , _snapshotMetadata_blockTimestamp = parseTime "2023-05-10T05:35:44"
+        , _snapshotMetadata_url = "https://mainnet-v16-shots.nyc3.digitaloceanspaces.com/mainnet-3505126.rolling"
+        , _snapshotMetadata_chainName = "mainnet"
+        , _snapshotMetadata_historyMode = SnapshotHistoryMode_Rolling
+        , _snapshotMetadata_artifactType = SnapshotArtifactType_TezosSnapshot
         }
     actual @?= expected
 

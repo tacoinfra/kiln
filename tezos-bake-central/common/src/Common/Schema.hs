@@ -987,8 +987,16 @@ data SnapshotImportSource
   = SnapshotImportSource_FileSource
   | SnapshotImportSource_FilePathSource FilePath
   | SnapshotImportSource_UriSource URI
-  | SnapshotImportSource_XtzShotsMetadataSource
+  | SnapshotImportSource_SnapshotProviderSource SnapshotProvider
   deriving (Eq, Generic, Ord, Show, Typeable)
+
+data SnapshotProvider
+  = SnapshotProvider_XtzShots
+  | SnapshotProvider_Marigold
+  | SnapshotProvider_Custom (Maybe URI)
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON SnapshotProvider
+instance ToJSON SnapshotProvider
 
 data SnapshotImportError
   = SnapshotImportError_FileNotFound
@@ -996,55 +1004,55 @@ data SnapshotImportError
   | SnapshotImportError_PermissionDenied
   deriving (Eq, Generic, Ord, Show, Typeable)
 
-data XtzShotsArtifactType
-  = XtzShotsArtifactType_TezosSnapshot
-  | XtzShotsArtifactType_Other
+data SnapshotArtifactType
+  = SnapshotArtifactType_TezosSnapshot
+  | SnapshotArtifactType_Other
   deriving (Eq, Generic, Ord, Show, Typeable)
 
-instance FromJSON XtzShotsArtifactType where
+instance FromJSON SnapshotArtifactType where
   parseJSON = \case
-    Aeson.String "tezos-snapshot" -> pure XtzShotsArtifactType_TezosSnapshot
-    _ -> pure XtzShotsArtifactType_Other
+    Aeson.String "tezos-snapshot" -> pure SnapshotArtifactType_TezosSnapshot
+    _ -> pure SnapshotArtifactType_Other
 
-data XtzShotsSnapshotHistoryMode
-  = XtzShotsSnapshotHistoryMode_Rolling
-  | XtzShotsSnapshotHistoryMode_Other
+data SnapshotHistoryMode
+  = SnapshotHistoryMode_Rolling
+  | SnapshotHistoryMode_Other
   deriving (Eq, Generic, Ord, Show, Typeable)
 
-instance FromJSON XtzShotsSnapshotHistoryMode where
+instance FromJSON SnapshotHistoryMode where
   parseJSON = \case
-    Aeson.String "rolling" -> pure XtzShotsSnapshotHistoryMode_Rolling
-    _ -> pure XtzShotsSnapshotHistoryMode_Other
+    Aeson.String "rolling" -> pure SnapshotHistoryMode_Rolling
+    _ -> pure SnapshotHistoryMode_Other
 
-data XtzShotsMetadata = XtzShotsMetadata
-  { _xtzShotsMetadata_blockHeight :: RawLevel
-  , _xtzShotsMetadata_blockHash :: BlockHash
-  , _xtzShotsMetadata_blockTimestamp :: UTCTime
-  , _xtzShotsMetadata_url :: Text
-  , _xtzShotsMetadata_chainName :: Text
-  , _xtzShotsMetadata_historyMode :: XtzShotsSnapshotHistoryMode
-  , _xtzShotsMetadata_artifactType :: XtzShotsArtifactType
+data SnapshotMetadata = SnapshotMetadata
+  { _snapshotMetadata_blockHeight :: RawLevel
+  , _snapshotMetadata_blockHash :: BlockHash
+  , _snapshotMetadata_blockTimestamp :: UTCTime
+  , _snapshotMetadata_url :: Text
+  , _snapshotMetadata_chainName :: Text
+  , _snapshotMetadata_historyMode :: SnapshotHistoryMode
+  , _snapshotMetadata_artifactType :: SnapshotArtifactType
   } deriving (Eq, Generic, Ord, Show, Typeable)
 
-instance FromJSON XtzShotsMetadata where
-  parseJSON = withObject "XtzShotsMetadata" $ \o -> do
-    _xtzShotsMetadata_blockHeight    <- o .: "block_height" <|>
+instance FromJSON SnapshotMetadata where
+  parseJSON = withObject "SnapshotMetadata" $ \o -> do
+    _snapshotMetadata_blockHeight    <- o .: "block_height" <|>
       fmap (RawLevel . read) (o .: "block_height")
-    _xtzShotsMetadata_blockHash      <- o .: "block_hash"
-    _xtzShotsMetadata_blockTimestamp <- o .: "block_timestamp"
-    _xtzShotsMetadata_url            <- o .: "url"
-    _xtzShotsMetadata_chainName      <- o .: "chain_name"
-    _xtzShotsMetadata_historyMode    <- o .: "history_mode"
-    _xtzShotsMetadata_artifactType   <- o .: "artifact_type"
-    pure $ XtzShotsMetadata{..}
+    _snapshotMetadata_blockHash      <- o .: "block_hash"
+    _snapshotMetadata_blockTimestamp <- o .: "block_timestamp"
+    _snapshotMetadata_url            <- o .: "url"
+    _snapshotMetadata_chainName      <- o .: "chain_name"
+    _snapshotMetadata_historyMode    <- o .: "history_mode"
+    _snapshotMetadata_artifactType   <- o .: "artifact_type"
+    pure $ SnapshotMetadata{..}
 
-newtype XtzShotsMetadataList = XtzShotsMetadataList
-  { unXtzShotsMetadataList :: [XtzShotsMetadata] }
+newtype SnapshotMetadataList = SnapshotMetadataList
+  { unSnapshotMetadataList :: [SnapshotMetadata] }
   deriving (Eq, Generic, Ord, Show, Typeable)
 
-instance FromJSON XtzShotsMetadataList where
-  parseJSON = withObject "XtzShotsMetadataList" $ \o ->
-    XtzShotsMetadataList <$> o .: "data"
+instance FromJSON SnapshotMetadataList where
+  parseJSON = withObject "SnapshotMetadataList" $ \o ->
+    SnapshotMetadataList <$> o .: "data"
 
 data AddInternalNodeError
   = AddInternalNodeError_SnapshotImportError SnapshotImportError
@@ -1215,7 +1223,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'TelegramMessageQueue
   , 'TelegramRecipient
   , 'UpstreamVersion
-  , 'XtzShotsMetadata
+  , 'SnapshotMetadata
   ] ++ map makePrisms
   [ ''ErrorLogInternalNodeFailed
   , ''UpgradeCheckError

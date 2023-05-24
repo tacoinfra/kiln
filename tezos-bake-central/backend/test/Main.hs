@@ -4,7 +4,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Accusation (testAccusations)
-import XtzShotsMetadata (testXtzShotsMetadata)
+import SnapshotMetadata (testSnapshotMetadata)
 
 main :: IO ()
 main = defaultMain tests
@@ -12,5 +12,5 @@ main = defaultMain tests
 tests :: TestTree
 tests = testGroup "Backend tests"
   [ testAccusations
-  , testXtzShotsMetadata
+  , testSnapshotMetadata
   ]

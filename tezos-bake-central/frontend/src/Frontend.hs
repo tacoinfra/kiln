@@ -1530,7 +1530,7 @@ data NodeBootstrapMethod
   | NodeBootstrapMethod_SnapshotFile (Maybe File.File)
   | NodeBootstrapMethod_SnapshotFilePath (Maybe FilePath)
   | NodeBootstrapMethod_SnapshotURI (Maybe URI)
-  | NodeBootstrapMethod_XtzShotsMetadata
+  | NodeBootstrapMethod_SnapshotProvider SnapshotProvider
 
 startNodeWorkflow :: forall m t js.
   ( MonadAppWidget js t m
@@ -1542,7 +1542,6 @@ startNodeWorkflow :: forall m t js.
 startNodeWorkflow backWF close = Workflow $ do
   backEv <- backButton
   divClass "ui header" $ text "Start a Kiln Node"
-  elClass "h5" "ui header" $ text "Initialize Chain Data From:"
   divClass "ui two column centered grid divided" $ do
   rec
     let
@@ -1551,23 +1550,61 @@ startNodeWorkflow backWF close = Workflow $ do
         , useSnapshotFileEv
         , useSnapshotPeerToPeerEv
         , useSnapshotFilePathEv
-        , useXtzShotsMetadataEv
+        , useSnapshotProviderEv
         ]
 
-    useXtzShotsMetadata <- isRadioItemSelected radioItems useXtzShotsMetadataEv True
+    useSnapshotProvider <- isRadioItemSelected radioItems useSnapshotProviderEv True
     useSnapshotURI      <- isRadioItemSelected radioItems useSnapshotUriEv False
     useSnapshotFile     <- isRadioItemSelected radioItems useSnapshotFileEv False
     useSnapshotFilePath <- isRadioItemSelected radioItems useSnapshotFilePathEv False
 
-    (useXtzShotsMetadataEv, (useSnapshotUriEv, mSnapshotURI)) <- divClass "column" $ do
+    ((useSnapshotProviderEv, selectedProviderDyn), (useSnapshotUriEv, mSnapshotURI)) <- divClass "column" $ do
 
-      (useXtzShotsMetadataEv', _) <- fakeRadioItem useXtzShotsMetadata $ el "div" $ do
-        el "div" $ text "Download latest rolling snapshot from xtz-shots (Recommended)"
-        divClass "explanation" $ do
-          el "p" $ text "Snapshots are compressed versions of the blockchain, taken at a specific block level. Use a snapshot to considerably reduce initial node syncing time."
-          el "p" $ do
-            el "span" $ text "You can download the latest rolling snapshot from "
-            hrefLink "https://xtz-shots.io/" $ text "xtz-shots.io"
+      (useSnapshotProviderEv', selectedProviderDyn') <- fakeRadioItem useSnapshotProvider $ el "div" $ mdo
+        el "div" $ text "Download latest rolling snapshot from the snapshot provider (Recommended)"
+
+        divClass "explanation" $ text ""
+
+        let
+          providerOptions =
+            [ SnapshotProvider_XtzShots
+            , SnapshotProvider_Marigold
+            , SnapshotProvider_Custom Nothing
+            ]
+
+          providerText = text . \case
+            SnapshotProvider_XtzShots -> "Xtz-shots"
+            SnapshotProvider_Marigold -> "Marigold"
+            SnapshotProvider_Custom _ -> "Custom snapshot provider URL"
+
+        providerDropdown <- divClass "ui field" $ do
+          el "label" $ text "Select snapshot provider"
+          SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity SnapshotProvider_XtzShots) never $ SemUi.TaggedStatic $
+            Map.fromList $ ffor providerOptions $ \p -> (p, providerText p)
+
+        uriEv <- dyn $ ffor (value providerDropdown) $ \(Identity v) -> case v of
+          Custom _ -> do
+            divClass "explanation" $  do
+              text "You can enter either the URL of the provider (e.g. "
+              hrefLink "https://xtz-shots.io" $ text "https://xtz-shots.io"
+              text " or "
+              hrefLink "https://xtz-shots.io/tezos-snapshots.json" $ text "https://xtz-shots.io/tezos-snapshots.json"
+              text ") or a link to a specific snapshot. "
+              text "Kiln will download the latest rolling snapshot from the provider or a specific snapshot depending on the given URL."
+            elAttr "div" ("style" =: "margin-top: 10px") $
+             either (const Nothing) Just <$$$> formItem' "" $ uriField "" ""
+          _ -> blank $> constDyn Nothing
+        uriEv' <- switchHold never $ updated <$> uriEv
+        uriDyn <- holdDyn Nothing uriEv'
+
+        let
+          selectedProviderDyn' :: Dynamic t SnapshotProvider
+          selectedProviderDyn' = ffor2 (value providerDropdown) uriDyn $ \(Identity dd) u -> case dd of
+            SnapshotProvider_Custom _ -> SnapshotProvider_Custom u
+            sp -> sp
+
+        pure selectedProviderDyn'
+
 
       (useSnapshotUriEv', mSnapshotURI') <- fakeRadioItem useSnapshotURI $ el "div" $ do
         el "div" $ text "Provide snapshot URL"
@@ -1582,7 +1619,7 @@ startNodeWorkflow backWF close = Workflow $ do
               Left _ -> Nothing
         return mUri
 
-      pure (useXtzShotsMetadataEv', (useSnapshotUriEv', mSnapshotURI'))
+      pure ((useSnapshotProviderEv', selectedProviderDyn'), (useSnapshotUriEv', mSnapshotURI'))
 
     ((useSnapshotFilePathEv, mSnapshotFilePath), useSnapshotPeerToPeerEv, (useSnapshotFileEv, mSelectedSnapshot))
       <- divClass "column" $ do
@@ -1601,8 +1638,8 @@ startNodeWorkflow backWF close = Workflow $ do
             useSnapshotFile' <- useSnapshotFile
             useSnapshotURI' <- useSnapshotURI
             useSnapshotFilePath' <- useSnapshotFilePath
-            useXtzShotsMetadata' <- useXtzShotsMetadata
-            return $ not $ useSnapshotFile' || useSnapshotURI' || useSnapshotFilePath' || useXtzShotsMetadata'
+            useSnapshotProvider' <- useSnapshotProvider
+            return $ not $ useSnapshotFile' || useSnapshotURI' || useSnapshotFilePath' || useSnapshotProvider'
 
         (useSnapshotFileEv', mSelectedSnapshot') <- fakeRadioItem useSnapshotFile $ el "div" $ do
           el "div" $ text "Provide snapshot file stored locally"
@@ -1632,15 +1669,15 @@ startNodeWorkflow backWF close = Workflow $ do
       useSnapshotFile' <- useSnapshotFile
       useSnapshotURI' <- useSnapshotURI
       useSnapshotFilePath' <- useSnapshotFilePath
-      useXtzShotsMetadata' <- useXtzShotsMetadata
+      useSnapshotProvider' <- useSnapshotProvider
       if useSnapshotFile'
       then NodeBootstrapMethod_SnapshotFile <$> mSelectedSnapshot
       else if useSnapshotURI'
       then NodeBootstrapMethod_SnapshotURI <$> mSnapshotURI
       else if useSnapshotFilePath'
       then NodeBootstrapMethod_SnapshotFilePath . fmap T.unpack <$> mSnapshotFilePath
-      else if useXtzShotsMetadata'
-      then return NodeBootstrapMethod_XtzShotsMetadata
+      else if useSnapshotProvider'
+      then NodeBootstrapMethod_SnapshotProvider <$> selectedProviderDyn
       else return NodeBootstrapMethod_PeerToPeer
 
     disabledFlag :: Dynamic t Text
@@ -1651,7 +1688,8 @@ startNodeWorkflow backWF close = Workflow $ do
         NodeBootstrapMethod_SnapshotFile (Just _) -> ""
         NodeBootstrapMethod_SnapshotFilePath (Just _) -> ""
         NodeBootstrapMethod_SnapshotURI (Just _) -> ""
-        NodeBootstrapMethod_XtzShotsMetadata -> ""
+        NodeBootstrapMethod_SnapshotProvider (SnapshotProvider_Custom Nothing) -> "disabled"
+        NodeBootstrapMethod_SnapshotProvider _ -> ""
         _ -> "disabled"
 
   rec
@@ -1686,8 +1724,8 @@ startNodeWorkflow backWF close = Workflow $ do
       downloadSnapshotEv = flip mapMaybe selectedMethodEv $ \case
         NodeBootstrapMethod_SnapshotURI u -> u
         _ -> Nothing
-      downloadXtzShotsMetadataEv = flip mapMaybe selectedMethodEv $ \case
-        NodeBootstrapMethod_XtzShotsMetadata -> Just ()
+      downloadFromProviderEv = flip mapMaybe selectedMethodEv $ \case
+        NodeBootstrapMethod_SnapshotProvider p -> Just p
         _ -> Nothing
 
     formEv <- performEvent $ ffor uploadSnapshotEv fileToFormValue
@@ -1704,9 +1742,10 @@ startNodeWorkflow backWF close = Workflow $ do
       requestingIdentity $ ffor uploadSnapshotFromPathEv $ \fp ->
       public (PublicRequest_AddInternalNode (Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp)))
     startNodePeerToPeerResEv <- requestingIdentity $ startNodePeerToPeerEv $> public (PublicRequest_AddInternalNode Nothing)
-    downloadXtzShotsMetadataResEv <- requestingIdentity $ downloadXtzShotsMetadataEv $> public (PublicRequest_AddInternalNode $ Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_XtzShotsMetadataSource))
+    downloadFromProviderResEv <- requestingIdentity $ ffor downloadFromProviderEv $ \p ->
+      public (PublicRequest_AddInternalNode $ Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_SnapshotProviderSource p))
     let
-      events = map void [startNodePeerToPeerResEv, uploadSnapshotResEv, downloadSnapshotResEv, downloadXtzShotsMetadataResEv]
+      events = map void [startNodePeerToPeerResEv, uploadSnapshotResEv, downloadSnapshotResEv, downloadFromProviderResEv]
         <> [uploadSnapshotFromPathResEv]
 
   pure ( (["start-node"], leftmost events <> close)

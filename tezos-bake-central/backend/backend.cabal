@@ -188,7 +188,7 @@ test-suite test
   main-is: Main.hs
   other-modules:
     Accusation
-    XtzShotsMetadata
+    SnapshotMetadata
   build-depends:
       aeson
     , base >= 4 && < 5
