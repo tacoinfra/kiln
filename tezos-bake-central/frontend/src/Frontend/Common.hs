@@ -284,8 +284,15 @@ localHumanizedTimestamp titleDyn tsDyn = do
     (do
       whenJustDyn titleDyn $ \title -> el "strong" (text title) *> el "br" blank
       dyn_ $ fmap localTimestamp tsDyn
-    ) $
-    dynText <=< holdUniqDyn $ ffor2 currentTime tsDyn $ humanizeTimestamp tz
+    ) $ fmap fst
+      $ runWithReplace blank
+      -- We redraw this text only when 'currentTime' value is changed
+      -- and fetch the current value of 'tsDyn' at this moment using the
+      -- 'attach' function to prevent the cases when 'tsDyn' is changed
+      -- between the timer ticks.
+      $ ffor (attach (current tsDyn) (updated currentTime))
+      $ \(ts, now') ->
+          text $ humanizeTimestamp tz now' ts
 
 -- | Like 'localHumanizedTimestamp' for tooltips without titles. Uses CSS
 -- tooltips since they are more lightweight
