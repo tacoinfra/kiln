@@ -1,23 +1,23 @@
 { pkgs }:
 with pkgs;
 let
-  outer-version = "v17.0-1";
+  outer-version = "v17.1-1";
   macos_version = "big_sur";
     tezos-baker-PtNairob = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-PtNairob-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "12kgn6jybbj48ilry2h9gf31aa1rym7ah6hhayisrvix9jg9zg08";
+      sha256 = "0cmpj7qfv64zba0dydysp7zhpg0nj62l35i5jh858hjz1kbm04cz";
     };
     tezos-baker-PtMumbai = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-PtMumbai-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0qadr84kcm4y6ivqzlffyvmizji78a20y0bz17bfnll9kjy7ni83";
+      sha256 = "1pws1s0hsy78akyrvf96bipn6vcdjgyibig38ad44pmw32phbqrj";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1hhng2q2b62q83833j197jqazzprmvadmalxjfxdcd3m8pyzg96a";
+      sha256 = "0jdniivnbd5lklms73avjcj00cs41iy7di32hq3bcn3zym9gvfpb";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "02868qspn1yckjmzxa3il4iqnyc32k98id9pm42ajpkn9ngf2dv9";
+      sha256 = "193frapgks3gycicq1lwr9slf4cf6cj0701a9802mv3lrrjd87jq";
     };
 
 in stdenv.mkDerivation rec {
