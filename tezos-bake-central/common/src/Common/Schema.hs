@@ -987,16 +987,15 @@ data SnapshotImportSource
   = SnapshotImportSource_FileSource
   | SnapshotImportSource_FilePathSource FilePath
   | SnapshotImportSource_UriSource URI
-  | SnapshotImportSource_SnapshotProviderSource SnapshotProvider
+  | SnapshotImportSource_KnownSnapshotProviderSource KnownSnapshotProvider
   deriving (Eq, Generic, Ord, Show, Typeable)
 
-data SnapshotProvider
-  = SnapshotProvider_XtzShots
-  | SnapshotProvider_Marigold
-  | SnapshotProvider_Custom (Maybe URI)
+data KnownSnapshotProvider
+  = KnownSnapshotProvider_XtzShots
+  | KnownSnapshotProvider_Marigold
   deriving (Eq, Ord, Show, Typeable, Generic)
-instance FromJSON SnapshotProvider
-instance ToJSON SnapshotProvider
+instance FromJSON KnownSnapshotProvider
+instance ToJSON KnownSnapshotProvider
 
 data SnapshotImportError
   = SnapshotImportError_FileNotFound
