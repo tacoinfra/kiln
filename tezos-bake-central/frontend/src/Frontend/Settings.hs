@@ -138,7 +138,7 @@ settingsTab = do
       divClass "ui tiny header" $ text $ "Missed " <> T.toTitle textKind
       (every, ()) <- fakeRadioItem (isNothing <$> mLimit) $ text $ "Notify for every missed " <> textKind
       rec
-        (after, rnlDyn) <- fakeRadioItem (isJust <$> mLimit) $ mdo
+        (after, rnlDyn) <- fakeRadioItemClass "settings" (isJust <$> mLimit) $ mdo
           let input f = do
                 rec result <- fmap (fmap (readMaybe . T.unpack) . value) $ inputElement $ def
                       & initialAttributes .~ "type" =: "number" <> "min" =: "0"
@@ -288,8 +288,23 @@ settingsTab = do
           _ -> blank
 
 fakeRadioItem :: (DomBuilder t m, PostBuild t m) => Dynamic t Bool -> m a -> m (Event t (), a)
-fakeRadioItem checked ma = do
-  (e, a) <- elDynAttr' "div" (ffor checked $ \c -> "class" =: ("fake-radio-item" <> if c then " checked" else "")) ma
+fakeRadioItem = fakeRadioItemClass ""
+
+fakeRadioItemClass
+  :: ( DomBuilder t m
+     , PostBuild t m
+     )
+  => Text
+  -> Dynamic t Bool
+  -> m a
+  -> m (Event t (), a)
+fakeRadioItemClass cls checked ma = do
+  (e, a) <- flip (elDynAttr' "div") ma $ ffor checked $ \c -> "class" =: T.concat
+    [ "fake-radio-item"
+    , if c then " checked" else ""
+    , " "
+    , cls
+    ]
   pure (domEvent Click e, a)
 
 (<$$) :: Functor f => Functor g => b -> f (g a) -> f (g b)

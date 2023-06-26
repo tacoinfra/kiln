@@ -538,6 +538,12 @@ body {
   &.checked:after {
     background-color: @blue;
   }
+  &.checked input {
+    color: @black;
+  }
+}
+
+.fake-radio-item.settings {
   input {
     display: inline;
     width: @60px;
@@ -548,9 +554,6 @@ body {
     border-radius: 3px;
     color: #c6c6c6;
     background: #fcfcfc;
-  }
-  &.checked input {
-    color: @black;
   }
 }
 
