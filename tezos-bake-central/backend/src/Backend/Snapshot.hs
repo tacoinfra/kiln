@@ -19,18 +19,20 @@
 module Backend.Snapshot where
 
 import Control.Applicative (optional)
-import Control.Concurrent
+import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO, writeTVar)
 import Control.Exception.Safe (IOException, MonadCatch, MonadThrow, SomeException (..), handle, throw, throwString, try)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
-import Control.Monad.Trans.Resource (runResourceT)
+import Control.Monad.Trans.Resource (ResourceT, runResourceT)
 import Control.Monad.Logger
 import Data.Aeson (FromJSON (..), eitherDecode, withObject, (.:))
 import qualified Data.Attoparsec.Text as P
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isSpace)
+import Data.Conduit (ConduitT, await, yield, (.|))
 import Data.Conduit.Binary (sinkFileCautious)
 import qualified Data.Conduit.List as CL
 import Data.Conduit.Process (StreamingProcessHandle, getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
@@ -55,6 +57,7 @@ import System.Exit (ExitCode(..))
 import System.FilePath.Posix (takeFileName)
 import System.Process (CreateProcess)
 import qualified System.Process as Process
+import Text.Read (readMaybe)
 import Text.URI (URI, mkURI, relativeTo, render, renderStr)
 import qualified Text.URI.QQ as Uri
 
@@ -273,9 +276,7 @@ downloadSnapshot
 downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
   let snapshotUriStr = renderStr snapshotURI
   $(logDebug) $ "Downloading node snapshot from " <> T.pack snapshotUriStr
-  let db = _nodeDataSource_pool nds
-      logger = _nodeDataSource_logger nds
-      dataDir = nodeDataDir appConfig
+  let dataDir = nodeDataDir appConfig
   cleanupDir storeLocation
   nodePPid <- runDb (Identity db) $ project1
     ( NodeInternal_idField
@@ -299,7 +300,7 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
           runLoggingEnv logger $ case status of
             200 -> $(logDebug) statusLogText
             _   -> $(logError) statusLogText
-          sinkFileCautious storePath
+          updateDownloadProgress (getContentLength resp) .| sinkFileCautious storePath
       case res of
         Left (e :: Http.HttpException) ->
           let errText = T.pack (show e)
@@ -337,8 +338,48 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
           _ -> threadDelay' 1 >> go
     go
   where
+    db = _nodeDataSource_pool nds
+    logger = _nodeDataSource_logger nds
     storeLocation = snapshotStorePath appConfig
     storePath = storeLocation <> defaultSnapshotFileName
+
+    -- Returns the value of 'Content-Length' response header if present.
+    getContentLength :: Http.Response a -> Maybe Int
+    getContentLength resp = case Http.getResponseHeader "Content-Length" resp of
+      [v] -> readMaybe $ T.unpack $ T.decodeUtf8 v
+      _ -> Nothing
+
+    updateDownloadProgress
+      :: Maybe Int
+      -> ConduitT ByteString ByteString (ResourceT IO) ()
+    updateDownloadProgress mbTotalSizeInt = updateDownloadProgress' 0
+      where
+        mbTotalSize :: Maybe Double
+        mbTotalSize = fromIntegral @Int @Double <$> mbTotalSizeInt
+
+        updateDownloadProgress'
+          :: Double
+          -> ConduitT ByteString ByteString (ResourceT IO) ()
+        updateDownloadProgress' curProgress = do
+          mbChunk <- await
+          whenJust mbChunk $ \chunk -> do
+            let newProgress = curProgress + fromIntegral @Int @Double (BS.length chunk)
+            -- If 'Content-Length' header isn't set, we don't update
+            -- the progress.
+            whenJust mbTotalSize $ \totalSize ->
+              runLoggingEnv logger $ runDb (Identity db) $
+                updateSnapshotMetaDownloadProgress (floor $ 100 * newProgress / totalSize)
+            yield chunk
+            updateDownloadProgress' newProgress
+
+    updateSnapshotMetaDownloadProgress
+      :: Int
+      -> Serializable ()
+    updateSnapshotMetaDownloadProgress newProgress = do
+      update
+        [SnapshotMeta_downloadProgressField =. Just newProgress]
+        (AutoKeyField ==. smId)
+      traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
 
 importSnapshotData
   :: (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
@@ -505,6 +546,7 @@ initSnapshotMeta appConfig mbStorePath nds mbUri = runDb (Identity $ _nodeDataSo
       , _snapshotMeta_mbUri = mbUri
       , _snapshotMeta_downloadError = Nothing
       , _snapshotMeta_importLog = Nothing
+      , _snapshotMeta_downloadProgress = Nothing
       }
   deleteAll sm
   k <- insert sm

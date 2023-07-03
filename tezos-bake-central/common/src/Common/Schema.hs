@@ -980,6 +980,7 @@ data SnapshotMeta = SnapshotMeta
   , _snapshotMeta_mbUri :: Maybe URI
   , _snapshotMeta_downloadError :: Maybe Text
   , _snapshotMeta_importLog :: Maybe Text
+  , _snapshotMeta_downloadProgress :: Maybe Int
   } deriving (Eq, Generic, Ord, Show, Typeable)
 instance HasId SnapshotMeta
 

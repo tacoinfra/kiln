@@ -136,6 +136,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ConnectedLedger") "forceConnectivityCheck"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ConnectedLedger") "updated"
   >=> migrateConnectedLedgerAddPollingState
+  >=> migrateSnapshotMetaAddDownloadProgress
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -988,6 +989,17 @@ migrateConnectedLedgerAddPollingState ta = do
     Just analyzedTable | all ((/= "ledgerPollingState") . colName) $ tableColumns analyzedTable -> do
       void [traceExecuteQ|
         ALTER TABLE "ConnectedLedger" ADD COLUMN "ledgerPollingState" VARCHAR NOT NULL DEFAULT 'LedgerPollingState_Unknown';
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateSnapshotMetaAddDownloadProgress :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateSnapshotMetaAddDownloadProgress ta = do
+  let table = (Nothing, "SnapshotMeta")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | all ((/= "downloadProgress") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "SnapshotMeta" ADD COLUMN "downloadProgress" INT NULL;
       |]
       getTableAnalysis
     _ -> pure ta

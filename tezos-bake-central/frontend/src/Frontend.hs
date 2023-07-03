@@ -2155,6 +2155,10 @@ nodesTab usingNodeOption =
                     when (nodeState == NodeProcessState_ImportingSnapshot) $ do
                       withSnapshotMeta $ \mSnapshotMeta -> for_ mSnapshotMeta $ \sm ->
                         whenJust (sm ^. snapshotMeta_importLog) $ \log -> divClass "import progress" $ text log
+                    when (nodeState == NodeProcessState_DownloadingSnapshot) $ do
+                      withSnapshotMeta $ \mSnapshotMeta -> for_ mSnapshotMeta $ \sm ->
+                        whenJust (sm ^. snapshotMeta_downloadProgress) $ \progress -> divClass "import progress" $ text $
+                          "Download progress: " <> tshow progress <> "%"
                     divClass "ui row" $ divClass "explanation" $ text $ case nodeState of
                       NodeProcessState_ImportingSnapshot -> "Depending on your hardware, importing a snapshot may take up to a few hours."
                       NodeProcessState_ImportComplete -> "You must verify this snapshot before starting the node."
