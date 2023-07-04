@@ -20,8 +20,8 @@ module Backend.Snapshot where
 
 import Control.Applicative (optional)
 import Control.Concurrent
-import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO)
-import Control.Exception.Safe (IOException, MonadThrow, SomeException (..), handle, throw, throwString, try)
+import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO, writeTVar)
+import Control.Exception.Safe (IOException, MonadCatch, MonadThrow, SomeException (..), handle, throw, throwString, try)
 import Control.Monad.Catch (MonadMask, catch, finally, onException)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Trans.Resource (runResourceT)
@@ -34,6 +34,7 @@ import Data.Char (isSpace)
 import Data.Conduit.Binary (sinkFileCautious)
 import qualified Data.Conduit.List as CL
 import Data.Conduit.Process (StreamingProcessHandle, getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
+import Data.Either.Combinators (whenLeft)
 import Data.Foldable (maximumBy)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -54,8 +55,8 @@ import System.Exit (ExitCode(..))
 import System.FilePath.Posix (takeFileName)
 import System.Process (CreateProcess)
 import qualified System.Process as Process
-import Text.URI (URI, mkURI, renderStr)
-import Text.URI.QQ (uri)
+import Text.URI (URI, mkURI, relativeTo, render, renderStr)
+import qualified Text.URI.QQ as Uri
 
 import Tezos.Types
 
@@ -77,7 +78,7 @@ type SnapshotMetaId = Key SnapshotMeta BackendSpecific
 --
 -- e.g we don't need to remove the snapshot file if this is the
 -- file uploaded by user and we don't ask user to verify the
--- snapshot downloaded from xtz-shots metadata because it could
+-- snapshot downloaded from the snapshot provider metadata because it could
 -- be done automatically since snapshot's head block is known
 data SnapshotImportOptions = SnapshotImportOptions
   { sioRemoveSnapshotFile :: Bool
@@ -116,10 +117,10 @@ execSnapshotInfo storePath nodePath = do
   let parse = eitherDecode . LBS.fromStrict . T.encodeUtf8 . T.pack
       mkErrMsg s = "Unexpected result of 'snapshot info' command: " <> T.pack s
   pure $ case infoExitCode of
-    ExitFailure c -> Left $ T.unlines
+    ExitFailure c -> Left $ T.concat
       [ "'octez-node snapshot info' failed with exit code "
       , tshow c
-      , ": "
+      , ":\n"
       , T.pack infoStderr
       ]
     ExitSuccess -> first mkErrMsg $ parse infoStdout
@@ -230,7 +231,8 @@ cleanupDir dir = do
 -- Jul  6 19:45:45 - shell.snapshots: Setting history-mode to full
 -- Jul  6 19:45:46 - shell.snapshots: Successful import from file ./.kiln/snapshots/main.snapshot
 
-handleSnapshotDownload
+-- | Synchronously download snapshot from the given url.
+handleSnapshotDownloadSync
   :: forall m.
   ( MonadLogger m
   , MonadLoggerIO m
@@ -242,10 +244,10 @@ handleSnapshotDownload
   => AppConfig
   -> NodeDataSource
   -> URI
+  -> (SnapshotMetaId, SnapshotMeta)
   -> m ()
-handleSnapshotDownload appConfig nds snapshotURI =
-  void $ liftIO $ forkIO $ runLoggingEnv (_nodeDataSource_logger nds) $ do
-    snapshotMeta <- initSnapshotMeta appConfig Nothing nds (Just snapshotURI)
+handleSnapshotDownloadSync appConfig nds snapshotURI snapshotMeta =
+  runLoggingEnv (_nodeDataSource_logger nds) $ do
     let
       importOptions = SnapshotImportOptions
         { sioRemoveSnapshotFile = True
@@ -280,6 +282,14 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
     , NodeInternal_dataField ~> DeletableRow_dataSelector
     ) CondEmpty
   for_ nodePPid $ \(nid, pid) -> do
+    -- We don't want to set the 'download complete' process state
+    -- right after downloading the file because this file isn't
+    -- always a valid node snapshot. We set this state only if
+    -- 'snapshot info' command returns a valid result.
+    --
+    -- This 'TVar' is used to mark that the file has been downloaded,
+    -- and we need to call 'snapshot info' command.
+    downloadCompletedTVar <- liftIO $ newTVarIO False
     downloaderThread <- liftIO $ forkIO $ do
       res <- try $ do
         request <- Http.parseRequest snapshotUriStr
@@ -296,25 +306,32 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
           in do
             runLoggingEnv logger $
               $(logError) $ "Snapshot download failed with: " <> errText
-            handleSnapshotDownloadFailure nds smId errText
-        Right _ -> runLoggingEnv logger $ runDb (Identity db) $
-          updateProcessState pid
-            (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
-            (ProcessState_Node NodeProcessState_DownloadComplete)
+        Right () -> atomically $ writeTVar downloadCompletedTVar True
 
     let
       cleanUpNode = do
         runDb (Identity db) $ removeNodeDbImpl (Right ())
         liftIO $ removeDirectoryRecursive dataDir
       go = do
+        isCompleted <- liftIO $ readTVarIO downloadCompletedTVar
         ps <- fmap headMay $ runDb (Identity db) $ project ProcessData_stateField (AutoKeyField ==. fromId pid)
-        case ps of
-          (Just (ProcessState_Node NodeProcessState_DownloadComplete)) -> do
+        case (isCompleted, ps) of
+          (_, Just (ProcessState_Node NodeProcessState_DownloadComplete)) ->
             importSnapshotData appConfig nds sm smId importOptions
-          (Just (ProcessState_Node NodeProcessState_DownloadCanceled)) -> do
+          (True, _) -> do
+            let nodePath = maybe nixNodePath _binaryPaths_nodePath $ _appConfig_binaryPaths appConfig
+            snapshotInfoRes <- execSnapshotInfo (T.unpack $ _snapshotMeta_storePath sm) nodePath
+            case snapshotInfoRes of
+              Left err -> throwString $ T.unpack err
+              Right _ -> do
+                runLoggingEnv logger $ runDb (Identity db) $ updateProcessState pid
+                  (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+                  (ProcessState_Node NodeProcessState_DownloadComplete)
+                threadDelay' 1 >> go
+          (_, Just (ProcessState_Node NodeProcessState_DownloadCanceled)) -> do
             liftIO $ killThread downloaderThread
             cleanUpNode
-          (Just (ProcessState_Node NodeProcessState_DownloadFailed)) -> liftIO $ do
+          (_, Just (ProcessState_Node NodeProcessState_DownloadFailed)) -> liftIO $ do
             snapshotExists <- doesFileExist storePath
             when snapshotExists $ removeFile storePath
           _ -> threadDelay' 1 >> go
@@ -524,9 +541,18 @@ updateSnapshotMetaImportLog importLog smId = do
 removeFileLogging :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 removeFileLogging f = liftIO (removeFile f) `catch` \(e :: IOException) -> $(logError) $ "Failed to remove file: " <> T.pack f <> ": " <> tshow e
 
--- | URI of xtz-shots snapshot metadata.
+snapshotProviderUri :: KnownSnapshotProvider -> URI
+snapshotProviderUri = \case
+  KnownSnapshotProvider_XtzShots -> xtzShotsMetadataUri
+  KnownSnapshotProvider_Marigold -> marigoldMetadataUri
+
+-- | URI of Xtz-shots snapshot metadata.
 xtzShotsMetadataUri :: URI
-xtzShotsMetadataUri = [uri|https://xtz-shots.io/tezos-snapshots.json|]
+xtzShotsMetadataUri = [Uri.uri|https://xtz-shots.io/tezos-snapshots.json|]
+
+-- | URI of Marigold snapshot metadata.
+marigoldMetadataUri :: URI
+marigoldMetadataUri = [Uri.uri|https://snapshots.tezos.marigold.dev/api/tezos-snapshots.json|]
 
 -- | The path where the node snapshot is stored.
 snapshotStorePath :: AppConfig -> FilePath
@@ -537,28 +563,91 @@ snapshotStorePath appConfig = _appConfig_kilnDataDir appConfig <> "/snapshots/"
 defaultSnapshotFileName :: FilePath
 defaultSnapshotFileName = "snapshot"
 
--- | Handle internal node bootstrap using the @SnapshotImportSource_XtzShotsMetadataSource@
--- option. This function downloads latest rolling snapshot from xtz-shots.io by parsing
--- the metadata from @xtzShotsMetadataUri@.
-handleDownloadXtzShotsMetadata
-  :: (MonadIO m)
+-- | Default name of snapshot metadata file.
+snapshotMetadataFileName :: URI
+snapshotMetadataFileName = [Uri.uri|tezos-snapshots.json|]
+
+-- | Given the url, tries to recognize whether this url points to
+-- snapshot provider metadata or specific node snapshot, and then
+-- downloads the snapshot.
+--
+-- First, it tries to download and validate node snapshot from given url.
+-- If it fails, tries to download the latest rolling snapshot from
+-- the metadata from given url. If it fails too, tries to do download
+-- the latest rolling snapshot from the metadata from 'url/tezos-snapshots.json'.
+handleDownloadSnapshotByUrlOverloaded
+  :: ( MonadIO m
+     , MonadCatch m
+     )
   => AppConfig
   -> NodeDataSource
+  -> URI
   -> m ()
-handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggingEnv logger $ do
-  (smId, _) <- initSnapshotMeta appConfig Nothing nds Nothing
+handleDownloadSnapshotByUrlOverloaded appConfig nds uri =
+  void $ liftIO $ forkIO $ runLoggingEnv logger $ do
+    (smId, sm) <- initSnapshotMeta appConfig Nothing nds (Just uri)
+    $(logDebug) $ "Trying to download snapshot by url: " <> uriText
+    resByUrl <- try @_ @SomeException $ handleSnapshotDownloadSync appConfig nds uri (smId, sm)
+    whenLeft resByUrl $ \e -> do
+      $(logError) $ T.unlines
+        [ "Failed to download snapshot by url:"
+        , tshow e
+        ]
+      $(logDebug) $ "Trying to download snapshot from provider: " <> uriText
+      resFromProvider <- try @_ @SomeException $
+        handleDownloadSnapshotFromProviderSync appConfig nds uri smId False
+      whenLeft resFromProvider $ \e' -> do
+        $(logError) $ T.unlines
+          [ "Failed to download snapshot from provider:"
+          , tshow e'
+          ]
+        uri' <- case snapshotMetadataFileName `relativeTo` uri of
+          Just u -> pure u
+          Nothing -> throwString $ concat
+            [ "Failed to make "
+            , renderStr snapshotMetadataFileName
+            , " relative to "
+            , renderStr uri
+            ]
+        $(logDebug) $ "Trying to download snapshot from provider: " <> render uri'
+        handleDownloadSnapshotFromProviderSync appConfig nds uri' smId True
+  where
+    logger = _nodeDataSource_logger nds
+    uriText = render uri
+
+-- | Synchronously handle internal node bootstrap using the @SnapshotImportSource_KnownSnapshotProviderSource@
+-- option. This function downloads latest rolling snapshot from the given snapshot provider by parsing
+-- the metadata from the provider URL.
+handleDownloadSnapshotFromProviderSync
+  :: ( MonadIO m
+     , MonadMask m
+     , MonadBaseNoPureAborts IO m
+     , MonadUnliftIO m
+     )
+  => AppConfig
+  -> NodeDataSource
+  -> URI
+  -> SnapshotMetaId
+  -> Bool
+  -> m ()
+handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId shouldHandleFailure = runLoggingEnv logger $ do
   let
     handleFetchMetadataError (e :: SomeException) = do
       $(logError) $ "Snapshot download failed with: " <> tshow e
-      handleSnapshotDownloadFailure nds smId errText
+      -- We don't want to immediately inform the user that
+      -- an error has occurred until we have tried all the download options.
+      --
+      -- See 'handleDownloadSnapshotByUrlOverloaded' for more context.
+      when shouldHandleFailure $
+        handleSnapshotDownloadFailure nds smId errText
       throw e
-  $(logDebug) $ "Downloading snapshot metadata from " <> T.pack (renderStr xtzShotsMetadataUri)
+  $(logDebug) $ "Downloading snapshot metadata from " <> T.pack (renderStr providerUrl)
   latestSnapshotMetadata <- handle handleFetchMetadataError $ do
-    metadata <- downloadXtzShotsMetadata httpMgr
+    metadata <- downloadSnapshotMetadata httpMgr providerUrl
     findLatestSnapshot appConfig metadata
-  latestSnapshotUri <- mkURI $ latestSnapshotMetadata ^. xtzShotsMetadata_url
+  latestSnapshotUri <- mkURI $ latestSnapshotMetadata ^. snapshotMetadata_url
   $(logDebug) $ "Found latest snapshot url " <> T.pack (renderStr latestSnapshotUri)
-  updatedSnapshotMeta <- updateSnapshotMeta' latestSnapshotMetadata smId latestSnapshotUri
+  updatedSnapshotMeta <- updateSnapshotMeta' latestSnapshotMetadata latestSnapshotUri
   let
     importOptions = SnapshotImportOptions
       { sioRemoveSnapshotFile = True
@@ -569,20 +658,23 @@ handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggi
     logger = _nodeDataSource_logger nds
     db = _nodeDataSource_pool nds
     httpMgr = _nodeDataSource_httpMgr nds
-    errText = "Unable to download latest snapshot from xtz-shots. Please choose another option."
+    errText = T.concat
+      [ "Unable to download latest snapshot from "
+      , render providerUrl
+      , ". Please choose another option."
+      ]
 
     updateSnapshotMeta'
       :: (MonadLoggerIO m)
-      => XtzShotsMetadata
-      -> SnapshotMetaId
+      => SnapshotMetadata
       -> URI
       -> m SnapshotMeta
-    updateSnapshotMeta' m smId url = runDb (Identity db) $ do
+    updateSnapshotMeta' m url = runDb (Identity db) $ do
       update
         [ SnapshotMeta_mbUriField =. Just url
-        , SnapshotMeta_headBlockField =. (Just $ m ^. xtzShotsMetadata_blockHash :: Maybe BlockHash)
-        , SnapshotMeta_headBlockLevelField =. (Just $ m ^. xtzShotsMetadata_blockHeight :: Maybe RawLevel)
-        , SnapshotMeta_headBlockBakeTimeField =. (Just $ m ^. xtzShotsMetadata_blockTimestamp :: Maybe UTCTime)
+        , SnapshotMeta_headBlockField =. (Just $ m ^. snapshotMetadata_blockHash :: Maybe BlockHash)
+        , SnapshotMeta_headBlockLevelField =. (Just $ m ^. snapshotMetadata_blockHeight :: Maybe RawLevel)
+        , SnapshotMeta_headBlockBakeTimeField =. (Just $ m ^. snapshotMetadata_blockTimestamp :: Maybe UTCTime)
         ] (AutoKeyField ==. smId)
       mbUpdatedSnapshotMeta <- get smId
       let errMsg = "Inconsistent db state: SnapshotMeta not found"
@@ -590,10 +682,33 @@ handleDownloadXtzShotsMetadata appConfig nds = void $ liftIO $ forkIO $ runLoggi
       notify NotifyTag_SnapshotMeta updatedSnapshotMeta
       pure updatedSnapshotMeta
 
--- | Download the list of snapshot metadata from @xtzShotsMetadataUri@.
-downloadXtzShotsMetadata :: (MonadLoggerIO m, MonadThrow m) => Http.Manager -> m [XtzShotsMetadata]
-downloadXtzShotsMetadata mgr = do
-  let uriStr = renderStr xtzShotsMetadataUri
+-- | Like 'handleDownloadSnapshotFromProvider', but downloads the snapshot
+-- in a separate thread and always handles errors.
+handleDownloadSnapshotFromProviderAsync
+  :: ( MonadIO m
+     , MonadMask m
+     , MonadBaseNoPureAborts IO m
+     , MonadUnliftIO m
+     )
+  => AppConfig
+  -> NodeDataSource
+  -> KnownSnapshotProvider
+  -> m ()
+handleDownloadSnapshotFromProviderAsync appConfig nds provider = runLoggingEnv (_nodeDataSource_logger nds) $ do
+  (smId, _) <- initSnapshotMeta appConfig Nothing nds Nothing
+  void $ liftIO $ forkIO $
+    handleDownloadSnapshotFromProviderSync appConfig nds (snapshotProviderUri provider) smId True
+
+-- | Download the list of snapshot metadata from the given provider url.
+downloadSnapshotMetadata
+  :: ( MonadLoggerIO m
+     , MonadThrow m
+     )
+  => Http.Manager
+  -> URI
+  -> m [SnapshotMetadata]
+downloadSnapshotMetadata mgr providerUri = do
+  let uriStr = renderStr providerUri
   resp <- doRequestLBSThrows mgr uriStr
   let body = Http.getResponseBody resp
       statusCode = Http.getResponseStatusCode resp
@@ -604,31 +719,30 @@ downloadXtzShotsMetadata mgr = do
       $(logError) statusLogText
       $(logError) $ "Response body: " <> T.decodeUtf8 (LBS.toStrict body)
       throwString $ "Expected metadata response status to be 200, but got " <> show statusCode
-  either throwString (pure . unXtzShotsMetadataList) $ eitherDecode body
+  either throwString (pure . unSnapshotMetadataList) $ eitherDecode body
 
--- | Given the list of snapshot metadata fetched from @xtzShotsMetadataUri@
--- find the latest rolling snapshot url.
-findLatestSnapshot :: (MonadThrow m) => AppConfig -> [XtzShotsMetadata] -> m XtzShotsMetadata
-findLatestSnapshot _ [] = throwString "Got empty metadata list from xtz-shots"
+-- | Given the list of snapshot metadata, find the latest rolling snapshot url.
+findLatestSnapshot :: (MonadThrow m) => AppConfig -> [SnapshotMetadata] -> m SnapshotMetadata
+findLatestSnapshot _ [] = throwString "Got empty metadata list from the snapshot provider"
 findLatestSnapshot appConfig metadata = do
   let mbChainName = showNamedChain <$> identifyChain chainId
-  chainName <- maybe (throwString "xtz-shots doesn't support custom chains") pure mbChainName
+  chainName <- maybe (throwString "Snapshot metadata doesn't support custom chains") pure mbChainName
   let
-    isNeededChain m = m ^. xtzShotsMetadata_chainName == chainName
+    isNeededChain m = m ^. snapshotMetadata_chainName == chainName
     filteredMetadata = flip filter metadata $ \m ->
       isNeededChain m && isRolling m && isTezosSnapshot m
   when (null filteredMetadata) $ throwString $
-    "There is no rolling tezos snapshot in xtz-shots metadata for " <> T.unpack chainName
+    "There is no rolling tezos snapshot in the snapshot provider metadata for " <> T.unpack chainName
   pure $ maximumBy byBlockHeight filteredMetadata
   where
     chainId = _appConfig_chainId appConfig
-    isRolling m = m ^. xtzShotsMetadata_historyMode
-      == XtzShotsSnapshotHistoryMode_Rolling
-    isTezosSnapshot m = m ^. xtzShotsMetadata_artifactType
-      == XtzShotsArtifactType_TezosSnapshot
+    isRolling m = m ^. snapshotMetadata_historyMode
+      == SnapshotHistoryMode_Rolling
+    isTezosSnapshot m = m ^. snapshotMetadata_artifactType
+      == SnapshotArtifactType_TezosSnapshot
     byBlockHeight m1 m2 = compare
-      (m1 ^. xtzShotsMetadata_blockHeight)
-      (m2 ^. xtzShotsMetadata_blockHeight)
+      (m1 ^. snapshotMetadata_blockHeight)
+      (m2 ^. snapshotMetadata_blockHeight)
 
 -- | Update the 'SnapshotMeta' table and set the correct internal node's
 -- process state in case of snapshot download error.

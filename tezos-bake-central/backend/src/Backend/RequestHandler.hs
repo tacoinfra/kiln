@@ -151,9 +151,9 @@ requestHandler appConfig nds =
                 notify NotifyTag_NodeInternal (nid, Just processData)
         case mNodeProcessState of
           Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_UriSource u) ->
-            handleSnapshotDownload appConfig nds u
-          Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_XtzShotsMetadataSource) ->
-            handleDownloadXtzShotsMetadata appConfig nds
+            handleDownloadSnapshotByUrlOverloaded appConfig nds u
+          Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_KnownSnapshotProviderSource p) ->
+            handleDownloadSnapshotFromProviderAsync appConfig nds p
           Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp) ->
             handleSnapshotFilePathImport appConfig nds fp
           Nothing ->
