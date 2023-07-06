@@ -648,7 +648,6 @@ optsArgDescr =
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)
 
--- | This does *not* run in @ob run@.
 backendMain :: (Backend BackendRoute AppRoute -> Frontend (R AppRoute) -> IO ()) -> IO ()
 backendMain k = do
   myArgs <- getArgs

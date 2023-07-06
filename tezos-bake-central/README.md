@@ -35,8 +35,11 @@ If you run the application behind a reverse-proxy, you should tell it what it's 
 
 ## Hacking
 
-Install [Obelisk](https://github.com/obsidiansystems/obelisk) then `ob run`.
+Run this command in `tezos-bake-central` folder to open the shell with necessary dependencies installed:
 
+```
+nix-shell -A shells.ghc
+```
 
 ### Building with profiling
 
