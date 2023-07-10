@@ -3,8 +3,7 @@
 Kiln configuration can either be done by passing command line arguments (e.g.
 `--network babylonnet`) or by putting a config file with the argument contents
 into a file in the config directory (e.g. a file `config/network` containing
-`babylonnet`). Using config files is required during development since `ob run`
-doesn't allow passing of command line arguments.
+`babylonnet`).
 
 ## loggers
 

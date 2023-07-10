@@ -6,13 +6,13 @@ These alerts should appear whenever an accusation presenting evidence of double 
 
 ## Tests
 
-**NOTE:** All commands must be run from the root of this repository. If you're testing via `ob run`, use `tezos-bake-central` instead of `app`.
+**NOTE:** All commands must be run from the root of this repository.
 
   1. Install Kiln to the `app` folder:
      ```shell
      $(nix-build --no-out-link -A installKiln)/bin/install-kiln app
 
-  1. In a separate terminal start the accusations test and tell it to install Kiln configs in `app`.
+  2. In a separate terminal start the accusations test and tell it to install Kiln configs in `app`.
      ```shell
      $(nix-build --no-out-link -A tests.accusations)/bin/accusations-test app
      ```
@@ -23,7 +23,7 @@ These alerts should appear whenever an accusation presenting evidence of double 
      ```shell
      $(nix-build --no-out-link -A tests.accusations)/bin/accusations-test app simple-double-endorsing
 
-  1. Wait for a few seconds after the `accusations-test` starts showing messages like this
+  3. Wait for a few seconds after the `accusations-test` starts showing messages like this
      ```
        Ensure-protocol-default-bootstrap 1. directory
        Ensure-protocol-default-bootstrap 2. sandbox.json
@@ -36,15 +36,15 @@ These alerts should appear whenever an accusation presenting evidence of double 
         ]
      ```
 
-  1. Start Kiln: (At the moment it is necessary to remove the file `config/binary-paths` manually)
+  4. Start Kiln: (At the moment it is necessary to remove the file `config/binary-paths` manually)
      ```shell
      (cd app && rm config/binary-paths && ./backend)
      ```
      Once the Kiln is started open http://localhost:8000
 
-  1. Additionally configure the Kiln to send alerts via email or some other medium.
+  5. Additionally configure the Kiln to send alerts via email or some other medium.
 
-  1. After a few minutes the script should pause and display this. Enter `q` to continue the test script.
+  6. After a few minutes the script should pause and display this. Enter `q` to continue the test script.
   ```
      Flextesa.accusing:
        Pause
