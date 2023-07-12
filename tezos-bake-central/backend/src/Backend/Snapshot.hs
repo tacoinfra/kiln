@@ -352,25 +352,29 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
     updateDownloadProgress
       :: Maybe Int
       -> ConduitT ByteString ByteString (ResourceT IO) ()
-    updateDownloadProgress mbTotalSizeInt = updateDownloadProgress' 0
+    updateDownloadProgress mbTotalSizeInt =
+      updateDownloadProgress' 0 Nothing
       where
         mbTotalSize :: Maybe Double
         mbTotalSize = fromIntegral @Int @Double <$> mbTotalSizeInt
 
         updateDownloadProgress'
           :: Double
+          -> Maybe Int
           -> ConduitT ByteString ByteString (ResourceT IO) ()
-        updateDownloadProgress' curProgress = do
+        updateDownloadProgress' curProgress curPercentage = do
           mbChunk <- await
           whenJust mbChunk $ \chunk -> do
             let newProgress = curProgress + fromIntegral @Int @Double (BS.length chunk)
+                newPercentage = calcProgressPercentage newProgress <$> mbTotalSize
             -- If 'Content-Length' header isn't set, we don't update
             -- the progress.
-            whenJust mbTotalSize $ \totalSize ->
-              runLoggingEnv logger $ runDb (Identity db) $
-                updateSnapshotMetaDownloadProgress (floor $ 100 * newProgress / totalSize)
+            whenJust mbTotalSize $ \_ -> do
+              when (curPercentage /= newPercentage) $
+                runLoggingEnv logger $ runDb (Identity db) $
+                  updateSnapshotMetaDownloadProgress newPercentage
             yield chunk
-            updateDownloadProgress' newProgress
+            updateDownloadProgress' newProgress newPercentage
 
     updateSnapshotMetaDownloadProgress
       :: Int
@@ -380,6 +384,9 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
         [SnapshotMeta_downloadProgressField =. Just newProgress]
         (AutoKeyField ==. smId)
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
+
+    calcProgressPercentage :: Double -> Double -> Int
+    calcProgressPercentage cur total = floor $ 100 * cur / total
 
 importSnapshotData
   :: (MonadLogger m, MonadLoggerIO m, MonadIO m, MonadMask m, MonadBaseNoPureAborts IO m)
