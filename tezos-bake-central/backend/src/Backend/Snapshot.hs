@@ -325,14 +325,18 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
             case snapshotInfoRes of
               Left err -> throwString $ T.unpack err
               Right _ -> do
-                runLoggingEnv logger $ runDb (Identity db) $ updateProcessState pid
-                  (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
-                  (ProcessState_Node NodeProcessState_DownloadComplete)
+                runLoggingEnv logger $ runDb (Identity db) $ do
+                  updateProcessState pid
+                    (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
+                    (ProcessState_Node NodeProcessState_DownloadComplete)
+                  runLoggingEnv logger $ runDb (Identity db) clearDownloadProgress
                 threadDelay' 1 >> go
           (_, Just (ProcessState_Node NodeProcessState_DownloadCanceled)) -> do
+            runLoggingEnv logger $ runDb (Identity db) clearDownloadProgress
             liftIO $ killThread downloaderThread
             cleanUpNode
           (_, Just (ProcessState_Node NodeProcessState_DownloadFailed)) -> liftIO $ do
+            runLoggingEnv logger $ runDb (Identity db) clearDownloadProgress
             snapshotExists <- doesFileExist storePath
             when snapshotExists $ removeFile storePath
           _ -> threadDelay' 1 >> go
@@ -376,12 +380,15 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
             yield chunk
             updateDownloadProgress' newProgress newPercentage
 
+    clearDownloadProgress :: Serializable ()
+    clearDownloadProgress = updateSnapshotMetaDownloadProgress Nothing
+
     updateSnapshotMetaDownloadProgress
-      :: Int
+      :: Maybe Int
       -> Serializable ()
     updateSnapshotMetaDownloadProgress newProgress = do
       update
-        [SnapshotMeta_downloadProgressField =. Just newProgress]
+        [SnapshotMeta_downloadProgressField =. newProgress]
         (AutoKeyField ==. smId)
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
 
