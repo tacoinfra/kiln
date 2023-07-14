@@ -41,6 +41,12 @@ build-kiln:
   script:
     - nix-build -A exe --argstr closure-compiler-setting "BUNDLE" --no-out-link
 
+build-kiln-darwin:
+  stage: build
+  rules: *if_merge_request
+  script:
+    - nix-build -A exe --argstr closure-compiler-setting "BUNDLE" --argstr system "x86_64-darwin" --no-out-link
+
 xrefcheck:
   stage: extras
   rules: *if_merge_request
