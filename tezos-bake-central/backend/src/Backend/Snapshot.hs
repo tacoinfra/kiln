@@ -482,7 +482,12 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
                     if sioVerifySnapshot
                     then updateState NodeProcessState_ImportComplete
                     else startNodeDaemon
-                ExitFailure _ -> inDb $ importFailed stderr
+                ExitFailure _ -> case procControl of
+                  ProcessControl_Stop -> do
+                    -- Do cleanup if the snapshot import was canceled
+                    inDb $ removeNodeDbImpl (Right ())
+                    liftIO $ removeDirectoryRecursive dataDir
+                  _ -> inDb $ importFailed stderr
 
   liftIO $ withNodeConfig appConfig $ \configFile -> do
     runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec configFile)
@@ -493,14 +498,6 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
 
   when sioRemoveSnapshotFile $
     removeFileLogging storePath
-
-  -- Do cleanup after cancel import
-  procControl <- inDb $ project SnapshotMeta_controlField (AutoKeyField ==. smId)
-  case headMay procControl of
-    Just ProcessControl_Stop -> do
-      inDb $ removeNodeDbImpl (Right ())
-      liftIO $ removeDirectoryRecursive dataDir
-    _ -> pure ()
   where
     mkSnapshotImportStreamingProcess
       :: (MonadUnliftIO m)
