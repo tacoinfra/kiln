@@ -432,8 +432,18 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
     updateState = updateState' nodePPid
 
     importFailed stderr = do
+      let
+        isNotProgressLine l = not
+          $  "nodes"    `T.isInfixOf` l
+          && "contents" `T.isInfixOf` l
+          && "commits"  `T.isInfixOf` l
+        -- Since import progress output is printed to 'stderr' (see tezos/#5213),
+        -- it contains large escaped import progress, which we don't want display
+        -- to user, so we remove import progress lines from 'stderr' before
+        -- saving it to db.
+        filteredStderr = T.unlines $ filter isNotProgressLine $ T.lines stderr
       $(logError) "importSnapshotData failed: "
-      update [ SnapshotMeta_importErrorField =. Just stderr ] (AutoKeyField ==. smId)
+      update [ SnapshotMeta_importErrorField =. Just filteredStderr ] (AutoKeyField ==. smId)
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
       updateState NodeProcessState_ImportFailed
 
@@ -482,7 +492,12 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
                     if sioVerifySnapshot
                     then updateState NodeProcessState_ImportComplete
                     else startNodeDaemon
-                ExitFailure _ -> inDb $ importFailed stderr
+                ExitFailure _ -> case procControl of
+                  ProcessControl_Stop -> do
+                    -- Do cleanup if the snapshot import was canceled
+                    inDb $ removeNodeDbImpl (Right ())
+                    liftIO $ removeDirectoryRecursive dataDir
+                  _ -> inDb $ importFailed stderr
 
   liftIO $ withNodeConfig appConfig $ \configFile -> do
     runLoggingEnv logger $ $(logInfoSH) ("importSnapshotData: running process" :: Text, procSpec configFile)
@@ -494,13 +509,13 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
   when sioRemoveSnapshotFile $
     removeFileLogging storePath
 
-  -- Do cleanup after cancel import
-  procControl <- inDb $ project SnapshotMeta_controlField (AutoKeyField ==. smId)
-  case headMay procControl of
-    Just ProcessControl_Stop -> do
-      inDb $ removeNodeDbImpl (Right ())
-      liftIO $ removeDirectoryRecursive dataDir
-    _ -> pure ()
+  -- Clear import log when import finished to avoid its flickering
+  -- appearance on UI when user starts new node.
+  runLoggingEnv logger $ inDb $ do
+    update
+      [SnapshotMeta_importLogField =. (Nothing :: Maybe Text)]
+      (AutoKeyField ==. smId)
+    traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
   where
     mkSnapshotImportStreamingProcess
       :: (MonadUnliftIO m)
