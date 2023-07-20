@@ -508,6 +508,14 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
 
   when sioRemoveSnapshotFile $
     removeFileLogging storePath
+
+  -- Clear import log when import finished to avoid its flickering
+  -- appearance on UI when user starts new node.
+  runLoggingEnv logger $ inDb $ do
+    update
+      [SnapshotMeta_importLogField =. (Nothing :: Maybe Text)]
+      (AutoKeyField ==. smId)
+    traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
   where
     mkSnapshotImportStreamingProcess
       :: (MonadUnliftIO m)
