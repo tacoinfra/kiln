@@ -208,13 +208,13 @@ requestHandler appConfig nds =
               (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
               (ProcessState_Node NodeProcessState_DownloadCanceled)
 
-      PublicRequest_UpdateInternalWorker workerType shouldRun -> inDb $ case workerType of
-        WorkerType_Node
+      PublicRequest_UpdateInternalDaemon daemonType shouldRun -> inDb $ case daemonType of
+        DaemonType_Node
           | shouldRun -> startNodeDaemon -- Only start node
           | otherwise -> do -- On stopping node, stop the baker also (if running)
               stopBakerDaemon
               stopNodeDaemon
-        WorkerType_Baker
+        DaemonType_Baker
           | not shouldRun -> stopBakerDaemon -- Only stop baker
           | otherwise -> do -- On starting baker, start the node also (if stopped)
               startNodeDaemon

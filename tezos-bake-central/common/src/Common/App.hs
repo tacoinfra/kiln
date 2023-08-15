@@ -115,12 +115,17 @@ pattern NairobiProtocolHash = "PtNairobiyssHuh87hEhfVBGCVrK3WnS8Z2FT4ymB5tAa4r1n
 pattern MumbaiProtocolHash :: ProtocolHash
 pattern MumbaiProtocolHash = "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
 
-data WorkerType
-  = WorkerType_Node
-  | WorkerType_Baker
+data DaemonType
+  = DaemonType_Node
+  | DaemonType_Baker
   deriving (Eq, Ord, Show, Typeable, Generic)
-instance FromJSON WorkerType
-instance ToJSON WorkerType
+instance FromJSON DaemonType
+instance ToJSON DaemonType
+
+daemonName :: DaemonType -> Text
+daemonName = \case
+  DaemonType_Node -> "Kiln Node"
+  DaemonType_Baker -> "Kiln Baker"
 
 data BakerInternalData = BakerInternalData
   { _bakerInternalData_secretKey :: SecretKey

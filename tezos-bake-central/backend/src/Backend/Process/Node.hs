@@ -47,6 +47,7 @@ import Backend.Env
 import Backend.NodeRPC
 import Backend.Process.Common
 import Backend.Schema
+import Common.App (DaemonType(..))
 import Common.Route (ExportLog(..))
 import Common.Schema
 import ExtraPrelude
@@ -132,7 +133,7 @@ internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
       runTransaction $ updateState ProcessState_Starting
       procHandler <- withNodeConfig appConfig $ \nodeConfigPath ->
         pure $ proc nodePath (nodeArgs nodeConfigPath dataDir)
-      startProcMonitor procHandler [] "kiln-node" pid updateState
+      startProcMonitor procHandler [] DaemonType_Node pid updateState
   where
     mkWorker act = worker' "nodeProcessWorker" $
       flip runReaderT (KilnEnv appConfig nds) $ runLogger act

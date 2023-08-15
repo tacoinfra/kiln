@@ -361,7 +361,7 @@ bakerProcessWorker appConfig nds pid paths = mkWorker $ do
               , "?format=one-per-line&level-at-least=error"
               ]
             tezosLogEnv = [(envVarName, envVarValue)]
-          startProcMonitor procHandler tezosLogEnv "kiln-baker" pid updateState
+          startProcMonitor procHandler tezosLogEnv DaemonType_Baker pid updateState
             `finally` killThread handlerThreadId
   where
     mkWorker act = worker' "bakerProcessWorker" $

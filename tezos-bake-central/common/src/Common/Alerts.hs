@@ -122,11 +122,6 @@ data ErrorLogMessage = ErrorLogMessage
   , _errorLogMessage_subject :: Text
   , _errorLogMessage_content :: Text
   }
-data ErrorLogWidgets m = ErrorLogWidgets
-  { _errorLogWidgets_tile :: m ()
-  , _errorLogWidgets_notification :: m ()
-  , _errorLogWidgets_banner :: m ()
-  }
 
 bakerLedgerDisconnectedDescriptions :: ErrorLogBakerLedgerDisconnected -> BakerErrorDescriptions
 bakerLedgerDisconnectedDescriptions elog = BakerErrorDescriptions

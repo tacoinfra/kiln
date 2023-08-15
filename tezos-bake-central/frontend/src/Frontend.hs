@@ -1789,7 +1789,7 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
         divClass "detail" $ text "Date Baked:"
         divClass "" $ (localHumanizedTimestampBasic . constDyn) headBlockTimestamp
   start <- divClass "buttons" $ uiButton "primary" "Start Node"
-  response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+  response <- requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Node True) <$ start
   pure (pure ["confirmation"], leftmost [void response, close])
 
 showErrorLogModal ::
@@ -2012,10 +2012,10 @@ nodesTab usingNodeOption =
                 runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
                 dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
                   (True, bRunning) ->
-                    tileMenuEntryModal "Stop Node" $ stopModal bRunning (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                    tileMenuEntryModal "Stop Node" $ stopModal bRunning (PublicRequest_UpdateInternalDaemon DaemonType_Node False <$)
                   _ -> do
                     start <- tileMenuEntry "Start Node"
-                    void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+                    void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Node True) <$ start
 
               verifyAndStartMenu sm = do
                 tileMenuEntryModal "Verify and start node" (verifySnapshotModal sm)
@@ -2113,7 +2113,7 @@ nodesTab usingNodeOption =
                   menu = case _processData_state pd of
                     ProcessState_Failed -> Just $ do
                       restart <- tileMenuEntry "Restart Node"
-                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ restart
+                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Node True) <$ restart
                       for_ (_processData_errorLog pd) $ \errLog ->
                         tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln node error log" errLog
                       removeNodeMenu
@@ -2619,7 +2619,7 @@ bakersTab =
           let
             showLogMenu errorLog = do
               restart <- tileMenuEntry "Restart Baker"
-              void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ restart
+              void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Baker True) <$ restart
               tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln baker error log" errorLog
 
             removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
@@ -2748,10 +2748,10 @@ bakersTab =
                 let stopModal = warningModal "Stop Baker?"
                       ["This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time."]
                       "Stop Baker"
-                tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Baker False <$)
+                tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalDaemon DaemonType_Baker False <$)
               else do
                 start <- tileMenuEntry "Start Baker"
-                void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ start
+                void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Baker True) <$ start
               let
                 removeInternalBakerModal = warningModal "Remove Baker?"
                   ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]

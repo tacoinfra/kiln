@@ -53,7 +53,9 @@ import Backend.Common
 import Backend.Config
 import Backend.Env
 import Backend.NodeRPC (HasNodeDataSource)
+import Backend.Process.Alerts
 import Backend.Schema
+import Common.App (DaemonType(..), daemonName)
 import Common.Schema
 import ExtraPrelude
 
@@ -221,11 +223,11 @@ startProcMonitor
      )
   => CreateProcess
   -> [(String, String)]
-  -> Text
+  -> DaemonType
   -> Id ProcessData
   -> (ProcessState -> Serializable ())
   -> m ()
-startProcMonitor procHandler env namespace pid updateState = do
+startProcMonitor procHandler env daemonType pid updateState = do
   currentEnv <- getEnvironment
   let proc' = procHandler
           { Proc.std_out = Proc.CreatePipe
@@ -233,7 +235,7 @@ startProcMonitor procHandler env namespace pid updateState = do
           , Proc.env = Just $ currentEnv <> env
           }
   $(logInfoSH) ("processWorker: running process" :: Text, proc')
-  procMonitor proc' namespace pid updateState
+  procMonitor proc' daemonType pid updateState
   threadDelay' 10
 
 
@@ -249,12 +251,13 @@ procMonitor
      , HasAppConfig e
      )
   => CreateProcess
-  -> Text
+  -> DaemonType
   -> Id ProcessData
   -> (ProcessState -> Serializable ())
   -> m ()
-procMonitor cp namespace pid updateState = do
-  let errorLogBufferSize = 30
+procMonitor cp daemonType pid updateState = do
+  let namespace = daemonLogNamespace daemonType
+      errorLogBufferSize = 30
   -- Buffer containing the last few lines of stderr.
   -- Needed to correctly display the error message in case of a process fail.
   errorLogBuffer <- newTBQueueIO @_ @Text errorLogBufferSize
@@ -303,9 +306,16 @@ procMonitor cp namespace pid updateState = do
               update [ProcessData_controlField =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
             $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
           ProcessControl_Run -> do
+            appConfig <- askAppConfig
             runTransaction $ do
               updateState ProcessState_Failed
-              errorLog <- liftIO $ atomically $ flushTBQueue buffer
-              update [ProcessData_errorLogField =. Just (T.unlines errorLog)] $
+              errorLog <- fmap T.unlines $ liftIO $ atomically $ flushTBQueue buffer
+              update [ProcessData_errorLogField =. Just errorLog] $
                 AutoKeyField ==. fromId pid
+              flip runReaderT appConfig $ queueFailedProcessAlert (daemonName daemonType) errorLog
             $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
+
+daemonLogNamespace :: DaemonType -> Text
+daemonLogNamespace = \case
+  DaemonType_Node -> "kiln-node"
+  DaemonType_Baker -> "kiln-baker"

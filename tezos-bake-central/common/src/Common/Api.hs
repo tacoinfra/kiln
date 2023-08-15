@@ -24,7 +24,7 @@ import Text.URI (URI)
 
 import Tezos.Types
 
-import Common.App (AlertNotificationMethod, LiquidityBakingToggleVote, MailServerView, WorkerType)
+import Common.App (AlertNotificationMethod, LiquidityBakingToggleVote, MailServerView, DaemonType)
 import Common.Schema
 
 data PublicRequest a where
@@ -39,8 +39,8 @@ data PublicRequest a where
   PublicRequest_RemoveNode
     :: Either URI ()
     -> PublicRequest ()
-  PublicRequest_UpdateInternalWorker
-    :: WorkerType
+  PublicRequest_UpdateInternalDaemon
+    :: DaemonType
     -> Bool -- Desired running state
     -> PublicRequest ()
   PublicRequest_CancelSnapshotImport :: PublicRequest ()
