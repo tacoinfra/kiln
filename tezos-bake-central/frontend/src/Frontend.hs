@@ -1865,10 +1865,11 @@ nodesTab usingNodeOption =
         (external, internal) = splitDynPure $
           (filterLeft &&& filterRight) . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
         kilnNodeState = fmap _processData_state . headMay . Map.elems <$> internal
-
+        kilnNodeRestartAt = (_processData_restartAt <=< (headMay . Map.elems)) <$> internal
       useBlocker <- holdUniqDyn $ ffor nodesDyn $ \n -> MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
       kilnNodeStateD <- holdUniqDyn kilnNodeState
+      kilnNodeRestartAtDyn <- holdUniqDyn kilnNodeRestartAt
       -- Node alerts
       let
         verifySnapshotAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
@@ -1916,6 +1917,10 @@ nodesTab usingNodeOption =
             title = text "Internal node failed."
             desc = do
               el "p" $ text "Kiln node failed during work. Check Kiln command-line arguments that affect it."
+              dyn_ $ ffor kilnNodeRestartAtDyn $ \mbRestartAt -> do
+                whenJust mbRestartAt $ \restartAt -> el "p" $ do
+                  text "Kiln node will be automatically restarted "
+                  localHumanizedTimestampBasic $ pure restartAt
               el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show error log”."
           renderSplashAlert i title Nothing desc
 
@@ -2420,7 +2425,7 @@ bakersTab =
               Right bid ->
                 let bakerProcessData = _bakerInternalData_processData bid
                 in case _processData_state bakerProcessData of
-                  ProcessState_Failed -> failedBakerBanner
+                  ProcessState_Failed -> failedBakerBanner bakerProcessData
                   _ -> pure ()
 
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
@@ -2537,14 +2542,18 @@ bakersTab =
                text " "
                ensureHealthyNodes)
 
-    failedBakerBanner :: m ()
-    failedBakerBanner =
+    failedBakerBanner :: ProcessData -> m ()
+    failedBakerBanner intBakerData =
       SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
         let
           i = icon "icon-warning big red"
           title = text "Kiln Baker failed."
           desc = do
             el "p" $ text "Kiln baker failed during work. Check 'kiln-baker-custom-args' Kiln argument."
+            let mbRestartAt = _processData_restartAt intBakerData
+            whenJust mbRestartAt $ \restartAt -> el "p" $ do
+              text "Kiln baker will be automatically restarted "
+              localHumanizedTimestampBasic $ pure restartAt
             el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Baker tile and select “Show error log”."
         renderSplashAlert i title Nothing desc
 

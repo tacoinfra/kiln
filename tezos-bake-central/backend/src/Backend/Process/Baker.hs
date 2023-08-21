@@ -101,6 +101,8 @@ bakerDaemonProcess appConfig nds mbCustomPaths = runLoggerWithEnv $ do
               , _processData_updated = Nothing
               , _processData_backend = Nothing
               , _processData_errorLog = Nothing
+              , _processData_restartCount = 0
+              , _processData_restartAt = Nothing
               }
 
         bpid <- insert' processData

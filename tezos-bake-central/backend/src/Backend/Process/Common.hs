@@ -24,7 +24,7 @@ import UnliftIO.Async (Concurrently(..), runConcurrently)
 import UnliftIO.STM (TBQueue, atomically, isFullTBQueue, newTBQueueIO, readTBQueue, writeTBQueue)
 import Control.Concurrent.STM (flushTBQueue)
 import UnliftIO.Exception (bracket, finally, onException)
-import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logInfoNS, logInfoSH, logWarn, logWarnSH, logDebug)
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logError, logInfo, logInfoNS, logWarn, logDebug)
 import Control.Monad.IO.Unlift (MonadUnliftIO, withUnliftIO, unliftIO)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -35,11 +35,12 @@ import Data.Conduit.Process (CreateProcess, getStreamingProcessExitCode, streami
 import Data.Streaming.Process (StreamingProcessHandle, streamingProcess)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
-import Data.Time (getCurrentTime, addUTCTime, NominalDiffTime)
+import Data.Time (NominalDiffTime, UTCTime, getCurrentTime, addUTCTime, diffUTCTime)
 import Data.Void (Void)
+import Database.Id.Class
 import Database.Id.Groundhog
 import Database.Groundhog.Postgresql
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, project1)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.DB.Serializable
 import System.Posix.Signals (signalProcess, sigKILL)
@@ -121,14 +122,44 @@ waitUntilShouldRun
   -> m Bool
   -> m ()
 waitUntilShouldRun pid runPrestartCheck = do
+  autoRestart <- shouldAutoRestart pid
   canRun <- runTransaction $ do
     isStopped <- all (== ProcessControl_Stop) <$> project ProcessData_controlField (AutoKeyField ==. fromId pid)
-    -- We don't restart process with non-empty error log. It means that this process just failed with error.
-    -- We guarantee this condition by the fact that in all other cases we clean the log.
-    hasEmptyErrorLog <- fmap (isNothing . head) $ project ProcessData_errorLogField $ AutoKeyField ==. fromId pid
-    pure $ not isStopped && hasEmptyErrorLog
+    pure $ not isStopped
   prestartCheck <- runPrestartCheck
-  unless (canRun && prestartCheck) $ threadDelay' 1 *> waitUntilShouldRun pid runPrestartCheck
+  unless (canRun && prestartCheck && autoRestart) $
+    threadDelay' 1 *> waitUntilShouldRun pid runPrestartCheck
+
+shouldAutoRestart
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => Id ProcessData
+  -> m Bool
+shouldAutoRestart pid = do
+  (procControl, restartCnt, mbRestartAt) <- runTransaction $ getProcessData pid
+  case procControl of
+    ProcessControl_AutoRestart -> do
+      now <- liftIO getCurrentTime
+      case mbRestartAt of
+        Nothing -> pure False
+        Just restartAt | now >= restartAt -> do
+          runTransaction $ update
+            [ ProcessData_controlField =. ProcessControl_Run
+            , ProcessData_restartCountField =. restartCnt + 1
+            ] (AutoKeyField ==. fromId pid)
+          $(logDebug) $ T.concat
+            [ "Restarting process with id "
+            , tshow pid
+            , " attempt "
+            , tshow $ restartCnt + 1
+            ]
+          pure True
+        Just _ -> pure False
+    _ -> pure True
 
 withProcessLock
   :: ( MonadUnliftIO m
@@ -234,10 +265,8 @@ startProcMonitor procHandler env daemonType pid updateState = do
           , Proc.std_err = Proc.CreatePipe
           , Proc.env = Just $ currentEnv <> env
           }
-  $(logInfoSH) ("processWorker: running process" :: Text, proc')
+  $(logInfo) $ "Started process monitor for " <> tshow proc'
   procMonitor proc' daemonType pid updateState
-  threadDelay' 10
-
 
 -- | "Monitor/Stop loop", delay 1s
 -- it waits for the process' stop signal (_processData_running == False) and terminates it
@@ -278,11 +307,7 @@ procMonitor cp daemonType pid updateState = do
 
     {-# INLINE go #-}
     go (mCount :: Maybe Int) buffer ph = do
-      let getPC = \case
-            [] -> ProcessControl_Stop
-            (c:_) -> c
-      procControl <- runTransaction
-        (getPC <$> project ProcessData_controlField (AutoKeyField ==. fromId pid))
+      (procControl, restartCnt, _) <- runTransaction $ getProcessData pid
       liftIO (getStreamingProcessExitCode ph) >>= \case
         Nothing -> do
           runTransaction $ updateState ProcessState_Running
@@ -299,21 +324,83 @@ procMonitor cp daemonType pid updateState = do
         Just _ -> case procControl of
           ProcessControl_Stop -> do
             runTransaction $ updateState ProcessState_Stopped
-            $(logInfoSH) ("Process exited successfully:" :: Text, pid)
+            $(logInfo) $ "Process exited successfully " <> tshow pid
           ProcessControl_Restart -> do
             runTransaction $ do
               updateState ProcessState_Stopped
               update [ProcessData_controlField =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
-            $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
+            $(logInfo) $ "Process exited successfully, restarting: " <> tshow pid
           ProcessControl_Run -> do
             appConfig <- askAppConfig
+            now <- liftIO getCurrentTime
+            let cutoffTime :: NominalDiffTime = 600 -- TODO move to config
+                restartAt = calcRestartAt restartCnt now cutoffTime
+            logFailedProcess restartAt
             runTransaction $ do
               updateState ProcessState_Failed
               errorLog <- fmap T.unlines $ liftIO $ atomically $ flushTBQueue buffer
-              update [ProcessData_errorLogField =. Just errorLog] $
-                AutoKeyField ==. fromId pid
-              flip runReaderT appConfig $ queueFailedProcessAlert (daemonName daemonType) errorLog
-            $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
+              update
+                [ ProcessData_errorLogField =. Just errorLog
+                , ProcessData_controlField =. ProcessControl_AutoRestart
+                , ProcessData_restartAtField =. restartAt
+                ] $ AutoKeyField ==. fromId pid
+              pure errorLog
+            -- We send the "Kiln node/baker failed" alert only when
+            -- the process failed for the first time
+            when (restartCnt == 0) $
+              sendFailedProcessAlert (daemonName daemonType) errLog
+            $(logWarn) $ "Process exited unexpectedly " <> tshow pid
+          ProcessControl_AutoRestart ->
+            $(logWarn) "Unreachable pattern in 'procMonitor'"
+
+    logFailedProcess :: MonadLogger m => Maybe UTCTime -> m ()
+    logFailedProcess mbRestartAt =
+      let
+        restartInfo = case mbRestartAt of
+          Nothing -> "It won't be restarted."
+          Just restartAt -> "It will be restarted at " <> tshow restartAt <> "."
+      in
+        $(logError) $ T.concat
+          [ daemonName daemonType
+          , " with id "
+          , tshow pid
+          , " failed. "
+          , restartInfo
+          ]
+
+
+getProcessData :: Id ProcessData -> Serializable (ProcessControl, Int, Maybe UTCTime)
+getProcessData pid = do
+  let defaults = (ProcessControl_Stop, 0, Nothing)
+      maxTimeDiff = 1200 -- 20 minutes
+  now <- liftIO getCurrentTime
+  (procControl, restartCnt', mbRestartAt) <- fmap (fromMaybe defaults) $ project1
+    ( ProcessData_controlField
+    , ProcessData_restartCountField
+    , ProcessData_restartAtField
+    ) (AutoKeyField ==. fromId pid)
+
+  restartCnt <- case mbRestartAt of
+    Nothing -> pure restartCnt'
+    Just restartAt ->
+      -- We set 'restartCount' to 0 if the value stored
+      -- in the db is outdated to allow more than 1 retry
+      -- cycle.
+      if now `diffUTCTime` restartAt >= maxTimeDiff
+      then do
+        update
+          [ProcessData_restartCountField =. (0 :: Int)]
+          (AutoKeyField ==. fromId pid)
+        pure 0
+      else pure restartCnt'
+  pure (procControl, restartCnt, mbRestartAt)
+
+calcRestartAt :: Int -> UTCTime -> NominalDiffTime -> Maybe UTCTime
+calcRestartAt restartCnt now cutoffTime =
+  let waitFor = fromIntegral @Int @NominalDiffTime (2 ^ (restartCnt + 1))
+  in if waitFor < cutoffTime
+  then Just $ waitFor `addUTCTime` now
+  else Nothing
 
 daemonLogNamespace :: DaemonType -> Text
 daemonLogNamespace = \case

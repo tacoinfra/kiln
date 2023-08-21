@@ -690,7 +690,7 @@ getBakerAddresses nds bid = do
   internalBakerData :: Map.Map PublicKeyHash (ProcessData, SecretKey, (Int, Bool)) <- [queryQ|
       SELECT b."data#data#publicKeyHash",
         la."secretKey#ledgerIdentifier", la."secretKey#signingCurve", la."secretKey#derivationPath",
-        p."control", p."state", p."errorLog",
+        p."control", p."state", p."errorLog", p."restartCount", p."restartAt" AT TIME ZONE 'UTC',
         ( SELECT COUNT(e.id) FROM "ErrorLogBakerMissedEndorsementBonus" elbm JOIN "ErrorLog" e on e.id = elbm.log
           WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
         ) +
@@ -721,7 +721,7 @@ getBakerAddresses nds bid = do
       JOIN "ProcessData" p ON p.id = b."data#data#bakerProcessData"
       JOIN "LedgerAccount" la ON la."publicKeyHash" = b."data#data#publicKeyHash"
       WHERE NOT b."data#deleted"
-    |] <&> Map.fromList . fmap (\(pkh, li, sc, dp, control, state, errorLog, missedAlertsCount, insufficientFundsAlert) ->
+    |] <&> Map.fromList . fmap (\(pkh, li, sc, dp, control, state, errorLog, restartCount, restartAt, missedAlertsCount, insufficientFundsAlert) ->
       let sk = SecretKey
             { _secretKey_ledgerIdentifier = li
             , _secretKey_signingCurve = sc
@@ -733,6 +733,8 @@ getBakerAddresses nds bid = do
             , _processData_updated = Nothing
             , _processData_backend = Nothing
             , _processData_errorLog = errorLog
+            , _processData_restartCount = restartCount
+            , _processData_restartAt = restartAt
             }
       in (pkh, (pd, sk, (missedAlertsCount, insufficientFundsAlert))))
 
@@ -847,18 +849,20 @@ getNodeAddresses nid = do
       , _nodeExternalData_minPeerConnections = mpc
       }))
   int :: Map.Map (WithInfinity (Id Node)) ProcessData <- [queryQ|
-      SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend, p."errorLog"
+      SELECT n.id, p.control, p.state, p.updated AT TIME ZONE 'UTC', p.backend, p."errorLog", p."restartCount", p."restartAt" AT TIME ZONE 'UTC'
         FROM "NodeInternal" n
         JOIN "ProcessData" p ON p.id = n."data#data"
       WHERE NOT n."data#deleted"
         AND CASE WHEN ?nid is NULL THEN true ELSE n.id = ?nid END|]
-    <&> Map.fromList . fmap (\(nid', control, state, updated, backend, errorLog) -> (Bounded nid',
+    <&> Map.fromList . fmap (\(nid', control, state, updated, backend, errorLog, restartCount, restartAt) -> (Bounded nid',
       ProcessData
       { _processData_control = control
       , _processData_state = state
       , _processData_updated = updated
       , _processData_backend = backend
       , _processData_errorLog = errorLog
+      , _processData_restartCount = restartCount
+      , _processData_restartAt = restartAt
       }))
   let qCount :: [Utf8]
       qCount = flip map universe $ \(Some nTag) -> logAssume (LogTag_Node nTag) $ case nodeLogDep nTag of

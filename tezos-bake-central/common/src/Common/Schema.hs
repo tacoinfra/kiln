@@ -369,14 +369,17 @@ data ProcessControl
   = ProcessControl_Run
   | ProcessControl_Stop
   | ProcessControl_Restart
+  | ProcessControl_AutoRestart
   deriving (Eq, Ord, Show, Read, Generic, Typeable, Enum, Bounded)
 
 data ProcessData = ProcessData
-  { _processData_control :: ProcessControl
+  { _processData_control :: ProcessControl -- the state the process should be in
   , _processData_state :: ProcessState -- the state the process is actually in.
   , _processData_updated :: Maybe UTCTime -- the time the process' state was last set.
   , _processData_backend :: Maybe Int -- a "unique" process id
   , _processData_errorLog :: Maybe Text -- error message provided by binary. it shouldn't be 'Nothing' only when state == 'ProcessState_Failed'
+  , _processData_restartCount :: Int -- the number of times the process was restarted
+  , _processData_restartAt :: Maybe UTCTime -- time of the next automatic restart of the process
   } deriving (Eq, Ord, Show, Generic, Typeable)
 
 instance HasId ProcessData
