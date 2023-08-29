@@ -144,7 +144,7 @@ shouldAutoRestart
   -> DaemonType
   -> m Bool
 shouldAutoRestart pid daemonType = do
-  (procControl, restartCnt, mbRestartAt) <- runTransaction $ getProcessData pid
+  (procControl, restartCnt, mbRestartAt) <- getProcessData pid
   case procControl of
     ProcessControl_AutoRestart -> do
       now <- liftIO getCurrentTime
@@ -302,7 +302,7 @@ procMonitor cp daemonType pid updateState = do
     in case daemonType of
       DaemonType_Node -> noOp
       DaemonType_Baker -> do
-        (_, _, mbRestartAt) <- runTransaction $ getProcessData pid
+        (_, _, mbRestartAt) <- getProcessData pid
         case mbRestartAt of
           -- If baker was scheduled to automatically restart,
           -- we determine from the logs that it started successfully
@@ -329,7 +329,7 @@ procMonitor cp daemonType pid updateState = do
 
     {-# INLINE go #-}
     go (mCount :: Maybe Int) buffer ph = do
-      (procControl, restartCnt, _) <- runTransaction $ getProcessData pid
+      (procControl, restartCnt, _) <- getProcessData pid
       liftIO (getStreamingProcessExitCode ph) >>= \case
         Nothing -> do
           runTransaction $ updateState ProcessState_Running
@@ -354,8 +354,8 @@ procMonitor cp daemonType pid updateState = do
             $(logInfo) $ "Process exited successfully, restarting: " <> tshow pid
           ProcessControl_Run -> do
             now <- liftIO getCurrentTime
-            let cutoffTime :: NominalDiffTime = 600 -- TODO move to config
-                restartAt = calcRestartAt restartCnt now cutoffTime
+            cutoffTime <- asks (view $ getAppConfig . appConfig_processRestartMaxDelay)
+            let restartAt = calcRestartAt restartCnt now cutoffTime
             logFailedProcess restartAt
             errLog <- runTransaction $ do
               updateState ProcessState_Failed
@@ -390,31 +390,41 @@ procMonitor cp daemonType pid updateState = do
           ]
 
 
-getProcessData :: Id ProcessData -> Serializable (ProcessControl, Int, Maybe UTCTime)
+getProcessData
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => Id ProcessData
+  -> m (ProcessControl, Int, Maybe UTCTime)
 getProcessData pid = do
+  cutoffTime <- asks (view $ getAppConfig . appConfig_processRestartMaxDelay)
   let defaults = (ProcessControl_Stop, 0, Nothing)
-      maxTimeDiff = 1200 -- 20 minutes
-  now <- liftIO getCurrentTime
-  (procControl, restartCnt', mbRestartAt) <- fmap (fromMaybe defaults) $ project1
-    ( ProcessData_controlField
-    , ProcessData_restartCountField
-    , ProcessData_restartAtField
-    ) (AutoKeyField ==. fromId pid)
+      maxTimeDiff = cutoffTime * 2
+  runTransaction $ do
+    now <- liftIO getCurrentTime
+    (procControl, restartCnt', mbRestartAt) <- fmap (fromMaybe defaults) $ project1
+      ( ProcessData_controlField
+      , ProcessData_restartCountField
+      , ProcessData_restartAtField
+      ) (AutoKeyField ==. fromId pid)
 
-  restartCnt <- case mbRestartAt of
-    Nothing -> pure restartCnt'
-    Just restartAt ->
-      -- We set 'restartCount' to 0 if the value stored
-      -- in the db is outdated to allow more than 1 retry
-      -- cycle.
-      if now `diffUTCTime` restartAt >= maxTimeDiff
-      then do
-        update
-          [ProcessData_restartCountField =. (0 :: Int)]
-          (AutoKeyField ==. fromId pid)
-        pure 0
-      else pure restartCnt'
-  pure (procControl, restartCnt, mbRestartAt)
+    restartCnt <- case mbRestartAt of
+      Nothing -> pure restartCnt'
+      Just restartAt ->
+        -- We set 'restartCount' to 0 if the value stored
+        -- in the db is outdated to allow more than 1 retry
+        -- cycle.
+        if now `diffUTCTime` restartAt >= maxTimeDiff
+        then do
+          update
+            [ProcessData_restartCountField =. (0 :: Int)]
+            (AutoKeyField ==. fromId pid)
+          pure 0
+        else pure restartCnt'
+    pure (procControl, restartCnt, mbRestartAt)
 
 calcRestartAt :: Int -> UTCTime -> NominalDiffTime -> Maybe UTCTime
 calcRestartAt restartCnt now cutoffTime =

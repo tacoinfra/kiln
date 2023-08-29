@@ -51,6 +51,7 @@ dummyAppConfig = AppConfig
   , _appConfig_kilnBakerCustomArgs = Nothing
   , _appConfig_binaryPaths = Nothing
   , _appConfig_tezosNodeEnvVar = Nothing
+  , _appConfig_processRestartMaxDelay = 0
   }
   where
     dummyNodeConfigFile = Left Null

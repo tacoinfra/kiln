@@ -34,6 +34,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
+import Data.Time (NominalDiffTime)
 import Data.Time.Clock (nominalDay)
 import Database.Groundhog.Core (Field, SubField)
 import Database.Groundhog.Postgresql
@@ -231,6 +232,14 @@ backendImpl cfg serve = do
     (_opts_checkLedgerConnection cfg)
     (getConfigFromFile (Just . Config.parseBool) $ configPath Config.checkLedgerConnection)
 
+  let
+    validateProcessRestartMaxDelay x | x >= 0 && x <= 3600 = fromIntegral x
+    validateProcessRestartMaxDelay _ = error "'process-restart-max-delay' value should be in range [1..3600]"
+
+  !(processRestartMaxDelay :: NominalDiffTime) <- fmap (validateProcessRestartMaxDelay. fromMaybe Config.defaultProcessRestartMaxDelay) $
+    combineConfigs
+      (_opts_processRestartMaxDelay cfg)
+      (getConfigFromFile (Just . read . T.unpack) $ configPath Config.processRestartMaxDelay)
   httpMgr <- Http.newManager Https.tlsManagerSettings
   let
     withLogger :: (LoggingEnv -> LoggingT IO a) -> IO a
@@ -360,6 +369,7 @@ backendImpl cfg serve = do
         , _appConfig_kilnBakerCustomArgs = kilnBakerCustomArgs
         , _appConfig_binaryPaths = binaryPaths
         , _appConfig_tezosNodeEnvVar = tezosNodeEnvVar
+        , _appConfig_processRestartMaxDelay = processRestartMaxDelay
         }
 
     dataSrc <- liftIO $ do
@@ -523,6 +533,7 @@ data Opts = Opts
   , _opts_nodeConfigFile :: Maybe FilePath
   , _opts_rightsHistoryWindow :: Maybe Int
   , _opts_checkLedgerConnection :: Maybe Bool
+  , _opts_processRestartMaxDelay :: Maybe Int
   }
 makeLenses ''Opts
 
@@ -548,6 +559,7 @@ instance Semigroup Opts where
     , _opts_nodeConfigFile = rightBiased (<|>) _opts_nodeConfigFile
     , _opts_rightsHistoryWindow = rightBiased (<|>) _opts_rightsHistoryWindow
     , _opts_checkLedgerConnection = rightBiased (<|>) _opts_checkLedgerConnection
+    , _opts_processRestartMaxDelay = rightBiased (<|>) _opts_processRestartMaxDelay
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
@@ -575,6 +587,7 @@ instance Monoid Opts where
       , _opts_nodeConfigFile = Nothing
       , _opts_rightsHistoryWindow = Nothing
       , _opts_checkLedgerConnection = Nothing
+      , _opts_processRestartMaxDelay = Nothing
       }
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -641,6 +654,10 @@ optsArgDescr =
       <> configPath Config.checkLedgerConnection <> "'. If that is blank, default to "
       <> bool "disabled" "enabled" Config.defaultCheckLedgerConnection <> ". If this option is disabled, " <>
       "the ledger indicator on the header will be shown only if Kiln Baker has baking rights."
+
+  , mkReqArg Config.processRestartMaxDelay "INT" (set opts_processRestartMaxDelay . Just . read . T.unpack) $
+      "Maximum time in seconds that Kiln will wait while automatically restarting the node and baker process. Defaults to " <>
+      show Config.defaultProcessRestartMaxDelay <> " seconds."
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

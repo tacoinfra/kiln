@@ -181,6 +181,12 @@ checkLedgerConnection = "check-ledger-connection"
 defaultCheckLedgerConnection :: Bool
 defaultCheckLedgerConnection = True
 
+processRestartMaxDelay :: FilePath
+processRestartMaxDelay = "process-restart-max-delay"
+
+defaultProcessRestartMaxDelay :: Int
+defaultProcessRestartMaxDelay = 600
+
 singleQuoted :: (IsString a, Semigroup a) => a -> a
 singleQuoted s = "'" <> s <> "'"
 

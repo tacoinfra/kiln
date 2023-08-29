@@ -29,6 +29,7 @@ import Text.URI (URI)
 import Data.Aeson.Lens
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Text as T
+import Data.Time (NominalDiffTime)
 import qualified Language.Haskell.TH.Quote as QQ
 import qualified Text.URI as Uri
 import qualified Text.URI.QQ as Uri
@@ -50,6 +51,7 @@ data AppConfig = AppConfig
   , _appConfig_kilnBakerCustomArgs :: Maybe Text
   , _appConfig_binaryPaths :: Maybe BinaryPaths
   , _appConfig_tezosNodeEnvVar :: Maybe FilePath
+  , _appConfig_processRestartMaxDelay :: NominalDiffTime
   }
 
 class HasAppConfig a where
