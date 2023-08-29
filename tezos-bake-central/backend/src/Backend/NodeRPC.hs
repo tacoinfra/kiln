@@ -90,6 +90,7 @@ import Tezos.Types hiding (Block)
 import qualified Tezos.Nairobi.Types as Nairobi
 
 import Backend.Common (LedgerQuery, timeout')
+import Backend.Config (AppConfig (..), kilnNodeRpcURI)
 import Backend.Schema
 import Backend.STM (MonadSTM (liftSTM), newTVar', readTVar', writeTVar')
 import Common.Schema
@@ -1017,6 +1018,19 @@ fetchProtocolForBlock chainId blkHash = do
   insert p
   notifyDefault p
   pure p
+
+sendKilnNodeHealthcheckRequest
+  :: ( MonadIO m
+     , MonadLoggerIO m
+     )
+  => AppConfig
+  -> NodeDataSource
+  -> m (Either RpcError ())
+sendKilnNodeHealthcheckRequest appConfig nds =
+  fmap void $ runExceptT @RpcError . flip runReaderT
+    (NodeRPCContext (_nodeDataSource_httpMgr nds)
+    (Uri.render $ kilnNodeRpcURI appConfig)) $
+      nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
 
 deriveGEq ''NodeQuery
 deriveGCompare ''NodeQuery

@@ -2,34 +2,54 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Backend.Process.Alerts
-  ( queueFailedProcessAlert
+  ( sendFailedProcessAlert
+  , sendProcessRestartedAlert
   ) where
 
-import Control.Monad.Base (MonadBase)
-import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.Logger (MonadLogger)
-import Control.Monad.Reader (MonadReader)
+import Control.Monad.Logger (MonadLoggerIO)
+import Control.Monad.Reader (MonadReader, runReaderT)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.Groundhog.Postgresql (PersistBackend)
-import Rhyolite.Backend.DB.LargeObjects (PostgresLargeObject)
-import Rhyolite.Backend.DB.Serializable (Serializable)
 
 import Backend.Alerts.Common
-import Backend.Config (HasAppConfig)
+import Backend.Config (HasAppConfig, askAppConfig)
+import Backend.Env (runTransaction)
+import Backend.NodeRPC (HasNodeDataSource)
 
-queueFailedProcessAlert
-  :: ( PersistBackend m, PostgresLargeObject m, MonadIO m
-     , MonadReader a m, HasAppConfig a, MonadLogger m
-     , MonadBase Serializable m
+sendAlert
+  :: ( MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => Alert
+  -> m ()
+sendAlert alert = do
+  appConfig <- askAppConfig
+  runTransaction $ flip runReaderT appConfig $ do
+    queueEmailAlert alert
+    queueTelegramAlert alert
+
+sendFailedProcessAlert
+  :: ( MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
      )
   => Text
   -> Text
   -> m ()
-queueFailedProcessAlert name errorLog = do
-  let alert = mkFailedProcessAlert name errorLog
-  queueEmailAlert alert
-  queueTelegramAlert alert
+sendFailedProcessAlert name errorLog = sendAlert $ mkFailedProcessAlert name errorLog
+
+sendProcessRestartedAlert
+  :: ( MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => Text
+  -> m ()
+sendProcessRestartedAlert name = sendAlert $ mkRestartedProcessAlert name
 
 mkFailedProcessAlert :: Text -> Text -> Alert
 mkFailedProcessAlert name errorLog =
@@ -38,3 +58,7 @@ mkFailedProcessAlert name errorLog =
     , " failed during work. Logs:\n"
     , errorLog
     ]
+
+mkRestartedProcessAlert :: Text -> Alert
+mkRestartedProcessAlert name =
+  Alert Resolved ("Resolved: " <> name <> " has been automatically restarted by Kiln") ""

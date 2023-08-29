@@ -121,7 +121,7 @@ internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
             [ ProcessData_controlField =. ProcessControl_Stop
             ] (AutoKeyField ==. fromId pid)
           updateState ProcessState_Failed
-    waitUntilShouldRun pid runPrestartCheck
+    waitUntilShouldRun pid DaemonType_Node runPrestartCheck
     withProcessLock pid $ do
       runTransaction $ updateState ProcessState_Initializing
       let

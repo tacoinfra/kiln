@@ -42,7 +42,6 @@ import Text.URI (render)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
-import Tezos.NodeRPC (NodeRPCContext(..), QueryNode(rIsBootstrapped), RpcError, nodeRPC)
 import Tezos.Types
 
 import Backend.Alerts (reportLedgerDisconnection)
@@ -220,11 +219,10 @@ checkKilnNodeAvailability
      , HasAppConfig e
      )
   => m Bool
-checkKilnNodeAvailability = isRight <$> do
+checkKilnNodeAvailability = do
   appConfig <- askAppConfig
   nds <- asks (view nodeDataSource)
-  runExceptT @RpcError . flip runReaderT (NodeRPCContext (_nodeDataSource_httpMgr nds) (render $ kilnNodeRpcURI appConfig)) $
-    nodeRPC (rIsBootstrapped $ _nodeDataSource_chain nds)
+  isRight <$> sendKilnNodeHealthcheckRequest appConfig nds
 
 -- | To initialize baker process we need to get its extra arguments from the database
 -- for this we need to make sure that its public key hash presents in 'BakerDaemonInternal' table
@@ -334,7 +332,7 @@ bakerProcessWorker
   -> m (w ())
 bakerProcessWorker appConfig nds pid paths = mkWorker $ do
   let updateState = updateBakerProcessState pid
-  waitUntilShouldRun pid bakerPrestartCheck
+  waitUntilShouldRun pid DaemonType_Baker bakerPrestartCheck
   withProcessLock pid $ do
     runTransaction $ updateState ProcessState_Initializing
     mbProtoHash <- runTransaction $ fetchProtocol pid
