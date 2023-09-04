@@ -1015,6 +1015,7 @@ data SnapshotImportError
   = SnapshotImportError_FileNotFound
   | SnapshotImportError_InvalidSnapshot
   | SnapshotImportError_PermissionDenied
+  | SnapshotImportError_UnknownError
   deriving (Eq, Generic, Ord, Show, Typeable)
 
 data SnapshotArtifactType

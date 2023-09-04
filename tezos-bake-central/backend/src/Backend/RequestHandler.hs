@@ -109,7 +109,7 @@ requestHandler appConfig nds =
       PublicRequest_SetHWM sk bl ->
         queryLedger $ setHighWaterMark appConfig db sk bl
 
-      req@(PublicRequest_AddInternalNode mNodeProcessState) -> validateAddInternalNodeRequest req appConfig $ do
+      req@(PublicRequest_AddInternalNode mNodeProcessState) -> validateAddInternalNodeRequest req $ do
         inDb $ do
           let ps = maybe ProcessState_Stopped (ProcessState_Node . fst) mNodeProcessState
               pc = maybe ProcessControl_Run (const ProcessControl_Stop) mNodeProcessState
@@ -515,15 +515,14 @@ getTelegramCfgId = toId <$$> listToMaybe <$> project AutoKeyField
   (TelegramConfig_enabledField ==. TelegramConfig_enabledField)
 
 validateAddInternalNodeRequest
-  :: (MonadBaseNoPureAborts IO m, MonadIO m, MonadMask m, MonadUnliftIO m, MonadLogger m)
+  :: (MonadBaseNoPureAborts IO m, MonadIO m, MonadMask m, MonadUnliftIO m, MonadLoggerIO m)
   => PublicRequest (Either AddInternalNodeError ())
-  -> AppConfig
   -> m ()
   -> m (Either AddInternalNodeError ())
-validateAddInternalNodeRequest req appConfig reqHandler =
+validateAddInternalNodeRequest req reqHandler =
   case req of
     PublicRequest_AddInternalNode (Just (_, SnapshotImportSource_FilePathSource fp)) -> do
-      validationRes <- validateSnapshotFilePath appConfig fp
+      validationRes <- validateSnapshotFilePath fp
       case validationRes of
         Left e -> pure $ Left $ AddInternalNodeError_SnapshotImportError e
         Right () -> Right <$> reqHandler

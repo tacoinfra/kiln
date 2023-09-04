@@ -201,12 +201,25 @@ initNode nodePath nodeConfigPath nodeId pid = do
       let
         out = T.pack out'
         err = T.pack err'
-      if exitCode == ExitSuccess
-        then do
-          logInfoNS "kiln-node" $ "Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
-        else do
-          logErrorNS "kiln-node" $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> "\n<STDOUT>\n" <> out <> "\n<STDERR>\n" <> err
-          liftIO $ throwIO exitCode
+      case exitCode of
+        ExitSuccess ->
+          logInfoNS "kiln-node" $ T.concat
+            [ "Got output from "
+            , fullCmdText
+            , ":\n"
+            , out
+            ]
+        ExitFailure ec -> do
+          logErrorNS "kiln-node" $ T.concat
+            [ fullCmdText
+            , " failed with exit code "
+            , tshow ec
+            , "\nstdout:\n"
+            , out
+            , "\nstderr:\n"
+            , err
+            ]
+          liftIO $ throwIO $ InternalNodeInitFailed err
 
 updateNodeProcessState
   :: ( MonadLogger m
