@@ -449,7 +449,7 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
         -- to user, so we remove import progress lines from 'stderr' before
         -- saving it to db.
         filteredStderr = T.unlines $ filter isNotProgressLine $ T.lines stderr
-      $(logError) "importSnapshotData failed: "
+      $(logError) $ "Failed to import node snapshot: " <> filteredStderr
       update [ SnapshotMeta_importErrorField =. Just filteredStderr ] (AutoKeyField ==. smId)
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
       updateState NodeProcessState_ImportFailed
