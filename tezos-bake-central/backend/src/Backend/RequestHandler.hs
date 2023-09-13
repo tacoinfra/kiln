@@ -30,6 +30,7 @@ import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Monoidal as MMap
 import qualified Data.Set as Set
 import Data.Some (Some(..))
+import Data.Time (UTCTime)
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
@@ -120,6 +121,8 @@ requestHandler appConfig nds =
                     , _processData_updated = Nothing
                     , _processData_backend = Nothing
                     , _processData_errorLog = Nothing
+                    , _processData_restartCount = 0
+                    , _processData_restartAt = Nothing
                     }
 
               pdid <- insert' processData
@@ -147,6 +150,8 @@ requestHandler appConfig nds =
                   [ ProcessData_controlField =. pc
                   , ProcessData_stateField =. ps
                   , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+                  , ProcessData_restartCountField =. (0 :: Int)
+                  , ProcessData_restartAtField =. (Nothing :: Maybe UTCTime)
                   ] (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
                 notify NotifyTag_NodeInternal (nid, Just processData)
         case mNodeProcessState of
@@ -208,13 +213,13 @@ requestHandler appConfig nds =
               (Just (\pd -> (NotifyTag_NodeInternal, (nid, pd))))
               (ProcessState_Node NodeProcessState_DownloadCanceled)
 
-      PublicRequest_UpdateInternalWorker workerType shouldRun -> inDb $ case workerType of
-        WorkerType_Node
+      PublicRequest_UpdateInternalDaemon daemonType shouldRun -> inDb $ case daemonType of
+        DaemonType_Node
           | shouldRun -> startNodeDaemon -- Only start node
           | otherwise -> do -- On stopping node, stop the baker also (if running)
               stopBakerDaemon
               stopNodeDaemon
-        WorkerType_Baker
+        DaemonType_Baker
           | not shouldRun -> stopBakerDaemon -- Only stop baker
           | otherwise -> do -- On starting baker, start the node also (if stopped)
               startNodeDaemon
@@ -246,6 +251,8 @@ requestHandler appConfig nds =
             update
               [ ProcessData_controlField =. ProcessControl_Stop
               , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+              , ProcessData_restartCountField =. (0 :: Int)
+              , ProcessData_restartAtField =. (Nothing :: Maybe UTCTime)
               ] $ AutoKeyField ==. bakerProcess
           update
             [BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. True]

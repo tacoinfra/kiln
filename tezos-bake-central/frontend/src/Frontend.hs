@@ -1789,7 +1789,7 @@ verifySnapshotModal smd = cancelableModalWithClasses $ \close -> do
         divClass "detail" $ text "Date Baked:"
         divClass "" $ (localHumanizedTimestampBasic . constDyn) headBlockTimestamp
   start <- divClass "buttons" $ uiButton "primary" "Start Node"
-  response <- requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+  response <- requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Node True) <$ start
   pure (pure ["confirmation"], leftmost [void response, close])
 
 showErrorLogModal ::
@@ -1865,10 +1865,11 @@ nodesTab usingNodeOption =
         (external, internal) = splitDynPure $
           (filterLeft &&& filterRight) . fmap _nodeSummary_node . MMap.getMonoidalMap <$> nodesDyn
         kilnNodeState = fmap _processData_state . headMay . Map.elems <$> internal
-
+        kilnNodeRestartAt = (_processData_restartAt <=< (headMay . Map.elems)) <$> internal
       useBlocker <- holdUniqDyn $ ffor nodesDyn $ \n -> MMap.null n
       -- let alertWindow = ClosedInterval LowerInfinity UpperInfinity
       kilnNodeStateD <- holdUniqDyn kilnNodeState
+      kilnNodeRestartAtDyn <- holdUniqDyn kilnNodeRestartAt
       -- Node alerts
       let
         verifySnapshotAlert = SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
@@ -1916,6 +1917,10 @@ nodesTab usingNodeOption =
             title = text "Internal node failed."
             desc = do
               el "p" $ text "Kiln node failed during work. Check Kiln command-line arguments that affect it."
+              dyn_ $ ffor kilnNodeRestartAtDyn $ \mbRestartAt -> do
+                whenJust mbRestartAt $ \restartAt -> el "p" $ do
+                  text "Kiln node will be automatically restarted "
+                  localHumanizedTimestampBasic $ pure restartAt
               el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Node tile and select “Show error log”."
           renderSplashAlert i title Nothing desc
 
@@ -2012,10 +2017,10 @@ nodesTab usingNodeOption =
                 runningDyn :: Dynamic t Bool <- (fmap . fmap) (== ProcessControl_Run) $ holdUniqDyn $ _processData_control <$> nodeData
                 dyn_ $ ffor (zipDyn runningDyn bakerRunning) $ \case
                   (True, bRunning) ->
-                    tileMenuEntryModal "Stop Node" $ stopModal bRunning (PublicRequest_UpdateInternalWorker WorkerType_Node False <$)
+                    tileMenuEntryModal "Stop Node" $ stopModal bRunning (PublicRequest_UpdateInternalDaemon DaemonType_Node False <$)
                   _ -> do
                     start <- tileMenuEntry "Start Node"
-                    void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ start
+                    void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Node True) <$ start
 
               verifyAndStartMenu sm = do
                 tileMenuEntryModal "Verify and start node" (verifySnapshotModal sm)
@@ -2113,7 +2118,7 @@ nodesTab usingNodeOption =
                   menu = case _processData_state pd of
                     ProcessState_Failed -> Just $ do
                       restart <- tileMenuEntry "Restart Node"
-                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Node True) <$ restart
+                      void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Node True) <$ restart
                       for_ (_processData_errorLog pd) $ \errLog ->
                         tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln node error log" errLog
                       removeNodeMenu
@@ -2420,7 +2425,7 @@ bakersTab =
               Right bid ->
                 let bakerProcessData = _bakerInternalData_processData bid
                 in case _processData_state bakerProcessData of
-                  ProcessState_Failed -> failedBakerBanner
+                  ProcessState_Failed -> failedBakerBanner bakerProcessData
                   _ -> pure ()
 
           let notifications :: Dynamic t (Map.Map (Down BakerAlert) ())
@@ -2537,14 +2542,18 @@ bakersTab =
                text " "
                ensureHealthyNodes)
 
-    failedBakerBanner :: m ()
-    failedBakerBanner =
+    failedBakerBanner :: ProcessData -> m ()
+    failedBakerBanner intBakerData =
       SemUi.segment (def & SemUi.classes SemUi.|~ "dashboard-section-overview") $ do
         let
           i = icon "icon-warning big red"
           title = text "Kiln Baker failed."
           desc = do
             el "p" $ text "Kiln baker failed during work. Check 'kiln-baker-custom-args' Kiln argument."
+            let mbRestartAt = _processData_restartAt intBakerData
+            whenJust mbRestartAt $ \restartAt -> el "p" $ do
+              text "Kiln baker will be automatically restarted "
+              localHumanizedTimestampBasic $ pure restartAt
             el "p" $ text "Logs may provide insight as to why this happened. Click the menu on the Kiln Baker tile and select “Show error log”."
         renderSplashAlert i title Nothing desc
 
@@ -2619,7 +2628,7 @@ bakersTab =
           let
             showLogMenu errorLog = do
               restart <- tileMenuEntry "Restart Baker"
-              void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ restart
+              void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Baker True) <$ restart
               tileMenuEntryModal "Show Error Log" $ showErrorLogModal "Kiln baker error log" errorLog
 
             removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
@@ -2748,10 +2757,10 @@ bakersTab =
                 let stopModal = warningModal "Stop Baker?"
                       ["This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time."]
                       "Stop Baker"
-                tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalWorker WorkerType_Baker False <$)
+                tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalDaemon DaemonType_Baker False <$)
               else do
                 start <- tileMenuEntry "Start Baker"
-                void $ requestingIdentity $ public (PublicRequest_UpdateInternalWorker WorkerType_Baker True) <$ start
+                void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Baker True) <$ start
               let
                 removeInternalBakerModal = warningModal "Remove Baker?"
                   ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]

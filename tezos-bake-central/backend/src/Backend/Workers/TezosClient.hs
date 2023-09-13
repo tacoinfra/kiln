@@ -27,7 +27,7 @@ import Data.Either (fromLeft)
 import Data.Either.Combinators (whenLeft)
 import Data.Int (Int32)
 import Data.Pool (Pool)
-import Data.Time (NominalDiffTime)
+import Data.Time (NominalDiffTime, UTCTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql(..), SqlDb)
 import Database.Id.Class
@@ -80,7 +80,10 @@ startBaking nds pkh = do
     update [ BakerDaemonInternal_dataField ~> DeletableRow_dataSelector ~> BakerDaemonInternalData_publicKeyHashSelector =. Just pkh
            , BakerDaemonInternal_dataField ~> DeletableRow_deletedSelector =. False] CondEmpty
     update [ ProcessData_controlField =. ProcessControl_Run
-           , ProcessData_errorLogField =. (Nothing :: Maybe Text)] $ AutoKeyField ==. bakerProcess
+           , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+           , ProcessData_restartCountField =. (0 :: Int)
+           , ProcessData_restartAtField =. (Nothing :: Maybe UTCTime)
+           ] $ AutoKeyField ==. bakerProcess
 
 updateConnectedLedgerViaGetConnectedLedger :: AppConfig -> Pool Postgresql -> LedgerQuery (LoggingT IO)
 updateConnectedLedgerViaGetConnectedLedger appConfig db = LedgerQuery LedgerQueryType_PollLedger $ do

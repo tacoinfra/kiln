@@ -16,6 +16,7 @@ import Control.Monad.Logger (MonadLoggerIO, logError)
 import Data.Functor.Infix hiding ((<&>))
 import Data.Pool (Pool)
 import Data.Some (Some(..))
+import Data.Time (UTCTime)
 import Data.Universe
 import Database.Groundhog.Core (EntityConstr, Field)
 import Database.Groundhog.Postgresql
@@ -53,6 +54,8 @@ removeNodeDbImpl = \case
         update
           [ ProcessData_controlField =. ProcessControl_Stop
           , ProcessData_errorLogField =. (Nothing :: Maybe Text)
+          , ProcessData_restartCountField =. (0 :: Int)
+          , ProcessData_restartAtField =. (Nothing :: Maybe UTCTime)
           ] (AutoKeyField ==. fromId pid)
         clearErrors nid
         notify NotifyTag_NodeInternal (nid, Nothing)

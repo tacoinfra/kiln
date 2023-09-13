@@ -21,7 +21,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-} -- for {Eq, Ord, Show} Notify
-
 {-# OPTIONS_GHC -Wall -Werror #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}

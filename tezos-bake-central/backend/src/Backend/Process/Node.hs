@@ -47,6 +47,7 @@ import Backend.Env
 import Backend.NodeRPC
 import Backend.Process.Common
 import Backend.Schema
+import Common.App (DaemonType(..))
 import Common.Route (ExportLog(..))
 import Common.Schema
 import ExtraPrelude
@@ -78,6 +79,8 @@ internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
               , _processData_updated = Nothing
               , _processData_backend = Nothing
               , _processData_errorLog = Nothing
+              , _processData_restartCount = 0
+              , _processData_restartAt = Nothing
               }
 
         pid <- insert' processData
@@ -118,7 +121,7 @@ internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
             [ ProcessData_controlField =. ProcessControl_Stop
             ] (AutoKeyField ==. fromId pid)
           updateState ProcessState_Failed
-    waitUntilShouldRun pid runPrestartCheck
+    waitUntilShouldRun pid DaemonType_Node runPrestartCheck
     withProcessLock pid $ do
       runTransaction $ updateState ProcessState_Initializing
       let
@@ -132,7 +135,7 @@ internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
       runTransaction $ updateState ProcessState_Starting
       procHandler <- withNodeConfig appConfig $ \nodeConfigPath ->
         pure $ proc nodePath (nodeArgs nodeConfigPath dataDir)
-      startProcMonitor procHandler [] "kiln-node" pid updateState
+      startProcMonitor procHandler [] DaemonType_Node pid updateState
   where
     mkWorker act = worker' "nodeProcessWorker" $
       flip runReaderT (KilnEnv appConfig nds) $ runLogger act

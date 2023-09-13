@@ -24,22 +24,25 @@ import UnliftIO.Async (Concurrently(..), runConcurrently)
 import UnliftIO.STM (TBQueue, atomically, isFullTBQueue, newTBQueueIO, readTBQueue, writeTBQueue)
 import Control.Concurrent.STM (flushTBQueue)
 import UnliftIO.Exception (bracket, finally, onException)
-import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logInfoNS, logInfoSH, logWarn, logWarnSH, logDebug)
+import Control.Monad.Logger (MonadLoggerIO, MonadLogger, logError, logInfo, logInfoNS, logWarn, logDebug)
 import Control.Monad.IO.Unlift (MonadUnliftIO, withUnliftIO, unliftIO)
 import qualified Data.Aeson as Aeson
+import qualified Data.Attoparsec.Text as P
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Conduit (ConduitT, runConduit, (.|))
 import qualified Data.Conduit.List as CL
 import Data.Conduit.Process (CreateProcess, getStreamingProcessExitCode, streamingProcessHandleRaw, terminateProcess)
+import Data.Either.Combinators (whenLeft)
 import Data.Streaming.Process (StreamingProcessHandle, streamingProcess)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
-import Data.Time (getCurrentTime, addUTCTime, NominalDiffTime)
+import Data.Time (NominalDiffTime, UTCTime, getCurrentTime, addUTCTime, diffUTCTime)
 import Data.Void (Void)
+import Database.Id.Class
 import Database.Id.Groundhog
 import Database.Groundhog.Postgresql
-import Rhyolite.Backend.DB (MonadBaseNoPureAborts)
+import Rhyolite.Backend.DB (MonadBaseNoPureAborts, project1)
 import Rhyolite.Backend.DB.PsqlSimple (queryQ, fromOnly)
 import Rhyolite.Backend.DB.Serializable
 import System.Posix.Signals (signalProcess, sigKILL)
@@ -52,8 +55,10 @@ import UnliftIO.IO (IOMode(..), hFlush, withFile)
 import Backend.Common
 import Backend.Config
 import Backend.Env
-import Backend.NodeRPC (HasNodeDataSource)
+import Backend.NodeRPC (HasNodeDataSource (..), sendKilnNodeHealthcheckRequest)
+import Backend.Process.Alerts
 import Backend.Schema
+import Common.App (DaemonType(..), daemonName)
 import Common.Schema
 import ExtraPrelude
 
@@ -116,17 +121,51 @@ waitUntilShouldRun
      , HasNodeDataSource e
      )
   => Id ProcessData
+  -> DaemonType
   -> m Bool
   -> m ()
-waitUntilShouldRun pid runPrestartCheck = do
+waitUntilShouldRun pid daemonType runPrestartCheck = do
+  autoRestart <- shouldAutoRestart pid daemonType
   canRun <- runTransaction $ do
     isStopped <- all (== ProcessControl_Stop) <$> project ProcessData_controlField (AutoKeyField ==. fromId pid)
-    -- We don't restart process with non-empty error log. It means that this process just failed with error.
-    -- We guarantee this condition by the fact that in all other cases we clean the log.
-    hasEmptyErrorLog <- fmap (isNothing . head) $ project ProcessData_errorLogField $ AutoKeyField ==. fromId pid
-    pure $ not isStopped && hasEmptyErrorLog
+    pure $ not isStopped
   prestartCheck <- runPrestartCheck
-  unless (canRun && prestartCheck) $ threadDelay' 1 *> waitUntilShouldRun pid runPrestartCheck
+  unless (canRun && prestartCheck && autoRestart) $
+    threadDelay' 1 *> waitUntilShouldRun pid daemonType runPrestartCheck
+
+shouldAutoRestart
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => Id ProcessData
+  -> DaemonType
+  -> m Bool
+shouldAutoRestart pid daemonType = do
+  (procControl, restartCnt, mbRestartAt) <- getProcessData pid
+  case procControl of
+    ProcessControl_AutoRestart -> do
+      now <- liftIO getCurrentTime
+      case mbRestartAt of
+        Nothing -> pure False
+        Just restartAt | now >= restartAt -> do
+          runTransaction $ update
+            [ ProcessData_controlField =. ProcessControl_Run
+            , ProcessData_restartCountField =. restartCnt + 1
+            ] (AutoKeyField ==. fromId pid)
+          $(logDebug) $ T.concat
+            [ "Restarting process with id "
+            , tshow pid
+            , " attempt "
+            , tshow $ restartCnt + 1
+            ]
+          when (daemonType == DaemonType_Node)
+            queueNodeRestartedAlert
+          pure True
+        Just _ -> pure False
+    _ -> pure True
 
 withProcessLock
   :: ( MonadUnliftIO m
@@ -221,21 +260,19 @@ startProcMonitor
      )
   => CreateProcess
   -> [(String, String)]
-  -> Text
+  -> DaemonType
   -> Id ProcessData
   -> (ProcessState -> Serializable ())
   -> m ()
-startProcMonitor procHandler env namespace pid updateState = do
+startProcMonitor procHandler env daemonType pid updateState = do
   currentEnv <- getEnvironment
   let proc' = procHandler
           { Proc.std_out = Proc.CreatePipe
           , Proc.std_err = Proc.CreatePipe
           , Proc.env = Just $ currentEnv <> env
           }
-  $(logInfoSH) ("processWorker: running process" :: Text, proc')
-  procMonitor proc' namespace pid updateState
-  threadDelay' 10
-
+  $(logInfo) $ "Started process monitor for " <> tshow proc'
+  procMonitor proc' daemonType pid updateState
 
 -- | "Monitor/Stop loop", delay 1s
 -- it waits for the process' stop signal (_processData_running == False) and terminates it
@@ -249,18 +286,35 @@ procMonitor
      , HasAppConfig e
      )
   => CreateProcess
-  -> Text
+  -> DaemonType
   -> Id ProcessData
   -> (ProcessState -> Serializable ())
   -> m ()
-procMonitor cp namespace pid updateState = do
-  let errorLogBufferSize = 30
+procMonitor cp daemonType pid updateState = do
+  let namespace = daemonLogNamespace daemonType
+      errorLogBufferSize = 30
   -- Buffer containing the last few lines of stderr.
   -- Needed to correctly display the error message in case of a process fail.
   errorLogBuffer <- newTBQueueIO @_ @Text errorLogBufferSize
 
+  onStdoutLogLineAction <-
+    let noOp = pure $ \_ -> pure ()
+    in case daemonType of
+      DaemonType_Node -> noOp
+      DaemonType_Baker -> do
+        (_, _, mbRestartAt) <- getProcessData pid
+        case mbRestartAt of
+          -- If baker was scheduled to automatically restart,
+          -- we determine from the logs that it started successfully
+          -- to send the alert.
+          Nothing -> noOp
+          Just _ -> pure $ \stdoutLine -> onBakerStartedLogLine stdoutLine
+
   ph <- createProcessWithStreams cp (return ())
-    (CL.mapM_ $ logInfoNS namespace . decodeUtf8)
+    (CL.mapM_ $ \line ->
+      let decodedLine = decodeUtf8 line
+      in logInfoNS namespace decodedLine >> onStdoutLogLineAction decodedLine
+    )
     (CL.mapM_ $ \line ->
       let decodedLine = decodeUtf8 line in
           logInfoNS namespace decodedLine *> writeBuffer decodedLine errorLogBuffer)
@@ -275,11 +329,7 @@ procMonitor cp namespace pid updateState = do
 
     {-# INLINE go #-}
     go (mCount :: Maybe Int) buffer ph = do
-      let getPC = \case
-            [] -> ProcessControl_Stop
-            (c:_) -> c
-      procControl <- runTransaction
-        (getPC <$> project ProcessData_controlField (AutoKeyField ==. fromId pid))
+      (procControl, restartCnt, _) <- getProcessData pid
       liftIO (getStreamingProcessExitCode ph) >>= \case
         Nothing -> do
           runTransaction $ updateState ProcessState_Running
@@ -296,16 +346,162 @@ procMonitor cp namespace pid updateState = do
         Just _ -> case procControl of
           ProcessControl_Stop -> do
             runTransaction $ updateState ProcessState_Stopped
-            $(logInfoSH) ("Process exited successfully:" :: Text, pid)
+            $(logInfo) $ "Process exited successfully " <> tshow pid
           ProcessControl_Restart -> do
             runTransaction $ do
               updateState ProcessState_Stopped
               update [ProcessData_controlField =. ProcessControl_Run] (AutoKeyField ==. fromId pid)
-            $(logInfoSH) ("Process exited successfully, restarting:" :: Text, pid)
+            $(logInfo) $ "Process exited successfully, restarting: " <> tshow pid
           ProcessControl_Run -> do
-            runTransaction $ do
+            now <- liftIO getCurrentTime
+            cutoffTime <- asks (view $ getAppConfig . appConfig_processRestartMaxDelay)
+            let restartAt = calcRestartAt restartCnt now cutoffTime
+            logFailedProcess restartAt
+            errLog <- runTransaction $ do
               updateState ProcessState_Failed
-              errorLog <- liftIO $ atomically $ flushTBQueue buffer
-              update [ProcessData_errorLogField =. Just (T.unlines errorLog)] $
-                AutoKeyField ==. fromId pid
-            $(logWarnSH) ("Process exited unexpectedly:" :: Text, pid)
+              errorLog <- fmap T.unlines $ liftIO $ atomically $ flushTBQueue buffer
+              update
+                [ ProcessData_errorLogField =. Just errorLog
+                , ProcessData_controlField =. ProcessControl_AutoRestart
+                , ProcessData_restartAtField =. restartAt
+                ] $ AutoKeyField ==. fromId pid
+              pure errorLog
+            -- We send the "Kiln node/baker failed" alert only when
+            -- the process failed for the first time
+            when (restartCnt == 0) $
+              sendFailedProcessAlert (daemonName daemonType) errLog
+            $(logWarn) $ "Process exited unexpectedly " <> tshow pid
+          ProcessControl_AutoRestart ->
+            $(logWarn) "Unreachable pattern in 'procMonitor'"
+
+    logFailedProcess :: MonadLogger m => Maybe UTCTime -> m ()
+    logFailedProcess mbRestartAt =
+      let
+        restartInfo = case mbRestartAt of
+          Nothing -> "It won't be restarted."
+          Just restartAt -> "It will be restarted at " <> tshow restartAt <> "."
+      in
+        $(logError) $ T.concat
+          [ daemonName daemonType
+          , " with id "
+          , tshow pid
+          , " failed. "
+          , restartInfo
+          ]
+
+
+getProcessData
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => Id ProcessData
+  -> m (ProcessControl, Int, Maybe UTCTime)
+getProcessData pid = do
+  cutoffTime <- asks (view $ getAppConfig . appConfig_processRestartMaxDelay)
+  let defaults = (ProcessControl_Stop, 0, Nothing)
+      maxTimeDiff = cutoffTime * 2
+  runTransaction $ do
+    now <- liftIO getCurrentTime
+    (procControl, restartCnt', mbRestartAt) <- fmap (fromMaybe defaults) $ project1
+      ( ProcessData_controlField
+      , ProcessData_restartCountField
+      , ProcessData_restartAtField
+      ) (AutoKeyField ==. fromId pid)
+
+    restartCnt <- case mbRestartAt of
+      Nothing -> pure restartCnt'
+      Just restartAt ->
+        -- We set 'restartCount' to 0 if the value stored
+        -- in the db is outdated to allow more than 1 retry
+        -- cycle.
+        if now `diffUTCTime` restartAt >= maxTimeDiff
+        then do
+          update
+            [ProcessData_restartCountField =. (0 :: Int)]
+            (AutoKeyField ==. fromId pid)
+          pure 0
+        else pure restartCnt'
+    pure (procControl, restartCnt, mbRestartAt)
+
+calcRestartAt :: Int -> UTCTime -> NominalDiffTime -> Maybe UTCTime
+calcRestartAt restartCnt now cutoffTime =
+  let waitFor = fromIntegral @Int @NominalDiffTime (2 ^ (restartCnt + 1))
+  in if waitFor < cutoffTime
+  then Just $ waitFor `addUTCTime` now
+  else Nothing
+
+daemonLogNamespace :: DaemonType -> Text
+daemonLogNamespace = \case
+  DaemonType_Node -> "kiln-node"
+  DaemonType_Baker -> "kiln-baker"
+
+-- | Waits up to 5 minutes for Kiln node to respond
+-- to RPC requests.
+waitUntilKilnNodeAlive
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => m ()
+waitUntilKilnNodeAlive = do
+  appConfig <- askAppConfig
+  nds <- asks (view nodeDataSource)
+  go appConfig nds 0
+  where
+    maxWaitTime :: Int
+    maxWaitTime = 300
+
+    go appConfig nds cnt = do
+      resp <- sendKilnNodeHealthcheckRequest appConfig nds
+      whenLeft resp $ \_ -> when (cnt < maxWaitTime) $
+        threadDelay' 1 >> go appConfig nds (cnt + 1)
+
+-- | Waits for Kiln node to respond to RPC queries in a separate
+-- thread and sends the "Kiln node has been restarted" alert.
+queueNodeRestartedAlert
+  :: ( MonadUnliftIO m
+     , MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => m ()
+queueNodeRestartedAlert = void $ forkIO $ do
+  waitUntilKilnNodeAlive
+  sendProcessRestartedAlert "Kiln Node"
+
+-- | Checks if the log line indicates that baker started
+-- and sends the "Kiln baker has been restarted" alert.
+onBakerStartedLogLine
+  :: ( MonadLoggerIO m
+     , MonadReader e m
+     , HasAppConfig e
+     , HasNodeDataSource e
+     )
+  => Text
+  -> m ()
+onBakerStartedLogLine line =
+  when (isRight $ P.parseOnly bakerStartedLogLineParser line) $
+    sendProcessRestartedAlert "Kiln Baker"
+  where
+    bakerStartedLogLineParser :: P.Parser ()
+    bakerStartedLogLineParser = do
+      let version = P.char 'v' >> P.decimal @Int >> P.char '.' >> P.decimal @Int
+          revision = P.char '(' >> P.many1 (P.letter <|> P.digit) >> P.char ')'
+          proto = P.many1 (P.letter <|> P.digit)
+      _ <- P.string "Baker"
+      P.skipSpace
+      _ <- version
+      P.skipSpace
+      _ <- revision
+      P.skipSpace
+      _ <- P.string "for"
+      P.skipSpace
+      _ <- proto
+      P.skipSpace
+      void $ P.string "started."

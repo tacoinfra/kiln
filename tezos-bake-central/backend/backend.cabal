@@ -143,6 +143,7 @@ library
     Backend.IndexQueries
     Backend.Migrations
     Backend.NotifyHandler
+    Backend.Process.Alerts
     Backend.Process.Common
     Backend.Process.Errors
     Backend.Process.Node
