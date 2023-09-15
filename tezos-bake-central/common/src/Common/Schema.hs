@@ -46,7 +46,7 @@ import Control.Applicative
 import Control.Exception.Safe (Exception, SomeException)
 import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
-import Data.Aeson (FromJSON (..), ToJSON (..), withObject, (.:))
+import Data.Aeson (FromJSON (..), ToJSON (..), withObject, (.:), (.:?))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -1035,6 +1035,8 @@ data SnapshotMetadata = SnapshotMetadata
   , _snapshotMetadata_chainName :: Text
   , _snapshotMetadata_historyMode :: SnapshotHistoryMode
   , _snapshotMetadata_artifactType :: SnapshotArtifactType
+  , _snapshotMetadata_tezosVersion :: MajorMinorVersion
+  , _snapshotMetadata_snapshotVersion :: Maybe Int -- This value is nullable because the objects with 'artifact_type == tarball' don't have this field
   } deriving (Eq, Generic, Ord, Show, Typeable)
 
 instance FromJSON SnapshotMetadata where
@@ -1047,6 +1049,9 @@ instance FromJSON SnapshotMetadata where
     _snapshotMetadata_chainName      <- o .: "chain_name"
     _snapshotMetadata_historyMode    <- o .: "history_mode"
     _snapshotMetadata_artifactType   <- o .: "artifact_type"
+    tezosVersion                     <- o .: "tezos_version"
+    _snapshotMetadata_tezosVersion   <- tezosVersion .: "version"
+    _snapshotMetadata_snapshotVersion <- o .:? "snapshot_version"
     pure $ SnapshotMetadata{..}
 
 newtype SnapshotMetadataList = SnapshotMetadataList

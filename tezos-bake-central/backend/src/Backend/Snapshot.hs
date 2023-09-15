@@ -68,7 +68,7 @@ import Backend.Config
 import Backend.Http (doRequestLBSThrows)
 import Backend.NodeRPC
 import Backend.Process.Common
-import Backend.Process.Node (nixNodePath)
+import Backend.Process.Node (getKilnNodeVersion, nixNodePath)
 import Backend.Schema
 import Common.Schema
 import ExtraPrelude
@@ -715,7 +715,8 @@ handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId shouldHand
   $(logDebug) $ "Downloading snapshot metadata from " <> T.pack (renderStr providerUrl)
   latestSnapshotMetadata <- handle handleFetchMetadataError $ do
     metadata <- downloadSnapshotMetadata httpMgr providerUrl
-    findLatestSnapshot appConfig metadata
+    kilnNodeVersion <- liftIO $ runLoggingEnv logger $ getKilnNodeVersion appConfig
+    findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata
   latestSnapshotUri <- mkURI $ latestSnapshotMetadata ^. snapshotMetadata_url
   $(logDebug) $ "Found latest snapshot url " <> T.pack (renderStr latestSnapshotUri)
   updatedSnapshotMeta <- updateSnapshotMeta' latestSnapshotMetadata latestSnapshotUri
@@ -792,28 +793,61 @@ downloadSnapshotMetadata mgr providerUri = do
       throwString $ "Expected metadata response status to be 200, but got " <> show statusCode
   either throwString (pure . unSnapshotMetadataList) $ eitherDecode body
 
--- | Given the list of snapshot metadata, find the latest rolling snapshot url.
-findLatestSnapshot :: (MonadThrow m) => AppConfig -> [SnapshotMetadata] -> m SnapshotMetadata
-findLatestSnapshot _ [] = throwString "Got empty metadata list from the snapshot provider"
-findLatestSnapshot appConfig metadata = do
+-- | Given the list of snapshot metadata, find the latest compatible snapshot url
+-- using the following strategy:
+--
+-- 1. Try to find the snapshot made by exactly the same version of 'octez-node'
+-- that is used by Kiln.
+-- 2. If there is none, try to find the snapshot made by the same major version
+-- of 'octez-node' and less - minor version with 'snapshot_version' equal to the
+-- snapshot version which is supported by current version of Kiln node (currently set to 5).
+-- 3. If there is none, try to find the snapshot with the 'snapshot_version' which
+-- is supported by Kiln node.
+findLatestCompatibleSnapshot
+  :: (MonadThrow m)
+  => AppConfig
+  -> MajorMinorVersion
+  -> [SnapshotMetadata]
+  -> m SnapshotMetadata
+findLatestCompatibleSnapshot _ _ [] = throwString "Got empty metadata list from the snapshot provider"
+findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata = do
   let mbChainName = showNamedChain <$> identifyChain chainId
   chainName <- maybe (throwString "Snapshot metadata doesn't support custom chains") pure mbChainName
-  let
-    isNeededChain m = m ^. snapshotMetadata_chainName == chainName
-    filteredMetadata = flip filter metadata $ \m ->
-      isNeededChain m && isRolling m && isTezosSnapshot m
-  when (null filteredMetadata) $ throwString $
-    "There is no rolling tezos snapshot in the snapshot provider metadata for " <> T.unpack chainName
-  pure $ maximumBy byBlockHeight filteredMetadata
+  case filter (\m -> defaultFilter chainName m && isExactSameVersion m) metadata of
+    [] -> case filter (\m -> defaultFilter chainName m && isSameMajorVersion m) metadata of
+      [] -> case filter (defaultFilter chainName) metadata of
+        [] -> throwString "Couldn't find compatible snapshot in the snapshot provider metadata"
+        m -> pure $ maximumByBlockHeight m
+      m -> pure $ maximumByBlockHeight m
+    m -> pure $ maximumByBlockHeight m
   where
     chainId = _appConfig_chainId appConfig
+    defaultFilter chainName m
+      =  isNeededChain chainName m
+      && isRolling m
+      && isTezosSnapshot m
+      && isCompatibleSnapshotVersion m
+    isCompatibleSnapshotVersion m =
+      m ^. snapshotMetadata_snapshotVersion == Just compatibleSnapshotVersion
+    isNeededChain chainName m = m ^. snapshotMetadata_chainName == chainName
     isRolling m = m ^. snapshotMetadata_historyMode
       == SnapshotHistoryMode_Rolling
     isTezosSnapshot m = m ^. snapshotMetadata_artifactType
       == SnapshotArtifactType_TezosSnapshot
+    isExactSameVersion m = m ^. snapshotMetadata_tezosVersion
+      == kilnNodeVersion
+    isSameMajorVersion m = let tezosVersion = m ^. snapshotMetadata_tezosVersion
+      in tezosVersion ^. majorMinorVersion_major == kilnNodeVersion ^. majorMinorVersion_major
+      && tezosVersion ^. majorMinorVersion_minor < kilnNodeVersion ^. majorMinorVersion_minor
     byBlockHeight m1 m2 = compare
       (m1 ^. snapshotMetadata_blockHeight)
       (m2 ^. snapshotMetadata_blockHeight)
+    maximumByBlockHeight m = maximumBy byBlockHeight m
+
+-- The version of node snapshot which is compatible with the
+-- version of 'octez-node' binary that is used in Kiln
+compatibleSnapshotVersion :: Int
+compatibleSnapshotVersion = 5
 
 -- | Update the 'SnapshotMeta' table and set the correct internal node's
 -- process state in case of snapshot download error.
