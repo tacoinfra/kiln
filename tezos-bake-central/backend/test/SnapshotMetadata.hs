@@ -22,7 +22,6 @@ testSnapshotMetadata = testGroup "Snapshot metadata"
   [ testFindLatestSnapshotWithExactVersion
   , testFindLatestSnapshotWithSameMajorVersion
   , testThrowsErrorWhenCouldntFindCompatibleSnapshot
-  , testCanHandleRc
   , testCanParseUnexpectedOctezVersions
   ]
 
@@ -75,23 +74,6 @@ testThrowsErrorWhenCouldntFindCompatibleSnapshot =
     handler e =
       let expectedError = "Couldn't find compatible snapshot in the snapshot provider metadata"
       in pure $ expectedError `isInfixOf` show e
-
-testCanHandleRc :: TestTree
-testCanHandleRc = baseMetadataTest
-  "Can handle RC version of octez-node"
-  "test/resources/metadata_4.json"
-  (MajorMinorVersion 18 0 Nothing $ ReleaseCandidate 1)
-  SnapshotMetadata
-    { _snapshotMetadata_blockHeight = 50
-      , _snapshotMetadata_blockHash = BlockHash "BLagBK76j8WwzqZbaFnZo1mgziHcoZoDXqddSzDPd2LL8qPZdcb"
-      , _snapshotMetadata_blockTimestamp = parseTime "2023-09-06T23:04:55"
-      , _snapshotMetadata_url = "https://mainnet-v17-shots.nyc3.digitaloceanspaces.com/mainnet-4185583.rolling"
-      , _snapshotMetadata_chainName = "mainnet"
-      , _snapshotMetadata_historyMode = SnapshotHistoryMode_Rolling
-      , _snapshotMetadata_artifactType = SnapshotArtifactType_TezosSnapshot
-      , _snapshotMetadata_tezosVersion = MajorMinorVersion 18 0 Nothing $ ReleaseCandidate 1
-      , _snapshotMetadata_snapshotVersion = Just 5
-    }
 
 testCanParseUnexpectedOctezVersions :: TestTree
 testCanParseUnexpectedOctezVersions =

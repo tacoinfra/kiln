@@ -812,10 +812,12 @@ findLatestCompatibleSnapshot
 findLatestCompatibleSnapshot _ _ [] = throwString "Got empty metadata list from the snapshot provider"
 findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata = do
   let mbChainName = showNamedChain <$> identifyChain chainId
+      releaseSnapshots = flip filter metadata $ \m ->
+        m ^. snapshotMetadata_tezosVersion . majorMinorVersion_additional_info == Release
   chainName <- maybe (throwString "Snapshot metadata doesn't support custom chains") pure mbChainName
-  case filter (\m -> defaultFilter chainName m && isExactSameVersion m) metadata of
-    [] -> case filter (\m -> defaultFilter chainName m && isSameMajorVersion m) metadata of
-      [] -> case filter (defaultFilter chainName) metadata of
+  case filter (\m -> defaultFilter chainName m && isExactSameVersion m) releaseSnapshots of
+    [] -> case filter (\m -> defaultFilter chainName m && isSameMajorVersion m) releaseSnapshots of
+      [] -> case filter (defaultFilter chainName) releaseSnapshots of
         [] -> throwString "Couldn't find compatible snapshot in the snapshot provider metadata"
         m -> pure $ maximumByBlockHeight m
       m -> pure $ maximumByBlockHeight m
