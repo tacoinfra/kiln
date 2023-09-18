@@ -46,7 +46,7 @@ import Control.Applicative
 import Control.Exception.Safe (Exception, SomeException)
 import Control.Lens hiding (universe)
 import Control.Monad.Except (runExcept)
-import Data.Aeson (FromJSON (..), ToJSON (..), withObject, (.:))
+import Data.Aeson (FromJSON (..), ToJSON (..), withObject, (.:), (.:?))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.GADT (deriveJSONGADT)
@@ -70,6 +70,7 @@ import Data.Universe.Some
 import Data.Version (Version)
 import Data.Word
 import Database.Id.Class
+import Debug.Trace (trace)
 import GHC.Generics (Generic)
 import "template-haskell" Language.Haskell.TH (Name)
 import Rhyolite.Schema (Email, Json)
@@ -268,6 +269,13 @@ data AdditionalInfo =
   inherent in the TezosWord64 type is necessary to have here.
   -}
   | Release
+  {-
+  Sometimes versions of Octez binaries have unexpected additional information
+  (e.g. there was v17.0-beta1 release).
+  We don't want to fail parsing of some unexpected Octez versions, so we just
+  parse it to 'Unknown' constructor.
+  -}
+  | Unknown
   deriving (Eq, Generic, Ord, Read, Show)
 
 instance Aeson.ToJSON AdditionalInfo where
@@ -275,12 +283,14 @@ instance Aeson.ToJSON AdditionalInfo where
     Development -> Aeson.String "dev"
     ReleaseCandidate rc -> Aeson.object ["rc" Aeson..= rc]
     Release -> Aeson.String "release"
+    Unknown -> Aeson.object mempty
 
 instance Aeson.FromJSON AdditionalInfo where
   parseJSON v =
     Aeson.withText "Development" (\text -> if text == "dev" then pure Development else empty) v
     <|> Aeson.withObject "ReleaseCandidate" (\ob -> ReleaseCandidate <$> ob Aeson..: "rc") v
     <|> Aeson.withText "Release" (\text -> if text == "release" then pure Release else empty) v
+    <|> trace ("Unknown value for 'AdditionalInfo' type: " <> show v) (pure Unknown)
 
 data NetworkVersion = NetworkVersion
   { _networkVersion_chainName :: Text -- This is not quite synonymous with the usual chainName or chainId.
@@ -1035,6 +1045,8 @@ data SnapshotMetadata = SnapshotMetadata
   , _snapshotMetadata_chainName :: Text
   , _snapshotMetadata_historyMode :: SnapshotHistoryMode
   , _snapshotMetadata_artifactType :: SnapshotArtifactType
+  , _snapshotMetadata_tezosVersion :: MajorMinorVersion
+  , _snapshotMetadata_snapshotVersion :: Maybe Int -- This value is nullable because the objects with 'artifact_type == tarball' don't have this field
   } deriving (Eq, Generic, Ord, Show, Typeable)
 
 instance FromJSON SnapshotMetadata where
@@ -1047,6 +1059,9 @@ instance FromJSON SnapshotMetadata where
     _snapshotMetadata_chainName      <- o .: "chain_name"
     _snapshotMetadata_historyMode    <- o .: "history_mode"
     _snapshotMetadata_artifactType   <- o .: "artifact_type"
+    tezosVersion                     <- o .: "tezos_version"
+    _snapshotMetadata_tezosVersion   <- tezosVersion .: "version"
+    _snapshotMetadata_snapshotVersion <- o .:? "snapshot_version"
     pure $ SnapshotMetadata{..}
 
 newtype SnapshotMetadataList = SnapshotMetadataList

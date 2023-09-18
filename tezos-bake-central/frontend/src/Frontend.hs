@@ -1082,6 +1082,7 @@ printMajorMinor n = case _nodeVersion_version n of
       ReleaseCandidate rc ->
           T.pack (show major) <> "." <> T.pack (show minor) <> "." <> T.pack extra <> "-rc" <> T.pack (show rc)
       Release -> T.pack (show major) <> "." <> T.pack (show minor) <> "." <> T.pack extra
+      Unknown -> "unknown"
 
 pluralOf :: Text -> Text
 pluralOf = (<> "s") -- good enough for all existing uses, lol
@@ -1840,6 +1841,7 @@ ppTezosVersion = either id showV . getTezosVersion
         Development -> "-dev"
         ReleaseCandidate rc -> "-rc" <> T.pack (show rc)
         Release -> mempty
+        Unknown -> mempty
 
 {-# ANN nodesTab ("HLint: ignore Use &&" :: String) #-}
 nodesTab

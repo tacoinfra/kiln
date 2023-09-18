@@ -15,9 +15,12 @@
 module Backend.Process.Node where
 
 import UnliftIO.Exception (Handler (..), catches, throwIO, tryJust)
+import Control.Applicative (optional)
+import Control.Exception.Safe (MonadThrow, throwString)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
 import Control.Monad.Logger (MonadLogger, MonadLoggerIO, logInfoNS, logDebug, logWarn, logError, logErrorNS)
 import qualified Data.Aeson as Aeson
+import qualified Data.Attoparsec.Text as P
 import qualified Data.ByteString.Lazy as LBS
 import Data.ByteString.Builder as Builder
 import Data.Dependent.Sum (DSum (..))
@@ -42,7 +45,7 @@ import qualified Data.Text.Encoding as T
 
 import Backend.Alerts (reportInternalNodeFailed)
 import Backend.Common.Worker (worker')
-import Backend.Config (AppConfig (..), BinaryPaths (..), HasAppConfig, getKilnNodeDataDir)
+import Backend.Config
 import Backend.Env
 import Backend.NodeRPC
 import Backend.Process.Common
@@ -141,8 +144,8 @@ internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
       flip runReaderT (KilnEnv appConfig nds) $ runLogger act
     runLoggerWithEnv act = flip runReaderT (KilnEnv appConfig nds) $ runLogger act
 
-getKilnNodeVersion :: MonadIO m => FilePath -> m (Maybe Version)
-getKilnNodeVersion versionFile = liftIO $ do
+getKilnNodeVersionFromVersionFile :: MonadIO m => FilePath -> m (Maybe Version)
+getKilnNodeVersionFromVersionFile versionFile = liftIO $ do
   vf <- LBS.readFile versionFile
   let parse :: Text -> Maybe Version
       parse = Aeson.decode . LBS.fromStrict . T.encodeUtf8 . tshow
@@ -167,7 +170,7 @@ initNode nodePath nodeConfigPath nodeId pid = do
       storeFolder  = dataDir </> "store"
 
   versionFileExists <- liftIO $ doesFileExist versionFile
-  mVersion <- if not versionFileExists then pure Nothing else getKilnNodeVersion versionFile
+  mVersion <- if not versionFileExists then pure Nothing else getKilnNodeVersionFromVersionFile versionFile
   when (versionFileExists && maybe True needsCarthageStorageUpgrade mVersion) $ liftIO $ do
     throwIO InternalNodeFailureReason_CarthageUpgrade
   identityFileExists <- liftIO $ doesFileExist identityFile
@@ -252,3 +255,43 @@ handleExportLogs nds lType = do
             Left _ -> pure ()
             Right c -> $(logError) $ "Stderr: " <> T.pack c
     pure str
+
+-- | Returns the parsed output of 'octez-node --version' command.
+-- Throws an exception in case of command failure or result parsing failure.
+getKilnNodeVersion :: (MonadLoggerIO m, MonadThrow m) => AppConfig -> m MajorMinorVersion
+getKilnNodeVersion appConfig = do
+  let mbCustomBinaryPaths = _appConfig_binaryPaths appConfig
+      nodePath = maybe nixNodePath _binaryPaths_nodePath mbCustomBinaryPaths
+      args = ["--version"]
+      cmdText = T.pack $ unwords (nodePath : args)
+  (exitCode, stdout, stderr) <- readProcessWithExitCode nodePath args ""
+  case exitCode of
+    ExitSuccess -> do
+      let stdoutText = T.pack stdout
+      $(logDebug) $ cmdText <> " command finished successfully. stdout: " <> stdoutText
+      parseNodeVersion stdoutText
+    ExitFailure ec -> do
+      let stderrText = T.pack stderr
+      throwString $ T.unpack $ cmdText <> " failed with exit code " <> tshow ec <> ". stderr: " <> stderrText
+  where
+    -- Parses the output of 'octez-node --version' command. Example output:
+    -- 344d8da5 (2023-06-14 14:32:54 +0200) (17.1)
+    nodeVersionParser :: P.Parser MajorMinorVersion
+    nodeVersionParser = do
+      let open  = P.char '('
+          close = P.char ')'
+      P.skipSpace >> P.many1 (P.letter <|> P.digit) >> P.skipSpace
+      open >> P.takeTill (== ')') >> close >> P.skipSpace
+      open
+      major <- P.decimal
+      P.char '.'
+      minor <- P.decimal
+      mbRc <- optional $ P.string "~rc" >> P.decimal
+      close
+      let additionalInfo = maybe Release ReleaseCandidate mbRc
+      pure $ MajorMinorVersion major minor Nothing additionalInfo
+
+    parseNodeVersion :: MonadThrow m => Text -> m MajorMinorVersion
+    parseNodeVersion stdout = case P.parseOnly nodeVersionParser stdout of
+      Left err -> throwString err
+      Right v -> pure v
