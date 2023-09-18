@@ -803,6 +803,8 @@ downloadSnapshotMetadata mgr providerUri = do
 -- snapshot version which is supported by current version of Kiln node (currently set to 5).
 -- 3. If there is none, try to find the snapshot with the 'snapshot_version' which
 -- is supported by Kiln node.
+--
+-- TODO [#212] update this algorithm based on the issue description.
 findLatestCompatibleSnapshot
   :: (MonadThrow m)
   => AppConfig
@@ -848,6 +850,8 @@ findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata = do
 
 -- The version of node snapshot which is compatible with the
 -- version of 'octez-node' binary that is used in Kiln
+--
+-- TODO [#210] [#tezos/6318] bump this number to 6.
 compatibleSnapshotVersion :: Int
 compatibleSnapshotVersion = 5
 
