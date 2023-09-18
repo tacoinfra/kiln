@@ -175,31 +175,38 @@ handleSnapshotUpload appConfig nds lockMVar = do
               importSnapshotData appConfig nds sm smId importOptions
 
 validateSnapshotFilePath
-  :: (MonadIO m, MonadLogger m)
-  => AppConfig
-  -> FilePath
+  :: (MonadIO m, MonadLoggerIO m)
+  => FilePath
   -> m (Either SnapshotImportError ())
-validateSnapshotFilePath appConfig fp = do
-  $(logInfo) $ "validateSnapshotFilePath: path = " <> T.pack fp
+validateSnapshotFilePath fp = do
+  let filePathText = T.pack fp
+  $(logDebug) $ "Validating snapshot file: " <> filePathText
   doesExist <- liftIO $ doesFileExist fp
   if doesExist then do
     doesHavePermissions <- fmap readable $ liftIO $ getPermissions fp
     if doesHavePermissions then do
-      let
-        nodePath = maybe nixNodePath _binaryPaths_nodePath $ _appConfig_binaryPaths appConfig
-        args = ["snapshot", "info", fp]
-      (exitCode, _, stderr) <- liftIO $ Process.readProcessWithExitCode nodePath args ""
+      (exitCode, stdout, stderr) <- liftIO $ Process.readProcessWithExitCode "file" [fp] ""
+      let cmdText = T.pack $ "file " <> fp
+          stdoutText = T.pack stdout
       case exitCode of
-        ExitSuccess   -> do
-          $(logInfo) "validateSnapshotFilePath: snapshot file is valid"
-          pure $ Right ()
-        ExitFailure _ -> do
-          $(logInfo) $ "validateSnapshotFilePath: invalid snapshot file, stderr = " <> T.pack stderr
-          pure $ Left SnapshotImportError_InvalidSnapshot
+        ExitFailure ec -> do
+          $(logError) $ T.concat
+            [ cmdText
+            , " failed with exit code "
+            , tshow ec
+            , ". stderr:\n"
+            , T.pack stderr
+            ]
+          pure $ Left SnapshotImportError_UnknownError
+        ExitSuccess -> do
+          $(logDebug) $ cmdText <> " finished successfully. stdout:\n" <> stdoutText
+          pure $ if "tar archive" `T.isSuffixOf` T.strip stdoutText
+          then Right ()
+          else Left SnapshotImportError_InvalidSnapshot
     else
       pure $ Left SnapshotImportError_PermissionDenied
   else do
-    $(logInfo) "validateSnapshotFilePath: file not found"
+    $(logError) $ "File not found: " <> filePathText
     pure $ Left SnapshotImportError_FileNotFound
 
 handleSnapshotFilePathImport
@@ -442,7 +449,7 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
         -- to user, so we remove import progress lines from 'stderr' before
         -- saving it to db.
         filteredStderr = T.unlines $ filter isNotProgressLine $ T.lines stderr
-      $(logError) "importSnapshotData failed: "
+      $(logError) $ "Failed to import node snapshot: " <> filteredStderr
       update [ SnapshotMeta_importErrorField =. Just filteredStderr ] (AutoKeyField ==. smId)
       traverse_ (notify NotifyTag_SnapshotMeta) =<< get smId
       updateState NodeProcessState_ImportFailed

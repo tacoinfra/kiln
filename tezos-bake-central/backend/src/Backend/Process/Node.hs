@@ -14,7 +14,7 @@
 
 module Backend.Process.Node where
 
-import UnliftIO.Exception (Handler (..), catches, throwIO, tryJust)
+import UnliftIO.Exception (Exception (..), Handler (..), catches, throwIO, tryJust)
 import Control.Applicative (optional)
 import Control.Exception.Safe (MonadThrow, throwString)
 import Control.Monad.IO.Unlift (MonadUnliftIO)
@@ -54,6 +54,10 @@ import Common.App (DaemonType(..))
 import Common.Route (ExportLog(..))
 import Common.Schema
 import ExtraPrelude
+
+data InternalNodeInitFailed = InternalNodeInitFailed Text
+  deriving (Show)
+instance Exception InternalNodeInitFailed
 
 needsCarthageStorageUpgrade :: Version -> Bool
 needsCarthageStorageUpgrade = (< Version [0,0,4] [])
@@ -119,9 +123,10 @@ internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
   mkWorker $ do
     let runPrestartCheck = pure True -- We don't have a prestart check for the node process
         updateState = updateNodeProcessState pid nid
-        initFailed = do
+        initFailed mbErrorLog = do
           update
             [ ProcessData_controlField =. ProcessControl_Stop
+            , ProcessData_errorLogField =. mbErrorLog
             ] (AutoKeyField ==. fromId pid)
           updateState ProcessState_Failed
     waitUntilShouldRun pid DaemonType_Node runPrestartCheck
@@ -131,9 +136,11 @@ internalNodeWorker appConfig nds maybePaths = runLoggerWithEnv $ do
         initNodeProcess = withNodeConfig appConfig $ \nodeConfigPath ->
           initNode nodePath nodeConfigPath nid pid
       dataDir <- catches initNodeProcess
+        -- TODO [#206]: check if this error is still relevant and remove
+        -- it if needed
         [ Handler $ \(e :: InternalNodeFailureReason) ->
-            runTransaction (initFailed *> runReaderT (reportInternalNodeFailed pid e) appConfig) *> throwIO e
-        , Handler $ \(e :: ExitCode) -> runTransaction initFailed *> throwIO e
+            runTransaction (initFailed Nothing *> runReaderT (reportInternalNodeFailed pid e) appConfig) *> throwIO e
+        , Handler $ \e@(InternalNodeInitFailed msg) -> runTransaction (initFailed $ Just msg) *> throwIO e
         ]
       runTransaction $ updateState ProcessState_Starting
       procHandler <- withNodeConfig appConfig $ \nodeConfigPath ->
@@ -192,21 +199,35 @@ initNode nodePath nodeConfigPath nodeId pid = do
           logInfoNS "kiln-node" "Kiln node storage was successfully upgraded"
       _ -> do
         logErrorNS "kiln-node" $ "Kiln node storage upgrade failed with: " <> T.pack err'
-        liftIO $ throwIO exitCode
+        liftIO $ throwIO $ InternalNodeInitFailed $ T.pack err'
   return dataDir
   where
     runCommandWithLogging :: (MonadLogger m, MonadIO m) => FilePath -> [Text] -> m ()
     runCommandWithLogging cmd args = do
       (exitCode, out', err') <- liftIO (readProcessWithExitCode cmd (T.unpack <$> args) "")
       let
+        fullCmdText = T.pack cmd <> T.unwords args
         out = T.pack out'
         err = T.pack err'
-      if exitCode == ExitSuccess
-        then do
-          logInfoNS "kiln-node" $ "Got output from : " <> T.pack cmd <> " " <> tshow args <> " --> " <> out
-        else do
-          logErrorNS "kiln-node" $ "Command Failed : (stdout): " <> T.pack cmd <> " " <> tshow args <> "\n<STDOUT>\n" <> out <> "\n<STDERR>\n" <> err
-          liftIO $ throwIO exitCode
+      case exitCode of
+        ExitSuccess ->
+          logInfoNS "kiln-node" $ T.concat
+            [ "Got output from "
+            , fullCmdText
+            , ":\n"
+            , out
+            ]
+        ExitFailure ec -> do
+          logErrorNS "kiln-node" $ T.concat
+            [ fullCmdText
+            , " failed with exit code "
+            , tshow ec
+            , "\nstdout:\n"
+            , out
+            , "\nstderr:\n"
+            , err
+            ]
+          liftIO $ throwIO $ InternalNodeInitFailed err
 
 updateNodeProcessState
   :: ( MonadLogger m

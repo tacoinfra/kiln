@@ -1684,11 +1684,17 @@ startNodeWorkflow backWF close = Workflow $ do
         AddInternalNodeError_SnapshotImportError SnapshotImportError_FileNotFound ->
           divClass "ui error message" $ text "File does not exist"
         AddInternalNodeError_SnapshotImportError SnapshotImportError_InvalidSnapshot ->
-          divClass "ui error message" $ text "Invalid snapshot file"
+          divClass "ui error message" $ do
+            el "p" $ text "The provided file is not a valid node snapshot"
+            el "p" $ text "Check Kiln logs for a more detailed error message"
         AddInternalNodeError_SnapshotImportError SnapshotImportError_PermissionDenied ->
           divClass "ui error message" $ do
             el "p" $ text "Permission denied"
             el "p" $ text "If you run Kiln on macOS, try to move the snapshot file from Desktop/Downloads/Documents to another folder"
+        AddInternalNodeError_SnapshotImportError SnapshotImportError_UnknownError ->
+          divClass "ui error message" $ do
+            el "p" $ text "Failed to validate file"
+            el "p" $ text "'octez-node snapshot info' command failed. Check Kiln logs for a more detailed error message"
 
 
     addNodeEv <- divClass "row" $
