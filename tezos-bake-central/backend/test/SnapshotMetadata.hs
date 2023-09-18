@@ -23,6 +23,7 @@ testSnapshotMetadata = testGroup "Snapshot metadata"
   , testFindLatestSnapshotWithSameMajorVersion
   , testThrowsErrorWhenCouldntFindCompatibleSnapshot
   , testCanHandleRc
+  , testCanParseUnexpectedOctezVersions
   ]
 
 testFindLatestSnapshotWithExactVersion :: TestTree
@@ -92,6 +93,26 @@ testCanHandleRc = baseMetadataTest
       , _snapshotMetadata_snapshotVersion = Just 5
     }
 
+testCanParseUnexpectedOctezVersions :: TestTree
+testCanParseUnexpectedOctezVersions =
+  testCase "Can parse unexpected Octez versions in snapshot metadata" $ do
+    rawMetadata <- LBS.readFile "test/resources/metadata_unexpected.json"
+    let eiMetadata = eitherDecode rawMetadata
+        expected =
+          SnapshotMetadata
+            { _snapshotMetadata_blockHeight = 50
+              , _snapshotMetadata_blockHash = BlockHash "BLagBK76j8WwzqZbaFnZo1mgziHcoZoDXqddSzDPd2LL8qPZdcb"
+              , _snapshotMetadata_blockTimestamp = parseTime "2023-09-06T23:04:55"
+              , _snapshotMetadata_url = "https://mainnet-v17-shots.nyc3.digitaloceanspaces.com/mainnet-4185583.rolling"
+              , _snapshotMetadata_chainName = "mainnet"
+              , _snapshotMetadata_historyMode = SnapshotHistoryMode_Rolling
+              , _snapshotMetadata_artifactType = SnapshotArtifactType_TezosSnapshot
+              , _snapshotMetadata_tezosVersion = MajorMinorVersion 17 0 Nothing Unknown
+              , _snapshotMetadata_snapshotVersion = Just 5
+            }
+    case eiMetadata of
+      Left err -> assertFailure $ "Expected to parse the metadata, but failed with: " <> show err
+      Right m -> unSnapshotMetadataList m @?= [expected]
 
 baseMetadataTest :: TestName -> FilePath -> MajorMinorVersion -> SnapshotMetadata -> TestTree
 baseMetadataTest testName filePath kilnNodeVersion expected =

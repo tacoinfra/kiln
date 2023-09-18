@@ -1,0 +1,35 @@
+{
+    "date_generated": "2023-09-15T04:41:27Z",
+    "org": "Oxhead Alpha",
+    "$schema": "https://raw.githubusercontent.com/oxheadalpha/tezos-snapshot-metadata-schema/main/tezos-snapshot-metadata.schema.json",
+    "data": [
+        {
+            "block_hash": "BLagBK76j8WwzqZbaFnZo1mgziHcoZoDXqddSzDPd2LL8qPZdcb",
+            "block_height": 50,
+            "block_timestamp": "2023-09-06T23:04:55Z",
+            "filename": "mainnet-4185583.rolling",
+            "url": "https://mainnet-v17-shots.nyc3.digitaloceanspaces.com/mainnet-4185583.rolling",
+            "sha256": "248aca1a28136dcc5e58c681121cd4a3322a762d77d8655da7c0d8e134b06b45",
+            "filesize_bytes": 7774431232,
+            "filesize": "7G",
+            "chain_name": "mainnet",
+            "history_mode": "rolling",
+            "artifact_type": "tezos-snapshot",
+            "tezos_version": {
+                "implementation": "octez",
+                "version": {
+                    "major": 17,
+                    "minor": 0,
+                    "additional_info": {
+                        "beta": 1
+                    }
+                },
+                "commit_info": {
+                    "commit_hash": "b2bc6d7f",
+                    "commit_date": "2023-08-17 11:12:44 +0200"
+                }
+            },
+            "snapshot_version": 5
+        }
+    ]
+}

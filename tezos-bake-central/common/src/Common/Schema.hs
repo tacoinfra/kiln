@@ -70,6 +70,7 @@ import Data.Universe.Some
 import Data.Version (Version)
 import Data.Word
 import Database.Id.Class
+import Debug.Trace (trace)
 import GHC.Generics (Generic)
 import "template-haskell" Language.Haskell.TH (Name)
 import Rhyolite.Schema (Email, Json)
@@ -268,6 +269,13 @@ data AdditionalInfo =
   inherent in the TezosWord64 type is necessary to have here.
   -}
   | Release
+  {-
+  Sometimes versions of Octez binaries have unexpected additional information
+  (e.g. there was v17.0-beta1 release).
+  We don't want to fail parsing of some unexpected Octez versions, so we just
+  parse it to 'Unknown' constructor.
+  -}
+  | Unknown
   deriving (Eq, Generic, Ord, Read, Show)
 
 instance Aeson.ToJSON AdditionalInfo where
@@ -275,12 +283,14 @@ instance Aeson.ToJSON AdditionalInfo where
     Development -> Aeson.String "dev"
     ReleaseCandidate rc -> Aeson.object ["rc" Aeson..= rc]
     Release -> Aeson.String "release"
+    Unknown -> Aeson.object mempty
 
 instance Aeson.FromJSON AdditionalInfo where
   parseJSON v =
     Aeson.withText "Development" (\text -> if text == "dev" then pure Development else empty) v
     <|> Aeson.withObject "ReleaseCandidate" (\ob -> ReleaseCandidate <$> ob Aeson..: "rc") v
     <|> Aeson.withText "Release" (\text -> if text == "release" then pure Release else empty) v
+    <|> trace ("Unknown value for 'AdditionalInfo' type: " <> show v) (pure Unknown)
 
 data NetworkVersion = NetworkVersion
   { _networkVersion_chainName :: Text -- This is not quite synonymous with the usual chainName or chainId.
