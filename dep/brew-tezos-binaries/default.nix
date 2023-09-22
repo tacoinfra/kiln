@@ -1,23 +1,23 @@
 { pkgs }:
 with pkgs;
 let
-  outer-version = "v17.3-1";
+  outer-version = "v18.0-1";
   macos_version = "big_sur";
     tezos-baker-PtNairob = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-PtNairob-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0g1p738w7zwkf4nh04lkpgi8237pdxym6h40b4yabfmpd9djlrdz";
+      sha256 = "0zffxh6nnfj8af9bi9qvrgh9m8bb44h4r79msrs3y21fa9c777n7";
     };
-    tezos-baker-PtMumbai = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-PtMumbai-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "02kyd32nj3c5yrc3dr501xhi2j10fvl6aclm6dydi6dkf8ipq83w";
+    tezos-baker-Proxford = fetchTarball {
+      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-Proxford-${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "02kq1qg5si0x0k70rfzm9char9pp6dax8f8nq3iwzb95b70h5i0n";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "09rv7pwxfdf1gh3zgpmn0lwbi7x12gsr45vk692dwc27v62fdjma";
+      sha256 = "1wzay0iq96bzjb0b4ff3ynm564rlvkxw1y34kqcpkwmybz54idjn";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0npbqzbmyz372vj1sfq42m8lqly77zv6wmjkw25firkm3c7rzs8j";
+      sha256 = "1alspzvncw0y70sy0gcrn2jknjqbnr92r0s02bpmzlw63xx9vh7a";
     };
 
 in stdenv.mkDerivation rec {
@@ -31,8 +31,8 @@ in stdenv.mkDerivation rec {
   cp ${tezos-baker-PtNairob}/${outer-version}/bin/tezos-baker-PtNairob $out/bin/tezos-baker-PtNairob
   chmod +x $out/bin/tezos-baker-PtNairob
 
-  cp ${tezos-baker-PtMumbai}/${outer-version}/bin/tezos-baker-PtMumbai $out/bin/tezos-baker-PtMumbai
-  chmod +x $out/bin/tezos-baker-PtMumbai
+  cp ${tezos-baker-Proxford}/${outer-version}/bin/tezos-baker-Proxford $out/bin/tezos-baker-Proxford
+  chmod +x $out/bin/tezos-baker-Proxford
 
   cp ${tezos-client}/${outer-version}/bin/tezos-client $out/bin/tezos-client
   chmod +x $out/bin/tezos-client
