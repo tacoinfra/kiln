@@ -857,10 +857,8 @@ findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata = do
 
 -- The version of node snapshot which is compatible with the
 -- version of 'octez-node' binary that is used in Kiln
---
--- TODO [#210] [#tezos/6318] bump this number to 6.
 compatibleSnapshotVersion :: Int
-compatibleSnapshotVersion = 5
+compatibleSnapshotVersion = 6
 
 -- | Update the 'SnapshotMeta' table and set the correct internal node's
 -- process state in case of snapshot download error.
