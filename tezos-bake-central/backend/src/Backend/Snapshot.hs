@@ -723,7 +723,7 @@ handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId shouldHand
   latestSnapshotMetadata <- handle handleFetchMetadataError $ do
     metadata <- downloadSnapshotMetadata httpMgr providerUrl
     kilnNodeVersion <- liftIO $ runLoggingEnv logger $ getKilnNodeVersion appConfig
-    findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata
+    findLatestCompatibleSnapshot appConfig kilnNodeVersion compatibleSnapshotVersion metadata
   latestSnapshotUri <- mkURI $ latestSnapshotMetadata ^. snapshotMetadata_url
   $(logDebug) $ "Found latest snapshot url " <> T.pack (renderStr latestSnapshotUri)
   updatedSnapshotMeta <- updateSnapshotMeta' latestSnapshotMetadata latestSnapshotUri
@@ -816,10 +816,11 @@ findLatestCompatibleSnapshot
   :: (MonadThrow m)
   => AppConfig
   -> MajorMinorVersion
+  -> Int
   -> [SnapshotMetadata]
   -> m SnapshotMetadata
-findLatestCompatibleSnapshot _ _ [] = throwString "Got empty metadata list from the snapshot provider"
-findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata = do
+findLatestCompatibleSnapshot _ _ _ [] = throwString "Got empty metadata list from the snapshot provider"
+findLatestCompatibleSnapshot appConfig kilnNodeVersion neededSnapshotVersion metadata = do
   let mbChainName = showNamedChain <$> identifyChain chainId
       releaseSnapshots = flip filter metadata $ \m ->
         m ^. snapshotMetadata_tezosVersion . majorMinorVersion_additional_info == Release
@@ -839,7 +840,7 @@ findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata = do
       && isTezosSnapshot m
       && isCompatibleSnapshotVersion m
     isCompatibleSnapshotVersion m =
-      m ^. snapshotMetadata_snapshotVersion == Just compatibleSnapshotVersion
+      m ^. snapshotMetadata_snapshotVersion == Just neededSnapshotVersion
     isNeededChain chainName m = m ^. snapshotMetadata_chainName == chainName
     isRolling m = m ^. snapshotMetadata_historyMode
       == SnapshotHistoryMode_Rolling
@@ -857,6 +858,8 @@ findLatestCompatibleSnapshot appConfig kilnNodeVersion metadata = do
 
 -- The version of node snapshot which is compatible with the
 -- version of 'octez-node' binary that is used in Kiln
+--
+-- TODO [#212] [tezos/#6319] get this info from the node.
 compatibleSnapshotVersion :: Int
 compatibleSnapshotVersion = 6
 
