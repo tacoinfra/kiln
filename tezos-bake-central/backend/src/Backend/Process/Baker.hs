@@ -68,15 +68,15 @@ getBakerPath paths mbProto =
     Just protoHash -> _bakerPath_path =<< find (\bp -> _bakerPath_proto bp == protoHash) paths
 
 defaultBakerPaths :: NonEmpty BakerPath
-defaultBakerPaths = NonEmpty.fromList [nairobiPath, mumbaiPath]
+defaultBakerPaths = NonEmpty.fromList [nairobiPath, oxfordPath]
   where
     nairobiPath = BakerPath
       { _bakerPath_proto = NairobiProtocolHash
       , _bakerPath_path = Just $(staticWhich "tezos-baker-PtNairob")
       }
-    mumbaiPath = BakerPath
-      { _bakerPath_proto = MumbaiProtocolHash
-      , _bakerPath_path = Just $(staticWhich "tezos-baker-PtMumbai")
+    oxfordPath = BakerPath
+      { _bakerPath_proto = OxfordProtocolHash
+      , _bakerPath_path = Just $(staticWhich "tezos-baker-Proxford")
       }
 
 bakerDaemonProcess

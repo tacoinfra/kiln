@@ -29,7 +29,8 @@ testFindLatestSnapshotWithExactVersion :: TestTree
 testFindLatestSnapshotWithExactVersion = baseMetadataTest
   "Prefers the snapshot with exact same Octez version"
   "test/resources/metadata_1.json"
-  (MajorMinorVersion 17 3 Nothing Release) $
+  (MajorMinorVersion 17 3 Nothing Release)
+  neededSnapshotVersion $
   SnapshotMetadata
     { _snapshotMetadata_blockHeight = 100
     , _snapshotMetadata_blockHash = BlockHash "BLagBK76j8WwzqZbaFnZo1mgziHcoZoDXqddSzDPd2LL8qPZdcb"
@@ -46,7 +47,8 @@ testFindLatestSnapshotWithSameMajorVersion :: TestTree
 testFindLatestSnapshotWithSameMajorVersion = baseMetadataTest
   "Picks the snapshot with the same major version when couldn't find exact same version"
   "test/resources/metadata_2.json"
-  (MajorMinorVersion 17 3 Nothing Release) $
+  (MajorMinorVersion 17 3 Nothing Release)
+  neededSnapshotVersion $
   SnapshotMetadata
     { _snapshotMetadata_blockHeight = 50
       , _snapshotMetadata_blockHash = BlockHash "BLagBK76j8WwzqZbaFnZo1mgziHcoZoDXqddSzDPd2LL8qPZdcb"
@@ -65,7 +67,7 @@ testThrowsErrorWhenCouldntFindCompatibleSnapshot =
     rawMetadata <- LBS.readFile "test/resources/metadata_3.json"
     let metadata = either (error "Can't parse metadata") unSnapshotMetadataList $ eitherDecode rawMetadata
         kilnNodeVersion = MajorMinorVersion 17 3 Nothing Release
-    hasError <- handle handler $ findLatestCompatibleSnapshot dummyAppConfig kilnNodeVersion metadata >> pure False
+    hasError <- handle handler $ findLatestCompatibleSnapshot dummyAppConfig kilnNodeVersion neededSnapshotVersion metadata >> pure False
     if hasError
     then pure ()
     else assertFailure "Didn't catch the expected error"
@@ -96,16 +98,19 @@ testCanParseUnexpectedOctezVersions =
       Left err -> assertFailure $ "Expected to parse the metadata, but failed with: " <> show err
       Right m -> unSnapshotMetadataList m @?= [expected]
 
-baseMetadataTest :: TestName -> FilePath -> MajorMinorVersion -> SnapshotMetadata -> TestTree
-baseMetadataTest testName filePath kilnNodeVersion expected =
+baseMetadataTest :: TestName -> FilePath -> MajorMinorVersion -> Int -> SnapshotMetadata -> TestTree
+baseMetadataTest testName filePath kilnNodeVersion snapshotVersion expected =
   testCase testName $ do
     rawMetadata <- LBS.readFile filePath
     let metadata = either (error "Can't parse metadata") unSnapshotMetadataList $ eitherDecode rawMetadata
-    actual <- findLatestCompatibleSnapshot dummyAppConfig kilnNodeVersion metadata
+    actual <- findLatestCompatibleSnapshot dummyAppConfig kilnNodeVersion snapshotVersion metadata
     actual @?= expected
 
 parseTime :: String -> UTCTime
 parseTime = parseTimeOrError True defaultTimeLocale "%Y-%m-%dT%H:%M:%S"
+
+neededSnapshotVersion :: Int
+neededSnapshotVersion = 5
 
 dummyAppConfig :: AppConfig
 dummyAppConfig = AppConfig

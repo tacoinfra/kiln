@@ -115,6 +115,9 @@ pattern NairobiProtocolHash = "PtNairobiyssHuh87hEhfVBGCVrK3WnS8Z2FT4ymB5tAa4r1n
 pattern MumbaiProtocolHash :: ProtocolHash
 pattern MumbaiProtocolHash = "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
 
+pattern OxfordProtocolHash :: ProtocolHash
+pattern OxfordProtocolHash = "ProxfordSW2S7fvchT1Zgj2avb5UES194neRyYVXoaDGvF9egt8"
+
 data DaemonType
   = DaemonType_Node
   | DaemonType_Baker
