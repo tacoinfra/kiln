@@ -48,10 +48,17 @@ import Tezos.Common.ShortByteString (ShortByteString, fromShort, toShort)
 newtype BlockHash = BlockHash { unBlockHash :: HashedValue 'HashType_BlockHash }
   deriving newtype (Show, Read, Eq, Ord, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
   deriving NFData
+
+-- @ProtocolHash@ is a newtype instead of type alias because it's
+-- used in the 'PublicRequest' GADT, and being a type alias prevents
+-- it from deriving some instances
+newtype ProtocolHash = ProtocolHash { unProtocolHash :: HashedValue 'HashType_ProtocolHash }
+  deriving newtype (Show, Read, Eq, Ord, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+  deriving NFData
+
 type OperationHash = HashedValue 'HashType_OperationHash
 type OperationListHash = HashedValue 'HashType_OperationListHash
 type OperationListListHash = HashedValue 'HashType_OperationListListHash
-type ProtocolHash = HashedValue 'HashType_ProtocolHash
 type ContextHash = HashedValue 'HashType_ContextHash
 type Ed25519PublicKeyHash = HashedValue 'HashType_Ed25519PublicKeyHash
 type Secp256k1PublicKeyHash = HashedValue 'HashType_Secp256k1PublicKeyHash
@@ -155,6 +162,9 @@ toBase58Text = T.decodeUtf8 . toBase58
 
 blockHashToBase58Text :: BlockHash -> Text
 blockHashToBase58Text = toBase58Text . unBlockHash
+
+protocolHashToBase58Text :: ProtocolHash -> Text
+protocolHashToBase58Text = toBase58Text . unProtocolHash
 
 data HashBase58Error
   = HashBase58Error_DecodeError

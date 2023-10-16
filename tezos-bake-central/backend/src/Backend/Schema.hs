@@ -494,6 +494,7 @@ instance PersistField ProtoAgnosticVotingPower where
 
 instance NeverNull (HashedValue a)
 instance NeverNull BlockHash
+instance NeverNull ProtocolHash
 -- instance NeverNull (Json BlockInfo)
 instance NeverNull Cycle
 instance NeverNull Fitness
@@ -527,8 +528,14 @@ instance ToField (HashedValue t) where
 instance FromField BlockHash where
   fromField f b = BlockHash . HashedValue . toShort . fromBinary <$> fromField f b
 
+instance FromField ProtocolHash where
+  fromField f b = ProtocolHash . HashedValue . toShort . fromBinary <$> fromField f b
+
 instance ToField BlockHash where
   toField (BlockHash a) = toField $ Binary $ fromShort $ unHashedValue a
+
+instance ToField ProtocolHash where
+  toField (ProtocolHash a) = toField $ Binary $ fromShort $ unHashedValue a
 
 instance PersistField (HashedValue t) where
   persistName _ = "HashedValue"
@@ -540,7 +547,13 @@ instance PersistField BlockHash where
   persistName _ = "BlockHash"
   toPersistValues = primToPersistValue . fromShort . unHashedValue . unBlockHash
   fromPersistValues = (fmap.first) (BlockHash . HashedValue . toShort) . primFromPersistValue
-  dbType p _ = dbType p (error "dbType for HashedValue forced" :: ByteString)
+  dbType p _ = dbType p (error "dbType for BlockHash forced" :: ByteString)
+
+instance PersistField ProtocolHash where
+  persistName _ = "ProtocolHash"
+  toPersistValues = primToPersistValue . fromShort . unHashedValue . unProtocolHash
+  fromPersistValues = (fmap.first) (ProtocolHash . HashedValue . toShort) . primFromPersistValue
+  dbType p _ = dbType p (error "dbType for ProtocolHash forced" :: ByteString)
 
 deriving instance ToField TezosWord64
 deriving instance FromField TezosWord64
@@ -574,6 +587,10 @@ instance PrimitivePersistField (HashedValue t) where
 instance PrimitivePersistField BlockHash where
   toPrimitivePersistValue x (BlockHash v) = toPrimitivePersistValue x v
   fromPrimitivePersistValue x v = BlockHash $ HashedValue $ toShort $ fromPrimitivePersistValue x v
+
+instance PrimitivePersistField ProtocolHash where
+  toPrimitivePersistValue x (ProtocolHash v) = toPrimitivePersistValue x v
+  fromPrimitivePersistValue x v = ProtocolHash $ HashedValue $ toShort $ fromPrimitivePersistValue x v
 
 instance PrimitivePersistField Round where
   toPrimitivePersistValue x (Round v) = toPrimitivePersistValue x v
@@ -802,52 +819,27 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
     autoKey: null
     constructors:
       - name: BakerVote
-        fields:
-          - name: _bakerVote_proposal
-            reference:
-              table: PeriodProposal
-              onDelete: cascade
         uniques:
           - name: BakerVote_key
             type: primary
-            fields: [_bakerVote_pkh, _bakerVote_proposal]
+            fields: [_bakerVote_pkh, _bakerVote_proposalHash]
   - entity: PeriodTestingVote
     autoKey: null
     constructors:
       - name: PeriodTestingVote
-        fields:
-          - name: _periodTestingVote_proposal
-            reference:
-              table: PeriodProposal
-              onDelete: cascade
   - primitive: TestChainStatus
   - entity: PeriodTesting
     autoKey: null
     constructors:
       - name: PeriodTesting
-        fields:
-          - name: _periodTesting_proposal
-            reference:
-              table: PeriodProposal
-              onDelete: cascade
   - entity: PeriodPromotionVote
     autoKey: null
     constructors:
       - name: PeriodPromotionVote
-        fields:
-          - name: _periodPromotionVote_proposal
-            reference:
-              table: PeriodProposal
-              onDelete: cascade
   - entity: PeriodAdoption
     autoKey: null
     constructors:
       - name: PeriodAdoption
-        fields:
-          - name: _periodAdoption_proposal
-            reference:
-              table: PeriodProposal
-              onDelete: cascade
   - primitive: SigningCurve
   - entity: ConnectedLedger
     autoKey: null

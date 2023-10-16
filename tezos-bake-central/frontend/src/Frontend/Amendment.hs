@@ -183,13 +183,13 @@ withLoader f d = maybeDyn d >>= \m -> dyn_ $ ffor m $ \case
 
 periodAdoption
   :: forall t m js. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
-  => Dynamic t (Id PeriodProposal, PeriodProposal) -> m ()
-periodAdoption adopt = el "dl" $ do
+  => Dynamic t ProtocolHash -> m ()
+periodAdoption proposalHash = el "dl" $ do
   el "dt" $ text "Proposal Hash"
   el "dd" $ do
-    let proposalHash = toBase58Text . _periodProposal_hash . snd <$> adopt
-    copyButton $ current proposalHash
-    dynText proposalHash
+    let proposalHashText = protocolHashToBase58Text <$> proposalHash
+    copyButton $ current proposalHashText
+    dynText proposalHashText
 
 periodProposals
   :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m), Prerender js t m)
@@ -203,7 +203,7 @@ periodProposals proposals' = do
         el "th" $ text "Votes"
     el "tbody" $ void $ simpleList proposals $ \proposal -> el "tr" $ do
       el "td" $ do
-        let protocolHash = toBase58Text . _periodProposal_hash . fst <$> proposal
+        let protocolHash = protocolHashToBase58Text . _periodProposal_hash . fst <$> proposal
         copyButton $ current protocolHash
         dynText protocolHash
       el "td" $ dynText $ textWithCommas . _periodProposal_votes . fst <$> proposal
@@ -212,21 +212,21 @@ periodProposals proposals' = do
 
 periodTest
   :: forall t m js. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
-  => Dynamic t ((Id PeriodProposal, PeriodProposal), PeriodTesting) -> m ()
-periodTest test = el "dl" $ do
+  => Dynamic t ProtocolHash -> m ()
+periodTest proposalHashDyn = el "dl" $ do
   el "dt" $ text "Proposal Hash"
   el "dd" $ do
-    let proposalHash = toBase58Text . _periodProposal_hash . snd . fst <$> test
+    let proposalHash = protocolHashToBase58Text <$> proposalHashDyn
     copyButton $ current proposalHash
     dynText proposalHash
 
 periodVote
   :: forall t m js. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
-  => Text -> Dynamic t ((Id PeriodProposal, PeriodProposal), PeriodVote) -> m ()
+  => Text -> Dynamic t (ProtocolHash, PeriodVote) -> m ()
 periodVote promote vote = el "dl" $ do
   el "dt" $ text "Proposal Hash"
   el "dd" $ do
-    let proposalHash = toBase58Text . _periodProposal_hash . snd . fst <$> vote
+    let proposalHash = protocolHashToBase58Text . fst <$> vote
     copyButton $ current proposalHash
     dynText proposalHash
   el "dt" $ text $ "Promote to " <> promote <> " Vote Breakdown"
@@ -370,7 +370,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             el "th" $ text "Cast Vote"
           -- TODO handle empty list gracefully
           voteE <- el "tbody" $ listViewWithKey proposals $ \_ pp -> do
-            let protocolHash = toBase58Text . _periodProposal_hash . fst <$> pp
+            let protocolHash = protocolHashToBase58Text . _periodProposal_hash . fst <$> pp
                 attrs = ffor2 protocolHash hashFilter $ \h h' ->
                   if T.strip (T.toCaseFold h') `T.isInfixOf` T.toCaseFold h
                   then mempty
@@ -391,7 +391,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
                   Just True -> "Voted"
                   Just False -> "Pending"
                 pure $ attachWithMaybe (\(p, m) () -> case m of Nothing -> Just p; _ -> Nothing) (current lookuped) vote
-          pure $ fmapMaybe (fmap fst . Map.minViewWithKey) voteE
+          pure $ fmapMaybe (fmap fst . Map.minView) voteE
         elDynAttr "div" (ffor proposals $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
           text "No proposals have been submitted for this voting period yet."
         pure (never, waitForWalletAppFlow . castVoteFlow False Nothing mempty <$> vote)
@@ -414,7 +414,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       :: Text -- ^ Header
       -> Text -- ^ Explanation
       -> Text -- ^ Promote to <X>
-      -> m (Dynamic t (Maybe (Dynamic t ((Id PeriodProposal, PeriodProposal), PeriodVote)))) -- ^ Watch relevant vote
+      -> m (Dynamic t (Maybe (Dynamic t (ProtocolHash, PeriodVote)))) -- ^ Watch relevant vote
       -> Workflow t m (Event t ())
     someVotingPeriodFlow header explanation promote getPeriodVote = Workflow $ do
       mPeriodVote <- getPeriodVote
@@ -423,8 +423,8 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         Nothing -> divClass "ui active loader" $ pure never
         Just pv -> do
           divClass "detail" $ text "Proposal Hash"
-          let proposal = _periodProposal_hash . snd . fst <$> pv
-              hashText = toBase58Text <$> proposal
+          let proposal = fst <$> pv
+              hashText = protocolHashToBase58Text <$> proposal
           divClass "proposal-hash" $ do
             copyButton $ current hashText
             dynText hashText
@@ -432,7 +432,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             text $ "Promote this proposal to " <> promote <> "?"
           let ballotButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
           vote <- divClass "vote-buttons" $ leftmost <$> traverse ballotButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
-          pure $ attachWith (\((pid, pp), _) b -> castVoteFlow False (Just b) mempty (pid, _periodProposal_hash pp)) (current pv) vote
+          pure $ attachWith (\(ph, _) b -> castVoteFlow False (Just b) mempty ph) (current pv) vote
       pure (never, waitForWalletAppFlow <$> vote)
 
     waitForWalletAppFlow
@@ -476,9 +476,9 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       :: Bool
       -> Maybe Ballot
       -> Text
-      -> (Id PeriodProposal, ProtocolHash)
+      -> ProtocolHash
       -> Workflow t m (Event t ())
-    castVoteFlow isTimedOut mBallot errLog (proposalId, proposalHash) = Workflow $ do
+    castVoteFlow isTimedOut mBallot errLog proposalHash = Workflow $ do
       ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet
       when isTimedOut $ do
         divClass "ui message" $ do
@@ -492,18 +492,18 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       divClass "bigtitle" $ text $ case mBallot of
         Nothing -> "Cast a vote for this proposal?"
         Just ballot -> "Cast a ‘" <> textBallot ballot <> "’ vote for this proposal?"
-      divClass "cast-vote-protocol" $ text $ toBase58Text proposalHash
+      divClass "cast-vote-protocol" $ text $ protocolHashToBase58Text proposalHash
       cast <- voteButton "Cast Vote"
-      _ <- requestingIdentity $ public (PublicRequest_DoVote sk proposalId mBallot) <$ cast
+      _ <- requestingIdentity $ public (PublicRequest_DoVote sk proposalHash mBallot) <$ cast
       let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
-          retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot errLog (proposalId, proposalHash)
-      pure (never, leftmost [respondToPromptFlow retryFlow (proposalId, proposalHash) mBallot <$ cast, ledgerDisconnectedFlow retryFlow <$ appLost])
+          retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot errLog proposalHash
+      pure (never, leftmost [respondToPromptFlow retryFlow proposalHash mBallot <$ cast, ledgerDisconnectedFlow retryFlow <$ appLost])
 
     respondToPromptFlow
       :: Workflow t m (Event t ())
       -- ^ Workflow to return to after retry
-      -> (Id PeriodProposal, ProtocolHash) -> Maybe Ballot -> Workflow t m (Event t ())
-    respondToPromptFlow retryFlow proposal mBallot = Workflow $ do
+      -> ProtocolHash -> Maybe Ballot -> Workflow t m (Event t ())
+    respondToPromptFlow retryFlow proposalHash mBallot = Workflow $ do
       ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet
       pb <- getPostBuild
       promptStep <- watchVotePrompting sk
@@ -515,10 +515,10 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
                 -- TODO: go to proper flow
                 VoteStep_Done -> Just $ waitForBakingAppFlow $ voteCastSuccessfullyFlow $ Left ()
                 VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow retryFlow
-                VoteStep_Declined -> Just $ castVoteFlow True mBallot errLog proposal
-                VoteStep_Failed _ -> Just $ castVoteFlow True mBallot errLog proposal
+                VoteStep_Declined -> Just $ castVoteFlow True mBallot errLog proposalHash
+                VoteStep_Failed _ -> Just $ castVoteFlow True mBallot errLog proposalHash
                 VoteStep_Prompting -> Nothing
-                VoteStep_WrongPeriod -> Just $ castVoteFlow True mBallot errLog proposal -- This case should be caught by the outer runWithReplace
+                VoteStep_WrongPeriod -> Just $ castVoteFlow True mBallot errLog proposalHash -- This case should be caught by the outer runWithReplace
             _ -> Nothing
       divClass "bigtitle" $ do
         elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
@@ -534,7 +534,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         divClass "confirm-title" $ text "Source"
         divClass "confirm-content monospaced-text" $ text $ toPublicKeyHashText bakerPkh
         divClass "confirm-title" $ text "Protocol"
-        divClass "confirm-content" $ text $ toBase58Text $ snd proposal
+        divClass "confirm-content" $ text $ protocolHashToBase58Text proposalHash
         divClass "confirm-title" $ text "Period"
         divClass "confirm-content" $ display $ unRawLevel . _amendment_votingPeriod <$> amendment
       let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus

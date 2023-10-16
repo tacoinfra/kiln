@@ -578,30 +578,27 @@ amendmentProcessWorker appConfig nds db = mkWorker $
       currentPeriodKind = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo . votingPeriodInfo_votingPeriod . votingPeriod_kind
       periodFraction = fromIntegral currentVotingPosition / fromIntegral blocksPerVotingPeriod :: Double
 
-      singleVotePeriod pkh periodKindOffset mkVotingState = do
+      singleVotePeriod pkh mkVotingState = do
         let blk = latestHead ^.hash
         ballotList <- throwing $ nodeQueryDataSource $ nodeQuery_BallotList blk
         let
           mBallot = ballotList
             &  find (\b -> b ^. ballotListItem_pkh == pkh)
             <&> view ballotListItem_ballot
-        -- The voting period of the last proposal period
-        let amendmentPeriod = latestBlock ^. blockMetadata . blockMetadata_votingPeriodInfo .
-              votingPeriodInfo_votingPeriod . votingPeriod_index - periodKindOffset
 
         runTransaction $ for_ mBallot $ \ballot -> do
           pps <- [queryQ|
             UPDATE "BakerVote" SET included = ?blk
-            FROM "PeriodProposal" pp
-            WHERE pp.id = proposal AND pp."chainId" = ?chainId AND pp."votingPeriod" = ?amendmentPeriod AND ballot = ?ballot AND pkh = ?pkh
-            RETURNING proposal, attempted
+            WHERE ballot = ?ballot AND pkh = ?pkh AND "chainId" = ?chainId
+            RETURNING "proposalHash", attempted
           |]
-          for_ pps $ \(proposal, attempted) -> notify NotifyTag_BakerVote $ Just $ BakerVote
+          for_ pps $ \(proposalHash, attempted) -> notify NotifyTag_BakerVote $ Just $ BakerVote
             { _bakerVote_pkh = pkh
-            , _bakerVote_proposal = proposal
+            , _bakerVote_proposalHash = proposalHash
             , _bakerVote_ballot = ballot
             , _bakerVote_included = Just blk
             , _bakerVote_attempted = attempted
+            , _bakerVote_chainId = chainId
             }
 
         pure $ mkVotingState $ isJust mBallot
@@ -651,9 +648,9 @@ amendmentProcessWorker appConfig nds db = mkWorker $
                       unseenProposalHashes = proposalHashes S.\\ proposalHashesWhenLastVoting
                     pure $ if null unseenProposalHashes then ProposalVotingState_CaughtUp else ProposalVotingState_OutdatedVote
 
-        VotingPeriodKind_Exploration -> singleVotePeriod pkh 1 BakerVotingState_Exploration
+        VotingPeriodKind_Exploration -> singleVotePeriod pkh BakerVotingState_Exploration
         VotingPeriodKind_Cooldown -> pure BakerVotingState_Testing
-        VotingPeriodKind_Promotion -> singleVotePeriod pkh 3 BakerVotingState_Promotion
+        VotingPeriodKind_Promotion -> singleVotePeriod pkh BakerVotingState_Promotion
         VotingPeriodKind_Adoption -> pure BakerVotingState_Adoption
 
       runLogger $ runTransaction $ flip runReaderT appConfig $ do
@@ -825,20 +822,22 @@ amendmentProcessWorker appConfig nds db = mkWorker $
               |] $ (\(pHash, votes) -> (pHash, chainId, votingPeriod, votes)) <$> protoAgnosticProposals
               for_ inserted $ \(pid, phash, chain, vp, votes, includedPkh :: Maybe PublicKeyHash, includedBlock :: Maybe BlockHash) ->
                 notify NotifyTag_Proposals (pid, Just (PeriodProposal phash chain vp votes, fmap (\_ -> isJust includedBlock) includedPkh))
-        VotingPeriodKind_Exploration -> handleVotingPeriod predBlk PeriodTestingVote NotifyTag_PeriodTestingVote
+        VotingPeriodKind_Exploration -> handleVotingPeriod predBlk chainId PeriodTestingVote NotifyTag_PeriodTestingVote
         VotingPeriodKind_Cooldown -> do
           mProposal <- runMaybe $ nodeQueryDataSource $ nodeQuery_CurrentProposal (predBlk ^. hash)
           for_ mProposal $ \proposal -> do
             runTransaction $ do
-              ts <- (fmap . fmap) fromOnly [queryQ|
-                INSERT INTO "PeriodTesting"
-                (SELECT p.id FROM "PeriodProposal" p WHERE p.hash = ?proposal)
-                RETURNING proposal
+              ts <- [queryQ|
+                INSERT INTO "PeriodTesting" ("proposalHash", "chainId")
+                VALUES (?proposal, ?chainId)
+                RETURNING "proposalHash", "chainId"
               |]
-              for_ ts $ \ph -> notify NotifyTag_PeriodTesting $ Just PeriodTesting
-                { _periodTesting_proposal = ph }
-        VotingPeriodKind_Promotion -> handleVotingPeriod predBlk PeriodPromotionVote NotifyTag_PeriodPromotionVote
-        VotingPeriodKind_Adoption -> handleVotingPeriod predBlk PeriodAdoption NotifyTag_PeriodAdoption
+              for_ ts $ \(ph, chId) -> notify NotifyTag_PeriodTesting $ Just PeriodTesting
+                { _periodTesting_proposalHash = ph
+                , _periodTesting_chainId = chId
+                }
+        VotingPeriodKind_Promotion -> handleVotingPeriod predBlk chainId PeriodPromotionVote NotifyTag_PeriodPromotionVote
+        VotingPeriodKind_Adoption -> handleVotingPeriod predBlk chainId PeriodAdoption NotifyTag_PeriodAdoption
 
     handleVotingPeriod
       :: ( PersistEntity a
@@ -846,10 +845,11 @@ amendmentProcessWorker appConfig nds db = mkWorker $
          , MonadUnliftIO w
          )
       => blk
-      -> (Id PeriodProposal -> PeriodVote -> a)
+      -> ChainId
+      -> (ProtocolHash -> ChainId -> PeriodVote -> a)
       -> NotifyTag (Maybe a)
       -> LoggingT w ()
-    handleVotingPeriod blk f n = do
+    handleVotingPeriod blk chainId f n = do
       mpv <- runMaybe $ do
         mProposal <- nodeQueryDataSource $ nodeQuery_CurrentProposal (blk ^. hash)
         ballots <- nodeQueryDataSource $ nodeQuery_Ballots (blk ^. hash)
@@ -863,15 +863,13 @@ amendmentProcessWorker appConfig nds db = mkWorker $
         let protoAgnosticBallots = case ballots of
               BallotsNairobi (Nairobi.Ballots yay nay pass) ->
                 ProtoAgnosticBallots (tezToProtoAgnosticVotingPower yay) (tezToProtoAgnosticVotingPower nay) (tezToProtoAgnosticVotingPower pass)
-        mPid <- (fmap . fmap) toId $ project1 AutoKeyField $ PeriodProposal_hashField ==. proposal
-        for_ mPid $ \pid -> do
-          let pv = PeriodVote
-                { _periodVote_ballots = protoAgnosticBallots
-                , _periodVote_quorum = quorum
-                , _periodVote_totalVotingPower = totalVotingPower
-                }
-          insert_ $ f pid pv
-          notify n $ Just $ f pid pv
+        let pv = PeriodVote
+              { _periodVote_ballots = protoAgnosticBallots
+              , _periodVote_quorum = quorum
+              , _periodVote_totalVotingPower = totalVotingPower
+              }
+        insert_ $ f proposal chainId pv
+        notify n $ Just $ f proposal chainId pv
 
     clearBakerVote = runTransaction $
       deleteAll' @BakerVote Proxy >> notify NotifyTag_BakerVote Nothing
@@ -899,9 +897,9 @@ protocolMonitorWorker appConfig nds = mkWorker $
 
     $(logDebug) $ T.concat
       [ "protocolMonitorWorker: setting protocol. mainProto = "
-      , toBase58Text mainProto
+      , protocolHashToBase58Text mainProto
       , "altProto = "
-      , tshow $ toBase58Text <$> altProto
+      , tshow $ protocolHashToBase58Text <$> altProto
       ]
     let ds = BakerDaemonInternal_dataField ~> DeletableRow_dataSelector
     runTransaction $ project1 ds CondEmpty >>= \case
@@ -925,14 +923,14 @@ protocolMonitorWorker appConfig nds = mkWorker $
                 update [ds ~> BakerDaemonInternalData_altProtocolSelector =. Just p] CondEmpty
                 when isRunning $ setControl ProcessControl_Restart tbpid
           stopMain = do
-            $(logDebug) $ "protocolMonitorWorker: stopping maing protocol baker " <> toBase58Text mainProto
+            $(logDebug) $ "protocolMonitorWorker: stopping maing protocol baker " <> protocolHashToBase58Text mainProto
             setControl ProcessControl_Stop bpid
           stopAlt = do
-            $(logDebug) $ "protocolMonitorWorker: stopping alternate protocol baker " <> toBase58Text mainProto
+            $(logDebug) $ "protocolMonitorWorker: stopping alternate protocol baker " <> protocolHashToBase58Text mainProto
             setControl ProcessControl_Stop tbpid
           -- stop main and swap pids
           altToMain = do
-            $(logDebug) $ "protocolMonitorWorker: swapping processes " <> toBase58Text mainProto
+            $(logDebug) $ "protocolMonitorWorker: swapping processes " <> protocolHashToBase58Text mainProto
             stopMain
             update [ ds ~> BakerDaemonInternalData_protocolSelector =. mainProto
                   , ds ~> BakerDaemonInternalData_bakerProcessDataSelector =. tbpid

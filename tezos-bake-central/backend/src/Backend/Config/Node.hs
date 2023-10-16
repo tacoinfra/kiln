@@ -78,7 +78,7 @@ fetchChainIdByUrl httpMgr uri mbCustomPaths = do
       let mbGenesis = json ^? key "genesis" . _Object
       genesis   <- maybe (throwString "Key 'genesis' isn't present in the network config") pure mbGenesis
       blkHash   <- fmap BlockHash . fromRawHash =<< getRawGenesisValue genesis "block"
-      protoHash <- fromRawHash =<< getRawGenesisValue genesis "protocol"
+      protoHash <- fmap ProtocolHash . fromRawHash =<< getRawGenesisValue genesis "protocol"
       eiChainId <- computeChainId mbCustomPaths protoHash blkHash
       either (throwString . T.unpack) pure eiChainId
 
@@ -149,7 +149,7 @@ computeChainIdFromConfigFile mbCustomPaths json = do
     throwString $ T.unpack $ T.intercalate ":" errs
   let genesis = json ^. key "network" . key "genesis" . _Object
   blkHash   <- fmap BlockHash . fromRawHash =<< getRawGenesisValue genesis "block"
-  protoHash <- fromRawHash =<< getRawGenesisValue genesis "protocol"
+  protoHash <- fmap ProtocolHash . fromRawHash =<< getRawGenesisValue genesis "protocol"
   eiChainId <- computeChainId mbCustomPaths protoHash blkHash
   either (throwString . T.unpack) pure eiChainId
 

@@ -484,8 +484,8 @@ requestHandler appConfig nds =
             Just _ -> update [RightNotificationSettings_limitField =. limit] pk
         notify NotifyTag_RightNotificationSettings (rk, mLimit)
 
-      PublicRequest_DoVote sk p b ->
-        queryLedger $ submitVote appConfig db nds sk p b
+      PublicRequest_DoVote sk ph b ->
+        queryLedger $ submitVote appConfig db nds sk ph b
 
       PublicRequest_RestartKilnBaker -> inDb restartBakerDaemon
 

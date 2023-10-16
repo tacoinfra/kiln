@@ -8,9 +8,9 @@ import Tezos.Common.Base58Check as X
   Ed25519SecretKey, Ed25519Seed, Ed25519Signature, GenericSignature, NonceHash,
   HashBase58Error(..), HashedValue(..), tryFromBase58, toBase58, fromBase58,
   OperationHash, OperationListHash, OperationListListHash, P256PublicKey,
-  P256PublicKeyHash, P256Signature, ProtocolHash, Secp256k1PublicKey,
+  P256PublicKeyHash, P256Signature, ProtocolHash(..), Secp256k1PublicKey,
   Secp256k1PublicKeyHash, Secp256k1SecretKey, Secp256k1Signature,
-  blockHashToBase58Text, toBase58Text)
+  blockHashToBase58Text, protocolHashToBase58Text, toBase58Text)
 import Tezos.Common.Accusation as X
 import Tezos.Common.Block as X
 import Tezos.Common.BlockHeader as X

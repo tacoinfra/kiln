@@ -350,65 +350,41 @@ watchBakerVote =
     { _bakeViewSelector_bakerVote = viewJust 1
     }
 
-watchPeriodTestingVote :: MonadAppWidget js t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodVote)))
+watchPeriodTestingVote :: MonadAppWidget js t m => m (Dynamic t (Maybe (ProtocolHash, PeriodVote)))
 watchPeriodTestingVote = do
-  vote <- (fmap . fmap) (join . getMaybeView . _bakeView_periodTestingVote) $ watchViewSelector $ pure $ mempty
+  mbVoteDyn <- (fmap . fmap) (join . getMaybeView . _bakeView_periodTestingVote) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodTestingVote = viewJust 1
     }
-  mId <- holdUniqDyn $ fmap _periodTestingVote_proposal <$> vote
-  dm <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor mId $ \mp -> mempty
-    { _bakeViewSelector_proposals = maybe mempty (\p -> viewRangeExactly (Bounded p) 1) mp
-    }
-  pure $ ffor2 vote dm $ \mv m -> do
-    v <- mv
-    let pid = _periodTestingVote_proposal v
-    (pp, _) <- MMap.lookup pid m
-    pure ((pid, pp), _periodTestingVote_periodVote v)
+  pure $ ffor mbVoteDyn $ \mbVote -> do
+    vote <- mbVote
+    pure (_periodTestingVote_proposalHash vote, _periodTestingVote_periodVote vote)
 
-watchPeriodTesting :: MonadAppWidget js t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodTesting)))
+watchPeriodTesting :: MonadAppWidget js t m => m (Dynamic t (Maybe ProtocolHash))
 watchPeriodTesting = do
-  test <- (fmap . fmap) (join . getMaybeView . _bakeView_periodTesting) $ watchViewSelector $ pure $ mempty
+  mbTestingDyn <- (fmap . fmap) (join . getMaybeView . _bakeView_periodTesting) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodTesting = viewJust 1
     }
-  mId <- holdUniqDyn $ fmap _periodTesting_proposal <$> test
-  dm <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor mId $ \mp -> mempty
-    { _bakeViewSelector_proposals = maybe mempty (\p -> viewRangeExactly (Bounded p) 1) mp
-    }
-  pure $ ffor2 test dm $ \mt m -> do
-    t <- mt
-    let pid = _periodTesting_proposal t
-    (pp, _) <- MMap.lookup pid m
-    pure ((pid, pp), t)
+  pure $ ffor mbTestingDyn $ \mbTesting -> do
+    testing <- mbTesting
+    pure $ _periodTesting_proposalHash testing
 
-watchPeriodPromotionVote :: MonadAppWidget js t m => m (Dynamic t (Maybe ((Id PeriodProposal, PeriodProposal), PeriodVote)))
+watchPeriodPromotionVote :: MonadAppWidget js t m => m (Dynamic t (Maybe (ProtocolHash, PeriodVote)))
 watchPeriodPromotionVote = do
-  vote <- (fmap . fmap) (join . getMaybeView . _bakeView_periodPromotionVote) $ watchViewSelector $ pure $ mempty
+  mbVoteDyn <- (fmap . fmap) (join . getMaybeView . _bakeView_periodPromotionVote) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodPromotionVote = viewJust 1
     }
-  mId <- holdUniqDyn $ fmap _periodPromotionVote_proposal <$> vote
-  dm <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor mId $ \mp -> mempty
-    { _bakeViewSelector_proposals = maybe mempty (\p -> viewRangeExactly (Bounded p) 1) mp
-    }
-  pure $ ffor2 vote dm $ \mv m -> do
-    v <- mv
-    let pid = _periodPromotionVote_proposal v
-    (pp, _) <- MMap.lookup pid m
-    pure ((pid, pp), _periodPromotionVote_periodVote v)
+  pure $ ffor mbVoteDyn $ \mbVote -> do
+    vote <- mbVote
+    pure (_periodPromotionVote_proposalHash vote, _periodPromotionVote_periodVote vote)
 
-watchPeriodAdoption :: MonadAppWidget js t m => m (Dynamic t (Maybe (Id PeriodProposal, PeriodProposal)))
+watchPeriodAdoption :: MonadAppWidget js t m => m (Dynamic t (Maybe ProtocolHash))
 watchPeriodAdoption = do
-  adoption <- (fmap . fmap) (join . getMaybeView . _bakeView_periodAdoption) $ watchViewSelector $ pure $ mempty
+  mbVoteDyn <- (fmap . fmap) (join . getMaybeView . _bakeView_periodAdoption) $ watchViewSelector $ pure $ mempty
     { _bakeViewSelector_periodAdoption = viewJust 1
     }
-  mId <- holdUniqDyn $ fmap _periodAdoption_proposal <$> adoption
-  dm <- (fmap . fmap) (fmapMaybe getFirst . getRangeView' . _bakeView_proposals) $ watchViewSelector $ ffor mId $ \mp -> mempty
-    { _bakeViewSelector_proposals = maybe mempty (\p -> viewRangeExactly (Bounded p) 1) mp
-    }
-  pure $ ffor2 adoption dm $ \mv m -> do
-    v <- mv
-    let pid = _periodAdoption_proposal v
-    (pp, _) <- MMap.lookup pid m
-    pure (pid, pp)
+  pure $ ffor mbVoteDyn $ \mbVote -> do
+    vote <- mbVote
+    pure $ _periodAdoption_proposalHash vote
 
 watchPrompting :: MonadAppWidget js t m => SecretKey -> m (Dynamic t (Maybe SetupState))
 watchPrompting sk = do
