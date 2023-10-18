@@ -157,7 +157,7 @@ amendmentPopup dAmendment dAmendments dProtoInfo = divClass "amendment-popup" $ 
             in textWithCommas periodStartCycle <> " - " <> textWithCommas periodEndCycle
 
     dyn_ $ ffor dSelectedPeriod $ \case
-      VotingPeriodKind_Proposal -> periodProposals =<< watchProposals
+      VotingPeriodKind_Proposal -> periodProposals dAmendment =<< watchProposals
       VotingPeriodKind_Exploration -> withLoader (periodVote "Exploration") =<< watchPeriodTestingVote
       VotingPeriodKind_Cooldown -> withLoader periodTest =<< watchPeriodTesting
       VotingPeriodKind_Promotion -> withLoader (periodVote "mainnet") =<< watchPeriodPromotionVote
@@ -193,9 +193,12 @@ periodAdoption proposalHash = el "dl" $ do
 
 periodProposals
   :: (DomBuilder t m, MonadFix m, PostBuild t m, MonadHold t m, PerformEvent t m, TriggerEvent t m, MonadJSM (Performable m), Prerender js t m)
-  => Dynamic t (Map.Map (Id PeriodProposal) (PeriodProposal, Maybe Bool)) -> m ()
-periodProposals proposals' = do
+  => Dynamic t Amendment
+  -> Dynamic t (Map.Map (Id PeriodProposal) (PeriodProposal, Maybe Bool))
+  -> m ()
+periodProposals amendmentDyn proposals' = do
   let proposals = sortOn (Down . _periodProposal_votes . fst) . Map.elems <$> proposals'
+  curPeriodKindDyn <- holdUniqDyn $ _amendment_period <$> amendmentDyn
   el "table" $ do
     el "thead" $ do
       el "tr" $ do
@@ -207,8 +210,18 @@ periodProposals proposals' = do
         copyButton $ current protocolHash
         dynText protocolHash
       el "td" $ dynText $ textWithCommas . _periodProposal_votes . fst <$> proposal
-  elDynAttr "div" (ffor proposals $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
-    text "No proposals have been submitted for this voting period yet."
+  elDynAttr "div" (ffor proposals  $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
+    dyn_ $ ffor curPeriodKindDyn $ \curPeriodKind ->
+      if curPeriodKind == VotingPeriodKind_Proposal
+      then text "No proposals have been submitted for this voting period yet."
+      -- If Kiln has been installed and launched with fresh db later
+      -- than the end of the current proposal period, there is a chance that
+      -- the information about proposals won't be available from the Kiln Node
+      -- RPC since it's a rolling node.
+      --
+      -- In such cases we display this message since it's more precise
+      -- and not misleading.
+      else text "Proposals are not available from the Kiln Node history."
 
 periodTest
   :: forall t m js. (DomBuilder t m, MonadJSM (Performable m), PostBuild t m, MonadFix m, PerformEvent t m, TriggerEvent t m, MonadHold t m, Prerender js t m)
