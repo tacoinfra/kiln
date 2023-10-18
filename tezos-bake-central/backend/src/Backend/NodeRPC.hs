@@ -1003,17 +1003,7 @@ fetchProtocolForBlock chainId blkHash = do
   let p = ProtocolIndex
           { _protocolIndex_chainId = chainId
           , _protocolIndex_hash = blockHeader ^. protocolHash
-          , _protocolIndex_jsonConstants = case Aeson.eitherDecode' (_rpcResult_raw protoInfo) of
-                                             Left errorMsg -> error ("the 'impossible' happened: aeson parse error on _rpcResult_raw: " <> errorMsg)
-                                             Right x -> x
           , _protocolIndex_constants = _rpcResult_value protoInfo
-          , _protocolIndex_proto = blockHeader ^. blockHeader_proto
-          , _protocolIndex_firstBlockHash = Nothing
-          , _protocolIndex_firstBlockPredecessor = Nothing
-          , _protocolIndex_firstBlockLevel = Nothing
-          , _protocolIndex_firstBlockFitness = Nothing
-          , _protocolIndex_firstBlockTimestamp = Nothing
-          , _protocolIndex_firstBlockCycle = Nothing
           }
   insert p
   notifyDefault p

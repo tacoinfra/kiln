@@ -143,6 +143,14 @@ preMigrate chainId =
   >=> migratePeriodPromotionVoteRemovePeriodProposalRef
   >=> migratePeriodAdoptionRemovePeriodProposalRef
   >=> migrateBakerVoteRemovePeriodProposalRef
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "jsonConstants"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "proto"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockHash"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockPredecessor"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockLevel"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockFitness"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockTimestamp"
+  >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockCycle"
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
