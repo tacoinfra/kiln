@@ -22,9 +22,9 @@ import Rhyolite.Backend.Account (migrateAccount)
 import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, execute_, queryQ, traceExecuteQ)
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
 import Safe
-import Tezos.Types (ChainId)
+import Tezos.Types (ChainId, ProtocolHash (..))
 
-import Common.Schema (ErrorLog, Id, TezosVersion(..))
+import Common.Schema (ErrorLog, Id, PeriodProposal (..), TezosVersion(..))
 import ExtraPrelude
 
 type Migrate m = (PersistBackend m, SchemaAnalyzer m, PostgresRaw m, MonadLogger m, MonadIO m)
@@ -138,6 +138,11 @@ preMigrate chainId =
   >=> migrateConnectedLedgerAddPollingState
   >=> migrateSnapshotMetaAddDownloadProgress
   >=> migrateProcessDataAddRestarts
+  >=> migratePeriodTestingVoteRemovePeriodProposalRef
+  >=> migratePeriodTestingRemovePeriodProposalRef
+  >=> migratePeriodPromotionVoteRemovePeriodProposalRef
+  >=> migratePeriodAdoptionRemovePeriodProposalRef
+  >=> migrateBakerVoteRemovePeriodProposalRef
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -1014,5 +1019,141 @@ migrateProcessDataAddRestarts ta = do
         ALTER TABLE "ProcessData" ADD COLUMN "restartCount" INT NOT NULL DEFAULT 0;
         ALTER TABLE "ProcessData" ADD COLUMN "restartAt" TIMESTAMP NULL;
       |]
+      getTableAnalysis
+    _ -> pure ta
+
+migratePeriodTestingVoteRemovePeriodProposalRef :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migratePeriodTestingVoteRemovePeriodProposalRef ta = do
+  let table = (Nothing, "PeriodTestingVote")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "proposal") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "PeriodTestingVote" ADD COLUMN "proposalHash" BYTEA NULL;
+        ALTER TABLE "PeriodTestingVote" ADD COLUMN "chainId" BYTEA NULL;
+      |]
+
+      periodProposals :: [(Id PeriodProposal, ProtocolHash, ChainId)] <-
+        [queryQ|SELECT id, hash, "chainId" FROM "PeriodProposal";|]
+      for_ periodProposals $ \(pid, phash, pchainId) -> do
+        [traceExecuteQ|
+          UPDATE "PeriodTestingVote"
+          SET "proposalHash" = ?phash, "chainId" = ?pchainId
+          WHERE proposal = ?pid
+        |]
+
+      void [traceExecuteQ|
+        ALTER TABLE "PeriodTestingVote" DROP COLUMN proposal;
+        ALTER TABLE "PeriodTestingVote" ALTER COLUMN "proposalHash" SET NOT NULL;
+        ALTER TABLE "PeriodTestingVote" ALTER COLUMN "chainId" SET NOT NULL;
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migratePeriodTestingRemovePeriodProposalRef :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migratePeriodTestingRemovePeriodProposalRef ta = do
+  let table = (Nothing, "PeriodTesting")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "proposal") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "PeriodTesting" ADD COLUMN "proposalHash" BYTEA NULL;
+        ALTER TABLE "PeriodTesting" ADD COLUMN "chainId" BYTEA NULL;
+      |]
+
+      periodProposals :: [(Id PeriodProposal, ProtocolHash, ChainId)] <-
+        [queryQ|SELECT id, hash, "chainId" FROM "PeriodProposal";|]
+      for_ periodProposals $ \(pid, phash, pchainId) -> do
+        [traceExecuteQ|
+          UPDATE "PeriodTesting"
+          SET "proposalHash" = ?phash, "chainId" = ?pchainId
+          WHERE proposal = ?pid
+        |]
+
+      void [traceExecuteQ|
+        ALTER TABLE "PeriodTesting" DROP COLUMN proposal;
+        ALTER TABLE "PeriodTesting" ALTER COLUMN "proposalHash" SET NOT NULL;
+        ALTER TABLE "PeriodTesting" ALTER COLUMN "chainId" SET NOT NULL;
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migratePeriodPromotionVoteRemovePeriodProposalRef :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migratePeriodPromotionVoteRemovePeriodProposalRef ta = do
+  let table = (Nothing, "PeriodPromotionVote")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "proposal") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "PeriodPromotionVote" ADD COLUMN "proposalHash" BYTEA NULL;
+        ALTER TABLE "PeriodPromotionVote" ADD COLUMN "chainId" BYTEA NULL;
+      |]
+
+      periodProposals :: [(Id PeriodProposal, ProtocolHash, ChainId)] <-
+        [queryQ|SELECT id, hash, "chainId" FROM "PeriodProposal";|]
+      for_ periodProposals $ \(pid, phash, pchainId) -> do
+        [traceExecuteQ|
+          UPDATE "PeriodPromotionVote"
+          SET "proposalHash" = ?phash, "chainId" = ?pchainId
+          WHERE proposal = ?pid
+        |]
+
+      void [traceExecuteQ|
+        ALTER TABLE "PeriodPromotionVote" DROP COLUMN proposal;
+        ALTER TABLE "PeriodPromotionVote" ALTER COLUMN "proposalHash" SET NOT NULL;
+        ALTER TABLE "PeriodPromotionVote" ALTER COLUMN "chainId" SET NOT NULL;
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migratePeriodAdoptionRemovePeriodProposalRef :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migratePeriodAdoptionRemovePeriodProposalRef ta = do
+  let table = (Nothing, "PeriodAdoption")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "proposal") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "PeriodAdoption" ADD COLUMN "proposalHash" BYTEA NULL;
+        ALTER TABLE "PeriodAdoption" ADD COLUMN "chainId" BYTEA NULL;
+      |]
+
+      periodProposals :: [(Id PeriodProposal, ProtocolHash, ChainId)] <-
+        [queryQ|SELECT id, hash, "chainId" FROM "PeriodProposal";|]
+      for_ periodProposals $ \(pid, phash, pchainId) -> do
+        [traceExecuteQ|
+          UPDATE "PeriodAdoption"
+          SET "proposalHash" = ?phash, "chainId" = ?pchainId
+          WHERE proposal = ?pid
+        |]
+
+      void [traceExecuteQ|
+        ALTER TABLE "PeriodAdoption" DROP COLUMN proposal;
+        ALTER TABLE "PeriodAdoption" ALTER COLUMN "proposalHash" SET NOT NULL;
+        ALTER TABLE "PeriodAdoption" ALTER COLUMN "chainId" SET NOT NULL;
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateBakerVoteRemovePeriodProposalRef :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateBakerVoteRemovePeriodProposalRef ta = do
+  let table = (Nothing, "BakerVote")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "proposal") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "BakerVote" ADD COLUMN "proposalHash" BYTEA NULL;
+        ALTER TABLE "BakerVote" ADD COLUMN "chainId" BYTEA NULL;
+      |]
+
+      periodProposals :: [(Id PeriodProposal, ProtocolHash, ChainId)] <-
+        [queryQ|SELECT id, hash, "chainId" FROM "PeriodProposal";|]
+      for_ periodProposals $ \(pid, phash, pchainId) -> do
+        [traceExecuteQ|
+          UPDATE "BakerVote"
+          SET "proposalHash" = ?phash, "chainId" = ?pchainId
+          WHERE proposal = ?pid
+        |]
+
+      void [traceExecuteQ|
+        ALTER TABLE "BakerVote" DROP COLUMN proposal;
+        ALTER TABLE "BakerVote" ALTER COLUMN "proposalHash" SET NOT NULL;
+        ALTER TABLE "BakerVote" ALTER COLUMN "chainId" SET NOT NULL;
+      |]
+
       getTableAnalysis
     _ -> pure ta

@@ -117,7 +117,7 @@ bakerDaemonProcess appConfig nds mbCustomPaths = runLoggerWithEnv $ do
               }
             -- Add this as default protocol, we will anyways fix this in protocolMonitorWorker once the synced node is available
             psdd :: ProtocolHash
-            psdd = "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
+            psdd = ProtocolHash "PsddFKi32cMJ2qPjf43Qv5GDWLDPZb3T3bF6fLKiF5HtvHNU7aP"
         insert $ BakerDaemonInternal
           { _bakerDaemonInternal_id = nid
           , _bakerDaemonInternal_data = DeletableRow

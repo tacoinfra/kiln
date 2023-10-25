@@ -14,6 +14,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DoAndIfThenElse #-}
+{-# LANGUAGE TupleSections #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 
@@ -30,10 +31,9 @@ import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, UTCTime)
 import Database.Groundhog
 import Database.Groundhog.Postgresql (Postgresql(..), SqlDb)
-import Database.Id.Class
 import Database.Id.Groundhog
 import Rhyolite.Backend.DB
-import Rhyolite.Backend.DB.PsqlSimple (executeQ)
+import Rhyolite.Backend.DB.PsqlSimple (executeQ, queryQ)
 import Rhyolite.Backend.Logging (LoggingEnv (..), runLoggingEnv)
 import Rhyolite.Backend.DB.Serializable (Serializable)
 import System.Directory (createDirectoryIfMissing)
@@ -465,7 +465,7 @@ computeChainId maybePaths protoHash blkHash = do
   let
     cmdArgs =
       [ "--protocol"
-      , T.unpack $ toBase58Text protoHash
+      , T.unpack $ protocolHashToBase58Text protoHash
       , "compute"
       , "chain"
       , "id"
@@ -611,37 +611,60 @@ setHighWaterMark appConfig db sk bl = LedgerQuery LedgerQueryType_SetHWM $
     clearLedgerNeedToResetHWM db appConfig
     pure $ fromLeft SetHWMStep_Done e
 
-submitVote :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> NodeDataSource -> SecretKey -> Id PeriodProposal -> Maybe Ballot -> LedgerQuery m
-submitVote appConfig db nds sk p b = LedgerQuery LedgerQueryType_Vote $ do
+{-# ANN submitVote ("HLint: ignore Evaluate" :: String) #-}
+submitVote
+  :: (MonadLoggerIO m)
+  => AppConfig
+  -> Pool Postgresql
+  -> NodeDataSource
+  -> SecretKey
+  -> ProtocolHash
+  -> Maybe Ballot
+  -> LedgerQuery m
+submitVote appConfig db nds sk proposalHash b = LedgerQuery LedgerQueryType_Vote $ do
   withDbAndConfig db appConfig $
     notify NotifyTag_VotePrompting (sk, Just $ VoteState (Just VoteStep_Prompting) mempty)
   dsh <- liftIO $ atomically $ dataSourceFinalHead nds
   let attempted = view hash <$> dsh
-  (mbProposal :: Maybe PeriodProposal) <- withDbAndConfig db appConfig $ selectSingle (AutoKeyField ==. fromId p)
+      chainId   = _appConfig_chainId appConfig
+  queryRes <- withDbAndConfig db appConfig
+    [queryQ|
+      SELECT pp.id, pp.hash, pp."chainId", pp."votingPeriod", pp.votes
+      FROM "PeriodProposal" pp
+      WHERE pp.hash = ?proposalHash AND pp."chainId" = ?chainId
+    |]
+  let
+    mbProposal = listToMaybe $ queryRes <&> \(pId, pHash, pChainId, pVotingPeriod, pVotes) -> (pId,) $ PeriodProposal
+      { _periodProposal_hash = pHash
+      , _periodProposal_votes = pVotes
+      , _periodProposal_chainId = pChainId
+      , _periodProposal_votingPeriod = pVotingPeriod
+      }
   mla <-
     withDbAndConfig db appConfig $ selectSingle $ embeddedSecretKeyEquals LedgerAccount_secretKeyField sk
-  for_ mla $ \la -> for_ (_ledgerAccount_publicKeyHash la) $ \pkh -> for_ mbProposal $ \proposal -> do
-    let proposalHash = proposal ^. periodProposal_hash
+  for_ mla $ \la -> for_ (_ledgerAccount_publicKeyHash la) $ \pkh -> do
     (vs, errLog) <- case b of
       Nothing -> do
         (vs, stderr) <- submitProposals appConfig [proposalHash]
-        when (vs == VoteStep_Done) $ withDbAndConfig db appConfig $ do
-          _ <- [executeQ|
-            INSERT INTO "BakerProposal" (pkh, proposal, included, attempted)
-            VALUES (?pkh, ?p, null, ?attempted)
-            ON CONFLICT DO NOTHING
-          |]
-          notify NotifyTag_Proposals (p, Just (proposal, Just False))
+        when (vs == VoteStep_Done) $ withDbAndConfig db appConfig $
+          for_ mbProposal $ \(proposalId, proposal) -> do
+            _ <- [executeQ|
+              INSERT INTO "BakerProposal" (pkh, proposal, included, attempted)
+              VALUES (?pkh, ?proposalId, null, ?attempted)
+              ON CONFLICT DO NOTHING
+            |]
+            notify NotifyTag_Proposals (proposalId, Just (proposal, Just False))
         pure (vs, T.unlines stderr)
       Just ballot -> do
         (vs, stderr) <- submitBallot appConfig proposalHash ballot
         when (vs == VoteStep_Done) $ withDbAndConfig db appConfig $ do
           let bv = BakerVote
                 { _bakerVote_pkh = pkh
-                , _bakerVote_proposal = p
+                , _bakerVote_proposalHash = proposalHash
                 , _bakerVote_ballot = ballot
                 , _bakerVote_included = Nothing
                 , _bakerVote_attempted = attempted
+                , _bakerVote_chainId = chainId
                 }
           insert_ bv
           notify NotifyTag_BakerVote $ Just bv
@@ -651,7 +674,7 @@ submitVote appConfig db nds sk p b = LedgerQuery LedgerQueryType_Vote $ do
 
 submitProposals :: (MonadLoggerIO m) => AppConfig -> [ProtocolHash] -> m (VoteStep, [Text])
 submitProposals appConfig proposals = do
-  e <- runExceptT $ runClientCommandReturnsStderr appConfig noTimeout (["submit", "proposals", "for", T.unpack kilnLedgerAlias] ++ map (T.unpack . toBase58Text) proposals) $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommandReturnsStderr appConfig noTimeout (["submit", "proposals", "for", T.unpack kilnLedgerAlias] ++ map (T.unpack . protocolHashToBase58Text) proposals) $ \_warnings errors -> if
     | "Submission failed because of invalid proposals." : _ <- errors -> Left $ VoteStep_Failed "Invalid proposals"
     | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
     | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
@@ -664,7 +687,7 @@ submitProposals appConfig proposals = do
 
 submitBallot :: (MonadLoggerIO m) => AppConfig -> ProtocolHash -> Ballot -> m (VoteStep, [Text])
 submitBallot appConfig proposal ballot = do
-  e <- runExceptT $ runClientCommandReturnsStderr appConfig noTimeout ["submit", "ballot", "for", T.unpack kilnLedgerAlias, T.unpack (toBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
+  e <- runExceptT $ runClientCommandReturnsStderr appConfig noTimeout ["submit", "ballot", "for", T.unpack kilnLedgerAlias, T.unpack (protocolHashToBase58Text proposal), ballotText ballot] $ \_warnings errors -> if
     | "Ledger Application level error (sign): Unregistered status message" : _ <- errors -> Left $ VoteStep_Failed "Not in wallet app"
     | "Ledger Application level error (sign): Conditions of use not satisfied" : _ <- errors -> Left VoteStep_Declined
     | "Unauthorized ballot" : _ <- errors -> Left $ VoteStep_Failed "Unauthorized ballot"

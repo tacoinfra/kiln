@@ -27,7 +27,7 @@ data BakerBootstrapError
 instance Buildable BakerBootstrapError where
   build = \case
     BakerBootstrapError mbProto ->
-      "tezos-baker is not available for the given protocol: " +| build (maybe "<unknown protocol>" toBase58Text mbProto)
+      "tezos-baker is not available for the given protocol: " +| build (maybe "<unknown protocol>" protocolHashToBase58Text mbProto)
 
 data ErrorTrace
   = ErrorTrace_LedgerNotFound

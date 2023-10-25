@@ -496,7 +496,7 @@ appHeader = SemUi.segment (def & SemUi.segmentConfig_vertical SemUi.|~ True) $ d
       let dProtoText = dmLatestHead <&> \mLatestHead ->
             case (mLatestHead, mCustomProtocol) of
               (_, Just customProtocol) -> customProtocol
-              (Just latestHead', _) -> latestHead' ^. protocolHash. to toBase58Text
+              (Just latestHead', _) -> latestHead' ^. protocolHash. to protocolHashToBase58Text
               _ -> "Unknown"
       divClass "tooltip-description" $ el "p" $ do
         whenJustDyn dmLatestHead $ \_ -> copyButton (current dProtoText)

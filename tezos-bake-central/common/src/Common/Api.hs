@@ -96,7 +96,7 @@ data PublicRequest a where
     -> PublicRequest ()
   PublicRequest_DoVote
     :: SecretKey
-    -> Id PeriodProposal
+    -> ProtocolHash
     -> Maybe Ballot -- When 'Nothing', vote for proposal rather than submitting a ballot
     -> PublicRequest ()
   PublicRequest_RestartKilnBaker

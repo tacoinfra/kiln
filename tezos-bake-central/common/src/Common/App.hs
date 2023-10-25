@@ -110,13 +110,13 @@ instance FromJSON e => FromJSON a => FromJSON (Validation e a)
 instance ToJSON e => ToJSON a => ToJSON (Validation e a)
 
 pattern NairobiProtocolHash :: ProtocolHash
-pattern NairobiProtocolHash = "PtNairobiyssHuh87hEhfVBGCVrK3WnS8Z2FT4ymB5tAa4r1nQf"
+pattern NairobiProtocolHash = ProtocolHash "PtNairobiyssHuh87hEhfVBGCVrK3WnS8Z2FT4ymB5tAa4r1nQf"
 
 pattern MumbaiProtocolHash :: ProtocolHash
-pattern MumbaiProtocolHash = "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
+pattern MumbaiProtocolHash = ProtocolHash "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
 
 pattern OxfordProtocolHash :: ProtocolHash
-pattern OxfordProtocolHash = "ProxfordSW2S7fvchT1Zgj2avb5UES194neRyYVXoaDGvF9egt8"
+pattern OxfordProtocolHash = ProtocolHash "ProxfordSW2S7fvchT1Zgj2avb5UES194neRyYVXoaDGvF9egt8"
 
 data DaemonType
   = DaemonType_Node

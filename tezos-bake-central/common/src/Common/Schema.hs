@@ -528,7 +528,8 @@ data PeriodVote = PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodTestingVote = PeriodTestingVote
-  { _periodTestingVote_proposal :: Id PeriodProposal
+  { _periodTestingVote_proposalHash :: ProtocolHash
+  , _periodTestingVote_chainId :: ChainId
   , _periodTestingVote_periodVote :: PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
@@ -539,17 +540,20 @@ instance Aeson.ToJSON TestChainStatus
 instance Aeson.FromJSON TestChainStatus
 
 data PeriodTesting = PeriodTesting
-  { _periodTesting_proposal :: Id PeriodProposal
+  { _periodTesting_proposalHash :: ProtocolHash
+  , _periodTesting_chainId :: ChainId
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 data PeriodPromotionVote = PeriodPromotionVote
-  { _periodPromotionVote_proposal :: Id PeriodProposal
+  { _periodPromotionVote_proposalHash :: ProtocolHash
+  , _periodPromotionVote_chainId :: ChainId
   , _periodPromotionVote_periodVote :: PeriodVote
   } deriving (Eq, Ord, Generic, Typeable, Show)
 
 -- There is no actual voting in this period.
 data PeriodAdoption = PeriodAdoption
-  { _periodAdoption_proposal :: Id PeriodProposal
+  { _periodAdoption_proposalHash :: ProtocolHash
+  , _periodAdoption_chainId :: ChainId
   , _periodAdoption_periodVote :: PeriodVote
   }
    deriving (Eq, Ord, Generic, Typeable, Show)
@@ -565,7 +569,8 @@ data BakerProposal = BakerProposal
 -- Exploration/promotion period
 data BakerVote = BakerVote
   { _bakerVote_pkh :: PublicKeyHash
-  , _bakerVote_proposal :: Id PeriodProposal
+  , _bakerVote_proposalHash :: ProtocolHash
+  , _bakerVote_chainId :: ChainId
   , _bakerVote_ballot :: Ballot
   , _bakerVote_included :: Maybe BlockHash
   , _bakerVote_attempted :: Maybe BlockHash

@@ -176,30 +176,30 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
 
   bakerVote <- maybeViewHandler _bakeViewSelector_bakerVote $ Just <$> do
     results <- [queryQ|
-      SELECT v.pkh, v.proposal, v.ballot, v.included, v.attempted
+      SELECT v.pkh, v."proposalHash", v.ballot, v.included, v.attempted, v."chainId"
       FROM "BakerVote" v
-      JOIN "PeriodProposal" p ON p.id = v.proposal
-      WHERE p."chainId" = ?chainId
+      WHERE v."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(pkh, proposal, ballot, included, attempted) -> BakerVote
+    pure $ listToMaybe $ results <&> \(pkh, proposalHash, ballot, included, attempted, chId) -> BakerVote
       { _bakerVote_pkh = pkh
-      , _bakerVote_proposal = proposal
+      , _bakerVote_proposalHash = proposalHash
       , _bakerVote_ballot = ballot
       , _bakerVote_included = included
       , _bakerVote_attempted = attempted
+      , _bakerVote_chainId = chId
       }
 
   periodTestingVote <- maybeViewHandler _bakeViewSelector_periodTestingVote $ Just <$> do
     results <- [queryQ|
-      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower"
+      SELECT v."proposalHash", v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower", v."chainId"
       FROM "PeriodTestingVote" v
-      JOIN "PeriodProposal" p ON p.id = v.proposal
-      WHERE p."chainId" = ?chainId
+      WHERE v."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodTestingVote
-      { _periodTestingVote_proposal = p
+    pure $ listToMaybe $ results <&> \(ph, by, bn, bp, q, t, chId) -> PeriodTestingVote
+      { _periodTestingVote_proposalHash = ph
+      , _periodTestingVote_chainId = chId
       , _periodTestingVote_periodVote = PeriodVote
         { _periodVote_ballots = ProtoAgnosticBallots
           { _protoAgnosticBallots_yay = by
@@ -212,26 +212,27 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
       }
 
   periodTesting <- maybeViewHandler _bakeViewSelector_periodTesting $ Just <$> do
-    results <- fromOnly <<$>> [queryQ|
-      SELECT t.proposal
+    results <- [queryQ|
+      SELECT t."proposalHash", t."chainId"
       FROM "PeriodTesting" t
-      JOIN "PeriodProposal" p ON p.id = t.proposal
-      WHERE p."chainId" = ?chainId
+      WHERE t."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \p -> PeriodTesting
-      { _periodTesting_proposal = p }
+    pure $ listToMaybe $ results <&> \(ph, chId) -> PeriodTesting
+      { _periodTesting_proposalHash = ph
+      , _periodTesting_chainId = chId
+      }
 
   periodPromotionVote <- maybeViewHandler _bakeViewSelector_periodPromotionVote $ Just <$> do
     results <- [queryQ|
-      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower"
+      SELECT v."proposalHash", v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower", v."chainId"
       FROM "PeriodPromotionVote" v
-      JOIN "PeriodProposal" p ON p.id = v.proposal
-      WHERE p."chainId" = ?chainId
+      WHERE v."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodPromotionVote
-      { _periodPromotionVote_proposal = p
+    pure $ listToMaybe $ results <&> \(ph, by, bn, bp, q, t, chId) -> PeriodPromotionVote
+      { _periodPromotionVote_proposalHash = ph
+      , _periodPromotionVote_chainId = chId
       , _periodPromotionVote_periodVote = PeriodVote
         { _periodVote_ballots = ProtoAgnosticBallots
           { _protoAgnosticBallots_yay = by
@@ -245,14 +246,14 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
 
   periodAdoption <- maybeViewHandler _bakeViewSelector_periodAdoption $ Just <$> do
     results <- [queryQ|
-      SELECT v.proposal, v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower"
+      SELECT v."proposalHash", v."periodVote#ballots#yay", v."periodVote#ballots#nay", v."periodVote#ballots#pass", v."periodVote#quorum", v."periodVote#totalVotingPower", v."chainId"
       FROM "PeriodAdoption" v
-      JOIN "PeriodProposal" p ON p.id = v.proposal
-      WHERE p."chainId" = ?chainId
+      WHERE v."chainId" = ?chainId
       LIMIT 1
     |]
-    pure $ listToMaybe $ results <&> \(p,by,bn,bp,q,t) -> PeriodAdoption
-      { _periodAdoption_proposal = p
+    pure $ listToMaybe $ results <&> \(ph, by, bn, bp, q, t, chId) -> PeriodAdoption
+      { _periodAdoption_proposalHash = ph
+      , _periodAdoption_chainId = chId
       , _periodAdoption_periodVote = PeriodVote
         { _periodVote_ballots = ProtoAgnosticBallots
           { _protoAgnosticBallots_yay = by
