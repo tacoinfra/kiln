@@ -474,15 +474,7 @@ instance Aeson.ToJSONKey NamedChainOrChainId where
 data ProtocolIndex = ProtocolIndex
   { _protocolIndex_chainId :: ChainId
   , _protocolIndex_hash :: ProtocolHash
-  , _protocolIndex_jsonConstants :: Json Aeson.Value
   , _protocolIndex_constants :: ProtoInfo
-  , _protocolIndex_proto :: Word8
-  , _protocolIndex_firstBlockHash :: Maybe BlockHash
-  , _protocolIndex_firstBlockPredecessor :: Maybe BlockHash
-  , _protocolIndex_firstBlockLevel :: Maybe RawLevel
-  , _protocolIndex_firstBlockFitness :: Maybe Fitness
-  , _protocolIndex_firstBlockTimestamp :: Maybe UTCTime
-  , _protocolIndex_firstBlockCycle :: Maybe Cycle
   } deriving (Eq, Show, Generic, Typeable)
 instance HasId ProtocolIndex where
   type IdData ProtocolIndex = (ChainId, ProtocolHash)
