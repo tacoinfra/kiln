@@ -845,7 +845,7 @@ downloadSnapshotMetadata mgr providerUri = do
 -- that is used by Kiln.
 -- 2. If there is none, try to find the snapshot made by the same major version
 -- of 'octez-node' and less - minor version with 'snapshot_version' equal to the
--- snapshot version which is supported by current version of Kiln node (currently set to 5).
+-- snapshot version which is supported by current version of Kiln node (currently set to 6).
 -- 3. If there is none, try to find the snapshot with the 'snapshot_version' which
 -- is supported by Kiln node.
 --
@@ -878,7 +878,8 @@ findLatestCompatibleSnapshot appConfig kilnNodeVersion neededSnapshotVersion met
       && isTezosSnapshot m
       && isCompatibleSnapshotVersion m
     isCompatibleSnapshotVersion m =
-      m ^. snapshotMetadata_snapshotVersion == Just neededSnapshotVersion
+      let versionDiff = subtract <$> (m ^. snapshotMetadata_snapshotVersion) <*> Just neededSnapshotVersion
+      in versionDiff `elem` [Just 0, Just 1]
     isNeededChain chainName m = m ^. snapshotMetadata_chainName == chainName
     isRolling m = m ^. snapshotMetadata_historyMode
       == SnapshotHistoryMode_Rolling

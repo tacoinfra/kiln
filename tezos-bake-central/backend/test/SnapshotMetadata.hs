@@ -61,6 +61,24 @@ testFindLatestSnapshotWithSameMajorVersion = baseMetadataTest
       , _snapshotMetadata_snapshotVersion = Just 5
     }
 
+testCanPickSnapshotWithOneLessSnapshotVersion :: TestTree
+testCanPickSnapshotWithOneLessSnapshotVersion = baseMetadataTest
+  "Can pick the snapshot with 'snapshot_version' one less than specified one"
+  "test/resources/metadata_5.json"
+  (MajorMinorVersion 17 3 Nothing Release)
+  neededSnapshotVersion $
+  SnapshotMetadata
+    { _snapshotMetadata_blockHeight = 100
+    , _snapshotMetadata_blockHash = BlockHash "BLagBK76j8WwzqZbaFnZo1mgziHcoZoDXqddSzDPd2LL8qPZdcb"
+    , _snapshotMetadata_blockTimestamp = parseTime "2023-09-06T23:04:55"
+    , _snapshotMetadata_url = "https://mainnet-v17-shots.nyc3.digitaloceanspaces.com/mainnet-4185583.rolling"
+    , _snapshotMetadata_chainName = "mainnet"
+    , _snapshotMetadata_historyMode = SnapshotHistoryMode_Rolling
+    , _snapshotMetadata_artifactType = SnapshotArtifactType_TezosSnapshot
+    , _snapshotMetadata_tezosVersion = MajorMinorVersion 16 1 Nothing Release
+    , _snapshotMetadata_snapshotVersion = Just 4
+    }
+
 testThrowsErrorWhenCouldntFindCompatibleSnapshot :: TestTree
 testThrowsErrorWhenCouldntFindCompatibleSnapshot =
   testCase "Throws error when couldn't find compatible snapshot" $ do
