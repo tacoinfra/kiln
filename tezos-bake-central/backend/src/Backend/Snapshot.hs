@@ -106,6 +106,14 @@ instance FromJSON SnapshotInfoResult where
     sirTimestamp <- h .: "timestamp"
     pure $ SnapshotInfoResult {..}
 
+-- | This data type represents the policy of reporting the errors
+-- when a snapshot download action runs more than once
+-- (e.g. in case of retries and using the fallback options)
+data ErrorReportPolicy
+  = DontReportError -- ^ Don't report error to user since it will be retried
+  | ReportError -- ^ Report the error to user
+  | OverrideUrl URI -- ^ Report the error, but override the url in the error message (used when fallback options are used)
+
 -- | Execute the 'octez-node snapshot info <path> --json' command and
 -- return either @SnapshotInfoResult@ or error message in case of
 -- command execution/result decoding error.
@@ -624,6 +632,14 @@ snapshotProviderUri = \case
   KnownSnapshotProvider_XtzShots -> xtzShotsMetadataUri
   KnownSnapshotProvider_Marigold -> marigoldMetadataUri
 
+-- | In case when we couldn't find the compatible snapshot in
+-- a given provider's metadata, we use the second known provider
+-- as a fallback option.
+fallbackProviderUri :: KnownSnapshotProvider -> URI
+fallbackProviderUri = \case
+  KnownSnapshotProvider_XtzShots -> marigoldMetadataUri
+  KnownSnapshotProvider_Marigold -> xtzShotsMetadataUri
+
 -- | URI of Xtz-shots snapshot metadata.
 xtzShotsMetadataUri :: URI
 xtzShotsMetadataUri = [Uri.uri|https://xtz-shots.io/tezos-snapshots.json|]
@@ -673,7 +689,7 @@ handleDownloadSnapshotByUrlOverloaded appConfig nds uri =
         ]
       $(logDebug) $ "Trying to download snapshot from provider: " <> uriText
       resFromProvider <- try @_ @SomeException $
-        handleDownloadSnapshotFromProviderSync appConfig nds uri smId False
+        handleDownloadSnapshotFromProviderSync appConfig nds uri smId DontReportError
       whenLeft resFromProvider $ \e' -> do
         $(logError) $ T.unlines
           [ "Failed to download snapshot from provider:"
@@ -688,7 +704,7 @@ handleDownloadSnapshotByUrlOverloaded appConfig nds uri =
             , renderStr uri
             ]
         $(logDebug) $ "Trying to download snapshot from provider: " <> render uri'
-        handleDownloadSnapshotFromProviderSync appConfig nds uri' smId True
+        handleDownloadSnapshotFromProviderSync appConfig nds uri' smId ReportError
   where
     logger = _nodeDataSource_logger nds
     uriText = render uri
@@ -706,9 +722,9 @@ handleDownloadSnapshotFromProviderSync
   -> NodeDataSource
   -> URI
   -> SnapshotMetaId
-  -> Bool
+  -> ErrorReportPolicy
   -> m ()
-handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId shouldHandleFailure = runLoggingEnv logger $ do
+handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId errPolicy = runLoggingEnv logger $ do
   let
     handleFetchMetadataError (e :: SomeException) = do
       $(logError) $ "Snapshot download failed with: " <> tshow e
@@ -716,8 +732,10 @@ handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId shouldHand
       -- an error has occurred until we have tried all the download options.
       --
       -- See 'handleDownloadSnapshotByUrlOverloaded' for more context.
-      when shouldHandleFailure $
-        handleSnapshotDownloadFailure nds smId errText
+      case errPolicy of
+        DontReportError -> pure ()
+        ReportError -> handleSnapshotDownloadFailure nds smId $ mkErrorText providerUrl
+        OverrideUrl u -> handleSnapshotDownloadFailure nds smId $ mkErrorText u
       throw e
   $(logDebug) $ "Downloading snapshot metadata from " <> T.pack (renderStr providerUrl)
   latestSnapshotMetadata <- handle handleFetchMetadataError $ do
@@ -737,9 +755,9 @@ handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId shouldHand
     logger = _nodeDataSource_logger nds
     db = _nodeDataSource_pool nds
     httpMgr = _nodeDataSource_httpMgr nds
-    errText = T.concat
+    mkErrorText url = T.concat
       [ "Unable to download latest snapshot from "
-      , render providerUrl
+      , render url
       , ". Please choose another option."
       ]
 
@@ -773,10 +791,30 @@ handleDownloadSnapshotFromProviderAsync
   -> NodeDataSource
   -> KnownSnapshotProvider
   -> m ()
-handleDownloadSnapshotFromProviderAsync appConfig nds provider = runLoggingEnv (_nodeDataSource_logger nds) $ do
+handleDownloadSnapshotFromProviderAsync appConfig nds provider = runLoggingEnv logger $ do
   (smId, _) <- initSnapshotMeta appConfig Nothing nds Nothing
-  void $ liftIO $ forkIO $
-    handleDownloadSnapshotFromProviderSync appConfig nds (snapshotProviderUri provider) smId True
+  void $ liftIO $ forkIO $ do
+    let
+      downloadFromProvider uri errPolicy =
+        handleDownloadSnapshotFromProviderSync appConfig nds uri smId errPolicy
+
+      handler :: MonadIO m => SomeException -> m ()
+      handler e = runLoggingEnv logger $ do
+        $(logDebug) $ T.concat
+          [ "Failed to download the snapshot from "
+          , render (snapshotProviderUri provider)
+          , ":\n"
+          , tshow e
+          , "\nTrying to download from the fallback provider: "
+          , render (fallbackProviderUri provider)
+          ]
+        -- Here we use 'OverrideUrl' policy to mention the provider that user initially selected, not the fallback
+        -- provider, in the error message on UI
+        liftIO $ downloadFromProvider (fallbackProviderUri provider) (OverrideUrl $ snapshotProviderUri provider)
+
+    handle handler $ downloadFromProvider (snapshotProviderUri provider) DontReportError
+  where
+    logger = _nodeDataSource_logger nds
 
 -- | Download the list of snapshot metadata from the given provider url.
 downloadSnapshotMetadata
