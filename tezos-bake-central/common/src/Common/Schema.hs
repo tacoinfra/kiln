@@ -51,12 +51,10 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as AesonE
 import Data.Aeson.GADT (deriveJSONGADT)
 import Data.Aeson.TH (deriveJSON)
-import qualified Data.Aeson.TH as Aeson
 import Data.Constraint.Extras.TH (deriveArgDict)
 import Data.Dependent.Sum.Orphans ()
 import Data.GADT.Compare.TH (deriveGCompare, deriveGEq)
 import Data.GADT.Show.TH (deriveGShow)
-import qualified Data.HashMap.Strict as HashMap
 import Data.Int (Int32, Int64)
 import Data.Semigroup (Semigroup, (<>))
 import Data.Some (Some (..))
@@ -78,7 +76,6 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Common.Accusation
-import Tezos.Common.Json (tezosJsonOptions)
 import Tezos.Common.NodeRPC.Types (AsRpcError (asRpcError), RpcError)
 import Tezos.Types
 
@@ -1178,6 +1175,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ProcessData
   , ''ProcessState
   , ''ProtoAgnosticBallots
+  , ''ProtocolIndex
   , ''RightKind
   , ''RightNotificationLimit
   , ''RightNotificationSettings
@@ -1327,21 +1325,6 @@ errorLogNames =
   , ''ErrorLogNodeWrongChain
   , ''ErrorLogVotingReminder
   ]
-
-instance Aeson.ToJSON ProtocolIndex where
-  toJSON protoIndex =
-    case $(Aeson.mkToJSON tezosJsonOptions ''ProtocolIndex) protoIndex of
-      Aeson.Object o ->
-        case HashMap.lookup "json_constants" o of
-          Nothing -> error "the 'impossible' happened: the _protocolIndex_jsonConstants field is missing"
-          Just jc -> Aeson.Object $ HashMap.insert "constants" jc $ HashMap.delete "json_constants" o
-      _ -> error "the 'impossible' happened: ProtocolIndex is not a JSON object"
-
-instance Aeson.FromJSON ProtocolIndex where
-  parseJSON = Aeson.withObject "ProtocolIndex" $ \o -> do
-    jc :: Aeson.Value <- o Aeson..: "constants"
-    let o' = HashMap.insert "json_constants" jc o
-    $(Aeson.mkParseJSON tezosJsonOptions ''ProtocolIndex) (Aeson.Object o')
 
 makePrisms ''AdditionalInfo
 
