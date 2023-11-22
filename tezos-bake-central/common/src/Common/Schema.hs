@@ -861,9 +861,11 @@ data ErrorLogBakerMissed = ErrorLogBakerMissed
   { _errorLogBakerMissed_log :: Id ErrorLog
   , _errorLogBakerMissed_baker :: Id Baker
   , _errorLogBakerMissed_right :: RightKind
-  , _errorLogBakerMissed_level :: RawLevel
-  , _errorLogBakerMissed_fitness :: Fitness
-  , _errorLogBakerMissed_bakeTime :: UTCTime
+  , _errorLogBakerMissed_firstLevel :: RawLevel
+  , _errorLogBakerMissed_firstBakeTime :: UTCTime
+  , _errorLogBakerMissed_lastLevel :: RawLevel
+  , _errorLogBakerMissed_lastBakeTime :: UTCTime
+  , _errorLogBakerMissed_count :: Int
   } deriving (Eq, Ord, Generic, Typeable, Show)
 instance HasId ErrorLogBakerMissed where
   type IdData ErrorLogBakerMissed = Id ErrorLog

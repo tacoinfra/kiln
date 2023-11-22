@@ -787,7 +787,7 @@ instance HasAlertMetaData (BakerLogTag a) where
           , _alertMetaData_severity = AlertSeverity_Error
           }
     BakerLogTag_BakerMissed ->
-      def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
+      def { _alertMetaData_isEventBased = False, _alertMetaData_isUserResolvable = True }
     BakerLogTag_MissedEndorsementBonus ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_NeedToResetHWM -> def { _alertMetaData_severity = AlertSeverity_Warning }
@@ -1022,6 +1022,16 @@ liveErrorsWidget = void $ do
           BakerLogTag_BakerAccused -> renderBakerError
             (bakerAccusedDescriptions log)
             pkh
+          BakerLogTag_BakerMissed | _errorLogBakerMissed_count log > 1 -> do
+            let cnt = _errorLogBakerMissed_count log
+                firstLevel = _errorLogBakerMissed_firstLevel log
+                firstTime = _errorLogBakerMissed_firstBakeTime log
+                lastLevel = _errorLogBakerMissed_lastLevel log
+                lastTime = _errorLogBakerMissed_lastBakeTime log
+                right = _errorLogBakerMissed_right log
+            tz <- asks (^. timeZone)
+            flip renderBakerError pkh $ bakerGroupedMissedDescriptions
+              tz cnt (firstLevel, firstTime) (lastLevel, lastTime) right
           BakerLogTag_BakerMissed -> renderBakerError
             (bakerMissedDescriptions log)
             pkh
@@ -2475,7 +2485,7 @@ bakersTab =
                     BakerLogTag_VotingReminder -> Nothing
                   Right (BakerAlert_GroupedAlert GroupedBakerAlert{..}) ->
                     Just $ el "span" $ do
-                      elClass "span" "ui label circular" $ text $ tshow (length _groupedBakerAlert_logs)
+                      elClass "span" "ui label circular" $ text $ tshow _groupedBakerAlert_count
                       text nbsp
                       text $ "Missed " <> subj <> "."
                       where
@@ -2600,7 +2610,7 @@ bakersTab =
                 ev = fmap (\l -> LogTag_Baker BakerLogTag_BakerMissed :=> Const l) logs
                 errMsg = "Inconsistent state of grouped alert. 'right' should be 'Just' value for 'MissedBake' alert."
                 rightKind = fromMaybe (error errMsg) _groupedBakerAlert_right
-              in renderBakerError ev (pure $ bakerGroupedMissedDescriptions tz (length logs) first' latest' rightKind) pkh
+              in renderBakerError ev (pure $ bakerGroupedMissedDescriptions tz _groupedBakerAlert_count first' latest' rightKind) pkh
             GroupedAlertType_MissedEndorsementBonus ->
               let ev = fmap (\l -> LogTag_Baker BakerLogTag_MissedEndorsementBonus :=> Const l) logs
               in renderBakerError ev (pure $ bakerGroupedMissedBonusDescriptions tz (length logs) first' latest') pkh

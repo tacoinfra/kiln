@@ -287,7 +287,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
   , _bakerErrorDescriptions_resolved = const ("Dismissed", "Dismissed")
   }
   where
-    lvl = tshow $ unRawLevel $ _errorLogBakerMissed_level elog
+    lvl = tshow $ unRawLevel $ _errorLogBakerMissed_firstLevel elog
     (aRight, toRight) = case _errorLogBakerMissed_right elog of
       RightKind_Baking -> ("a bake", "to bake")
       RightKind_Endorsing -> ("an endorsement", "to endorse")
@@ -296,7 +296,7 @@ bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (Raw
 bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker missed " <> aRight
   , _bakerErrorDescriptions_tile = "Missed " <> aRight <> "."
-  , _bakerErrorDescriptions_notification = "This baker failed " -- TODO: ... failed what
+  , _bakerErrorDescriptions_notification = "This baker has missed " <> tshow count <> " " <> opportunity <> "."
   , _bakerErrorDescriptions_problem =
       [ "This baker has missed " <> errorEmphasis (tshow count <> " " <> opportunity) <> "."
       , "The first " <> theRight <> " missed was for "

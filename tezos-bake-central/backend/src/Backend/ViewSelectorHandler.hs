@@ -32,7 +32,7 @@ import Data.Functor.Apply (liftF2)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Dependent.Sum (DSum(..))
-import Data.List (dropWhileEnd, intersperse, minimumBy, maximumBy)
+import Data.List (dropWhileEnd, intersperse, minimumBy, maximumBy, (\\))
 import qualified Data.List.NonEmpty as NEL
 import Data.Maybe (mapMaybe)
 import qualified Data.Map as Map
@@ -539,21 +539,17 @@ getBakerAlert chainId = do
             -- groupable baker alerts
             BakerLogTag_BakerMissed -> case NEL.nonEmpty elogs of
               Nothing -> []
-              Just (elog :| []) -> pure $ BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity elog)
-              Just ls ->
-                let
-                  elog = NEL.head ls
-                  getLvl = _errorLogBakerMissed_level
-                  getBakeTime = _errorLogBakerMissed_bakeTime
-                  applyF f = (\el -> (getLvl el, getBakeTime el)) $ f (comparing getBakeTime) elogs
-                in pure $ BakerAlert_GroupedAlert $  GroupedBakerAlert
-                  { _groupedBakerAlert_type = GroupedAlertType_MissedBake
-                  , _groupedBakerAlert_first = applyF minimumBy
-                  , _groupedBakerAlert_latest = applyF maximumBy
-                  , _groupedBakerAlert_right = Just $ _errorLogBakerMissed_right elog
-                  , _groupedBakerAlert_baker = _errorLogBakerMissed_baker elog
-                  , _groupedBakerAlert_logs = _errorLogBakerMissed_log <$> ls
-                  }
+              Just (elog :| _) | _errorLogBakerMissed_count elog == 1 ->
+                pure $ BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity elog)
+              Just (elog :| _) -> pure $ BakerAlert_GroupedAlert $  GroupedBakerAlert
+                { _groupedBakerAlert_type = GroupedAlertType_MissedBake
+                , _groupedBakerAlert_first = (_errorLogBakerMissed_firstLevel elog, _errorLogBakerMissed_firstBakeTime elog)
+                , _groupedBakerAlert_latest = (_errorLogBakerMissed_lastLevel elog, _errorLogBakerMissed_lastBakeTime elog)
+                , _groupedBakerAlert_right = Just $ _errorLogBakerMissed_right elog
+                , _groupedBakerAlert_baker = _errorLogBakerMissed_baker elog
+                , _groupedBakerAlert_logs = _errorLogBakerMissed_log elog :| []
+                , _groupedBakerAlert_count = _errorLogBakerMissed_count elog
+                }
             BakerLogTag_MissedEndorsementBonus -> case NEL.nonEmpty elogs of
               Nothing -> []
               Just (elog :| []) -> pure $ BakerAlert_Alert (BakerLogTag_MissedEndorsementBonus :=> Identity elog)
@@ -570,6 +566,7 @@ getBakerAlert chainId = do
                     , _groupedBakerAlert_right = Nothing
                     , _groupedBakerAlert_baker = _errorLogBakerMissedEndorsementBonus_baker elog
                     , _groupedBakerAlert_logs = _errorLogBakerMissedEndorsementBonus_log <$> ls
+                    , _groupedBakerAlert_count = length ls
                     }
 
             -- non-groupable baker alerts
@@ -583,12 +580,14 @@ getAlertCount
   :: forall m.
   ( MonadLogger m
   , PersistBackend m
+  , PostgresRaw m
   )
   => ChainId
   -> m (DMap LogTag (Const Int))
-getAlertCount chainId = DMap.fromList . concat <$> traverse (\(Some lTag) -> do
-  (x, _) <- runQuery lTag
-  pure $ map (\(t, v) -> t :=> Const v) x) universe
+getAlertCount chainId = do
+  bakerMissedAlerts <- bakerMissedAlertCount
+  otherAlerts <- fmap concat $ traverse alertCountForLogTag logTags
+  pure $ DMap.fromList $ bakerMissedAlerts ++ otherAlerts
   where
     {-# INLINE queryAlert #-}
     queryAlert
@@ -621,6 +620,31 @@ getAlertCount chainId = DMap.fromList . concat <$> traverse (\(Some lTag) -> do
     runQuery lTag = do
       vus <- logAssume lTag $ queryAlert (singleConstructor $ proxify lTag) (logDep lTag)
       pure $ (\(vs, u) -> (map (\v -> (lTag, v)) vs, lTag :=> u)) vus
+
+    -- We exclude 'ErrorLogBakerMissed' alert there and handle it
+    -- separately since this db table has different structure
+    -- than otehr 'ErrorLog*' tables.
+    logTags :: [Some LogTag]
+    logTags = universe \\ [Some $ LogTag_Baker BakerLogTag_BakerMissed]
+
+    alertCountForLogTag :: Some LogTag -> m [DSum LogTag (Const Int)]
+    alertCountForLogTag (Some lTag) = do
+      (x, _) <- runQuery lTag
+      pure $ map (\(t, v) -> t :=> Const v) x
+
+    bakerMissedAlertCount :: m [DSum LogTag (Const Int)]
+    bakerMissedAlertCount = do
+      -- postgres returns 'numeric' type for the result of 'SUM' query,
+      -- so we need to explicitly cast it to integer to avoid
+      -- 'incompatible types' runtime error.
+      res :: [Integer] <- stripOnly <$> [queryQ|
+        SELECT CAST(COALESCE(SUM(elbm.count), 0) AS INTEGER) FROM "ErrorLog" el
+        JOIN "ErrorLogBakerMissed" elbm ON elbm.log = el.id
+        WHERE el.stopped IS NULL
+        AND el."chainId" = ?chainId
+      |]
+      let taggedRes = (\x -> (LogTag_Baker BakerLogTag_BakerMissed, fromIntegral x)) <$> res
+      pure $ map (\(t, v) -> t :=> Const v) taggedRes
 
 getBakerAddresses
   :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m, MonadMask m)
