@@ -527,6 +527,21 @@ getBakerAlert chainId = do
       , let k = bakerIdForBakerErrorLogView t'
       ]
 
+    groupBakerMissedAlerts :: Maybe (NonEmpty ErrorLogBakerMissed) -> [BakerAlert]
+    groupBakerMissedAlerts = \case
+      Nothing -> []
+      Just (elog :| _) | _errorLogBakerMissed_count elog == 1 ->
+        pure $ BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity elog)
+      Just (elog :| _) -> pure $ BakerAlert_GroupedAlert $ GroupedBakerAlert
+        { _groupedBakerAlert_type = GroupedAlertType_MissedBake
+        , _groupedBakerAlert_first = (_errorLogBakerMissed_firstLevel elog, _errorLogBakerMissed_firstBakeTime elog)
+        , _groupedBakerAlert_latest = (_errorLogBakerMissed_lastLevel elog, _errorLogBakerMissed_lastBakeTime elog)
+        , _groupedBakerAlert_right = Just $ _errorLogBakerMissed_right elog
+        , _groupedBakerAlert_baker = _errorLogBakerMissed_baker elog
+        , _groupedBakerAlert_logs = _errorLogBakerMissed_log elog :| []
+        , _groupedBakerAlert_count = _errorLogBakerMissed_count elog
+        }
+
     groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
     groupBakerAlerts bs = bakerAlerts
       where
@@ -537,19 +552,12 @@ getBakerAlert chainId = do
         bakerAlerts = DMap.toList groupedAlerts >>= \(tag :=> elogs) ->
           case tag of
             -- groupable baker alerts
-            BakerLogTag_BakerMissed -> case NEL.nonEmpty elogs of
-              Nothing -> []
-              Just (elog :| _) | _errorLogBakerMissed_count elog == 1 ->
-                pure $ BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity elog)
-              Just (elog :| _) -> pure $ BakerAlert_GroupedAlert $  GroupedBakerAlert
-                { _groupedBakerAlert_type = GroupedAlertType_MissedBake
-                , _groupedBakerAlert_first = (_errorLogBakerMissed_firstLevel elog, _errorLogBakerMissed_firstBakeTime elog)
-                , _groupedBakerAlert_latest = (_errorLogBakerMissed_lastLevel elog, _errorLogBakerMissed_lastBakeTime elog)
-                , _groupedBakerAlert_right = Just $ _errorLogBakerMissed_right elog
-                , _groupedBakerAlert_baker = _errorLogBakerMissed_baker elog
-                , _groupedBakerAlert_logs = _errorLogBakerMissed_log elog :| []
-                , _groupedBakerAlert_count = _errorLogBakerMissed_count elog
-                }
+            BakerLogTag_BakerMissed ->
+              let filterAlertsByRightKind right alerts = NEL.nonEmpty $
+                    filter ((== right) . _errorLogBakerMissed_right) alerts
+                  bakes = filterAlertsByRightKind RightKind_Baking elogs
+                  endorsements = filterAlertsByRightKind RightKind_Endorsing elogs
+              in groupBakerMissedAlerts bakes ++ groupBakerMissedAlerts endorsements
             BakerLogTag_MissedEndorsementBonus -> case NEL.nonEmpty elogs of
               Nothing -> []
               Just (elog :| []) -> pure $ BakerAlert_Alert (BakerLogTag_MissedEndorsementBonus :=> Identity elog)
