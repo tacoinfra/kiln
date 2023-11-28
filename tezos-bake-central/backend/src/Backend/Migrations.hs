@@ -8,7 +8,7 @@
 
 module Backend.Migrations where
 
-import Backend.Schema (migrateSchema)
+import Backend.Schema (migrateSchema, stripOnly)
 import Control.Monad (forM_)
 import Control.Monad.Fail (MonadFail(..))
 import Control.Monad.Logger (MonadLogger, logInfoS)
@@ -19,7 +19,7 @@ import Database.Groundhog.Generic (runMigration)
 import Database.Groundhog.Generic.Migration hiding (migrateSchema)
 import Database.PostgreSQL.Simple.Types (Identifier (..), QualifiedIdentifier (..))
 import Rhyolite.Backend.Account (migrateAccount)
-import Rhyolite.Backend.DB.PsqlSimple (Only (..), PostgresRaw, execute_, queryQ, traceExecuteQ)
+import Rhyolite.Backend.DB.PsqlSimple (In (..), Only (..), PostgresRaw, executeQ, execute_, queryQ, traceExecuteQ)
 import Rhyolite.Backend.EmailWorker (migrateQueuedEmail)
 import Safe
 import Tezos.Types (ChainId, ProtocolHash (..))
@@ -151,6 +151,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockFitness"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockTimestamp"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockCycle"
+  >=> migrateErrorLogBakerMissed
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -595,7 +596,7 @@ migrateErrorLogBakerMissedTimestamp ta = do
   let table = (Nothing, "ErrorLogBakerMissed")
   analyzeTable ta table >>= \case
     Just analyzedTable
-      | not . any ((== "bakeTime") . colName) $ tableColumns analyzedTable
+      | not ("bakeTime" `existsIn` analyzedTable || "firstBakeTime" `existsIn` analyzedTable)
       -> do
           -- Using the ErrorLog.started as Block's timestamp is not correct, but mostly a good approximation
           void [traceExecuteQ|
@@ -605,6 +606,8 @@ migrateErrorLogBakerMissedTimestamp ta = do
             |]
           getTableAnalysis
     _ -> pure ta
+  where
+    existsIn name t = any ((== name) . colName) $ tableColumns t
 
 -- This is needed to remove the firstBlockHash from the unique constraints
 -- Without this the auto migration fails to make the firstBlockHash field 'Maybe'
@@ -1163,5 +1166,29 @@ migrateBakerVoteRemovePeriodProposalRef ta = do
         ALTER TABLE "BakerVote" ALTER COLUMN "chainId" SET NOT NULL;
       |]
 
+      getTableAnalysis
+    _ -> pure ta
+
+migrateErrorLogBakerMissed :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateErrorLogBakerMissed ta = do
+  let table = (Nothing, "ErrorLogBakerMissed")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | any ((== "fitness") . colName) $ tableColumns analyzedTable -> do
+      elogs :: [Id ErrorLog] <- stripOnly <$> [queryQ|SELECT log from "ErrorLogBakerMissed";|]
+      let inErrorLogs = In elogs
+      [executeQ|
+        DELETE FROM "ErrorLogBakerMissed";
+        DELETE FROM "ErrorLog" where id in ?inErrorLogs;
+      |]
+      void [traceExecuteQ|
+        ALTER TABLE "ErrorLogBakerMissed" DROP COLUMN fitness;
+        ALTER TABLE "ErrorLogBakerMissed" DROP COLUMN level;
+        ALTER TABLE "ErrorLogBakerMissed" DROP COLUMN "bakeTime";
+        ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "firstLevel" INTEGER NOT NULL;
+        ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "lastLevel" INTEGER NOT NULL;
+        ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "firstBakeTime" TIMESTAMP WITHOUT TIME ZONE NOT NULL;
+        ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "lastBakeTime" TIMESTAMP WITHOUT TIME ZONE NOT NULL;
+        ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN count INTEGER NOT NULL;
+      |]
       getTableAnalysis
     _ -> pure ta
