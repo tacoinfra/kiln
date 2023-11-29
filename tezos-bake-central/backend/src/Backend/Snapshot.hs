@@ -879,7 +879,7 @@ findLatestCompatibleSnapshot appConfig kilnNodeVersion neededSnapshotVersion met
       && isCompatibleSnapshotVersion m
     isCompatibleSnapshotVersion m =
       let versionDiff = subtract <$> (m ^. snapshotMetadata_snapshotVersion) <*> Just neededSnapshotVersion
-      in versionDiff `elem` [Just 0, Just 1]
+      in versionDiff `elem` [Just 0, Just 1, Just 2]
     isNeededChain chainName m = m ^. snapshotMetadata_chainName == chainName
     isRolling m = m ^. snapshotMetadata_historyMode
       == SnapshotHistoryMode_Rolling
@@ -900,7 +900,7 @@ findLatestCompatibleSnapshot appConfig kilnNodeVersion neededSnapshotVersion met
 --
 -- TODO [#212] [tezos/#6319] get this info from the node.
 compatibleSnapshotVersion :: Int
-compatibleSnapshotVersion = 6
+compatibleSnapshotVersion = 7
 
 -- | Update the 'SnapshotMeta' table and set the correct internal node's
 -- process state in case of snapshot download error.
