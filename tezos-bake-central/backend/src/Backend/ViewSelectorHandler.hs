@@ -61,7 +61,7 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Safe (headMay)
@@ -582,6 +582,24 @@ getBakerAlert chainId = do
 
   pure $ mapMaybe (\(k, v) -> fmap (k,) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList bakerErrors
 
+alertTableNames :: [Text]
+alertTableNames = do
+  flip map (universe :: [Some LogTag]) $ \(Some lTag) -> do
+    logAssume lTag $ getTableName (singleConstructor $ proxify lTag)
+  where
+    getTableName
+      :: forall c b.
+         ( PersistEntity b
+         , EntityConstr b c
+         )
+      => c (ConstructorMarker b)
+      -> Text
+    getTableName ctor =
+      let entityD = entityDef pg (undefined :: b)
+          constrD = constructors entityD !! constrNum
+          constrNum = entityConstrNum (Proxy @b) ctor
+          sqlTable = tableName id entityD constrD
+      in decodeUtf8 $ fromUtf8 sqlTable
 
 {-# ANN getAlertCount ("HLint: ignore Use bimap" :: String) #-}
 getAlertCount
@@ -593,6 +611,7 @@ getAlertCount
   => ChainId
   -> m (DMap LogTag (Const Int))
 getAlertCount chainId = do
+  cleanupOldLogs
   bakerMissedAlerts <- bakerMissedAlertCount
   otherAlerts <- fmap concat $ traverse alertCountForLogTag logTags
   pure $ DMap.fromList $ bakerMissedAlerts ++ otherAlerts
@@ -653,6 +672,27 @@ getAlertCount chainId = do
       |]
       let taggedRes = (\x -> (LogTag_Baker BakerLogTag_BakerMissed, fromIntegral x)) <$> res
       pure $ map (\(t, v) -> t :=> Const v) taggedRes
+
+    cleanupOldLogs :: m ()
+    cleanupOldLogs = do
+      oldLogsIds :: [Id ErrorLog] <- stripOnly <$> [queryQ|
+        SELECT id FROM "ErrorLog"
+        WHERE stopped IS NOT NULL
+        AND NOW() - stopped > INTERVAL '3 days'
+        AND "chainId" = ?chainId;
+      |]
+      let inOldLogsIds = Pg.In oldLogsIds
+      unless (null oldLogsIds) $ do
+        for_ alertTableNames $ \tName -> do
+          let
+            escape t = "\"" <> t <> "\""
+            paren s = "(" <> s <> ")"
+            inClause = paren $ T.concat $ intersperse "," $ map (tshow . unId) oldLogsIds
+            sql = "DELETE FROM " <> escape tName <> " WHERE log in " <> inClause
+          executeRaw False (T.unpack sql) []
+        void [executeQ|
+          DELETE FROM "ErrorLog" WHERE id in ?inOldLogsIds;
+        |]
 
 getBakerAddresses
   :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m, MonadMask m)
