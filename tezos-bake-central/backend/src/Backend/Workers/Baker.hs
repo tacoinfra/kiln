@@ -404,7 +404,7 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
   -- endorsements *on* this block are *of* the previous block
   endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ nodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
   endorsingAlerts :: [AppSerializable ()]
-                    <- whenM (any (elem (_baker_publicKeyHash baker)) $ view endorsingRightsCrossCompat_delegates <$> endorsers) $ do
+                    <- whenM (any (elem (_baker_publicKeyHash baker) . view endorsingRightsCrossCompat_delegates) endorsers) $ do
       let
         blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
         mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer

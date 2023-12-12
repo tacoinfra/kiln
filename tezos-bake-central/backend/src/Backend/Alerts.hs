@@ -563,7 +563,7 @@ clearNodeInsufficientPeersError nodeId = do
     |]
     for_ lids notifyDefault
     specErrs <- catMaybes <$> for lids getIdBy
-    errs <- catMaybes <$> traverse getId (_errorLogNodeInsufficientPeers_log <$> specErrs)
+    errs <- catMaybes <$> traverse (getId . _errorLogNodeInsufficientPeers_log) specErrs
     let formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
     when (any (isJust . _errorLog_noticeSentAt) errs) $
       (getNodeName nodeId formatExtNodeName >>=) $ traverse_ $ \nodeName -> do
@@ -800,7 +800,7 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
  RETURNING t.log |]
   for_ lids notifyDefault
   specErrs <- catMaybes <$> for lids getIdBy
-  errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
+  errs <- catMaybes <$> traverse (getId . _errorLogBadNodeHead_log) specErrs
   let formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
   when (any (isJust . _errorLog_noticeSentAt) errs) $
     (getNodeName nodeId formatExtNodeName >>=) $ traverse_ $ \nodeName -> do
