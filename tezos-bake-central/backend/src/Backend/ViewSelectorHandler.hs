@@ -39,7 +39,6 @@ import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (comparing)
-import Data.Pool (Pool)
 import Data.Semigroup (sconcat)
 import Data.Some (Some(..))
 import qualified Data.Text as T
@@ -69,6 +68,7 @@ import Text.URI (render, URI)
 
 import Tezos.Types
 
+import Backend.Config (AppConfig (..))
 import Backend.Http (doRequestLBS)
 import Backend.IndexQueries (endOfPreservedCycles)
 import Backend.NodeRPC
@@ -87,9 +87,9 @@ viewSelectorHandler
   :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m, Show a)
   => FrontendConfig
   -> NodeDataSource
-  -> Pool Postgresql
+  -> AppConfig
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+viewSelectorHandler frontendConfig nds appConfig = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
   let
     maybeViewHandler
       :: Applicative m'
@@ -159,7 +159,7 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
 
       pure (telegramConfig, telegramRecipients)
 
-  alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount chainId
+  alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount appConfig
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceFinalHead nds
 
@@ -349,6 +349,8 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
     , _bakeView_rightNotificationSettings = rightNotificationSettings
     , _bakeView_bakerRegistered = mempty
     }
+  where
+    db = _nodeDataSource_pool nds
 
 pg :: Proxy Postgresql
 pg = Proxy @Postgresql
@@ -608,9 +610,9 @@ getAlertCount
   , PersistBackend m
   , PostgresRaw m
   )
-  => ChainId
+  => AppConfig
   -> m (DMap LogTag (Const Int))
-getAlertCount chainId = do
+getAlertCount appConfig = do
   cleanupOldLogs
   bakerMissedAlerts <- bakerMissedAlertCount
   otherAlerts <- fmap concat $ traverse alertCountForLogTag logTags
@@ -678,7 +680,7 @@ getAlertCount chainId = do
       oldLogsIds :: [Id ErrorLog] <- stripOnly <$> [queryQ|
         SELECT id FROM "ErrorLog"
         WHERE stopped IS NOT NULL
-        AND NOW() - stopped > INTERVAL '3 days'
+        AND NOW() - stopped > INTERVAL '?alertsTtl minutes'
         AND "chainId" = ?chainId;
       |]
       let inOldLogsIds = Pg.In oldLogsIds
@@ -693,6 +695,9 @@ getAlertCount chainId = do
         void [executeQ|
           DELETE FROM "ErrorLog" WHERE id in ?inOldLogsIds;
         |]
+
+    chainId = _appConfig_chainId appConfig
+    alertsTtl = _appConfig_resolvedAlertsTtl appConfig
 
 getBakerAddresses
   :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m, MonadMask m)

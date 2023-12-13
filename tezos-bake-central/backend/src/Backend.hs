@@ -236,10 +236,19 @@ backendImpl cfg serve = do
     validateProcessRestartMaxDelay x | x >= 0 && x <= 3600 = fromIntegral x
     validateProcessRestartMaxDelay _ = error "'process-restart-max-delay' value should be in range [1..3600]"
 
+    validateResolvedAlertsTtl x | x >= 0 && x <= 10080 = fromIntegral x
+    validateResolvedAlertsTtl _ = error "'resolved-alerts-ttl' value should be in range [0..10080]"
+
   !(processRestartMaxDelay :: NominalDiffTime) <- fmap (validateProcessRestartMaxDelay. fromMaybe Config.defaultProcessRestartMaxDelay) $
     combineConfigs
       (_opts_processRestartMaxDelay cfg)
       (getConfigFromFile (Just . read . T.unpack) $ configPath Config.processRestartMaxDelay)
+
+  !(resolvedAlertsTtl :: Int) <- fmap (validateResolvedAlertsTtl . fromMaybe Config.defaultResolvedAlertsTtl) $
+    combineConfigs
+      (_opts_resolvedAlertsTtl cfg)
+      (getConfigFromFile (Just . read . T.unpack) $ configPath Config.resolvedAlertsTtl)
+
   httpMgr <- Http.newManager Https.tlsManagerSettings
   let
     withLogger :: (LoggingEnv -> LoggingT IO a) -> IO a
@@ -370,6 +379,7 @@ backendImpl cfg serve = do
         , _appConfig_binaryPaths = binaryPaths
         , _appConfig_tezosNodeEnvVar = tezosNodeEnvVar
         , _appConfig_processRestartMaxDelay = processRestartMaxDelay
+        , _appConfig_resolvedAlertsTtl = resolvedAlertsTtl
         }
 
     dataSrc <- liftIO $ do
@@ -429,8 +439,8 @@ backendImpl cfg serve = do
       let withWs = RhyoliteWs.withWebsocketsConnectionLogging @Snap.Snap (\str e -> runLoggingEnv logger $ $logError $ T.pack $ "Websocket error: " <> str <> " " <> show e)
       (handleListen, wsFinalizer) <- RhyoliteApp.serveDbOverWebsocketsRaw withWs "v3" RhyoliteApp.functorFromWire db
         (requestHandler appConfig dataSrc)
-        (notifyHandler dataSrc)
-        (viewSelectorHandler frontendConfig dataSrc db)
+        (notifyHandler dataSrc appConfig)
+        (viewSelectorHandler frontendConfig dataSrc appConfig)
         (RhyoliteApp.queryMorphismPipeline $ RhyoliteApp.transposeMonoidMap <<< RhyoliteApp.monoidMapQueryMorphism)
       addFinalizer wsFinalizer
 
@@ -534,6 +544,7 @@ data Opts = Opts
   , _opts_rightsHistoryWindow :: Maybe Int
   , _opts_checkLedgerConnection :: Maybe Bool
   , _opts_processRestartMaxDelay :: Maybe Int
+  , _opts_resolvedAlertsTtl :: Maybe Int
   }
 makeLenses ''Opts
 
@@ -560,6 +571,7 @@ instance Semigroup Opts where
     , _opts_rightsHistoryWindow = rightBiased (<|>) _opts_rightsHistoryWindow
     , _opts_checkLedgerConnection = rightBiased (<|>) _opts_checkLedgerConnection
     , _opts_processRestartMaxDelay = rightBiased (<|>) _opts_processRestartMaxDelay
+    , _opts_resolvedAlertsTtl = rightBiased (<|>) _opts_resolvedAlertsTtl
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
@@ -588,6 +600,7 @@ instance Monoid Opts where
       , _opts_rightsHistoryWindow = Nothing
       , _opts_checkLedgerConnection = Nothing
       , _opts_processRestartMaxDelay = Nothing
+      , _opts_resolvedAlertsTtl = Nothing
       }
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -658,6 +671,10 @@ optsArgDescr =
   , mkReqArg Config.processRestartMaxDelay "INT" (set opts_processRestartMaxDelay . Just . read . T.unpack) $
       "Maximum time in seconds that Kiln will wait while automatically restarting the node and baker process. Defaults to " <>
       show Config.defaultProcessRestartMaxDelay <> " seconds."
+
+  , mkReqArg Config.resolvedAlertsTtl "INT" (set opts_resolvedAlertsTtl . Just . read . T.unpack) $
+      "Time in minutes after which resolved alerts are deleted. The value should be between 0 and 10080 (7 days). Defaults to " <>
+      show Config.defaultResolvedAlertsTtl <> " minutes (3 days)."
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)

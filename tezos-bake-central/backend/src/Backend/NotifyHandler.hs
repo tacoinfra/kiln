@@ -29,6 +29,7 @@ import Rhyolite.Backend.Schema.Class (DefaultKeyUnique)
 
 import Tezos.Types
 
+import Backend.Config (AppConfig)
 import Backend.NodeRPC
 import Backend.Schema
 import Backend.ViewSelectorHandler (getAlertCount, getNodeAddresses, getBakerAddresses, getBakerAlert)
@@ -46,10 +47,11 @@ import ExtraPrelude
 notifyHandler
   :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m)
   => NodeDataSource
+  -> AppConfig
   -> DbNotification NotifyTag
   -> BakeViewSelector a
   -> m (BakeView a)
-notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $
+notifyHandler nds appConfig notification aggVS = runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity $ _nodeDataSource_pool nds) $
   --  $(logDebugS) "NotifyHandler" (T.decodeUtf8 $ LBS.toStrict $ Aeson.encode $ _notifyMessage_value notifyMessage) *>
   {- We run use runIdentity here to help the typechecker out. Otherwise we use a ton of memory.-}
   case _dbNotification_message notification of
@@ -271,7 +273,7 @@ notifyHandler nds notification aggVS = runLoggingEnv (_nodeDataSource_logger nds
             { _bakeView_bakerAddresses = toRangeView bakerAddressesVS newBakerCounts
             }
       newCount <- whenM (viewSelects () alertCountVS) $ do
-        alertCount <- getAlertCount (_nodeDataSource_chain nds)
+        alertCount <- getAlertCount appConfig
         pure mempty
           { _bakeView_alertCount = toMaybeView alertCountVS (Just alertCount)
           }

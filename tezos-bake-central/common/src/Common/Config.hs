@@ -187,6 +187,12 @@ processRestartMaxDelay = "process-restart-max-delay"
 defaultProcessRestartMaxDelay :: Int
 defaultProcessRestartMaxDelay = 600
 
+resolvedAlertsTtl :: FilePath
+resolvedAlertsTtl = "resolved-alerts-ttl"
+
+defaultResolvedAlertsTtl :: Int
+defaultResolvedAlertsTtl = 4320 -- 3 days
+
 singleQuoted :: (IsString a, Semigroup a) => a -> a
 singleQuoted s = "'" <> s <> "'"
 
