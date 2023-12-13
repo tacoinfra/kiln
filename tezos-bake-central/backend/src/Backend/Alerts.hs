@@ -563,7 +563,7 @@ clearNodeInsufficientPeersError nodeId = do
     |]
     for_ lids notifyDefault
     specErrs <- catMaybes <$> for lids getIdBy
-    errs <- catMaybes <$> traverse getId (_errorLogNodeInsufficientPeers_log <$> specErrs)
+    errs <- catMaybes <$> traverse (getId . _errorLogNodeInsufficientPeers_log) specErrs
     let formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
     when (any (isJust . _errorLog_noticeSentAt) errs) $
       (getNodeName nodeId formatExtNodeName >>=) $ traverse_ $ \nodeName -> do
@@ -800,7 +800,7 @@ clearBadNodeHeadError nodeId = when' (nodeNotDeleted nodeId) $ do
  RETURNING t.log |]
   for_ lids notifyDefault
   specErrs <- catMaybes <$> for lids getIdBy
-  errs <- catMaybes <$> traverse getId (_errorLogBadNodeHead_log <$> specErrs)
+  errs <- catMaybes <$> traverse (getId . _errorLogBadNodeHead_log) specErrs
   let formatExtNodeName alias address = maybe "" (\x -> "Node " <> x <> " at ") alias <> address
   when (any (isJust . _errorLog_noticeSentAt) errs) $
     (getNodeName nodeId formatExtNodeName >>=) $ traverse_ $ \nodeName -> do
@@ -811,24 +811,25 @@ missedBakeLog
   :: forall m a. (PersistBackend m, PostgresRaw m, MonadReader a m, HasAppConfig a)
   => RightKind
   -> PublicKeyHash
-  -> RawLevel
-  -> m (Map (Id Baker) [(Id ErrorLog, Id ErrorLogBakerMissed, Fitness)])
-missedBakeLog right pkh lvl = do
+  -> m (Map (Id Baker) (Maybe (Id ErrorLogBakerMissed), Maybe ErrorLogBakerMissed))
+missedBakeLog right pkh = do
   chainId <- _appConfig_chainId <$> askAppConfig
-  ([queryQ|
-    SELECT b."publicKeyHash", el.id, elbm.log, elbm.fitness
+  res <- [queryQ|
+    SELECT b."publicKeyHash", el.id, elbm.log, elbm."firstLevel", elbm."firstBakeTime" AT TIME ZONE 'UTC', elbm."lastLevel", elbm."lastBakeTime" AT TIME ZONE 'UTC', elbm.count
     FROM "Baker" b
     LEFT OUTER JOIN "ErrorLogBakerMissed" elbm
       ON b."publicKeyHash" = elbm."baker#publicKeyHash"
       AND elbm.right = ?right
-      AND elbm.level = ?lvl
     LEFT OUTER JOIN "ErrorLog" el
       ON el.id = elbm.log
       AND el.stopped IS NULL
       AND el."chainId" = ?chainId
     WHERE NOT b."data#deleted"
       AND b."publicKeyHash" = ?pkh
-  |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissed), Maybe Fitness)]) <&> Map.fromList . fmap (\(bid, elid, elbmid, f) -> (bid, toList $ (,,) <$> elid <*> elbmid <*> f))
+  |] :: m [(Id Baker, Maybe (Id ErrorLog), Maybe (Id ErrorLogBakerMissed), Maybe RawLevel, Maybe UTCTime, Maybe RawLevel, Maybe UTCTime, Maybe Int)]
+  pure $ res
+    <&> (\(bid, elid, elbmid, fl, fb, ll, lb, cnt) -> (bid, (elbmid, ErrorLogBakerMissed <$> elid <*> pure bid <*> pure right <*> fl <*> fb <*> ll <*> lb <*> cnt)))
+    & Map.fromList
 
 missedEndorsementBonusLog
   :: forall m a. (PersistBackend m, PostgresRaw m, MonadReader a m, HasAppConfig a)
@@ -862,50 +863,44 @@ reportMissedBake
      , SqlDb (PhantomDb m)
      , MonadBase Serializable m
      , MonadLogger m)
-  => UTCTime -> Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
-reportMissedBake bakeTime f right pkh lvl = when' (bakerNotDeleted pkh) $ do
-  chainId <- _appConfig_chainId <$> askAppConfig
-  missedBakes <- missedBakeLog right pkh lvl
-  for_ (Map.toList missedBakes) $ \(bid, eids) -> case nonEmpty eids of
-    Nothing -> do
+  => UTCTime -> RightKind -> PublicKeyHash -> RawLevel -> m ()
+reportMissedBake bakeTime right pkh lvl = when' (bakerNotDeleted pkh) $ do
+  missedBakes <- missedBakeLog right pkh
+  for_ (Map.toList missedBakes) $ \(bid, ids) -> case ids of
+    (Just _elbmid, Just elbm) -> do
+      let eid = _errorLogBakerMissed_log elbm
+          firstLevel = min lvl (_errorLogBakerMissed_firstLevel elbm)
+          lastLevel = max lvl (_errorLogBakerMissed_lastLevel elbm)
+          firstBaked = min bakeTime (_errorLogBakerMissed_firstBakeTime elbm)
+          lastBaked = max bakeTime (_errorLogBakerMissed_lastBakeTime elbm)
+          cnt = _errorLogBakerMissed_count elbm
+      updateErrorLogBy eid ErrorLogBakerMissed_logField
+        [ ErrorLogBakerMissed_firstLevelField =. firstLevel
+        , ErrorLogBakerMissed_lastLevelField =. lastLevel
+        , ErrorLogBakerMissed_firstBakeTimeField =. firstBaked
+        , ErrorLogBakerMissed_lastBakeTimeField =. lastBaked
+        , ErrorLogBakerMissed_countField =. cnt + 1
+        ]
+      queueAlert (Just eid) $ alert lvl
+    _ -> do
       (eid, _elbm) <- insertErrorLog $ \eid -> ErrorLogBakerMissed
         { _errorLogBakerMissed_log = eid
         , _errorLogBakerMissed_baker = bid
         , _errorLogBakerMissed_right = right
-        , _errorLogBakerMissed_level = lvl
-        , _errorLogBakerMissed_fitness = f
-        , _errorLogBakerMissed_bakeTime = bakeTime
+        , _errorLogBakerMissed_firstLevel = lvl
+        , _errorLogBakerMissed_lastLevel = lvl
+        , _errorLogBakerMissed_firstBakeTime = bakeTime
+        , _errorLogBakerMissed_lastBakeTime = bakeTime
+        , _errorLogBakerMissed_count = 1
         }
-      project1 RightNotificationSettings_limitField (RightNotificationSettings_rightKindField ==. right) >>= \case
-        Nothing -> queueAlert (Just eid) $ alert lvl
-        Just rnl -> do
-          let mins = _rightNotificationLimit_withinMinutes rnl
-          elIds :: [(Id ErrorLog, RawLevel)] <- [queryQ|
-            SELECT el.id, elbm.level
-            FROM "Baker" b
-            JOIN "ErrorLogBakerMissed" elbm
-              ON b."publicKeyHash" = elbm."baker#publicKeyHash"
-              AND elbm.right = ?right
-            JOIN "ErrorLog" el
-              ON el.id = elbm.log
-              AND el.stopped IS NULL
-              AND el."chainId" = ?chainId
-            WHERE NOT b."data#deleted"
-              AND b."publicKeyHash" = ?pkh
-              AND el.started > NOW() AT TIME ZONE 'UTC' - ?mins * INTERVAL '1 minute'
-              AND el."noticeSentAt" IS NULL
-          |]
-          when (length elIds >= _rightNotificationLimit_amount rnl) $ for_ elIds $ \(eid', lvl') -> queueAlert (Just eid') $ alert lvl'
-    Just xs -> for_ xs $ \(eid, _elbmid, f') -> when (f' <= f) $ do
-      updateErrorLogBy eid ErrorLogBakerMissed_logField [ ErrorLogBakerMissed_fitnessField =. f ]
       queueAlert (Just eid) $ alert lvl
-    where
-      alert lvl' = Alert Unresolved
+  where
+    alert lvl' = Alert Unresolved
         ("Missed " <> rightTxt <> " opportunity")
         ("Baker with address:" <> toPublicKeyHashText pkh <> " Missed " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl'))
-      rightTxt = case right of
-        RightKind_Baking -> "bake"
-        RightKind_Endorsing -> "endorsement"
+    rightTxt = case right of
+      RightKind_Baking -> "bake"
+      RightKind_Endorsing -> "endorsement"
 
 reportMissedEndorsementBonus
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
@@ -992,8 +987,8 @@ reportAccusation opHash blkHash accusationType pkh lvl cycle aLvl aCycle = when'
 
 clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r
                    , MonadBase Serializable m
-                   , MonadIO m, PostgresLargeObject m, PersistBackend m) => Fitness -> RightKind -> PublicKeyHash -> RawLevel -> m ()
-clearMissedBake f right pkh lvl = do
+                   , MonadIO m, PostgresLargeObject m, PersistBackend m) => RightKind -> PublicKeyHash -> RawLevel -> m ()
+clearMissedBake right pkh lvl = do
   chainId <- _appConfig_chainId <$> askAppConfig
   lids :: [Id ErrorLogBakerMissed] <- stripOnly <$> [queryQ|
       UPDATE "ErrorLog" el SET stopped = NOW()
@@ -1004,10 +999,8 @@ clearMissedBake f right pkh lvl = do
         AND NOT b."data#deleted"
         AND el.stopped IS NULL
         AND el."chainId" = ?chainId
-        AND elbm.fitness < ?f :: VARCHAR[] -- because groundhog
         AND elbm.right = ?right
         AND b."publicKeyHash" = ?pkh
-        AND elbm.level = ?lvl
       RETURNING elbm.log |]
   for_ lids notifyDefault
   unless (null lids) $ queueAlert Nothing $

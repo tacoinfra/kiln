@@ -32,14 +32,13 @@ import Data.Functor.Apply (liftF2)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Dependent.Sum (DSum(..))
-import Data.List (dropWhileEnd, intersperse, minimumBy, maximumBy)
+import Data.List (dropWhileEnd, intersperse, minimumBy, maximumBy, (\\))
 import qualified Data.List.NonEmpty as NEL
 import Data.Maybe (mapMaybe)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap(..))
 import qualified Data.Map.Monoidal as MMap
 import Data.Ord (comparing)
-import Data.Pool (Pool)
 import Data.Semigroup (sconcat)
 import Data.Some (Some(..))
 import qualified Data.Text as T
@@ -61,7 +60,7 @@ import qualified Network.HTTP.Client as Http
 import qualified Network.HTTP.Simple as Http
 import Rhyolite.Backend.App (QueryHandler (..))
 import Rhyolite.Backend.DB (MonadBaseNoPureAborts, runDb, selectMap', selectSingle)
-import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, queryQ)
+import Rhyolite.Backend.DB.PsqlSimple (PostgresRaw, executeQ, queryQ)
 import Rhyolite.Backend.Logging (runLoggingEnv)
 import Rhyolite.Backend.Schema.Class (singleConstructor)
 import Safe (headMay)
@@ -69,6 +68,7 @@ import Text.URI (render, URI)
 
 import Tezos.Types
 
+import Backend.Config (AppConfig (..))
 import Backend.Http (doRequestLBS)
 import Backend.IndexQueries (endOfPreservedCycles)
 import Backend.NodeRPC
@@ -87,9 +87,9 @@ viewSelectorHandler
   :: forall m a. (MonadBaseNoPureAborts IO m, MonadIO m, Monoid a, MonadMask m, Show a)
   => FrontendConfig
   -> NodeDataSource
-  -> Pool Postgresql
+  -> AppConfig
   -> QueryHandler (BakeViewSelector a) m
-viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
+viewSelectorHandler frontendConfig nds appConfig = QueryHandler $ \vs -> runLoggingEnv (_nodeDataSource_logger nds) $ runDb (Identity db) $ do
   let
     maybeViewHandler
       :: Applicative m'
@@ -159,7 +159,7 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
 
       pure (telegramConfig, telegramRecipients)
 
-  alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount chainId
+  alertCount <- maybeViewHandler _bakeViewSelector_alertCount $ Just <$> getAlertCount appConfig
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceFinalHead nds
 
@@ -349,6 +349,8 @@ viewSelectorHandler frontendConfig nds db = QueryHandler $ \vs -> runLoggingEnv 
     , _bakeView_rightNotificationSettings = rightNotificationSettings
     , _bakeView_bakerRegistered = mempty
     }
+  where
+    db = _nodeDataSource_pool nds
 
 pg :: Proxy Postgresql
 pg = Proxy @Postgresql
@@ -527,6 +529,21 @@ getBakerAlert chainId = do
       , let k = bakerIdForBakerErrorLogView t'
       ]
 
+    groupBakerMissedAlerts :: Maybe (NonEmpty ErrorLogBakerMissed) -> [BakerAlert]
+    groupBakerMissedAlerts = \case
+      Nothing -> []
+      Just (elog :| _) | _errorLogBakerMissed_count elog == 1 ->
+        pure $ BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity elog)
+      Just (elog :| _) -> pure $ BakerAlert_GroupedAlert $ GroupedBakerAlert
+        { _groupedBakerAlert_type = GroupedAlertType_MissedBake
+        , _groupedBakerAlert_first = (_errorLogBakerMissed_firstLevel elog, _errorLogBakerMissed_firstBakeTime elog)
+        , _groupedBakerAlert_latest = (_errorLogBakerMissed_lastLevel elog, _errorLogBakerMissed_lastBakeTime elog)
+        , _groupedBakerAlert_right = Just $ _errorLogBakerMissed_right elog
+        , _groupedBakerAlert_baker = _errorLogBakerMissed_baker elog
+        , _groupedBakerAlert_logs = _errorLogBakerMissed_log elog :| []
+        , _groupedBakerAlert_count = _errorLogBakerMissed_count elog
+        }
+
     groupBakerAlerts :: [(ErrorLog, DSum BakerLogTag Identity)] -> [BakerAlert]
     groupBakerAlerts bs = bakerAlerts
       where
@@ -537,23 +554,12 @@ getBakerAlert chainId = do
         bakerAlerts = DMap.toList groupedAlerts >>= \(tag :=> elogs) ->
           case tag of
             -- groupable baker alerts
-            BakerLogTag_BakerMissed -> case NEL.nonEmpty elogs of
-              Nothing -> []
-              Just (elog :| []) -> pure $ BakerAlert_Alert (BakerLogTag_BakerMissed :=> Identity elog)
-              Just ls ->
-                let
-                  elog = NEL.head ls
-                  getLvl = _errorLogBakerMissed_level
-                  getBakeTime = _errorLogBakerMissed_bakeTime
-                  applyF f = (\el -> (getLvl el, getBakeTime el)) $ f (comparing getBakeTime) elogs
-                in pure $ BakerAlert_GroupedAlert $  GroupedBakerAlert
-                  { _groupedBakerAlert_type = GroupedAlertType_MissedBake
-                  , _groupedBakerAlert_first = applyF minimumBy
-                  , _groupedBakerAlert_latest = applyF maximumBy
-                  , _groupedBakerAlert_right = Just $ _errorLogBakerMissed_right elog
-                  , _groupedBakerAlert_baker = _errorLogBakerMissed_baker elog
-                  , _groupedBakerAlert_logs = _errorLogBakerMissed_log <$> ls
-                  }
+            BakerLogTag_BakerMissed ->
+              let filterAlertsByRightKind right alerts = NEL.nonEmpty $
+                    filter ((== right) . _errorLogBakerMissed_right) alerts
+                  bakes = filterAlertsByRightKind RightKind_Baking elogs
+                  endorsements = filterAlertsByRightKind RightKind_Endorsing elogs
+              in groupBakerMissedAlerts bakes ++ groupBakerMissedAlerts endorsements
             BakerLogTag_MissedEndorsementBonus -> case NEL.nonEmpty elogs of
               Nothing -> []
               Just (elog :| []) -> pure $ BakerAlert_Alert (BakerLogTag_MissedEndorsementBonus :=> Identity elog)
@@ -570,6 +576,7 @@ getBakerAlert chainId = do
                     , _groupedBakerAlert_right = Nothing
                     , _groupedBakerAlert_baker = _errorLogBakerMissedEndorsementBonus_baker elog
                     , _groupedBakerAlert_logs = _errorLogBakerMissedEndorsementBonus_log <$> ls
+                    , _groupedBakerAlert_count = length ls
                     }
 
             -- non-groupable baker alerts
@@ -577,18 +584,39 @@ getBakerAlert chainId = do
 
   pure $ mapMaybe (\(k, v) -> fmap (k,) . NEL.nonEmpty $ groupBakerAlerts v) $ MMap.toList bakerErrors
 
+alertTableNames :: [Text]
+alertTableNames = do
+  flip map (universe :: [Some LogTag]) $ \(Some lTag) -> do
+    logAssume lTag $ getTableName (singleConstructor $ proxify lTag)
+  where
+    getTableName
+      :: forall c b.
+         ( PersistEntity b
+         , EntityConstr b c
+         )
+      => c (ConstructorMarker b)
+      -> Text
+    getTableName ctor =
+      let entityD = entityDef pg (undefined :: b)
+          constrD = constructors entityD !! constrNum
+          constrNum = entityConstrNum (Proxy @b) ctor
+          sqlTable = tableName id entityD constrD
+      in decodeUtf8 $ fromUtf8 sqlTable
 
 {-# ANN getAlertCount ("HLint: ignore Use bimap" :: String) #-}
 getAlertCount
   :: forall m.
   ( MonadLogger m
   , PersistBackend m
+  , PostgresRaw m
   )
-  => ChainId
+  => AppConfig
   -> m (DMap LogTag (Const Int))
-getAlertCount chainId = DMap.fromList . concat <$> traverse (\(Some lTag) -> do
-  (x, _) <- runQuery lTag
-  pure $ map (\(t, v) -> t :=> Const v) x) universe
+getAlertCount appConfig = do
+  cleanupOldLogs
+  bakerMissedAlerts <- bakerMissedAlertCount
+  otherAlerts <- fmap concat $ traverse alertCountForLogTag logTags
+  pure $ DMap.fromList $ bakerMissedAlerts ++ otherAlerts
   where
     {-# INLINE queryAlert #-}
     queryAlert
@@ -621,6 +649,55 @@ getAlertCount chainId = DMap.fromList . concat <$> traverse (\(Some lTag) -> do
     runQuery lTag = do
       vus <- logAssume lTag $ queryAlert (singleConstructor $ proxify lTag) (logDep lTag)
       pure $ (\(vs, u) -> (map (\v -> (lTag, v)) vs, lTag :=> u)) vus
+
+    -- We exclude 'ErrorLogBakerMissed' alert there and handle it
+    -- separately since this db table has different structure
+    -- than otehr 'ErrorLog*' tables.
+    logTags :: [Some LogTag]
+    logTags = universe \\ [Some $ LogTag_Baker BakerLogTag_BakerMissed]
+
+    alertCountForLogTag :: Some LogTag -> m [DSum LogTag (Const Int)]
+    alertCountForLogTag (Some lTag) = do
+      (x, _) <- runQuery lTag
+      pure $ map (\(t, v) -> t :=> Const v) x
+
+    bakerMissedAlertCount :: m [DSum LogTag (Const Int)]
+    bakerMissedAlertCount = do
+      -- postgres returns 'numeric' type for the result of 'SUM' query,
+      -- so we need to explicitly cast it to integer to avoid
+      -- 'incompatible types' runtime error.
+      res :: [Integer] <- stripOnly <$> [queryQ|
+        SELECT CAST(COALESCE(SUM(elbm.count), 0) AS INTEGER) FROM "ErrorLog" el
+        JOIN "ErrorLogBakerMissed" elbm ON elbm.log = el.id
+        WHERE el.stopped IS NULL
+        AND el."chainId" = ?chainId
+      |]
+      let taggedRes = (\x -> (LogTag_Baker BakerLogTag_BakerMissed, fromIntegral x)) <$> res
+      pure $ map (\(t, v) -> t :=> Const v) taggedRes
+
+    cleanupOldLogs :: m ()
+    cleanupOldLogs = do
+      oldLogsIds :: [Id ErrorLog] <- stripOnly <$> [queryQ|
+        SELECT id FROM "ErrorLog"
+        WHERE stopped IS NOT NULL
+        AND NOW() - stopped > INTERVAL '?alertsTtl minutes'
+        AND "chainId" = ?chainId;
+      |]
+      let inOldLogsIds = Pg.In oldLogsIds
+      unless (null oldLogsIds) $ do
+        for_ alertTableNames $ \tName -> do
+          let
+            escape t = "\"" <> t <> "\""
+            paren s = "(" <> s <> ")"
+            inClause = paren $ T.concat $ intersperse "," $ map (tshow . unId) oldLogsIds
+            sql = "DELETE FROM " <> escape tName <> " WHERE log in " <> inClause
+          executeRaw False (T.unpack sql) []
+        void [executeQ|
+          DELETE FROM "ErrorLog" WHERE id in ?inOldLogsIds;
+        |]
+
+    chainId = _appConfig_chainId appConfig
+    alertsTtl = _appConfig_resolvedAlertsTtl appConfig
 
 getBakerAddresses
   :: forall m. (PostgresRaw m, MonadIO m, PersistBackend m, MonadLogger m, MonadMask m)

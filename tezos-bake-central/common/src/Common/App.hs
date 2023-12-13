@@ -182,6 +182,7 @@ data GroupedBakerAlert = GroupedBakerAlert
   , _groupedBakerAlert_right :: Maybe RightKind
   , _groupedBakerAlert_baker :: Id Baker
   , _groupedBakerAlert_logs :: NonEmpty (Id ErrorLog)
+  , _groupedBakerAlert_count :: Int
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON GroupedBakerAlert
 instance ToJSON GroupedBakerAlert

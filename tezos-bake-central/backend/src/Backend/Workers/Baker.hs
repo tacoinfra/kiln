@@ -354,8 +354,7 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
             [BakerDetails_missedRightsInRowField =. (0 :: Int)] $
             BakerDetails_publicKeyHashField ==. pkh'
           notifyDefault newVal
-    cleanAction blockTimestamp blockFitness kind bakerPkh blockLevel = do
-      clearMissedBake blockFitness kind bakerPkh blockLevel
+    cleanAction blockTimestamp bakerPkh = do
       -- If the internal baker successfully endorses or baker, then there is an
       -- evidence that the Ledger device is connected properly
       when isInternal $ do
@@ -386,9 +385,10 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
       successfulBakeCondition = (thisBlock ^. blockMetadata . blockMetadata_baker) == _baker_publicKeyHash baker
       -- Report missed bake alert if baker missed a bake, or clear the alert otherwise
       missedBakeAction =
-          bool reportMissedBake cleanAction successfulBakeCondition
+          if successfulBakeCondition
+          then cleanAction (thisBlock ^. timestamp) (baker ^. baker_publicKeyHash)
+          else reportMissedBake
             (thisBlock ^. timestamp)
-            (headBlock ^. fitness)
             RightKind_Baking
             (baker ^. baker_publicKeyHash)
             lvl
@@ -404,7 +404,7 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
   -- endorsements *on* this block are *of* the previous block
   endorsers :: Seq EndorsingRightsCrossCompat <- runNodeQueryT $ nodeQueryIx $ nodeQueryIx_EndorsingRights headHash (Set.singleton $ lvl - 1)
   endorsingAlerts :: [AppSerializable ()]
-                    <- whenM (any (elem (_baker_publicKeyHash baker)) $ view endorsingRightsCrossCompat_delegates <$> endorsers) $ do
+                    <- whenM (any (elem (_baker_publicKeyHash baker) . view endorsingRightsCrossCompat_delegates) endorsers) $ do
       let
         blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
         mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer
@@ -415,12 +415,16 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
         successfulEndorsementCondition = _baker_publicKeyHash baker `elem` endorserDelegates
 
         -- Report missed endorsement alert if baker missed an endorsement, or clear the alert otherwise
-        missedEndorsementAction = bool reportMissedBake cleanAction successfulEndorsementCondition
-          (unsafeEstimatePastTimestamp protoInfo (thisBlock ^. level - 1) thisBlock)
-          (headBlock ^. fitness)
-          RightKind_Endorsing
-          (baker ^. baker_publicKeyHash)
-          (lvl - 1)
+        missedEndorsementAction =
+          if successfulEndorsementCondition
+          then cleanAction
+            (unsafeEstimatePastTimestamp protoInfo (thisBlock ^. level - 1) thisBlock)
+            (baker ^. baker_publicKeyHash)
+          else reportMissedBake
+            (unsafeEstimatePastTimestamp protoInfo (thisBlock ^. level - 1) thisBlock)
+            RightKind_Endorsing
+            (baker ^. baker_publicKeyHash)
+            (lvl - 1)
 
         -- Report missed endorsement bonus alerts if block proposer is not equal to block baker
         missedBonusAction = whenJust mbBlockProposer $ \blockProposer ->
