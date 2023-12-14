@@ -112,7 +112,7 @@ in (obApp false distroMethods.source system) // {
     obApp = obAppGargoyle false distroMethods.linuxPackage "x86_64-linux";
     nodeKit = tezosScopedKit false "x86_64-linux";
     pkgName = "kiln";
-    version = "0.17.2"; # TODO: Calculate this
+    version = "0.18.0"; # TODO: Calculate this
     inherit zcash;
   }).kiln-debian;
 
