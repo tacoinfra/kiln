@@ -14,35 +14,35 @@ import Tezos.Common.Accusation
 import Tezos.Common.Block
 import Tezos.Common.BlockHeader
 import qualified Tezos.Genesis.Block as Genesis
-import Tezos.Nairobi.Block (HasBlockMetadata(..))
-import qualified Tezos.Nairobi.Types as Nairobi
+import Tezos.Oxford.Block (HasBlockMetadata(..))
+import qualified Tezos.Oxford.Types as Oxford
 
 
 data BlockCrossCompat
   = BlockGenesis Genesis.Block
-  | BlockNairobi Nairobi.Block
+  | BlockOxford Oxford.Block
   deriving (Show)
 
 instance FromJSON BlockCrossCompat where
   parseJSON jv@(Object o) = do
     pv :: String <- o .: "protocol"
     case pv of
-      "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1" -> BlockNairobi <$> parseJSON jv
-      "PtNairobiyssHuh87hEhfVBGCVrK3WnS8Z2FT4ymB5tAa4r1nQf" -> BlockNairobi <$> parseJSON jv
+      "ProxfordYmVfjWnRcgjWH36fW6PArwqykTFzotUxRs6gmTcZDuH" -> BlockOxford <$> parseJSON jv
+      "PtNairobiyssHuh87hEhfVBGCVrK3WnS8Z2FT4ymB5tAa4r1nQf" -> BlockOxford <$> parseJSON jv
       _ -> BlockGenesis <$> parseJSON jv
   parseJSON _ = mzero
 
-blockCrossData :: (Genesis.Block -> a) -> (Nairobi.Block -> a) -> BlockCrossCompat -> a
+blockCrossData :: (Genesis.Block -> a) -> (Oxford.Block -> a) -> BlockCrossCompat -> a
 blockCrossData fGenesis f13 = \case
   BlockGenesis b -> fGenesis b
-  BlockNairobi b -> f13 b
+  BlockOxford b -> f13 b
 
 instance HasProtocolHash BlockCrossCompat where
   protocolHash = lens
     (blockCrossData (view protocolHash) (view protocolHash))
     (\b ph -> blockCrossData
       (BlockGenesis . (protocolHash .~ ph))
-      (BlockNairobi . (protocolHash .~ ph))
+      (BlockOxford . (protocolHash .~ ph))
       b)
 
 instance HasChainId BlockCrossCompat where
@@ -50,7 +50,7 @@ instance HasChainId BlockCrossCompat where
     (blockCrossData (view chainIdL) (view chainIdL))
     (\b ph -> blockCrossData
       (BlockGenesis . (chainIdL .~ ph))
-      (BlockNairobi . (chainIdL .~ ph))
+      (BlockOxford . (chainIdL .~ ph))
       b)
 
 instance HasBlockMetadata BlockCrossCompat where
@@ -58,7 +58,7 @@ instance HasBlockMetadata BlockCrossCompat where
     (blockCrossData (error "Genesis block doesn't provide useful metadata") (view blockMetadata))
     (\b ph -> blockCrossData
       (error "Genesis block doesn't provide useful metadata")
-      (BlockNairobi . (blockMetadata .~ ph))
+      (BlockOxford . (blockMetadata .~ ph))
       b)
 
 instance MayHaveAccusations BlockCrossCompat where
@@ -67,35 +67,35 @@ instance MayHaveAccusations BlockCrossCompat where
 instance BlockLike BlockCrossCompat where
   hash = lens
     (blockCrossData (view hash) (view hash))
-    (\b ph -> blockCrossData (BlockGenesis . (hash .~ ph)) (BlockNairobi . (hash .~ ph)) b)
+    (\b ph -> blockCrossData (BlockGenesis . (hash .~ ph)) (BlockOxford . (hash .~ ph)) b)
   predecessor = lens
     (blockCrossData (view predecessor) (view predecessor))
-    (\b ph -> blockCrossData (BlockGenesis . (predecessor .~ ph)) (BlockNairobi . (predecessor .~ ph)) b)
+    (\b ph -> blockCrossData (BlockGenesis . (predecessor .~ ph)) (BlockOxford . (predecessor .~ ph)) b)
   level = lens
     (blockCrossData (view level) (view level))
-    (\b ph -> blockCrossData (BlockGenesis . (level .~ ph)) (BlockNairobi . (level .~ ph)) b)
+    (\b ph -> blockCrossData (BlockGenesis . (level .~ ph)) (BlockOxford . (level .~ ph)) b)
   fitness = lens
     (blockCrossData (view fitness) (view fitness))
-    (\b ph -> blockCrossData (BlockGenesis . (fitness .~ ph)) (BlockNairobi . (fitness .~ ph)) b)
+    (\b ph -> blockCrossData (BlockGenesis . (fitness .~ ph)) (BlockOxford . (fitness .~ ph)) b)
   timestamp = lens
     (blockCrossData (view timestamp) (view timestamp))
-    (\b ph -> blockCrossData (BlockGenesis . (timestamp .~ ph)) (BlockNairobi . (timestamp .~ ph)) b)
+    (\b ph -> blockCrossData (BlockGenesis . (timestamp .~ ph)) (BlockOxford . (timestamp .~ ph)) b)
 
 instance HasBlockHeaderFull BlockCrossCompat where
   blockHeaderFull = lens
     (blockCrossData (view blockHeaderFull) (view blockHeaderFull))
     (\b ph -> blockCrossData
       (BlockGenesis . (blockHeaderFull .~ ph))
-      (BlockNairobi . (blockHeaderFull .~ ph))
+      (BlockOxford . (blockHeaderFull .~ ph))
       b)
 
 blockCrossCompatToBlockHeader :: BlockCrossCompat -> BlockHeader
 blockCrossCompatToBlockHeader = \case
   BlockGenesis b -> Genesis.toBlockHeader b
-  BlockNairobi b -> Nairobi.toBlockHeader b
+  BlockOxford b -> Oxford.toBlockHeader b
 
-mkBranchInfo :: BlockCrossCompat -> Nairobi.BranchInfo
+mkBranchInfo :: BlockCrossCompat -> Oxford.BranchInfo
 mkBranchInfo blk =
-  let levelInfo = blk ^. blockMetadata . Nairobi.blockMetadata_levelInfo in
-    Nairobi.BranchInfo (WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash))
-      (levelInfo ^. Nairobi.levelInfo_cycle) (levelInfo ^. Nairobi.levelInfo_cyclePosition)
+  let levelInfo = blk ^. blockMetadata . Oxford.blockMetadata_levelInfo in
+    Oxford.BranchInfo (WithProtocolHash (mkVeryBlockLike blk) (blk ^. protocolHash))
+      (levelInfo ^. Oxford.levelInfo_cycle) (levelInfo ^. Oxford.levelInfo_cyclePosition)

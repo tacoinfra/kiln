@@ -92,7 +92,7 @@ import Text.URI (URI)
 import qualified Text.URI as Uri
 
 import Tezos.Types
-import Tezos.Nairobi.Types (Cycle, Round)
+import Tezos.Oxford.Types (Cycle, Round)
 
 import Backend.DB.Utils (getSchemaName)
 import Backend.Version (parseVersion)

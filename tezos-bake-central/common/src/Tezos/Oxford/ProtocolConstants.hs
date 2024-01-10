@@ -3,7 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
-module Tezos.Nairobi.ProtocolConstants where
+module Tezos.Oxford.ProtocolConstants where
 
 import Control.DeepSeq (NFData)
 import Control.Lens ((^.))

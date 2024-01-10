@@ -66,7 +66,7 @@ import qualified Text.URI as Uri
 import Tezos.NodeRPC
 import Tezos.Types hiding (toBlockHeader)
 import qualified Tezos.Unsafe as Unsafe
-import qualified Tezos.Nairobi.Vote as Nairobi
+import qualified Tezos.Oxford.Vote as Oxford
 
 import Backend.Alerts (clearBadNodeHeadError, clearInaccessibleNodeError, clearNodeWrongChainError,
                        reportBadNodeHeadError, reportInaccessibleNodeError, reportNodeWrongChainError,
@@ -812,7 +812,7 @@ amendmentProcessWorker appConfig nds db = mkWorker $
               |]
               for_ deletedIds $ \(Only pid) -> notify NotifyTag_Proposals (pid, Nothing)
               let (protoAgnosticProposals :: [(ProtocolHash, ProtoAgnosticVotingPower)]) = toList $ case proposals of
-                    ProposalVotesListNairobi l -> fmap (\(Nairobi.ProposalVotes (pHash, votingPower)) ->
+                    ProposalVotesListOxford l -> fmap (\(Oxford.ProposalVotes (pHash, votingPower)) ->
                       (pHash, tezToProtoAgnosticVotingPower votingPower)) l
               inserted <- returning [sql|
                 INSERT INTO "PeriodProposal" (hash, "chainId", "votingPeriod", votes)
@@ -856,12 +856,12 @@ amendmentProcessWorker appConfig nds db = mkWorker $
         quorum <- nodeQueryDataSource $ nodeQuery_CurrentQuorum (blk ^. hash)
         listings <- nodeQueryDataSource $ nodeQuery_Listings (blk ^. hash)
         let totalVotingPower = case listings of
-              VoterListingsNairobi l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap Nairobi._voterDelegate_votingPower l
+              VoterListingsOxford l -> tezToProtoAgnosticVotingPower $ foldl' (+) 0 $ fmap Oxford._voterDelegate_votingPower l
         pure $ flip fmap mProposal $ \proposal -> (proposal, ballots, quorum, totalVotingPower)
 
       for_ mpv $ \(proposal, ballots, quorum, totalVotingPower) -> runDb (Identity db) $ do
         let protoAgnosticBallots = case ballots of
-              BallotsNairobi (Nairobi.Ballots yay nay pass) ->
+              BallotsOxford (Oxford.Ballots yay nay pass) ->
                 ProtoAgnosticBallots (tezToProtoAgnosticVotingPower yay) (tezToProtoAgnosticVotingPower nay) (tezToProtoAgnosticVotingPower pass)
         let pv = PeriodVote
               { _periodVote_ballots = protoAgnosticBallots

@@ -12,13 +12,13 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Backend.Workers.Block (getAccusedBaker)
-import Tezos.Nairobi.Types
-import qualified Tezos.Nairobi.Types as Nairobi
+import Tezos.Oxford.Types
+import qualified Tezos.Oxford.Types as Oxford
 
 
 testAccusations :: TestTree
 testAccusations = testGroup "Accusations"
-  [ testGroup "Nairobi"
+  [ testGroup "Oxford"
     [ testDoubleBakingEvidence013
     , testDoublePreendorsementEvidence013
     ]
@@ -42,7 +42,7 @@ baseAccusationTest testName getBalanceUpdates path expected = testCase testName 
 testDoubleBakingEvidence013 :: TestTree
 testDoubleBakingEvidence013 = baseAccusationTest
   "Double baking evidence"
-  (toList . Nairobi._doubleBakingEvidenceMetadata_balanceUpdates . Nairobi._operationContentsDoubleBakingEvidence_metadata)
+  (toList . Oxford._doubleBakingEvidenceMetadata_balanceUpdates . Oxford._operationContentsDoubleBakingEvidence_metadata)
   -- https://ithacanet.tzkt.io/opX2JykJaQ96Mt8dK4sTcjVuRbNJTJrJVBy36Xj6cGFUBne4uBX
   "test/resources/double_baking_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"
@@ -50,7 +50,7 @@ testDoubleBakingEvidence013 = baseAccusationTest
 testDoublePreendorsementEvidence013 :: TestTree
 testDoublePreendorsementEvidence013 = baseAccusationTest
   "Double preendorsement evidence"
-  (toList . Nairobi._doublePreendorsementEvidenceMetadata_balanceUpdates . Nairobi._operationContentsDoublePreendorsementEvidence_metadata)
+  (toList . Oxford._doublePreendorsementEvidenceMetadata_balanceUpdates . Oxford._operationContentsDoublePreendorsementEvidence_metadata)
   -- https://ithacanet.tzkt.io/ooUXVJPkfZpMy3LQshGGoJTAJCkzTEozWCk5rJK9MUBTWzaRnhw
   "test/resources/double_preendorsement_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"
