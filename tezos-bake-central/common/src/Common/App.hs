@@ -116,7 +116,7 @@ pattern MumbaiProtocolHash :: ProtocolHash
 pattern MumbaiProtocolHash = ProtocolHash "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
 
 pattern OxfordProtocolHash :: ProtocolHash
-pattern OxfordProtocolHash = ProtocolHash "ProxfordSW2S7fvchT1Zgj2avb5UES194neRyYVXoaDGvF9egt8"
+pattern OxfordProtocolHash = ProtocolHash "ProxfordYmVfjWnRcgjWH36fW6PArwqykTFzotUxRs6gmTcZDuH"
 
 data DaemonType
   = DaemonType_Node

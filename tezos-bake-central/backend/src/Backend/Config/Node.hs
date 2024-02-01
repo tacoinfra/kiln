@@ -181,6 +181,6 @@ mkTeztnetsUrl chainName = mkURI $ "https://teztnets.xyz/" <> chainName
 -- 'octez-node'.
 asNamedChain :: MonadThrow m => NetworkOption -> m NetworkOption
 asNamedChain = \case
-  NetworkOption_NamedChain c@NamedChain_Nairobinet ->
+  NetworkOption_NamedChain c | c == NamedChain_Nairobinet || c == NamedChain_Oxfordnet ->
     NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
   n -> pure n
