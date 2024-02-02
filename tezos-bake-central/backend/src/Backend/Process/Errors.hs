@@ -87,8 +87,11 @@ instance FromJSON ErrorEvent where
               -- See 'level:Error' events from 'Actions' module here
               -- https://gitlab.com/tezos/tezos/-/blob/79b313526e849f079b3ed1c95eca3bc690243396/src/proto_012_Psithaca/lib_delegate/baking_events.ml#L491
               "skipping_preendorsement.v0" -> pure ErrorEventType_SkippingPreendoresement
+              "skipping_preattestation.v0" -> pure ErrorEventType_SkippingPreendoresement
               "skipping_endorsement.v0" -> pure ErrorEventType_SkippingEndoresement
+              "skipping_attestation.v0" -> pure ErrorEventType_SkippingEndoresement
               "failed_to_inject_preendorsement.v0" -> pure ErrorEventType_FailingToInjectPreendorsement
+              "failed_to_inject_preattestation.v0" -> pure ErrorEventType_FailingToInjectPreendorsement
               _ -> fail $ "ErrorEvent: unexpected event: " <> unpack (decodeUtf8 $ toStrict $ encode o)
             delegate <- parseDelegate eventItem
             trace <- eventItem .: "trace"
