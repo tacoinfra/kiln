@@ -170,7 +170,7 @@ getRawGenesisValue (Object -> genesis) keyName =
 -- | Given the chain name, creates the URI of the network config
 -- corresponding to this chain.
 mkTeztnetsUrl :: MonadThrow m => Text -> m URI
-mkTeztnetsUrl chainName = mkURI $ "https://teztnets.xyz/" <> chainName
+mkTeztnetsUrl chainName = mkURI $ "https://teztnets.com/" <> chainName
 
 -- | 'octez-node' doesn't recognize 'nairobinet' as a named network
 -- and expects the network config url instead.
