@@ -130,14 +130,14 @@ library
 
     Tezos.Genesis.Block
 
-    Tezos.Nairobi.Account
-    Tezos.Nairobi.Block
-    Tezos.Nairobi.Level
-    Tezos.Nairobi.Operation
-    Tezos.Nairobi.ProtocolConstants
-    Tezos.Nairobi.Types
-    Tezos.Nairobi.Unsafe
-    Tezos.Nairobi.Vote
+    Tezos.Oxford.Account
+    Tezos.Oxford.Block
+    Tezos.Oxford.Level
+    Tezos.Oxford.Operation
+    Tezos.Oxford.ProtocolConstants
+    Tezos.Oxford.Types
+    Tezos.Oxford.Unsafe
+    Tezos.Oxford.Vote
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
 

@@ -1582,8 +1582,8 @@ startNodeWorkflow backWF close = Workflow $ do
 
         let
           providerOptions =
-            [ XtzShots
-            , Marigold
+            [ Marigold
+            , XtzShots
             , Custom Nothing
             ]
 
@@ -1594,7 +1594,7 @@ startNodeWorkflow backWF close = Workflow $ do
 
         providerDropdown <- divClass "ui field" $ do
           el "label" $ text "Select snapshot provider"
-          SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity XtzShots) never $ SemUi.TaggedStatic $
+          SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity Marigold) never $ SemUi.TaggedStatic $
             Map.fromList $ ffor providerOptions $ \p -> (p, providerText p)
 
         uriEv <- dyn $ ffor (value providerDropdown) $ \(Identity v) -> case v of
