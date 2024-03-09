@@ -94,6 +94,7 @@ import qualified Common.Config as Config
 import Common.HeadTag (headTag)
 import Common.Route
 import Common.Schema
+import Common.Snapshot
 import ExtraPrelude
 import Frontend.Amendment
 import Frontend.Common
@@ -1544,7 +1545,7 @@ data NodeBootstrapMethod
   | NodeBootstrapMethod_KnownSnapshotProvider KnownSnapshotProvider
 
 data SnapshotProviderOption
-  = XtzShots
+  = TzInit (Maybe TzInitRegion)
   | Marigold
   | Custom (Maybe URI)
   deriving (Show, Eq, Ord)
@@ -1583,21 +1584,59 @@ startNodeWorkflow backWF close = Workflow $ do
         let
           providerOptions =
             [ Marigold
-            , XtzShots
+            , TzInit Nothing
             , Custom Nothing
             ]
 
           providerText = text . \case
-            XtzShots -> "Xtz-shots"
+            TzInit _ -> "Tzinit"
             Marigold -> "Marigold"
             Custom _ -> "Custom snapshot provider URL"
 
         providerDropdown <- divClass "ui field" $ do
           el "label" $ text "Select snapshot provider"
-          SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity Marigold) never $ SemUi.TaggedStatic $
-            Map.fromList $ ffor providerOptions $ \p -> (p, providerText p)
+          ddDyn <- value <$> SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity Marigold) never (SemUi.TaggedStatic $
+            Map.fromList $ ffor providerOptions $ \ p -> (p, providerText p))
+          rsEvent <- dyn $ tzInitRegionSelect <$> ddDyn
+          rsDyn <- switchHold never rsEvent >>= holdDyn (Just TzInitAsia)
+          let
+            zipFn (Identity (TzInit _)) (Just region) = Identity (TzInit (Just region))
+            zipFn p _ = p
+          pure $ zipDynWith zipFn ddDyn rsDyn
 
-        uriEv <- dyn $ ffor (value providerDropdown) $ \(Identity v) -> case v of
+        let
+          tzInitRegionSelect p = case p of
+            (Identity (TzInit _)) -> mdo
+
+              let
+                regionRadioItems =
+                  [ useAsianRegionEv
+                  , useEuropeRegionEv
+                  , useUSRegionEv
+                  ]
+
+              useAsianRegion <- isRadioItemSelected regionRadioItems useAsianRegionEv True
+              useEuropeRegion <- isRadioItemSelected regionRadioItems useEuropeRegionEv False
+              useUSRegion <- isRadioItemSelected regionRadioItems useUSRegionEv False
+
+              el "br" blank
+              el "div" $ text "Choose the snapshot server closest to your location"
+              divClass "explanation" $  do
+                text "Tzinit provider has several snapshot services located in different regions. Using the service from the closest region will reduce the download time"
+              (useAsianRegionEv, _) <- fakeRadioItem useAsianRegion $ el "div" $ text "Asia"
+              (useEuropeRegionEv, _) <- fakeRadioItem useEuropeRegion $ el "div" $ text "Europe"
+              (useUSRegionEv, _) <- fakeRadioItem useUSRegion $ el "div" $ text "US"
+              updated <$> do
+                let
+                  zipFn True (False, False) = Just TzInitAsia
+                  zipFn False (True, False) = Just TzInitEurope
+                  zipFn False (False, True) = Just TzInitUs
+                  zipFn _ (_, _) = Nothing
+                pure $ zipDynWith zipFn useAsianRegion (zipDyn useEuropeRegion useUSRegion)
+            _ -> do
+              pure $ updated $ constDyn (Just TzInitAsia)
+
+        uriEv <- dyn $ ffor providerDropdown $ \(Identity v) -> case v of
           Custom _ -> do
             divClass "explanation" $  do
               text "You can enter either the URL of the provider (e.g. "
@@ -1614,8 +1653,9 @@ startNodeWorkflow backWF close = Workflow $ do
 
         let
           selectedProviderDyn' :: Dynamic t NodeBootstrapMethod
-          selectedProviderDyn' = ffor2 (value providerDropdown) uriDyn $ \(Identity dd) u -> case dd of
-            XtzShots -> NodeBootstrapMethod_KnownSnapshotProvider KnownSnapshotProvider_XtzShots
+          selectedProviderDyn' = ffor2 providerDropdown uriDyn $ \(Identity dd) u -> case dd of
+            TzInit mRegion -> NodeBootstrapMethod_KnownSnapshotProvider $
+              KnownSnapshotProvider_TzInit $ fromMaybe def mRegion
             Marigold -> NodeBootstrapMethod_KnownSnapshotProvider KnownSnapshotProvider_Marigold
             Custom _ -> NodeBootstrapMethod_URI u
 

@@ -71,6 +71,7 @@ import Backend.Process.Common
 import Backend.Process.Node (getKilnNodeVersion, nixNodePath)
 import Backend.Schema
 import Common.Schema
+import Common.Snapshot
 import ExtraPrelude
 
 -- | Type alias for the default key of 'SnapshotMeta' table defined for convenience.
@@ -646,22 +647,18 @@ updateSnapshotMetaImportLog importLog smId = do
 removeFileLogging :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 removeFileLogging f = liftIO (removeFile f) `catch` \(e :: IOException) -> $(logError) $ "Failed to remove file: " <> T.pack f <> ": " <> tshow e
 
-snapshotProviderUri :: KnownSnapshotProvider -> URI
-snapshotProviderUri = \case
-  KnownSnapshotProvider_XtzShots -> xtzShotsMetadataUri
+snapshotProviderUri :: NamedChain -> KnownSnapshotProvider -> URI
+snapshotProviderUri namedChain = \case
   KnownSnapshotProvider_Marigold -> marigoldMetadataUri
+  KnownSnapshotProvider_TzInit region -> tzInitUri namedChain region
 
 -- | In case when we couldn't find the compatible snapshot in
 -- a given provider's metadata, we use the second known provider
 -- as a fallback option.
-fallbackProviderUri :: KnownSnapshotProvider -> URI
-fallbackProviderUri = \case
-  KnownSnapshotProvider_XtzShots -> marigoldMetadataUri
-  KnownSnapshotProvider_Marigold -> xtzShotsMetadataUri
-
--- | URI of Xtz-shots snapshot metadata.
-xtzShotsMetadataUri :: URI
-xtzShotsMetadataUri = [Uri.uri|https://xtz-shots.io/tezos-snapshots.json|]
+fallbackProviderUri :: NamedChain -> KnownSnapshotProvider -> URI
+fallbackProviderUri namedChain = \case
+  KnownSnapshotProvider_Marigold -> tzInitUri namedChain TzInitAsia
+  KnownSnapshotProvider_TzInit _ -> marigoldMetadataUri
 
 -- | URI of Marigold snapshot metadata.
 marigoldMetadataUri :: URI
@@ -798,6 +795,11 @@ handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId errPolicy 
       notify NotifyTag_SnapshotMeta updatedSnapshotMeta
       pure updatedSnapshotMeta
 
+getChainName :: MonadThrow m => AppConfig -> m NamedChain
+getChainName appConfig = case identifyChain $ _appConfig_chainId appConfig of
+  Just n -> pure n
+  Nothing -> throwString "Cannot resolve chain name"
+
 -- | Like 'handleDownloadSnapshotFromProvider', but downloads the snapshot
 -- in a separate thread and always handles errors.
 handleDownloadSnapshotFromProviderAsync
@@ -812,7 +814,9 @@ handleDownloadSnapshotFromProviderAsync
   -> m ()
 handleDownloadSnapshotFromProviderAsync appConfig nds provider = runLoggingEnv logger $ do
   (smId, _) <- initSnapshotMeta appConfig Nothing nds Nothing
+
   void $ liftIO $ forkIO $ do
+    chainName <- getChainName appConfig
     let
       downloadFromProvider uri errPolicy =
         handleDownloadSnapshotFromProviderSync appConfig nds uri smId errPolicy
@@ -821,17 +825,17 @@ handleDownloadSnapshotFromProviderAsync appConfig nds provider = runLoggingEnv l
       handler e = runLoggingEnv logger $ do
         $(logDebug) $ T.concat
           [ "Failed to download the snapshot from "
-          , render (snapshotProviderUri provider)
+          , render (snapshotProviderUri chainName provider)
           , ":\n"
           , tshow e
           , "\nTrying to download from the fallback provider: "
-          , render (fallbackProviderUri provider)
+          , render (fallbackProviderUri chainName provider)
           ]
         -- Here we use 'OverrideUrl' policy to mention the provider that user initially selected, not the fallback
         -- provider, in the error message on UI
-        liftIO $ downloadFromProvider (fallbackProviderUri provider) (OverrideUrl $ snapshotProviderUri provider)
+        liftIO $ downloadFromProvider (fallbackProviderUri chainName provider) (OverrideUrl $ snapshotProviderUri chainName provider)
 
-    handle handler $ downloadFromProvider (snapshotProviderUri provider) DontReportError
+    handle handler $ downloadFromProvider (snapshotProviderUri chainName provider) DontReportError
   where
     logger = _nodeDataSource_logger nds
 

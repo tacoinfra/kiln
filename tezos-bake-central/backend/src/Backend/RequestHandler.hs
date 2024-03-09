@@ -65,6 +65,7 @@ import Backend.Workers.TezosClient
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
+import Common.Snapshot
 import ExtraPrelude
 
 requestHandler
@@ -154,9 +155,13 @@ requestHandler appConfig nds =
                   , ProcessData_restartAtField =. (Nothing :: Maybe UTCTime)
                   ] (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
                 notify NotifyTag_NodeInternal (nid, Just processData)
+
         case mNodeProcessState of
           Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_UriSource u) ->
             handleDownloadSnapshotByUrlOverloaded appConfig nds u
+          Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_KnownSnapshotProviderSource (KnownSnapshotProvider_TzInit region)) -> do
+            chainName <- getChainName appConfig
+            handleDownloadSnapshotByUrlOverloaded appConfig nds (tzInitUri chainName region)
           Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_KnownSnapshotProviderSource p) ->
             handleDownloadSnapshotFromProviderAsync appConfig nds p
           Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp) ->
