@@ -114,6 +114,12 @@ data ErrorReportPolicy
   | ReportError -- ^ Report the error to user
   | OverrideUrl URI -- ^ Report the error, but override the url in the error message (used when fallback options are used)
 
+-- | Auxiliary data type which represents snapshot download state.
+data SnapshotDownloadState
+  = Downloading
+  | Failed Text
+  | Completed
+
 -- | Execute the 'octez-node snapshot info <path> --json' command and
 -- return either @SnapshotInfoResult@ or error message in case of
 -- command execution/result decoding error.
@@ -298,14 +304,21 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
     , NodeInternal_dataField ~> DeletableRow_dataSelector
     ) CondEmpty
   for_ nodePPid $ \(nid, pid) -> do
-    -- We don't want to set the 'download complete' process state
-    -- right after downloading the file because this file isn't
-    -- always a valid node snapshot. We set this state only if
-    -- 'snapshot info' command returns a valid result.
+    -- We don't want to set either 'download complete' or 'download
+    -- failed' process state because this way node state on UI will
+    -- be also changed.
     --
-    -- This 'TVar' is used to mark that the file has been downloaded,
-    -- and we need to call 'snapshot info' command.
-    downloadCompletedTVar <- liftIO $ newTVarIO False
+    -- When download completed successfully, we need to check that
+    -- downloaded file is a valid node snapshot with 'snapshot info'
+    -- command.
+    --
+    -- When download failed, we try to download the snapshot from
+    -- the fallback provider before displaying the download failure
+    --
+    -- To determine the download state without affecting UI, we use
+    -- 'TVar' instead of changing the 'ProcessState' column in the
+    -- 'ProcessData' table.
+    downloadStateTVar <- liftIO $ newTVarIO Downloading
     downloaderThread <- liftIO $ forkIO $ do
       res <- try $ do
         request <- Http.parseRequest snapshotUriStr
@@ -318,23 +331,29 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
           updateDownloadProgress (getContentLength resp) .| sinkFileCautious storePath
       case res of
         Left (e :: Http.HttpException) ->
-          let errText = T.pack (show e)
+          let errText = "Snapshot download failed with: " <> T.pack (show e)
           in do
             runLoggingEnv logger $
-              $(logError) $ "Snapshot download failed with: " <> errText
-        Right () -> atomically $ writeTVar downloadCompletedTVar True
+              $(logError) errText
+            atomically $ writeTVar downloadStateTVar $ Failed errText
+        Right () -> atomically $ writeTVar downloadStateTVar Completed
 
     let
       cleanUpNode = do
         runDb (Identity db) $ removeNodeDbImpl (Right ())
         liftIO $ removeDirectoryRecursive dataDir
+      handleFailure = liftIO $ do
+        runLoggingEnv logger $ runDb (Identity db) clearDownloadProgress
+        snapshotExists <- doesFileExist storePath
+        when snapshotExists $ removeFile storePath
+
       go = do
-        isCompleted <- liftIO $ readTVarIO downloadCompletedTVar
+        downloadState <- liftIO $ readTVarIO downloadStateTVar
         ps <- fmap headMay $ runDb (Identity db) $ project ProcessData_stateField (AutoKeyField ==. fromId pid)
-        case (isCompleted, ps) of
+        case (downloadState, ps) of
           (_, Just (ProcessState_Node NodeProcessState_DownloadComplete)) ->
             importSnapshotData appConfig nds sm smId importOptions
-          (True, _) -> do
+          (Completed, _) -> do
             let nodePath = maybe nixNodePath _binaryPaths_nodePath $ _appConfig_binaryPaths appConfig
             snapshotInfoRes <- execSnapshotInfo (T.unpack $ _snapshotMeta_storePath sm) nodePath
             case snapshotInfoRes of
@@ -346,14 +365,14 @@ downloadSnapshot appConfig nds snapshotURI (smId, sm) importOptions = do
                     (ProcessState_Node NodeProcessState_DownloadComplete)
                   runLoggingEnv logger $ runDb (Identity db) clearDownloadProgress
                 threadDelay' 1 >> go
+          (Failed failMsg, _) -> do
+            handleFailure
+            throwString $ T.unpack failMsg
           (_, Just (ProcessState_Node NodeProcessState_DownloadCanceled)) -> do
             runLoggingEnv logger $ runDb (Identity db) clearDownloadProgress
             liftIO $ killThread downloaderThread
             cleanUpNode
-          (_, Just (ProcessState_Node NodeProcessState_DownloadFailed)) -> liftIO $ do
-            runLoggingEnv logger $ runDb (Identity db) clearDownloadProgress
-            snapshotExists <- doesFileExist storePath
-            when snapshotExists $ removeFile storePath
+          (_, Just (ProcessState_Node NodeProcessState_DownloadFailed)) -> handleFailure
           _ -> threadDelay' 1 >> go
     go
   where
