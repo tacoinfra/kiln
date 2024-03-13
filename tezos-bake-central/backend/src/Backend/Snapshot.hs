@@ -723,7 +723,7 @@ handleDownloadSnapshotByUrlOverloaded appConfig nds uri =
             , renderStr uri
             ]
         $(logDebug) $ "Trying to download snapshot from provider: " <> render uri'
-        handleDownloadSnapshotFromProviderSync appConfig nds uri' smId ReportError
+        handleDownloadSnapshotFromProviderSync appConfig nds uri' smId (OverrideUrl uri)
   where
     logger = _nodeDataSource_logger nds
     uriText = render uri
