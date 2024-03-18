@@ -1640,10 +1640,10 @@ startNodeWorkflow backWF close = Workflow $ do
           Custom _ -> do
             divClass "explanation" $  do
               text "You can enter either the URL of the provider (e.g. "
-              hrefLink "https://xtz-shots.io" $ text "https://xtz-shots.io"
-              text " or "
-              hrefLink "https://xtz-shots.io/tezos-snapshots.json" $ text "https://xtz-shots.io/tezos-snapshots.json"
-              text ") or a link to a specific snapshot. "
+              hrefLink "https://snapshots.tezos.marigold.dev/api/tezos-snapshots.json" $ text "https://snapshots.tezos.marigold.dev/api/tezos-snapshots.json"
+              text ") or a link to a specific snapshot (e.g. "
+              hrefLink "https://snapshots.eu.tzinit.org/mainnet/rolling" $ text "https://snapshots.eu.tzinit.org/mainnet/rolling"
+              text ").  "
               text "Kiln will download the latest rolling snapshot from the provider or a specific snapshot depending on the given URL."
             elAttr "div" ("style" =: "margin-top: 10px") $
              either (const Nothing) Just <$$$> formItem' "" $ uriField "" ""
