@@ -156,14 +156,19 @@ requestHandler appConfig nds =
                   ] (AutoKeyField ==. fromId (nodeData ^. deletableRow_data))
                 notify NotifyTag_NodeInternal (nid, Just processData)
 
+        let
+          snapshotProviders =
+            [ KnownSnapshotProvider_TzInit TzInitAsia
+            , KnownSnapshotProvider_TzInit TzInitEurope
+            , KnownSnapshotProvider_TzInit TzInitUs
+            , KnownSnapshotProvider_Marigold
+            ]
+
         case mNodeProcessState of
           Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_UriSource u) ->
             handleDownloadSnapshotByUrlOverloaded appConfig nds u
-          Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_KnownSnapshotProviderSource (KnownSnapshotProvider_TzInit region)) -> do
-            chainName <- getChainName appConfig
-            handleDownloadSnapshotByUrlOverloaded appConfig nds (tzInitUri chainName region)
           Just (NodeProcessState_DownloadingSnapshot, SnapshotImportSource_KnownSnapshotProviderSource p) ->
-            handleDownloadSnapshotFromProviderAsync appConfig nds p
+            handleDownloadSnapshotFromProviderAsync appConfig nds (p : filter (/= p) snapshotProviders) --  Put the selected download as the first element, and filter the same from the tail.
           Just (NodeProcessState_ImportingSnapshot, SnapshotImportSource_FilePathSource fp) ->
             handleSnapshotFilePathImport appConfig nds fp
           Nothing ->
