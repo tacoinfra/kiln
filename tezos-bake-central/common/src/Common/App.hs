@@ -109,11 +109,8 @@ type Deletable' e a = Validation (First e) a
 instance FromJSON e => FromJSON a => FromJSON (Validation e a)
 instance ToJSON e => ToJSON a => ToJSON (Validation e a)
 
-pattern NairobiProtocolHash :: ProtocolHash
-pattern NairobiProtocolHash = ProtocolHash "PtNairobiyssHuh87hEhfVBGCVrK3WnS8Z2FT4ymB5tAa4r1nQf"
-
-pattern MumbaiProtocolHash :: ProtocolHash
-pattern MumbaiProtocolHash = ProtocolHash "PtMumbai2TmsJHNGRkD8v8YDbtao7BLUC3wjASn1inAKLFCjaH1"
+pattern ParisBProtocolHash :: ProtocolHash
+pattern ParisBProtocolHash = ProtocolHash "PtParisBQscdCm6Cfow6ndeU6wKJyA3aV1j4D3gQBQMsTQyJCrz"
 
 pattern OxfordProtocolHash :: ProtocolHash
 pattern OxfordProtocolHash = ProtocolHash "ProxfordYmVfjWnRcgjWH36fW6PArwqykTFzotUxRs6gmTcZDuH"
