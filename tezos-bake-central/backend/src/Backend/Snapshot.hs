@@ -18,6 +18,7 @@
 
 module Backend.Snapshot where
 
+import Control.Concurrent.Async (async)
 import Control.Applicative (optional)
 import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM (TVar, atomically, modifyTVar, newTVarIO, readTVarIO, writeTVar)
@@ -71,6 +72,7 @@ import Backend.Process.Common
 import Backend.Process.Node (getKilnNodeVersion, nixNodePath)
 import Backend.Schema
 import Common.Schema
+import Common.Snapshot
 import ExtraPrelude
 
 -- | Type alias for the default key of 'SnapshotMeta' table defined for convenience.
@@ -646,22 +648,10 @@ updateSnapshotMetaImportLog importLog smId = do
 removeFileLogging :: (MonadLogger m, MonadIO m, MonadMask m) => FilePath -> m ()
 removeFileLogging f = liftIO (removeFile f) `catch` \(e :: IOException) -> $(logError) $ "Failed to remove file: " <> T.pack f <> ": " <> tshow e
 
-snapshotProviderUri :: KnownSnapshotProvider -> URI
-snapshotProviderUri = \case
-  KnownSnapshotProvider_XtzShots -> xtzShotsMetadataUri
+snapshotProviderUri :: NamedChain -> KnownSnapshotProvider -> URI
+snapshotProviderUri namedChain = \case
   KnownSnapshotProvider_Marigold -> marigoldMetadataUri
-
--- | In case when we couldn't find the compatible snapshot in
--- a given provider's metadata, we use the second known provider
--- as a fallback option.
-fallbackProviderUri :: KnownSnapshotProvider -> URI
-fallbackProviderUri = \case
-  KnownSnapshotProvider_XtzShots -> marigoldMetadataUri
-  KnownSnapshotProvider_Marigold -> xtzShotsMetadataUri
-
--- | URI of Xtz-shots snapshot metadata.
-xtzShotsMetadataUri :: URI
-xtzShotsMetadataUri = [Uri.uri|https://xtz-shots.io/tezos-snapshots.json|]
+  KnownSnapshotProvider_TzInit region -> tzInitUri namedChain region
 
 -- | URI of Marigold snapshot metadata.
 marigoldMetadataUri :: URI
@@ -798,8 +788,13 @@ handleDownloadSnapshotFromProviderSync appConfig nds providerUrl smId errPolicy 
       notify NotifyTag_SnapshotMeta updatedSnapshotMeta
       pure updatedSnapshotMeta
 
--- | Like 'handleDownloadSnapshotFromProvider', but downloads the snapshot
--- in a separate thread and always handles errors.
+getChainName :: MonadThrow m => AppConfig -> m NamedChain
+getChainName appConfig = case identifyChain $ _appConfig_chainId appConfig of
+  Just n -> pure n
+  Nothing -> throwString "Cannot resolve chain name"
+
+-- | Accepts a list of providers and tries to download the snapshot from each,
+-- in order, until one succeeds.
 handleDownloadSnapshotFromProviderAsync
   :: ( MonadIO m
      , MonadMask m
@@ -808,32 +803,36 @@ handleDownloadSnapshotFromProviderAsync
      )
   => AppConfig
   -> NodeDataSource
-  -> KnownSnapshotProvider
+  -> [KnownSnapshotProvider]
   -> m ()
-handleDownloadSnapshotFromProviderAsync appConfig nds provider = runLoggingEnv logger $ do
-  (smId, _) <- initSnapshotMeta appConfig Nothing nds Nothing
-  void $ liftIO $ forkIO $ do
-    let
-      downloadFromProvider uri errPolicy =
-        handleDownloadSnapshotFromProviderSync appConfig nds uri smId errPolicy
-
-      handler :: MonadIO m => SomeException -> m ()
-      handler e = runLoggingEnv logger $ do
-        $(logDebug) $ T.concat
-          [ "Failed to download the snapshot from "
-          , render (snapshotProviderUri provider)
-          , ":\n"
-          , tshow e
-          , "\nTrying to download from the fallback provider: "
-          , render (fallbackProviderUri provider)
-          ]
-        -- Here we use 'OverrideUrl' policy to mention the provider that user initially selected, not the fallback
-        -- provider, in the error message on UI
-        liftIO $ downloadFromProvider (fallbackProviderUri provider) (OverrideUrl $ snapshotProviderUri provider)
-
-    handle handler $ downloadFromProvider (snapshotProviderUri provider) DontReportError
+handleDownloadSnapshotFromProviderAsync appConfig nds providers =
+  void $ liftIO $ async $
+    runLoggingEnv (_nodeDataSource_logger nds) $ downloadFromProvider providers
   where
-    logger = _nodeDataSource_logger nds
+    downloadFromProvider [] = pure ()
+    downloadFromProvider (p:ps) = downloadFromProvider_ p >>= \case
+      Right _ -> pure ()
+      Left (e, smId) -> do
+        case ps of
+          [] -> do
+            handleSnapshotDownloadFailure nds smId "Snapshot download failed from all of the known providers. Please choose another option."
+          (_:_) -> do
+            $(logDebug) $ "Download failed with error: " <> tshow e <> "\n trying another alternative.."
+            downloadFromProvider ps
+
+    downloadFromProvider_ (KnownSnapshotProvider_TzInit region) = do
+      chainName <- getChainName appConfig
+      let uri = tzInitUri chainName region
+      (smId, sm) <- initSnapshotMeta appConfig Nothing nds (Just uri)
+      try (handleSnapshotDownloadSync appConfig nds uri (smId, sm)) >>= \case
+        Left (e :: SomeException) -> pure $ Left (e, smId)
+        Right _ -> pure $ Right ()
+    downloadFromProvider_ KnownSnapshotProvider_Marigold = do
+      let uri = marigoldMetadataUri
+      (smId, _) <- initSnapshotMeta appConfig Nothing nds (Just uri)
+      try (handleDownloadSnapshotFromProviderSync appConfig nds uri smId DontReportError) >>= \case
+        Left (e :: SomeException) -> pure $ Left (e, smId)
+        Right _ -> pure  $ Right ()
 
 -- | Download the list of snapshot metadata from the given provider url.
 downloadSnapshotMetadata

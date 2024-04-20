@@ -92,6 +92,7 @@ library
     Common.HeadTag
     Common.Route
     Common.Schema
+    Common.Snapshot
     Common.URI
     Common.Vassal
     Common.WrappedShow1
