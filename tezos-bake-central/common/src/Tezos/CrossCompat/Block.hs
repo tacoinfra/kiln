@@ -27,6 +27,7 @@ instance FromJSON BlockCrossCompat where
   parseJSON jv@(Object o) = do
     pv :: String <- o .: "protocol"
     case pv of
+      "PtParisBQscdCm6Cfow6ndeU6wKJyA3aV1j4D3gQBQMsTQyJCrz" -> BlockOxford <$> parseJSON jv
       "ProxfordYmVfjWnRcgjWH36fW6PArwqykTFzotUxRs6gmTcZDuH" -> BlockOxford <$> parseJSON jv
       "PtNairobiyssHuh87hEhfVBGCVrK3WnS8Z2FT4ymB5tAa4r1nQf" -> BlockOxford <$> parseJSON jv
       _ -> BlockGenesis <$> parseJSON jv
