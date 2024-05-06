@@ -125,7 +125,7 @@ instance QueryHistory RpcQuery where
       , "max_priority=" <> T.pack (show rnd)
       , rightsLevelsOrCycleToQueryArgs levelishes
       ]
-  rEndorsingRights params = blockAPI $ "/helpers/endorsing_rights"
+  rEndorsingRights params = blockAPI $ "/helpers/attestation_rights"
       <> (if null params then "" else "?" <> rightsLevelsOrCycleToQueryArgs params)
   rBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/balance"
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)

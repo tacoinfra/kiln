@@ -8,8 +8,9 @@
 module Tezos.Base.Account where
 
 import Control.DeepSeq (NFData)
+import Control.Applicative
 import Control.Lens.TH (makeLenses)
-import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:), (.:?))
+import Data.Aeson (FromJSON (..), ToJSON(..), withObject, object, (.=), (.:), (.:?))
 import Data.Bits (Bits)
 import Data.Hashable (Hashable)
 import Data.Maybe (fromMaybe)
@@ -63,6 +64,22 @@ data EndorsingRightsDelegateInfo = EndorsingRightsDelegateInfo
   , _endorsingRightsDelegateInfo_endorsingPower :: Word16
   } deriving (Eq, Ord, Show)
 
+instance FromJSON EndorsingRightsDelegateInfo where
+  parseJSON = withObject "EndorsingRightsDelegateInfo" $ \o -> do
+    _endorsingRightsDelegateInfo_delegate        <- o .: "delegate"
+    _endorsingRightsDelegateInfo_firstSlot       <- o .: "first_slot"
+    _endorsingRightsDelegateInfo_endorsingPower  <- o .: "endorsing_power" <|> o .: "attestation_power"
+    pure $ EndorsingRightsDelegateInfo {..}
+
+instance ToJSON EndorsingRightsDelegateInfo where
+  toJSON EndorsingRightsDelegateInfo {..} =
+    object
+      [ "delegate" .= _endorsingRightsDelegateInfo_delegate
+      , "first_slot" .= _endorsingRightsDelegateInfo_firstSlot
+      , "endorsing_power" .= _endorsingRightsDelegateInfo_endorsingPower
+      , "attestation_power" .= _endorsingRightsDelegateInfo_endorsingPower
+      ]
+
 data PendingConsensusKey = PendingConsensusKey
   { _pendingConsensusKey_cycle :: Cycle
   , _pendingConsensusKey_pkh :: PublicKeyHash
@@ -112,7 +129,6 @@ concat <$> traverse deriveTezosFromJson
 
 concat <$> traverse deriveTezosJson
   [ ''EndorsingRights
-  , ''EndorsingRightsDelegateInfo
   , ''ParticipationInfo
   , ''PendingConsensusKey
   ]
