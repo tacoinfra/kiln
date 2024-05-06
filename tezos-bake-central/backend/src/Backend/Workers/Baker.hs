@@ -53,7 +53,7 @@ import Safe (maximumDef, minimumDef)
 
 import Tezos.Types
 import qualified Tezos.Genesis.Block as Genesis
-import qualified Tezos.Oxford.Types as Oxford
+import qualified Tezos.Base.Types as Base
 import Tezos.CrossCompat.Account
 import Tezos.CrossCompat.Block
 import Tezos.NodeRPC.Class ((~~))
@@ -409,8 +409,8 @@ checkMissedOpportunities protoInfo headBlock baker isInternal lvl =  do
         blockBaker = thisBlock ^. blockMetadata . blockMetadata_baker
         mbBlockProposer = thisBlock ^. blockMetadata . blockMetadata_proposer
         endorserDelegates = blockCrossData
-            (^..Genesis.block_operations . traverse . traverse . Oxford.operation_contents . traverse . Oxford._OperationContents_Endorsement . Oxford.operationContentsEndorsement_metadata . Oxford.endorsementMetadata_delegate)
-            (^..Oxford.block_operations . traverse . traverse . Oxford.operation_contents . traverse . Oxford._OperationContents_Endorsement . Oxford.operationContentsEndorsement_metadata . Oxford.endorsementMetadata_delegate)
+            (^..Genesis.block_operations . traverse . traverse . Base.operation_contents . traverse . Base._OperationContents_Endorsement . Base.operationContentsEndorsement_metadata . Base.endorsementMetadata_delegate)
+            (^..Base.block_operations . traverse . traverse . Base.operation_contents . traverse . Base._OperationContents_Endorsement . Base.operationContentsEndorsement_metadata . Base.endorsementMetadata_delegate)
             thisBlock
         successfulEndorsementCondition = _baker_publicKeyHash baker `elem` endorserDelegates
 

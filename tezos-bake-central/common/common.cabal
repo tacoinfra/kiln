@@ -131,14 +131,14 @@ library
 
     Tezos.Genesis.Block
 
-    Tezos.Oxford.Account
-    Tezos.Oxford.Block
-    Tezos.Oxford.Level
-    Tezos.Oxford.Operation
-    Tezos.Oxford.ProtocolConstants
-    Tezos.Oxford.Types
-    Tezos.Oxford.Unsafe
-    Tezos.Oxford.Vote
+    Tezos.Base.Account
+    Tezos.Base.Block
+    Tezos.Base.Level
+    Tezos.Base.Operation
+    Tezos.Base.ProtocolConstants
+    Tezos.Base.Types
+    Tezos.Base.Unsafe
+    Tezos.Base.Vote
 
   ghc-options: -Wall -fno-warn-unused-do-bind -fwarn-tabs -funbox-strict-fields -O2 -fprof-auto-calls -fexpose-all-unfoldings
 

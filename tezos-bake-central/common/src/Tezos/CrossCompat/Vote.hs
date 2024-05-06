@@ -5,24 +5,24 @@ import Data.Aeson (FromJSON(..))
 import Data.Sequence (Seq)
 
 import Tezos.Common.Base58Check (ProtocolHash)
-import qualified Tezos.Oxford.Vote as Oxford
+import qualified Tezos.Base.Vote as Base
 
-data VoterListingsCrossCompat = VoterListingsOxford (Seq Oxford.VoterDelegate)
+data VoterListingsCrossCompat = VoterListingsBase (Seq Base.VoterDelegate)
   deriving Show
 
 instance FromJSON VoterListingsCrossCompat where
-  parseJSON jv = VoterListingsOxford <$> parseJSON jv
+  parseJSON jv = VoterListingsBase <$> parseJSON jv
 
-data ProposalVotesListCrossCompat = ProposalVotesListOxford (Seq Oxford.ProposalVotes)
+data ProposalVotesListCrossCompat = ProposalVotesListBase (Seq Base.ProposalVotes)
 
 getProposalVotesListCrossCompatProtocolHashes :: ProposalVotesListCrossCompat -> Seq ProtocolHash
 getProposalVotesListCrossCompatProtocolHashes = \case
-  ProposalVotesListOxford l -> fmap (fst . Oxford.unProposalVotes) l
+  ProposalVotesListBase l -> fmap (fst . Base.unProposalVotes) l
 
 instance FromJSON ProposalVotesListCrossCompat where
-  parseJSON jv = ProposalVotesListOxford <$> parseJSON jv
+  parseJSON jv = ProposalVotesListBase <$> parseJSON jv
 
-data BallotsCrossCompat = BallotsOxford Oxford.Ballots
+data BallotsCrossCompat = BallotsBase Base.Ballots
 
 instance FromJSON BallotsCrossCompat where
-  parseJSON jv = BallotsOxford <$> parseJSON jv
+  parseJSON jv = BallotsBase <$> parseJSON jv

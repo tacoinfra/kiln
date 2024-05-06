@@ -5,7 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Tezos.Oxford.Account where
+module Tezos.Base.Account where
 
 import Control.DeepSeq (NFData)
 import Control.Lens.TH (makeLenses)
