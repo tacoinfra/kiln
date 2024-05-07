@@ -22,7 +22,7 @@ import Tezos.Common.Block
 import Tezos.Common.Json (deriveTezosFromJson)
 
 import Tezos.Common.BlockHeader
-import Tezos.Oxford.Operation
+import Tezos.Base.Operation
 
 -- | "description": "All the information about a block.",
 data Block = Block

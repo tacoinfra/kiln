@@ -1,3 +1,3 @@
-module Tezos.Unsafe (module Latest) where
+module Tezos.Unsafe (module Base) where
 
-import Tezos.Oxford.Unsafe as Latest
+import Tezos.Base.Unsafe as Base

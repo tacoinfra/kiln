@@ -11,99 +11,99 @@ import Data.Aeson
 import qualified Data.Sequence as Seq
 import Data.Time
 
-import qualified Tezos.Oxford.Account as Oxford
+import qualified Tezos.Base.Account as Base
 import Tezos.Common.Level
 import Tezos.Common.PublicKeyHash
 import Tezos.Common.Tez
 
 data AccountCrossCompat
-  = AccountOxford Oxford.Account
+  = AccountBase Base.Account
 
 accountCrossCompat_delegatePkh :: Getter AccountCrossCompat (Maybe PublicKeyHash)
 accountCrossCompat_delegatePkh = to $ \case
-  AccountOxford a -> a ^. Oxford.account_delegate
+  AccountBase a -> a ^. Base.account_delegate
 
 instance FromJSON AccountCrossCompat where
   parseJSON jv =
-    AccountOxford <$> parseJSON jv
+    AccountBase <$> parseJSON jv
 
 data DelegateInfoCrossCompat
-  = DelegateInfoOxford Oxford.DelegateInfo
+  = DelegateInfoBase Base.DelegateInfo
 
 instance FromJSON DelegateInfoCrossCompat where
   parseJSON jv =
-    DelegateInfoOxford <$> parseJSON jv
+    DelegateInfoBase <$> parseJSON jv
 
 delegateInfoCrossCompat_balance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_balance = to $ \case
-  DelegateInfoOxford di -> di ^. Oxford.delegateInfo_fullBalance
+  DelegateInfoBase di -> di ^. Base.delegateInfo_fullBalance
 
 delegateInfoCrossCompat_frozenBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_frozenBalance = to $ \case
-  DelegateInfoOxford di -> di ^. Oxford.delegateInfo_frozenDeposits
+  DelegateInfoBase di -> di ^. Base.delegateInfo_frozenDeposits
 
 delegateInfoCrossCompat_stakingBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_stakingBalance = to $ \case
-  DelegateInfoOxford di -> di ^. Oxford.delegateInfo_stakingBalance
+  DelegateInfoBase di -> di ^. Base.delegateInfo_stakingBalance
 
 delegateInfoCrossCompat_delegatedBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_delegatedBalance = to $ \case
-  DelegateInfoOxford di -> di ^. Oxford.delegateInfo_delegatedBalance
+  DelegateInfoBase di -> di ^. Base.delegateInfo_delegatedBalance
 
 delegateInfoCrossCompat_gracePeriod :: Getter DelegateInfoCrossCompat Cycle
 delegateInfoCrossCompat_gracePeriod = to $ \case
-  DelegateInfoOxford di -> di ^. Oxford.delegateInfo_gracePeriod
+  DelegateInfoBase di -> di ^. Base.delegateInfo_gracePeriod
 
 delegateInfoCrossCompat_deactivated :: Getter DelegateInfoCrossCompat Bool
 delegateInfoCrossCompat_deactivated = to $ \case
-  DelegateInfoOxford di -> di ^. Oxford.delegateInfo_deactivated
+  DelegateInfoBase di -> di ^. Base.delegateInfo_deactivated
 
 delegateInfoCrossCompat_activeConsensusKey :: Getter DelegateInfoCrossCompat PublicKeyHash
 delegateInfoCrossCompat_activeConsensusKey = to $ \case
-  DelegateInfoOxford di -> di ^. Oxford.delegateInfo_activeConsensusKey
+  DelegateInfoBase di -> di ^. Base.delegateInfo_activeConsensusKey
 
-delegateInfoCrossCompat_pendingConsensusKeys :: Getter DelegateInfoCrossCompat [Oxford.PendingConsensusKey]
+delegateInfoCrossCompat_pendingConsensusKeys :: Getter DelegateInfoCrossCompat [Base.PendingConsensusKey]
 delegateInfoCrossCompat_pendingConsensusKeys = to $ \case
-  DelegateInfoOxford di -> di ^. Oxford.delegateInfo_pendingConsensusKeys
+  DelegateInfoBase di -> di ^. Base.delegateInfo_pendingConsensusKeys
 
 data BakingRightsCrossCompat
-  = BakingRightsOxford Oxford.BakingRights
+  = BakingRightsBase Base.BakingRights
 
 instance FromJSON BakingRightsCrossCompat where
   parseJSON jv =
-    BakingRightsOxford <$> parseJSON jv
+    BakingRightsBase <$> parseJSON jv
 
 bakingRightsCrossCompat_level :: Getter BakingRightsCrossCompat RawLevel
 bakingRightsCrossCompat_level = to $ \case
-  BakingRightsOxford e -> e ^. Oxford.bakingRights_level
+  BakingRightsBase e -> e ^. Base.bakingRights_level
 
 bakingRightsCrossCompat_delegate :: Getter BakingRightsCrossCompat PublicKeyHash
 bakingRightsCrossCompat_delegate = to $ \case
-  BakingRightsOxford e -> e ^. Oxford.bakingRights_delegate
+  BakingRightsBase e -> e ^. Base.bakingRights_delegate
 
-bakingRightsCrossCompat_round :: Getter BakingRightsCrossCompat Oxford.Round
+bakingRightsCrossCompat_round :: Getter BakingRightsCrossCompat Base.Round
 bakingRightsCrossCompat_round = to $ \case
-  BakingRightsOxford e -> e ^. Oxford.bakingRights_round
+  BakingRightsBase e -> e ^. Base.bakingRights_round
 
 bakingRightsCrossCompat_estimatedTime :: Getter BakingRightsCrossCompat (Maybe UTCTime)
 bakingRightsCrossCompat_estimatedTime = to $ \case
-  BakingRightsOxford e -> e ^. Oxford.bakingRights_estimatedTime
+  BakingRightsBase e -> e ^. Base.bakingRights_estimatedTime
 
 data EndorsingRightsCrossCompat
-  = EndorsingRightsOxford Oxford.EndorsingRights
+  = EndorsingRightsBase Base.EndorsingRights
 
 instance FromJSON EndorsingRightsCrossCompat where
   parseJSON jv =
-    EndorsingRightsOxford <$> parseJSON jv
+    EndorsingRightsBase <$> parseJSON jv
 
 instance ToJSON EndorsingRightsCrossCompat where
   toJSON = \case
-    EndorsingRightsOxford er -> toJSON er
+    EndorsingRightsBase er -> toJSON er
 
 endorsingRightsCrossCompat_level :: Getter EndorsingRightsCrossCompat RawLevel
 endorsingRightsCrossCompat_level = to $ \case
-  EndorsingRightsOxford e -> e ^. Oxford.endorsingRights_level
+  EndorsingRightsBase e -> e ^. Base.endorsingRights_level
 
 endorsingRightsCrossCompat_delegates :: Getter EndorsingRightsCrossCompat (Seq.Seq PublicKeyHash)
 endorsingRightsCrossCompat_delegates = to $ \case
-  EndorsingRightsOxford e -> view Oxford.endorsingRightsDelegateInfo_delegate <$> e ^. Oxford.endorsingRights_delegates
+  EndorsingRightsBase e -> view Base.endorsingRightsDelegateInfo_delegate <$> e ^. Base.endorsingRights_delegates

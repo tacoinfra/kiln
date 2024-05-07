@@ -87,7 +87,7 @@ import qualified Text.URI as Uri
 
 import Tezos.NodeRPC
 import Tezos.Types hiding (Block)
-import qualified Tezos.Oxford.Types as Oxford
+import qualified Tezos.Base.Types as Base
 
 import Backend.Common (LedgerQuery, timeout')
 import Backend.Config (AppConfig (..), kilnNodeRpcURI)
@@ -858,7 +858,7 @@ nodeQueryIx q = $(logDebugSH) ("nodeQueryIx called" :: Text, q) *> case q of
       |]
       for cachedRights $ \(lvl, delegate, round, estimatedTime) ->
         let
-          bakingRight = BakingRightsOxford $ Oxford.BakingRights
+          bakingRight = BakingRightsBase $ Base.BakingRights
             { _bakingRights_level = lvl
             , _bakingRights_delegate = delegate
             , _bakingRights_round = round

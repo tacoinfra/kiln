@@ -10,7 +10,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-module Tezos.Oxford.Operation where
+module Tezos.Base.Operation where
 
 import Control.Lens (traversed, (^.), (^..))
 import Control.Lens.TH (makeLenses, makePrisms)
@@ -154,6 +154,7 @@ instance FromJSON OperationContents where
       "register_global_constant"       -> pure OperationContents_RegisterGlobalConstant
       "set_deposits_limit"             -> pure OperationContents_SetDepositsLimit
 
+      "endorsement_with_dal"           -> pure OperationContents_Unknown
       "sc_rollup_add_messages"         -> pure OperationContents_Unknown
       "sc_rollup_cement"               -> pure OperationContents_Unknown
       "sc_rollup_publish"              -> pure OperationContents_Unknown

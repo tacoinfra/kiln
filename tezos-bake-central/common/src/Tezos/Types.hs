@@ -1,3 +1,3 @@
-module Tezos.Types (module Latest) where
+module Tezos.Types (module Base) where
 
-import Tezos.Oxford.Types as Latest
+import Tezos.Base.Types as Base

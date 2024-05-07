@@ -3,9 +3,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
-module Tezos.Oxford.ProtocolConstants where
+module Tezos.Base.ProtocolConstants where
 
 import Control.DeepSeq (NFData)
+import Control.Applicative ((<|>))
 import Control.Lens ((^.))
 import Control.Lens.TH (makeLenses)
 import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
@@ -51,6 +52,7 @@ getCyclesPerVotingPeriod protoInfo = case (_protoInfo_blocksPerVotingPeriod prot
 instance FromJSON ProtoInfo where
   parseJSON = withObject "ProtoInfo" $ \v -> do
     _protoInfo_preservedCycles       <- v .: "preserved_cycles"
+                                          <|> v.: "consensus_rights_delay"
     _protoInfo_blocksPerCycle        <- v .: "blocks_per_cycle"
     _protoInfo_blocksPerVotingPeriod <- v .:? "blocks_per_voting_period"
     _protoInfo_cyclesPerVotingPeriod <- v .:? "cycles_per_voting_period"
