@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeOperators #-}
 module Tezos.Base.Operation where
 
+import Control.Applicative ((<|>))
 import Control.Lens (traversed, (^.), (^..))
 import Control.Lens.TH (makeLenses, makePrisms)
 import Data.Aeson
@@ -76,6 +77,12 @@ data EndorsementMetadata = EndorsementMetadata
   }
   deriving (Eq, Ord, Show, Typeable)
 
+instance FromJSON EndorsementMetadata where
+  parseJSON = withObject "EndorsementMetadata" $ \o -> do
+    delegate <- o .: "delegate"
+    endorsementPower <- o .: "endorsement_power" <|> o .: "consensus_power"
+    pure $ EndorsementMetadata delegate endorsementPower
+
 -- | "kind": { "type": "string", "enum": [ "double_baking_evidence" ] },
 data OperationContentsDoubleBakingEvidence = OperationContentsDoubleBakingEvidence
   { _operationContentsDoubleBakingEvidence_bh1 :: BlockHeaderFull --  "bh1": { "$ref": "#/definitions/block_header.alpha.full_header" },
@@ -138,10 +145,14 @@ instance FromJSON OperationContents where
     kind :: Text <- v .: "kind"
     case kind of
       "endorsement"                    -> OperationContents_Endorsement                  <$> parseJSON (Object v)
+      "attestation"                    -> OperationContents_Endorsement                  <$> parseJSON (Object v)
       "double_endorsement_evidence"    -> OperationContents_DoubleEndorsementEvidence    <$> parseJSON (Object v)
+      "double_attestation_evidence"    -> OperationContents_DoubleEndorsementEvidence    <$> parseJSON (Object v)
       "double_baking_evidence"         -> OperationContents_DoubleBakingEvidence         <$> parseJSON (Object v)
+      "double_preattestation_evidence" -> OperationContents_DoublePreendorsementEvidence <$> parseJSON (Object v)
       "double_preendorsement_evidence" -> OperationContents_DoublePreendorsementEvidence <$> parseJSON (Object v)
       "preendorsement"                 -> pure OperationContents_Preendorsement
+      "preattestation"                 -> pure OperationContents_Preendorsement
       "seed_nonce_revelation"          -> pure OperationContents_SeedNonceRevelation
       "activate_account"               -> pure OperationContents_ActivateAccount
       "proposals"                      -> pure OperationContents_Proposals
@@ -155,6 +166,7 @@ instance FromJSON OperationContents where
       "set_deposits_limit"             -> pure OperationContents_SetDepositsLimit
 
       "endorsement_with_dal"           -> pure OperationContents_Unknown
+      "attestation_with_dal"           -> pure OperationContents_Unknown
       "sc_rollup_add_messages"         -> pure OperationContents_Unknown
       "sc_rollup_cement"               -> pure OperationContents_Unknown
       "sc_rollup_publish"              -> pure OperationContents_Unknown
@@ -194,7 +206,6 @@ concat <$> traverse deriveTezosFromJson
   , ''OperationContentsDoublePreendorsementEvidence
   , ''OperationContentsEndorsement
   , ''InlinedEndorsementLike
-  , ''EndorsementMetadata
   , ''EndorsementLikeContents
   , ''DoubleBakingEvidenceMetadata
   , ''DoubleEndorsementEvidenceMetadata

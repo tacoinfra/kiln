@@ -1237,7 +1237,7 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
     startBaking = divClass "start-baking column" $ do
       elClass "h5" "ui header" $ text "Start Baking"
       divClass "explanation" $ do
-        text "Bake and endorse on the Tezos blockchain using a baker that is managed from within Kiln. Requires using a "
+        text "Bake and attest on the Tezos blockchain using a baker that is managed from within Kiln. Requires using a "
         hrefLink "https://www.ledger.com/products/ledger-nano-s" $ text "Ledger Device" -- TODO is the link correct?
         text ". Kiln only supports running a single baker."
       baker <- maybeDyn =<< watchInternalBaker
@@ -1274,9 +1274,9 @@ addBakerModal close = ffor (workflow splash) $ \d -> let (c, e) = splitDynPure d
 
         el "p" $ text "To the maximum extent permitted by applicable law, we are not liable to any extent for any loss, damage, liability, expense or claim you suffer as a result of, but not limited to:"
         el "ul" $ traverse_ (el "li" . text)
-          [ "missed rewards due to missed baking or endorsement opportunities"
+          [ "missed rewards due to missed baking or attestation opportunities"
           , "missed rewards due to failure to reveal a nonce"
-          , "loss of funds due to double baking or double endorsing"
+          , "loss of funds due to double baking or double attesting"
           , "blockchain reorganizations"
           , "general Tezos network issues"
           , "any other use of this software"
@@ -2512,8 +2512,8 @@ bakersTab =
                       where
                         aRight = case _errorLogBakerMissed_right log of
                           RightKind_Baking -> "a bake"
-                          RightKind_Endorsing -> "an endorsement"
-                    BakerLogTag_MissedEndorsementBonus -> Just $ text "Missed endorsement bonus."
+                          RightKind_Endorsing -> "an attestation"
+                    BakerLogTag_MissedEndorsementBonus -> Just $ text "Missed attestation bonus."
                     BakerLogTag_NeedToResetHWM -> Just $ renderBakerError $ bakerNeedToResetHWMDescriptions log
                     BakerLogTag_BakerLedgerDisconnected -> Just $ renderBakerError $ bakerLedgerDisconnectedDescriptions log
                     BakerLogTag_BakerDeactivated -> Just $ renderBakerError $ bakerDeactivatedDescriptions log
@@ -2532,9 +2532,9 @@ bakersTab =
                         subj = case _groupedBakerAlert_type of
                           GroupedAlertType_MissedBake -> case _groupedBakerAlert_right of
                             Just RightKind_Baking -> "a bake"
-                            Just RightKind_Endorsing -> "an endorsement"
+                            Just RightKind_Endorsing -> "an attestation"
                             Nothing -> error "Inconsistent state of grouped alert. 'right' should be 'Just' value for 'MissedBake' alert."
-                          GroupedAlertType_MissedEndorsementBonus -> "the endorsement bonus"
+                          GroupedAlertType_MissedEndorsementBonus -> "the attestation bonus"
 
               let (title, subtitle) = splitDynPure $ bakerSummaryIdentification . (pkh,) <$> vDyn
               titleUniq <- holdUniqDyn title
@@ -2555,9 +2555,9 @@ bakersTab =
                     pkh
                     subtitleUniq
                     (\ev -> PublicRequest_RemoveBaker pkh <$ ev)
-                    -- if you have both a bake and endorse for the same level, you
+                    -- if you have both a bake and attest for the same level, you
                     -- must *first* bake the block at that level, then you may
-                    -- immediately endorse that block.  the times are the same,
+                    -- immediately attest that block.  the times are the same,
                     -- baking happens first.
                     (Just errorMessages)
                     vDyn
@@ -2691,7 +2691,7 @@ bakersTab =
 
             removeEntry modal = tileMenuEntryModal "Remove Baker" $ modal mkRemoveReq
             removeInternalBakerModal = warningModal "Remove Baker?"
-              ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]
+              ["This baker will not be able to sign blocks or attestations once removed and all related baker data will be deleted."]
               "Remove Baker"
 
           let mbErrorLog = _processData_errorLog bakerProcessData
@@ -2813,7 +2813,7 @@ bakersTab =
               if isBakerRunning bid
               then do
                 let stopModal = warningModal "Stop Baker?"
-                      ["This baker will not be able to sign blocks or endorsements once stopped. You can restart this baker at any time."]
+                      ["This baker will not be able to sign blocks or attestations once stopped. You can restart this baker at any time."]
                       "Stop Baker"
                 tileMenuEntryModal "Stop Baker" $ stopModal (PublicRequest_UpdateInternalDaemon DaemonType_Baker False <$)
               else do
@@ -2821,7 +2821,7 @@ bakersTab =
                 void $ requestingIdentity $ public (PublicRequest_UpdateInternalDaemon DaemonType_Baker True) <$ start
               let
                 removeInternalBakerModal = warningModal "Remove Baker?"
-                  ["This baker will not be able to sign blocks or endorsements once removed and all related baker data will be deleted."]
+                  ["This baker will not be able to sign blocks or attestations once removed and all related baker data will be deleted."]
                   "Remove Baker"
               removeEntry removeInternalBakerModal
 
@@ -2941,7 +2941,7 @@ bakersTab =
                 _participationInfo_remainingAllowedMissedSlots
 
               el "tr" $ do
-                el "td" (text "Expected endorsing rewards")
+                el "td" (text "Expected attestation rewards")
                 elClass "td" "expected-endorsing-rewards monospaced-text" . withPlaceholder . ffor dmParticipationInfo .
                   fmap $ \t -> do
                     let (w, p, tz) = tez' $ _participationInfo_expectedEndorsingRewards t

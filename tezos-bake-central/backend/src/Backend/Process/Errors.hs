@@ -57,9 +57,9 @@ instance Buildable ErrorEvent where
     eventTypeDescription _errorEvent_type +| " due to:\n" +| blockListF _errorEvent_trace |+ ""
     where
       eventTypeDescription = \case
-        ErrorEventType_SkippingPreendoresement -> "skipped preendorsement"
-        ErrorEventType_SkippingEndoresement -> "skipped endorsement"
-        ErrorEventType_FailingToInjectPreendorsement -> "failed to inject preendorsement"
+        ErrorEventType_SkippingPreendoresement -> "skipped preattestation"
+        ErrorEventType_SkippingEndoresement -> "skipped attestation"
+        ErrorEventType_FailingToInjectPreendorsement -> "failed to inject preattestation"
 
 instance FromJSON ErrorTrace where
   parseJSON = withObject "errorTrace" $ \o -> do

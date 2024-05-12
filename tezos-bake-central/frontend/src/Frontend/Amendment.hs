@@ -477,7 +477,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         icon "icon-check blue"
         text "Your vote has been cast."
       divClass "ui header centered" $
-        text "Open the Tezos Baking app to continue bake and endorse blocks."
+        text "Open the Tezos Baking app to continue bake and attest blocks."
       divClass "ui header centered" $ do
         elClass "span" "ui active inline loader small blue" blank
         elClass "span" "" $ text "Looking for Tezos Baking app on Ledger device..."
@@ -569,7 +569,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
     voteCastSuccessfullyFlow whereToGo = Workflow $ do
       divClass "bigtitle" $ text "Voting completed succesfully."
       divClass "bigtitle" $
-        text "Kiln Baker will be automatically restarted to continue bake and endorse blocks."
+        text "Kiln Baker will be automatically restarted to continue bake and attest blocks."
       closeButton <- voteButton "Close"
       pure $ fanEither $ whereToGo <$ closeButton
 
@@ -619,4 +619,4 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
               text "Your baker's next opportunity is "
               etaDyn <- maybeDyn mNextOp
               dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
-            divClass "description" $ text "You will not be able to sign blocks or endorsements while outside the Tezos Baking app. Be sure you have a few minutes to vote before your baker's next opportunity."
+            divClass "description" $ text "You will not be able to sign blocks or attestations while outside the Tezos Baking app. Be sure you have a few minutes to vote before your baker's next opportunity."
