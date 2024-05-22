@@ -441,6 +441,7 @@ bakerIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
   BakerLogTag_InsufficientFunds -> unId . _errorLogInsufficientFunds_baker
+  BakerLogTag_NotEnoughStakedBalance -> unId . _errorLogNotEnoughStakedBalance_baker
   BakerLogTag_VotingReminder -> unId . _errorLogVotingReminder_baker
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
@@ -453,6 +454,7 @@ errorLogIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
   BakerLogTag_InsufficientFunds -> _errorLogInsufficientFunds_log
+  BakerLogTag_NotEnoughStakedBalance -> _errorLogNotEnoughStakedBalance_log
   BakerLogTag_VotingReminder -> _errorLogVotingReminder_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog

@@ -82,7 +82,7 @@ import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHea
                       bakerGroupedMissedDescriptions, bakerInsufficientFundsDescriptions,
                       bakerLedgerDisconnectedDescriptions, bakerMissedDescriptions,
                       bakerMissedEndorsementBonusDescriptions, bakerVotingReminderDescriptions,
-                      bakerNeedToResetHWMDescriptions, standardTimeFormat)
+                      bakerNeedToResetHWMDescriptions, standardTimeFormat, bakerNotEnoughStakedBalanceDescriptions)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -797,6 +797,7 @@ instance HasAlertMetaData (BakerLogTag a) where
     BakerLogTag_BakerAccused ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_InsufficientFunds -> def { _alertMetaData_severity = AlertSeverity_Warning }
+    BakerLogTag_NotEnoughStakedBalance -> def
     BakerLogTag_VotingReminder -> def
       { _alertMetaData_isEventBased = True
       , _alertMetaData_isUserResolvable = True
@@ -1045,6 +1046,9 @@ liveErrorsWidget = void $ do
           BakerLogTag_InsufficientFunds -> do
               dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
               dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError (bakerInsufficientFundsDescriptions mMinimalStake log) pkh
+          BakerLogTag_NotEnoughStakedBalance -> renderBakerError
+              bakerNotEnoughStakedBalanceDescriptions
+              pkh
           BakerLogTag_VotingReminder ->
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining -> do
               let dsc = bakerVotingReminderDescriptions log <$> remaining
@@ -2522,6 +2526,8 @@ bakersTab =
                     BakerLogTag_InsufficientFunds -> Just $ do
                         dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
                         dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError $ bakerInsufficientFundsDescriptions mMinimalStake log
+                    BakerLogTag_NotEnoughStakedBalance -> Just $
+                      renderBakerError bakerNotEnoughStakedBalanceDescriptions
                     BakerLogTag_VotingReminder -> Nothing
                   Right (BakerAlert_GroupedAlert GroupedBakerAlert{..}) ->
                     Just $ el "span" $ do
@@ -2632,6 +2638,8 @@ bakersTab =
           BakerLogTag_InsufficientFunds -> do
               dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
               dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError ev (pure $ bakerInsufficientFundsDescriptions mMinimalStake log) pkh
+          BakerLogTag_NotEnoughStakedBalance ->
+            renderBakerError ev (pure bakerNotEnoughStakedBalanceDescriptions) pkh
           BakerLogTag_VotingReminder ->
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining ->
               renderBakerError ev (bakerVotingReminderDescriptions log <$> remaining) pkh

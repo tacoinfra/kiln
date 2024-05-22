@@ -308,6 +308,7 @@ requestHandler appConfig nds =
                 BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField
                 BakerLogTag_BakerAccused -> deleteLogsId tag ErrorLogBakerAccused_bakerField
                 BakerLogTag_InsufficientFunds -> deleteLogsId tag ErrorLogInsufficientFunds_bakerField
+                BakerLogTag_NotEnoughStakedBalance -> deleteLogsId tag ErrorLogNotEnoughStakedBalance_bakerField
                 BakerLogTag_VotingReminder -> deleteLogsId tag ErrorLogVotingReminder_bakerField
                 BakerLogTag_MissedEndorsementBonus -> deleteLogsId tag ErrorLogBakerMissedEndorsementBonus_bakerField
                 BakerLogTag_NeedToResetHWM -> deleteLogsId tag ErrorLogBakerNeedToResetHWM_bakerField

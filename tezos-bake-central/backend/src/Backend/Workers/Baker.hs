@@ -467,6 +467,9 @@ updateDelegateDetails protoInfo headBlock headCycle baker details isInternal = d
   -- and cache that.
   delegate <- (^.accountCrossCompat_delegatePkh) <$>
     nodeQueryDataSource (nodeQuery_Account headHash (Implicit pkh))
+  mbStakedBalance <- nodeQueryDataSource (nodeQuery_StakedBalance headHash headLvl pkh)
+  mbAdaptiveIssuanceLaunchCycle <- nodeQueryDataSource (nodeQuery_AILaunchCycle headHash)
+
   selfDelegateActions <- case delegate of
     Nothing -> pure []
     Just delegatePkh -> do
@@ -530,6 +533,16 @@ updateDelegateDetails protoInfo headBlock headCycle baker details isInternal = d
         insufficientFundAlerts :: AppSerializable ()
         insufficientFundAlerts = bool clearInsufficientFunds reportInsufficientFunds isInsufficientFunds baker
 
-      pure $ [deactivationAlerts, updateDetails] ++ [insufficientFundAlerts | isInternal]
+        notEnoughStakedBalanceAlerts :: AppSerializable ()
+        notEnoughStakedBalanceAlerts =
+          whenJust mbAdaptiveIssuanceLaunchCycle $ \aiCycle -> whenJust mbStakedBalance $ \stakedBalance ->
+          -- Having enough staked balance to receive baking rights is mandatory only when
+          -- adaptive issuance is activated, so we check that the adapative issuance was
+          -- activated before reporting the alert.
+          if headCycle >= aiCycle && stakedBalance < protoInfo ^. protoInfo_minimalFrozenStake
+          then reportNotEnoughStakedBalance baker
+          else clearNotEnoughStakedBalance baker
+
+      pure $ [deactivationAlerts, updateDetails] ++ [insufficientFundAlerts | isInternal] ++ [notEnoughStakedBalanceAlerts | isInternal]
 
   return $ sequence_ selfDelegateActions

@@ -87,6 +87,8 @@ class QueryHistory repr where -- blockscale
   rEndorsingRights :: Either Cycle (Set RawLevel) -> ChainId -> BlockQuery -> repr (Seq EndorsingRightsCrossCompat)
 
   rBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr Tez
+  rStakedBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr (Maybe Tez)
+  rAILaunchCycle :: ChainId -> BlockQuery -> repr (Maybe Cycle)
   rDelegateInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr DelegateInfoCrossCompat
   rParticipationInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr ParticipationInfo
   rRound :: ChainId -> BlockQuery -> repr Int32
@@ -128,6 +130,8 @@ instance QueryHistory RpcQuery where
   rEndorsingRights params = blockAPI $ "/helpers/attestation_rights"
       <> (if null params then "" else "?" <> rightsLevelsOrCycleToQueryArgs params)
   rBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/balance"
+  rStakedBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/staked_balance"
+  rAILaunchCycle = blockAPI "/context/adaptive_issuance_launch_cycle"
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
   rParticipationInfo publicKeyHash = blockAPI $
       "/context/delegates/" <> toPublicKeyHashText publicKeyHash <> "/participation"

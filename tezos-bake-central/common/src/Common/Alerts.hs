@@ -346,7 +346,7 @@ bakerInsufficientFundsDescriptions mMinimalStake _ = BakerErrorDescriptions
         "Bakers receive baking and attestation rights based on their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than " <>
           roll <> "ꜩ and will not receive any baking or attestation rights."
         ]
-    , _bakerErrorDescriptions_warning = Just ""
+    , _bakerErrorDescriptions_warning = Nothing
     , _bakerErrorDescriptions_fix = "Transfer tez or have other accounts delegate their tez to this baker so its staking balance is at least " <> roll <> "ꜩ."
     , _bakerErrorDescriptions_resolved = \_ ->
         ( "Resolved: Baker has sufficient funds to receive rights"
@@ -355,6 +355,22 @@ bakerInsufficientFundsDescriptions mMinimalStake _ = BakerErrorDescriptions
   where
     roll = fromString $ formatCommas $ maybe 6000 ((`div` 1000000) . getMicroTez) mMinimalStake
     formatCommas = reverse . intercalate "," . chunksOf 3 . reverse . show
+
+bakerNotEnoughStakedBalanceDescriptions :: BakerErrorDescriptions
+bakerNotEnoughStakedBalanceDescriptions = BakerErrorDescriptions
+    { _bakerErrorDescriptions_title = "Baker staked balance is insufficient to receive rights"
+    , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
+    , _bakerErrorDescriptions_notification = "This baker’s staked balance is less than 600ꜩ and cannot receive any baking or attestation rights."
+    , _bakerErrorDescriptions_problem = [ ErrorDescription_Plain $
+        "Bakers receive baking and attestation rights based on their staked balance. This baker’s staked balance is less than " <>
+          "600ꜩ and will not receive any baking or attestation rights."
+        ]
+    , _bakerErrorDescriptions_warning = Nothing
+    , _bakerErrorDescriptions_fix = "Click on '...' menu on the baker tile and stake at least 600ꜩ to obtain consensus rights."
+    , _bakerErrorDescriptions_resolved = \_ ->
+        ( "Resolved: Baker has sufficient staked balance to receive rights"
+        , "This baker now has a large enough staked balance to receive baking rights.")
+    }
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
 bakerAccusedDescriptions elog = BakerErrorDescriptions
