@@ -22,6 +22,10 @@
 module Frontend.Ledger
   ( ledgerSetupSteps
   , setLiquidityBakingToggle
+  , waitForWalletAppFlow
+  , waitForBakingAppFlow
+  , ledgerDeviceIcon
+  , ledgerDisconnectedFlow
   ) where
 
 import Data.Bifunctor (bimap)
@@ -48,6 +52,7 @@ import Tezos.Types
 
 import Common.Api
 import Common.App
+import Common.Config (HasFrontendConfig)
 import Common.Schema
 import ExtraPrelude
 import Frontend.Common
@@ -521,3 +526,113 @@ setupComplete (_sk, pkh) = divClass "central" $ do
     monospacedPkhText pkh
   divClass "centered explanation" $ text "If this was the first time you have registered this address as a delegate, this baker will not immediately have rights to bake or attest. It takes at least 6 cycles after registering to receive rights."
   uiButton "primary" "Continue"
+
+waitForWalletAppFlow
+  :: forall r t m js.
+  ( MonadAppWidget js t m
+  , MonadReader r m
+  , HasFrontendConfig r
+  , MonadJSM (Performable m)
+  , HasTimer t r, HasTimeZone r
+  )
+  => Text -- ^ Operation name used in the decsription (e.g. "Voting" or "Staking")
+  -> m () -- ^ Extra information to show
+  -> SecretKey -- ^ Ledger secret key
+  -> Workflow t m (Event t ()) -- ^ Workflow to redirect to when the wallet app is detected
+  -> Workflow t m (Event t ())
+waitForWalletAppFlow opName extra sk nextFlow = Workflow $ divClass "looking-ledger-app" $ do
+  devFound <- ledgerDeviceIcon LedgerApp_Wallet sk
+  divClass "ui header centered" $ do
+    elClass "span" "ui active inline loader small blue" blank
+    elClass "span" "" $ text "Looking for Tezos Wallet app on Ledger device..."
+  el "p" $ text $
+    opName <> " requires the Tezos Wallet app version 1.5.0 or higher to be open." <> opName <> " cannot be done using the Tezos Baking app. If you have not installed Tezos Wallet, do so now."
+  extra
+  divClass "detail" $ do
+    text "To install the Tezos Wallet app:"
+    el "ol" $ do
+      el "li" $ text "Install and open Ledger Live: https://www.ledger.com/pages/ledger-live"
+      el "li" $ text "Go to Manager and search for “Tezos”"
+      el "li" $ text "Install the “Tezos Wallet” app"
+      el "li" $ text "Open the Tezos Wallet app on your ledger"
+  let walletReady = ffilter ((==) (Just True)) $ updated devFound
+  pure (never, nextFlow <$ walletReady)
+
+waitForBakingAppFlow
+  :: forall r t m js.
+  ( MonadAppWidget js t m
+  , MonadReader r m
+  , HasFrontendConfig r
+  , MonadJSM (Performable m)
+  , HasTimer t r, HasTimeZone r
+  )
+  => SecretKey
+  -> Workflow t m (Event t ())
+  -> Workflow t m (Event t ())
+waitForBakingAppFlow sk nextFlow = Workflow $ divClass "looking-ledger-app" $ do
+  devFound <- ledgerDeviceIcon LedgerApp_Baking sk
+  divClass "bigtitle" $ do
+    icon "icon-check blue"
+    text "Your vote has been cast."
+  divClass "ui header centered" $
+    text "Open the Tezos Baking app to continue bake and attest blocks."
+  divClass "ui header centered" $ do
+    elClass "span" "ui active inline loader small blue" blank
+    elClass "span" "" $ text "Looking for Tezos Baking app on Ledger device..."
+  let bakingReady = ffilter ((==) (Just True)) $ updated devFound
+  _ <- requestingIdentity $ public PublicRequest_RestartKilnBaker <$ bakingReady
+  pure (never, nextFlow <$ bakingReady)
+
+-- searching device / wrong device found : show only identifier, no marks
+-- found : show green tick mark
+-- not found : show red cross mark
+ledgerDeviceIcon
+  :: forall r t m js.
+  ( MonadAppWidget js t m
+  , MonadReader r m
+  , HasFrontendConfig r
+  , MonadJSM (Performable m)
+  , HasTimer t r, HasTimeZone r
+  )
+  => LedgerApp
+  -> SecretKey
+  -> m (Dynamic t (Maybe Bool))
+ledgerDeviceIcon neededApp sk = divClass "ledger-device-status" $ do
+  connectedLedger <- watchConnectedLedgerForced
+  let
+    isNeededAppRunning :: ConnectedLedger -> Bool
+    isNeededAppRunning cl = case neededApp of
+      LedgerApp_Baking -> isJust (_connectedLedger_bakingAppVersion cl)
+      LedgerApp_Wallet -> isJust (_connectedLedger_walletAppVersion cl)
+
+    devFound :: Dynamic t (Maybe Bool)
+    devFound = ffor connectedLedger (>>= \cl -> ffor (_connectedLedger_ledgerIdentifier cl) $ \li ->
+      li == _secretKey_ledgerIdentifier sk && isNeededAppRunning cl)
+    iconType :: Dynamic t (Maybe Text)
+    iconType = ffor devFound $ fmap $ \b -> if b
+        then "icon-check blue"
+        else "icon-x-thick red"
+  divClass "" $ do
+    elAttr "img" ("src" =: $(static "images/ledger.svg")) blank
+    dyn_ $ ffor iconType $ mapM $ \it ->
+      elClass "span" "mark" $ icon $ "small circular " <> it
+  divClass "centered-grey" $ text $ unLedgerIdentifier $ _secretKey_ledgerIdentifier sk
+  pure devFound
+
+ledgerDisconnectedFlow
+  :: forall r t m js.
+  ( MonadAppWidget js t m
+  , MonadReader r m
+  , HasFrontendConfig r
+  , MonadJSM (Performable m)
+  , HasTimer t r, HasTimeZone r
+  )
+  => SecretKey
+  -> Workflow t m (Event t ())
+  -- ^ Workflow to return to after retry
+  -> Workflow t m (Event t ())
+ledgerDisconnectedFlow sk retryFlow = Workflow $ do
+  _ <- ledgerDeviceIcon LedgerApp_Wallet sk
+  divClass "bigtitle" $ text "Ledger Device was disconnected."
+  retry <- divClass "vote-buttons" $ uiDynButton (pure "primary") $ text "Restart"
+  pure (never, retryFlow <$ retry)

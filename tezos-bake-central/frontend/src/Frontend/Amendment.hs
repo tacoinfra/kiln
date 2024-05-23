@@ -40,6 +40,7 @@ import Common.Config
 import Common.Schema
 import ExtraPrelude
 import Frontend.Common
+import Frontend.Ledger
 import Frontend.Watch
 
 currentCyclePosition :: Amendment -> ProtoInfo -> Cycle
@@ -407,7 +408,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           pure $ fmapMaybe (fmap fst . Map.minView) voteE
         elDynAttr "div" (ffor proposals $ \ps -> "class" =: ("no-proposals" <> if null ps then "" else " transition hidden")) $ do
           text "No proposals have been submitted for this voting period yet."
-        pure (never, waitForWalletAppFlow . castVoteFlow False Nothing mempty <$> vote)
+        pure (never, waitForWalletApp . castVoteFlow False Nothing mempty <$> vote)
 
     explorationFlow :: Workflow t m (Event t ())
     explorationFlow = someVotingPeriodFlow "Exploration Period"
@@ -446,44 +447,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
           let ballotButton b = (b <$) <$> uiDynButton (pure "primary") (text $ textBallot b)
           vote <- divClass "vote-buttons" $ leftmost <$> traverse ballotButton [Ballot_Yay, Ballot_Nay, Ballot_Pass]
           pure $ attachWith (\(ph, _) b -> castVoteFlow False (Just b) mempty ph) (current pv) vote
-      pure (never, waitForWalletAppFlow <$> vote)
-
-    waitForWalletAppFlow
-      :: Workflow t m (Event t ()) -- ^ Workflow to redirect to when the wallet app is detected
-      -> Workflow t m (Event t ())
-    waitForWalletAppFlow nextFlow = Workflow $ divClass "looking-ledger-app" $ do
-      devFound <- ledgerDeviceIcon LedgerApp_Wallet
-      divClass "ui header centered" $ do
-        elClass "span" "ui active inline loader small blue" blank
-        elClass "span" "" $ text "Looking for Tezos Wallet app on Ledger device..."
-      el "p" $ text "Voting requires the Tezos Wallet app version 1.5.0 or higher to be open. Voting cannot be done using the Tezos Baking app. If you have not installed Tezos Wallet, do so now."
-      nextBakingRights
-      divClass "detail" $ do
-        text "To install the Tezos Wallet app:"
-        el "ol" $ do
-          el "li" $ text "Install and open Ledger Live: https://www.ledger.com/pages/ledger-live"
-          el "li" $ text "Go to Manager and search for “Tezos”"
-          el "li" $ text "Install the “Tezos Wallet” app"
-          el "li" $ text "Open the Tezos Wallet app on your ledger"
-      let walletReady = ffilter ((==) (Just True)) $ updated devFound
-      pure (never, nextFlow <$ walletReady)
-
-    waitForBakingAppFlow
-      :: Workflow t m (Event t ())
-      -> Workflow t m (Event t ())
-    waitForBakingAppFlow nextFlow = Workflow $ divClass "looking-ledger-app" $ do
-      devFound <- ledgerDeviceIcon LedgerApp_Baking
-      divClass "bigtitle" $ do
-        icon "icon-check blue"
-        text "Your vote has been cast."
-      divClass "ui header centered" $
-        text "Open the Tezos Baking app to continue bake and attest blocks."
-      divClass "ui header centered" $ do
-        elClass "span" "ui active inline loader small blue" blank
-        elClass "span" "" $ text "Looking for Tezos Baking app on Ledger device..."
-      let bakingReady = ffilter ((==) (Just True)) $ updated devFound
-      _ <- requestingIdentity $ public PublicRequest_RestartKilnBaker <$ bakingReady
-      pure (never, nextFlow <$ bakingReady)
+      pure (never, waitForWalletApp <$> vote)
 
     castVoteFlow
       :: Bool
@@ -492,7 +456,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       -> ProtocolHash
       -> Workflow t m (Event t ())
     castVoteFlow isTimedOut mBallot errLog proposalHash = Workflow $ do
-      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
       when isTimedOut $ do
         divClass "ui message" $ do
           el "div" $ do
@@ -509,15 +473,15 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
       cast <- voteButton "Cast Vote"
       _ <- requestingIdentity $ public (PublicRequest_DoVote sk proposalHash mBallot) <$ cast
       let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
-          retryFlow = waitForWalletAppFlow $ castVoteFlow isTimedOut mBallot errLog proposalHash
-      pure (never, leftmost [respondToPromptFlow retryFlow proposalHash mBallot <$ cast, ledgerDisconnectedFlow retryFlow <$ appLost])
+          retryFlow = waitForWalletApp $ castVoteFlow isTimedOut mBallot errLog proposalHash
+      pure (never, leftmost [respondToPromptFlow retryFlow proposalHash mBallot <$ cast, ledgerDisconnectedFlow sk retryFlow <$ appLost])
 
     respondToPromptFlow
       :: Workflow t m (Event t ())
       -- ^ Workflow to return to after retry
       -> ProtocolHash -> Maybe Ballot -> Workflow t m (Event t ())
     respondToPromptFlow retryFlow proposalHash mBallot = Workflow $ do
-      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
       pb <- getPostBuild
       promptStep <- watchVotePrompting sk
       let changed = leftmost [updated promptStep, tag (current promptStep) pb]
@@ -526,8 +490,8 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
               let errLog = _voteState_errLog vs
               in case step of
                 -- TODO: go to proper flow
-                VoteStep_Done -> Just $ waitForBakingAppFlow $ voteCastSuccessfullyFlow $ Left ()
-                VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow retryFlow
+                VoteStep_Done -> Just $ waitForBakingAppFlow sk $ voteCastSuccessfullyFlow $ Left ()
+                VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow sk retryFlow
                 VoteStep_Declined -> Just $ castVoteFlow True mBallot errLog proposalHash
                 VoteStep_Failed _ -> Just $ castVoteFlow True mBallot errLog proposalHash
                 VoteStep_Prompting -> Nothing
@@ -551,17 +515,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         divClass "confirm-title" $ text "Period"
         divClass "confirm-content" $ display $ unRawLevel . _amendment_votingPeriod <$> amendment
       let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
-      pure (never, leftmost [next, ledgerDisconnectedFlow retryFlow <$ appLost])
-
-    ledgerDisconnectedFlow
-      :: Workflow t m (Event t ())
-      -- ^ Workflow to return to after retry
-      -> Workflow t m (Event t ())
-    ledgerDisconnectedFlow retryFlow = Workflow $ do
-      _ <- ledgerDeviceIcon LedgerApp_Wallet
-      divClass "bigtitle" $ text "Ledger Device was disconnected."
-      retry <- voteButton "Restart"
-      pure (never, retryFlow <$ retry)
+      pure (never, leftmost [next, ledgerDisconnectedFlow sk retryFlow <$ appLost])
 
     voteCastSuccessfullyFlow
       :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
@@ -572,31 +526,6 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
         text "Kiln Baker will be automatically restarted to continue bake and attest blocks."
       closeButton <- voteButton "Close"
       pure $ fanEither $ whereToGo <$ closeButton
-
-    -- searching device / wrong device found : show only identifier, no marks
-    -- found : show green tick mark
-    -- not found : show red cross mark
-    ledgerDeviceIcon neededApp = divClass "ledger-device-status" $ do
-      connectedLedger <- watchConnectedLedgerForced
-      let
-        isNeededAppRunning :: ConnectedLedger -> Bool
-        isNeededAppRunning cl = case neededApp of
-          LedgerApp_Baking -> isJust (_connectedLedger_bakingAppVersion cl)
-          LedgerApp_Wallet -> isJust (_connectedLedger_walletAppVersion cl)
-
-        devFound :: Dynamic t (Maybe Bool)
-        devFound = ffor connectedLedger (>>= \cl -> ffor (_connectedLedger_ledgerIdentifier cl) $ \li ->
-          li == _secretKey_ledgerIdentifier sk && isNeededAppRunning cl)
-        iconType :: Dynamic t (Maybe Text)
-        iconType = ffor devFound $ fmap $ \b -> if b
-            then "icon-check blue"
-            else "icon-x-thick red"
-      divClass "" $ do
-        elAttr "img" ("src" =: $(static "images/ledger.svg")) blank
-        dyn_ $ ffor iconType $ mapM $ \it ->
-          elClass "span" "mark" $ icon $ "small circular " <> it
-      divClass "centered-grey" $ text $ unLedgerIdentifier $ _secretKey_ledgerIdentifier sk
-      pure devFound
 
     nextBakingRights = do
       mBakerDyn <- fmap (MMap.lookup bakerPkh) <$> watchBakerAddresses
@@ -620,3 +549,5 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
               etaDyn <- maybeDyn mNextOp
               dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
             divClass "description" $ text "You will not be able to sign blocks or attestations while outside the Tezos Baking app. Be sure you have a few minutes to vote before your baker's next opportunity."
+
+    waitForWalletApp = waitForWalletAppFlow "Voting" nextBakingRights sk
