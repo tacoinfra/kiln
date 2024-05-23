@@ -567,13 +567,14 @@ waitForBakingAppFlow
   , HasTimer t r, HasTimeZone r
   )
   => SecretKey
+  -> Text
   -> Workflow t m (Event t ())
   -> Workflow t m (Event t ())
-waitForBakingAppFlow sk nextFlow = Workflow $ divClass "looking-ledger-app" $ do
+waitForBakingAppFlow sk desc nextFlow = Workflow $ divClass "looking-ledger-app" $ do
   devFound <- ledgerDeviceIcon LedgerApp_Baking sk
   divClass "bigtitle" $ do
     icon "icon-check blue"
-    text "Your vote has been cast."
+    text desc
   divClass "ui header centered" $
     text "Open the Tezos Baking app to continue bake and attest blocks."
   divClass "ui header centered" $ do

@@ -12,6 +12,7 @@ data LedgerQueryType
   | LedgerQueryType_SetHWM
   | LedgerQueryType_CheckHWM
   | LedgerQueryType_Vote
+  | LedgerQueryType_Stake
 
 data LedgerQuery m = LedgerQuery
   { _ledgerQuery_type :: LedgerQueryType

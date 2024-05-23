@@ -490,7 +490,7 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
               let errLog = _voteState_errLog vs
               in case step of
                 -- TODO: go to proper flow
-                VoteStep_Done -> Just $ waitForBakingAppFlow sk $ voteCastSuccessfullyFlow $ Left ()
+                VoteStep_Done -> Just $ waitForBakingApp $ voteCastSuccessfullyFlow $ Left ()
                 VoteStep_Disconnected -> Just $ ledgerDisconnectedFlow sk retryFlow
                 VoteStep_Declined -> Just $ castVoteFlow True mBallot errLog proposalHash
                 VoteStep_Failed _ -> Just $ castVoteFlow True mBallot errLog proposalHash
@@ -551,3 +551,5 @@ voteModal (bakerPkh, sk) protoInfo amendment close = do
             divClass "description" $ text "You will not be able to sign blocks or attestations while outside the Tezos Baking app. Be sure you have a few minutes to vote before your baker's next opportunity."
 
     waitForWalletApp = waitForWalletAppFlow "Voting" nextBakingRights sk
+
+    waitForBakingApp = waitForBakingAppFlow sk "Your vote has been cast."

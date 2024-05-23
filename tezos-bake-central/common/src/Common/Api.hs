@@ -101,6 +101,11 @@ data PublicRequest a where
     -> PublicRequest ()
   PublicRequest_RestartKilnBaker
     :: PublicRequest ()
+  PublicRequest_Stake
+    :: SecretKey
+    -> Integer
+    -> PublicRequest ()
+
 
 data PrivateRequest a where
   PrivateRequest_NoOp :: PrivateRequest ()

@@ -227,17 +227,19 @@ data SetupState = SetupState
   , _setupState_setup :: Maybe (First SetupLedgerToBakeStep)
   , _setupState_register :: Maybe (First RegisterStep)
   , _setupState_setHWM :: Maybe (First SetHWMStep)
+  , _setupState_stake :: Maybe (First StakeStep)
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON SetupState
 instance ToJSON SetupState
 instance Monoid SetupState where
-  mempty = SetupState Nothing Nothing Nothing Nothing
+  mempty = SetupState Nothing Nothing Nothing Nothing Nothing
 instance Semigroup SetupState where
   ss1 <> ss2 = SetupState
     { _setupState_import = _setupState_import ss1 <> _setupState_import ss2
     , _setupState_setup = _setupState_setup ss1 <> _setupState_setup ss2
     , _setupState_register = _setupState_register ss1 <> _setupState_register ss2
     , _setupState_setHWM = _setupState_setHWM ss1 <> _setupState_setHWM ss2
+    , _setupState_stake = _setupState_stake ss1 <> _setupState_stake ss2
     }
 
 data ImportSecretKeyStep
@@ -285,6 +287,17 @@ data SetHWMStep
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON SetHWMStep
 instance ToJSON SetHWMStep
+
+data StakeStep
+  = StakeStep_Prompting
+  | StakeStep_Done
+  | StakeStep_Declined
+  | StakeStep_Disconnected
+  | StakeStep_NotEnoughBalance
+  | StakeStep_Failed Text -- Anything else
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON StakeStep
+instance ToJSON StakeStep
 
 data VoteStep
   = VoteStep_Prompting
