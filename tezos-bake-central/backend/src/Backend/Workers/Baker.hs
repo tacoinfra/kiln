@@ -17,7 +17,7 @@ import Prelude hiding (cycle)
 import Control.Arrow ((&&&))
 import Control.Lens (anyOf, set, (<>=), (<<>=), (%=), ix, over, _4, ifoldMap, at, (.=), FoldableWithIndex, (^..))
 import UnliftIO.Exception (handle, SomeException)
-import UnliftIO.STM (atomically)
+import UnliftIO.STM (atomically, readTVar, writeTVar)
 import Control.Monad (guard, mzero)
 import Control.Monad.Catch (MonadMask)
 import Control.Monad.Except (ExceptT(..), MonadError, catchError, runExceptT, throwError)
@@ -289,7 +289,7 @@ bakerWorker appConfig nds rightsHistoryWindow = mkWorker $
             Right transaction -> runDb (Identity db) $ runReaderT transaction appConfig
             Left err -> $(logErrorSH) $ "bakerWorker failed to check opportunities on level " <> tshow lvl <> " :" <> tshow err
 
-        updateRes <- (Right <$> updateDelegateDetails protoInfo headBlock headCycle baker details isInternal) `catchError` (pure . Left)
+        updateRes <- (Right <$> updateDelegateDetails nds protoInfo headBlock headCycle baker details isInternal) `catchError` (pure . Left)
         case updateRes of
           Right transaction -> do
             runDb (Identity db) $ runReaderT transaction appConfig
@@ -452,8 +452,8 @@ updateDelegateDetails
   , MonadIO m, MonadReader rP m, HasNodeDataSource rP, MonadLogger m
   , MonadBaseNoPureAborts IO m, MonadMask m, MonadLoggerIO m
   )
-  => ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT KilnRpcError m (AppSerializable ())
-updateDelegateDetails protoInfo headBlock headCycle baker details isInternal = do
+  => NodeDataSource -> ProtoInfo -> blk -> Cycle -> Baker -> Maybe BakerDetails -> Bool -> ExceptT KilnRpcError m (AppSerializable ())
+updateDelegateDetails nds protoInfo headBlock headCycle baker details isInternal = do
   let
     headHash = headBlock ^. hash
     headLvl = headBlock ^. level
@@ -469,6 +469,12 @@ updateDelegateDetails protoInfo headBlock headCycle baker details isInternal = d
     nodeQueryDataSource (nodeQuery_Account headHash (Implicit pkh))
   mbStakedBalance <- nodeQueryDataSource (nodeQuery_StakedBalance headHash headLvl pkh)
   mbAdaptiveIssuanceLaunchCycle <- nodeQueryDataSource (nodeQuery_AILaunchCycle headHash)
+
+  let aiCycleTVar = _nodeDataSource_AICycle nds
+  liftIO $ atomically $ do
+    aiCycle <- readTVar aiCycleTVar
+    when (aiCycle /= mbAdaptiveIssuanceLaunchCycle) $
+      writeTVar aiCycleTVar mbAdaptiveIssuanceLaunchCycle
 
   selfDelegateActions <- case delegate of
     Nothing -> pure []

@@ -232,6 +232,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_ledgerIOQueue :: TQueue (LedgerQuery (LoggingT IO))
   , _nodeDataSource_kilnNodeUri :: URI
   , _nodeDataSource_nodeForQuery :: Maybe URI -- Override the node selection algo, and do RPC using this node
+  , _nodeDataSource_AICycle :: TVar (Maybe Cycle)
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
@@ -619,6 +620,11 @@ dataSourceFinalHead
   :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
   => nds -> m (Maybe BranchInfo)
 dataSourceFinalHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestFinalHead)
+
+dataSourceAICycle
+  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
+  => nds -> m (Maybe Cycle)
+dataSourceAICycle nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_AICycle)
 
 roundChunkSize :: Num a => a
 roundChunkSize = 64

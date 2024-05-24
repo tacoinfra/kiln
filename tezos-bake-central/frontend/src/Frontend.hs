@@ -2929,9 +2929,12 @@ bakersTab =
                   "Remove Baker"
               removeEntry removeInternalBakerModal
 
-              stakeBtn <- tileMenuEntry "Stake"
-              let openStakeEv = ffor stakeBtn $ \() -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . stakeModal sk pkh
-              tellModal openStakeEv
+              mbLatestHeadDyn <- watchLatestHead
+              mbAiCycleDyn <- watchAICycle
+              whenAIActivated mbLatestHeadDyn mbAiCycleDyn $ do
+                stakeBtn <- tileMenuEntry "Stake"
+                let openStakeEv = ffor stakeBtn $ \() -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . stakeModal sk pkh
+                tellModal openStakeEv
 
         divClass "title" $ do
           let bakerStatusDyn = (\b bd n -> bakerStatus $ (b, bd) <$ n) <$> bakerDyn <*> details' <*> dCollectiveNodesStatus
@@ -3155,3 +3158,15 @@ withAmendmentPeriodProgress expectedVotingPeriod w = do
             True -> liftA2 Time.diffUTCTime thisPeriodEndTime currentTime
             False -> pure 0 -- The latest period is not the same as the expected one, so we assume it's over.
       w periodEndsIn
+
+-- | Only show the given widget if adaptive issuance is activated.
+whenAIActivated
+  :: MonadAppWidget js t m
+  => Dynamic t (Maybe BranchInfo)
+  -> Dynamic t (Maybe Cycle)
+  -> m ()
+  -> m ()
+whenAIActivated mbLatestHeadDyn mbAiCycleDyn contents =
+  dyn_ $ ffor2 mbLatestHeadDyn mbAiCycleDyn $ \mbHeadBlock mbAiCycle ->
+    whenJust mbHeadBlock $ \headBlock -> whenJust mbAiCycle $ \aiCycle ->
+      when (_branchInfo_cycle headBlock >= aiCycle) contents
