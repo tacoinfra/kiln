@@ -900,7 +900,7 @@ reportMissedBake bakeTime right pkh lvl = when' (bakerNotDeleted pkh) $ do
         ("Baker with address:" <> toPublicKeyHashText pkh <> " Missed " <> rightTxt <> " opportunity at level " <> tshow (unRawLevel lvl'))
     rightTxt = case right of
       RightKind_Baking -> "bake"
-      RightKind_Endorsing -> "endorsement"
+      RightKind_Endorsing -> "attestation"
 
 reportMissedEndorsementBonus
   :: ( MonadReader r m, HasAppConfig r, PostgresLargeObject m, MonadIO m, PersistBackend m
@@ -924,8 +924,8 @@ reportMissedEndorsementBonus bakeTime pkh lvl = when' (bakerNotDeleted pkh) $ do
     Just xs -> do
       for_ xs $ \(eid, _) -> queueAlert (Just eid) alert
   where
-    alert = Alert Unresolved "Missed endorsement bonus" $
-      "Baker with address: " <> toPublicKeyHashText pkh <> " Missed endorsement bonus at level " <>
+    alert = Alert Unresolved "Missed attestation bonus" $
+      "Baker with address: " <> toPublicKeyHashText pkh <> " Missed attestation bonus at level " <>
       tshow (unRawLevel lvl)
 
 -- we care only to inform the baker of each accusation against them, and no other provenance matters.
@@ -982,8 +982,8 @@ reportAccusation opHash blkHash accusationType pkh lvl cycle aLvl aCycle = when'
       ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> accusationTxt <> " at level " <> tshow (unRawLevel lvl))
     accusationTxt = case accusationType of
       AccusationType_DoubleBake -> "baked"
-      AccusationType_DoubleEndorsement -> "endorsed"
-      AccusationType_DoublePreendorsement -> "preendorsed"
+      AccusationType_DoubleEndorsement -> "attested"
+      AccusationType_DoublePreendorsement -> "preattested"
 
 clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r
                    , MonadBase Serializable m
@@ -1010,7 +1010,7 @@ clearMissedBake right pkh lvl = do
     where
       rightTxt = case right of
         RightKind_Baking -> "bake"
-        RightKind_Endorsing -> "endorsement"
+        RightKind_Endorsing -> "attestation"
 
 getNodeName
   :: (PersistBackend m, SqlDb (PhantomDb m))

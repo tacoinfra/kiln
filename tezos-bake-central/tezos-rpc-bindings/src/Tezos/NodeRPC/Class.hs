@@ -198,7 +198,7 @@ chainBlockUrl' chainId (BlockQueryOffset queryBase offset) =
 
 
 -- In Ithaca instead of an optional list of cycle arguments, '/helpers/baking_rights' and
--- '/helpers/endorsing_rights' RPC endpoints only take one optional cycle argument.
+-- '/helpers/attestation_rights' RPC endpoints only take one optional cycle argument.
 --
 -- See https://tezos.gitlab.io/protocols/tenderbake.html#rpcs
 rightsLevelsOrCycleToQueryArgs :: Either Cycle (Set RawLevel) -> Text

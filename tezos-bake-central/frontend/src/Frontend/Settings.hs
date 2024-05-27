@@ -134,7 +134,7 @@ settingsTab = do
       initialLimit <- sample $ current mLimit
       let textKind = case rk of
             RightKind_Baking -> "bake"
-            RightKind_Endorsing -> "endorsement"
+            RightKind_Endorsing -> "attestation"
       divClass "ui tiny header" $ text $ "Missed " <> T.toTitle textKind
       (every, ()) <- fakeRadioItem (isNothing <$> mLimit) $ text $ "Notify for every missed " <> textKind
       rec

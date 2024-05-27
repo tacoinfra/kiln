@@ -659,7 +659,7 @@ optsArgDescr =
       "The file containing the custom tezos-node configuration (for running custom networks)"
 
   , mkReqArg Config.rightsHistoryWindow "INT" (set opts_rightsHistoryWindow . Just . read . T.unpack) $
-      "How much baking and endorsing rights will be gathered from the past in blocks. Defaults to " <>
+      "How much baking and attestation rights will be gathered from the past in blocks. Defaults to " <>
         show Config.defaultRightsHistoryWindow <> " blocks."
 
   , mkReqArg Config.checkLedgerConnection "BOOL" (set opts_checkLedgerConnection . Just . Config.parseBool) $

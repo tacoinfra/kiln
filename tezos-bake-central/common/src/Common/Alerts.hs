@@ -144,8 +144,8 @@ bakerLedgerDisconnectedDescriptions elog = BakerErrorDescriptions
       "The Ledger Device for this baker is connected, but the Tezos Wallet app is opened on it."
       isWrongApp
     problem = bool
-      ["The Ledger Device that is used by this baker is not connected and will cause this baker to miss any baking or endorsing rights that occur while the device is disconnected."]
-      ["The Ledger Device for this baker is connected, but the Tezos Wallet app is opened on it, this will cause this baker to miss any baking or endorsing rights that occur while the Tezos Baking app is not opened."]
+      ["The Ledger Device that is used by this baker is not connected and will cause this baker to miss any baking or attestation rights that occur while the device is disconnected."]
+      ["The Ledger Device for this baker is connected, but the Tezos Wallet app is opened on it, this will cause this baker to miss any baking or attestation rights that occur while the Tezos Baking app is not opened."]
       isWrongApp
     fixMessage = bool
       "Make sure the Ledger Device is connected to your computer and has the Tezos Baking app open."
@@ -205,9 +205,9 @@ bakerDeactivationRiskDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker will be marked as inactive"
   , _bakerErrorDescriptions_tile = "Will be marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker address has not had any activity on the blockchain for almost " <> tshow preserved <> " cycles and will soon be marked as inactive."
-  , _bakerErrorDescriptions_problem = ["In the past " <> numCycles (preserved - 1) <> " this baker has not signed any blocks or endorsements, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."]
-  , _bakerErrorDescriptions_warning = Just $ "Once marked as inactive this baker will not receive any new baking or endorsing rights until " <> tshow (preserved + 2) <> " cycles after it is re-registered and will not be able to sign previously assigned blocks or endorsements."
-  , _bakerErrorDescriptions_fix = "If this baker signs a block or endorsement, or receives a minimum deposit of 1µꜩ this cycle it will not be marked as inactive"
+  , _bakerErrorDescriptions_problem = ["In the past " <> numCycles (preserved - 1) <> " this baker has not signed any blocks or attestations, or received any deposits. It will be marked as inactive by the network at the end of this cycle if none of these events occur."]
+  , _bakerErrorDescriptions_warning = Just $ "Once marked as inactive this baker will not receive any new baking or attestation rights until " <> tshow (preserved + 2) <> " cycles after it is re-registered and will not be able to sign previously assigned blocks or attestations."
+  , _bakerErrorDescriptions_fix = "If this baker signs a block or attestation, or receives a minimum deposit of 1µꜩ this cycle it will not be marked as inactive"
   , _bakerErrorDescriptions_resolved = \b ->
       let (primary, secondary) = bakerIdentification b
       in ("Resolved: Baker no longer at risk of being marked as inactive."
@@ -226,7 +226,7 @@ bakerDeactivatedDescriptions elog = BakerErrorDescriptions
   , _bakerErrorDescriptions_tile = "Has been marked as inactive."
   , _bakerErrorDescriptions_notification = "This baker has not had any activity on the blockchain for " <> tshow preserved <> " cycles and has been marked as inactive."
   , _bakerErrorDescriptions_problem = [
-      "This baker has not had any activity for " <> errorPlain (tshow preserved) <> " cycles, causing it to be marked as inactive. Inactive bakers cannot sign blocks or endorsements and they no longer receive baking and endorsing rights."
+      "This baker has not had any activity for " <> errorPlain (tshow preserved) <> " cycles, causing it to be marked as inactive. Inactive bakers cannot sign blocks or attestations and they no longer receive baking and attestation rights."
       ]
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Re-register this baker."
@@ -244,11 +244,11 @@ bakerMissedEndorsementBonusDescriptions
   -> BakerErrorDescriptions
 bakerMissedEndorsementBonusDescriptions elog =
   BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Baker missed the endorsement bonus"
-  , _bakerErrorDescriptions_tile = "Missed endorsement bonus"
-  , _bakerErrorDescriptions_notification = "This baker missed the endorsement bonus for the block at level " <> lvl <> "."
+  { _bakerErrorDescriptions_title = "Baker missed the attestation bonus"
+  , _bakerErrorDescriptions_tile = "Missed attestation bonus"
+  , _bakerErrorDescriptions_notification = "This baker missed the attestation bonus for the block at level " <> lvl <> "."
   , _bakerErrorDescriptions_problem = [
-      "This baker failed to get the bonus for including extra endorsements for the " <> errorEmphasis (" block at level " <> lvl ) <> "."
+      "This baker failed to get the bonus for including extra attestations for the " <> errorEmphasis (" block at level " <> lvl ) <> "."
     ]
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Baker and node logs may provide additional insight as to why this happened"
@@ -290,7 +290,7 @@ bakerMissedDescriptions elog = BakerErrorDescriptions
     lvl = tshow $ unRawLevel $ _errorLogBakerMissed_firstLevel elog
     (aRight, toRight) = case _errorLogBakerMissed_right elog of
       RightKind_Baking -> ("a bake", "to bake")
-      RightKind_Endorsing -> ("an endorsement", "to endorse")
+      RightKind_Endorsing -> ("an attestation", "to attest")
 
 bakerGroupedMissedDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> RightKind -> BakerErrorDescriptions
 bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerErrorDescriptions
@@ -314,15 +314,15 @@ bakerGroupedMissedDescriptions tz count (fb, ft) (lb, lt) rightKind = BakerError
     localTime ts = T.pack $ Time.formatTime Time.defaultTimeLocale standardTimeFormat $ Time.utcToZonedTime tz ts
     (aRight, opportunity, theRight) = case rightKind of
       RightKind_Baking -> ("a bake", "bake opportunities", "bake")
-      RightKind_Endorsing -> ("an endorsement", "endorsement operations", "endorsement")
+      RightKind_Endorsing -> ("an attestation", "attestation operations", "attestation")
 
 bakerGroupedMissedBonusDescriptions :: TimeZone -> Int -> (RawLevel, UTCTime) -> (RawLevel, UTCTime) -> BakerErrorDescriptions
 bakerGroupedMissedBonusDescriptions tz count (fb, ft) (lb, lt) = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Baker missed the endorsemenet bonus"
-  , _bakerErrorDescriptions_tile = "Missed endorsement bonus."
+  { _bakerErrorDescriptions_title = "Baker missed the attestation bonus"
+  , _bakerErrorDescriptions_tile = "Missed attestation bonus."
   , _bakerErrorDescriptions_notification = "This baker failed " -- TODO: ... failed what
   , _bakerErrorDescriptions_problem =
-      [ "This baker has missed " <> errorEmphasis (tshow count <> " endorsement bonuses") <> "."
+      [ "This baker has missed " <> errorEmphasis (tshow count <> " attestation bonuses") <> "."
       , "The first bonus missed was for "
         <> errorEmphasis ("block level " <> tshow (unRawLevel fb))
         <> " on " <> errorEmphasis (localTime ft) <> "."
@@ -341,10 +341,10 @@ bakerInsufficientFundsDescriptions :: Maybe Tez -> ErrorLogInsufficientFunds -> 
 bakerInsufficientFundsDescriptions mMinimalStake _ = BakerErrorDescriptions
     { _bakerErrorDescriptions_title = "Baker staking balance is insufficient to receive rights"
     , _bakerErrorDescriptions_tile = "Insufficient stake to receive rights."
-    , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than " <> roll <> "ꜩ and cannot receive any baking or endorsing rights."
+    , _bakerErrorDescriptions_notification = "This baker’s staking balance is less than " <> roll <> "ꜩ and cannot receive any baking or attestation rights."
     , _bakerErrorDescriptions_problem = [ ErrorDescription_Plain $
-        "Bakers receive baking and endorsing rights based on their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than " <>
-          roll <> "ꜩ and will not receive any baking or endorsing rights."
+        "Bakers receive baking and attestation rights based on their staking balance (the baker’s balance plus any tez delegated to them). This baker’s staking balance is less than " <>
+          roll <> "ꜩ and will not receive any baking or attestation rights."
         ]
     , _bakerErrorDescriptions_warning = Just ""
     , _bakerErrorDescriptions_fix = "Transfer tez or have other accounts delegate their tez to this baker so its staking balance is at least " <> roll <> "ꜩ."
@@ -377,7 +377,7 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
       , bool "" (errorEmphasis ("This baker may be re-accused for this "
                                  <> "offense (and any new deposits and "
                                  <> "rewards confiscated) for each block or "
-                                 <> "endorsement it signs in the remainder "
+                                 <> "attestation it signs in the remainder "
                                  <> "of cycle " <> cycle <> "."))
                  accusedInSameCycle
       ]
@@ -404,12 +404,12 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
     accusedLevel = tshow $ unRawLevel $ _errorLogBakerAccused_accusedLevel elog
     right = case _errorLogBakerAccused_accusationType elog of
       AccusationType_DoubleBake -> "baking"
-      AccusationType_DoubleEndorsement -> "endorsement"
-      AccusationType_DoublePreendorsement -> "preendorsement"
+      AccusationType_DoubleEndorsement -> "attestation"
+      AccusationType_DoublePreendorsement -> "preattestation"
     rightI = case _errorLogBakerAccused_accusationType elog of
       AccusationType_DoubleBake -> "bake"
-      AccusationType_DoubleEndorsement -> "endorsement"
-      AccusationType_DoublePreendorsement -> "preendorsement"
+      AccusationType_DoubleEndorsement -> "attestation"
+      AccusationType_DoublePreendorsement -> "preattestation"
     upTo = bool "" (" up to block level " <> accusedLevel) accusedInSameCycle
     accusedInSameCycle = liftA2 (==) _errorLogBakerAccused_cycle _errorLogBakerAccused_accusedCycle elog
 

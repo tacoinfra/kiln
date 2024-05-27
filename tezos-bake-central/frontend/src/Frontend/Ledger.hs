@@ -218,7 +218,7 @@ importSecretKey
 importSecretKey (sk, pkh) = doPrompt "Import address to Kiln." explanation prompt sk handleStep
   where
     explanation = do
-      text "Kiln must import this address before it can bake and endorse with your Ledger Device. Your private keys will remain securely stored on the Ledger."
+      text "Kiln must import this address before it can bake and attest with your Ledger Device. Your private keys will remain securely stored on the Ledger."
       pure $ pure $ Just $ PublicRequest_ImportSecretKey sk
     prompt = do
       el "span" $ text "Provide Public Key? Public Key Hash: "
@@ -244,7 +244,7 @@ authorizeLedger (sk, pkh) = do
   pure $ leftmost [Left <$> err, ffor isRegEv $ \r -> Right $ (if r then LSS_Complete else LSS_RegisterDelegate) ==> (sk, pkh)]
   where
     explanation = do
-      text "This allows the Ledger Device to sign blocks and endorsements for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or endorsements it may have already signed."
+      text "This allows the Ledger Device to sign blocks and attestations for the selected address automatically. It will not sign other operations such as transactions, and it will not sign blocks or attestations it may have already signed."
       pure $ pure $ Just $ PublicRequest_SetupLedgerToBake sk
     prompt = do
       el "span" $ text "Setup Baking? Address: "
@@ -519,5 +519,5 @@ setupComplete (_sk, pkh) = divClass "central" $ do
   elClass "h6" "ui header prompt-text" $ do
     el "span" $ text "Kiln is now running a baker using the address: "
     monospacedPkhText pkh
-  divClass "centered explanation" $ text "If this was the first time you have registered this address as a delegate, this baker will not immediately have rights to bake or endorse. It takes at least 6 cycles after registering to receive rights."
+  divClass "centered explanation" $ text "If this was the first time you have registered this address as a delegate, this baker will not immediately have rights to bake or attest. It takes at least 6 cycles after registering to receive rights."
   uiButton "primary" "Continue"
