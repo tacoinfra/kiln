@@ -622,6 +622,16 @@ stake appConfig db sk amount = LedgerQuery LedgerQueryType_Stake $
       | otherwise -> Left $ StakeStep_Failed $ T.unlines errors
     pure $ fromLeft StakeStep_Done e
 
+unstake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> SecretKey -> Integer -> LedgerQuery m
+unstake appConfig db sk amount = LedgerQuery LedgerQueryType_Unstake $
+  ledgerSetupStep appConfig db sk (mempty { _setupState_unstake = Just $ First UnstakeStep_Prompting  }) (\res -> mempty { _setupState_unstake = Just $ First res }) $ do
+    e <- runExceptT $ runClientCommand appConfig noTimeout ["unstake", show amount, "for", T.unpack kilnLedgerAlias] $ \_warnings errors -> if
+      | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left UnstakeStep_Declined
+      | "Ledger Transport level error:" : _ <- errors -> Left UnstakeStep_Disconnected
+      | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left UnstakeStep_Disconnected
+      | otherwise -> Left $ UnstakeStep_Failed $ T.unlines errors
+    pure $ fromLeft UnstakeStep_Done e
+
 {-# ANN submitVote ("HLint: ignore Evaluate" :: String) #-}
 submitVote
   :: (MonadLoggerIO m)
