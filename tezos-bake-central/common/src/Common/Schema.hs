@@ -624,6 +624,9 @@ data BakerDetails = BakerDetails
   , _bakerDetails_delegateInfo :: Maybe (Json CacheDelegateInfo)
   , _bakerDetails_participationInfo :: Maybe (Json ParticipationInfo)
   , _bakerDetails_missedRightsInRow :: Int
+  , _bakerDetails_stakedBalance :: Maybe Tez
+  , _bakerDetails_unstakedFrozenBalance :: Maybe Tez
+  , _bakerDetails_unstakedFinalizableBalance :: Maybe Tez
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails where
   type IdData BakerDetails = PublicKeyHash

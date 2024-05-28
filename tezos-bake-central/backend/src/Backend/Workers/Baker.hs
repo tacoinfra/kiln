@@ -467,7 +467,10 @@ updateDelegateDetails nds protoInfo headBlock headCycle baker details isInternal
   -- and cache that.
   delegate <- (^.accountCrossCompat_delegatePkh) <$>
     nodeQueryDataSource (nodeQuery_Account headHash (Implicit pkh))
-  mbStakedBalance <- nodeQueryDataSource (nodeQuery_StakedBalance headHash headLvl pkh)
+
+  mbStakedBalance <- nodeQueryDataSource (nodeQuery_StakedBalance headHash pkh)
+  mbUnstakedFrozenBalance <- nodeQueryDataSource (nodeQuery_UnstakedFrozenBalance headHash pkh)
+  mbUnstakedFinalizableBalance <- nodeQueryDataSource (nodeQuery_UnstakedFinalizableBalance headHash pkh)
   mbAdaptiveIssuanceLaunchCycle <- nodeQueryDataSource (nodeQuery_AILaunchCycle headHash)
 
   let aiCycleTVar = _nodeDataSource_AICycle nds
@@ -507,6 +510,9 @@ updateDelegateDetails nds protoInfo headBlock headCycle baker details isInternal
               , _bakerDetails_delegateInfo = Just $ Json di
               , _bakerDetails_participationInfo = j_pti
               , _bakerDetails_missedRightsInRow = missedRights
+              , _bakerDetails_stakedBalance = mbStakedBalance
+              , _bakerDetails_unstakedFrozenBalance = mbUnstakedFrozenBalance
+              , _bakerDetails_unstakedFinalizableBalance = mbUnstakedFinalizableBalance
               }
           case nonEmpty existingData of
             Nothing -> void $ insert (mkBakerDetails 0)

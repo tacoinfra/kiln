@@ -152,6 +152,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockTimestamp"
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockCycle"
   >=> migrateErrorLogBakerMissed
+  >=> migrateBakerDetailsAddBalances
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -1189,6 +1190,19 @@ migrateErrorLogBakerMissed ta = do
         ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "firstBakeTime" TIMESTAMP WITHOUT TIME ZONE NOT NULL;
         ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN "lastBakeTime" TIMESTAMP WITHOUT TIME ZONE NOT NULL;
         ALTER TABLE "ErrorLogBakerMissed" ADD COLUMN count INTEGER NOT NULL;
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateBakerDetailsAddBalances :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateBakerDetailsAddBalances ta = do
+  let table = (Nothing, "BakerDetails")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | all ((/= "stakedBalance") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "BakerDetails" ADD COLUMN "stakedBalance" BIGINT NULL;
+        ALTER TABLE "BakerDetails" ADD COLUMN "unstakedFrozenBalance" BIGINT NULL;
+        ALTER TABLE "BakerDetails" ADD COLUMN "unstakedFinalizableBalance" BIGINT NULL;
       |]
       getTableAnalysis
     _ -> pure ta

@@ -88,6 +88,8 @@ class QueryHistory repr where -- blockscale
 
   rBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr Tez
   rStakedBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr (Maybe Tez)
+  rUnstakedFrozenBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr (Maybe Tez)
+  rUnstakedFinalizableBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr (Maybe Tez)
   rAILaunchCycle :: ChainId -> BlockQuery -> repr (Maybe Cycle)
   rDelegateInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr DelegateInfoCrossCompat
   rParticipationInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr ParticipationInfo
@@ -131,6 +133,8 @@ instance QueryHistory RpcQuery where
       <> (if null params then "" else "?" <> rightsLevelsOrCycleToQueryArgs params)
   rBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/balance"
   rStakedBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/staked_balance"
+  rUnstakedFrozenBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/unstaked_frozen_balance"
+  rUnstakedFinalizableBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/unstaked_finalizable_balance"
   rAILaunchCycle = blockAPI "/context/adaptive_issuance_launch_cycle"
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
   rParticipationInfo publicKeyHash = blockAPI $

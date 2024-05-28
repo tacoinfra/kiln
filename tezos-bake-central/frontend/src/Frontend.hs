@@ -2913,6 +2913,12 @@ bakersTab =
     tile title pkh subtitle mkRemoveReq errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
           dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'
+          dmStakedBalance = fmap join $ _bakerDetails_stakedBalance <$$> details'
+          dmUnstakedFrozenBalance = fmap join $ _bakerDetails_unstakedFrozenBalance <$$> details'
+
+      mbLatestHeadDyn <- watchLatestHead
+      mbAiCycleDyn <- watchAICycle
+
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
 
         tooltipAndBadge :: Dynamic t (Maybe (Dynamic t (m (), Text))) <- do
@@ -3019,8 +3025,6 @@ bakersTab =
                   "Remove Baker"
               removeEntry removeInternalBakerModal
 
-              mbLatestHeadDyn <- watchLatestHead
-              mbAiCycleDyn <- watchAICycle
               whenAIActivated mbLatestHeadDyn mbAiCycleDyn $ do
                 let
                   openModalEv btn modal = ffor btn $ \() ->
@@ -3101,8 +3105,9 @@ bakersTab =
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
         elClass "table" "baker-balance" $ do
+          let availableBalanceTooltip = divClass "detail" $ text "The spendable balance, excluding frozen deposists."
           el "tr" $ do
-            el "td" (text "Available Balance")
+            el "td" $ tooltipped TooltipPos_TopLeft availableBalanceTooltip (text "Available Balance")
             elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
               let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
               text w
@@ -3111,8 +3116,32 @@ bakersTab =
               text p
               elClass "span" "tez" $ text tz
 
+          whenAIActivated mbLatestHeadDyn mbAiCycleDyn $ do
+            let stakedBalanceTooltip = divClass "detail" $ text "The staked balance."
+            el "tr" $ do
+              el "td" $ tooltipped TooltipPos_TopLeft stakedBalanceTooltip (text "Staked Balance")
+              elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmStakedBalance $ fmap $ \t -> do
+                let (w, _p, _tz) = tez' t
+                text w
+              elClass "td" "baker-balance-part monospaced-text" $ withPlaceholder' "" $ ffor dmStakedBalance $ fmap $ \t -> do
+                let (_w, p, tz) = tez' t
+                text p
+                elClass "span" "tez" $ text tz
+
+            let unstakedFrozenBalanceTooltip = divClass "detail" $ text "The unstaked balance which is still frozen."
+            el "tr" $ do
+              el "td" $ tooltipped TooltipPos_TopLeft unstakedFrozenBalanceTooltip (text "Unstaked Frozen Balance")
+              elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmUnstakedFrozenBalance $ fmap $ \t -> do
+                let (w, _p, _tz) = tez' t
+                text w
+              elClass "td" "baker-balance-part monospaced-text" $ withPlaceholder' "" $ ffor dmUnstakedFrozenBalance $ fmap $ \t -> do
+                let (_w, p, tz) = tez' t
+                text p
+                elClass "span" "tez" $ text tz
+
+          let stakingBalanceTooltip = divClass "detail" $ text "The total balance including delegated funds, balance of delegate itself and frozen deposits."
           el "tr" $ do
-            el "td" (text "Staking Balance")
+            el "td" $ tooltipped TooltipPos_TopLeft stakingBalanceTooltip (text "Staking Balance")
             elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
               let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
               text w
