@@ -101,6 +101,8 @@ notifyHandler nds appConfig notification aggVS = runLoggingEnv (_nodeDataSource_
 
     latestHeadVS = _bakeViewSelector_latestHead aggVS
 
+    aiCycleVS = _bakeViewSelector_AICycle aggVS
+
     connectedLedgerVS = _bakeViewSelector_connectedLedger aggVS
 
     handleConnectedLedger :: Applicative m' => Maybe ConnectedLedger -> m' (BakeView a)
@@ -183,6 +185,10 @@ notifyHandler nds appConfig notification aggVS = runLoggingEnv (_nodeDataSource_
           -- unexpected error during the update from the previous Kiln versions.
           latestHead <- liftIO $ atomically $ dataSourceFinalHead nds
           pure mempty { _bakeView_latestHead = toMaybeView latestHeadVS latestHead }
+
+      , whenM (viewSelects () aiCycleVS) $ do
+          aiCycle <- liftIO $ atomically $ dataSourceAICycle nds
+          pure mempty { _bakeView_AICycle = toMaybeView aiCycleVS aiCycle }
       ]
 
     bakerAddressesVS = _bakeViewSelector_bakerAddresses aggVS

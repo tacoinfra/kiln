@@ -29,9 +29,8 @@ data ProtoInfo = ProtoInfo
   , _protoInfo_blocksPerCycle :: RawLevel -- "blocks_per_cycle": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
   , _protoInfo_blocksPerVotingPeriod :: Maybe RawLevel
   , _protoInfo_cyclesPerVotingPeriod :: Maybe RawLevel -- "blocks_per_voting_period": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-
   , _protoInfo_minimalStake :: Tez -- "minimal_stake": { "$ref": "#/definitions/mutez" },
-
+  , _protoInfo_minimalFrozenStake :: Tez  -- "minimal_frozen_stake": { "$ref": "#/definitions/mutez" },
   , _protoInfo_minimalBlockDelay :: TezosWord64 -- "minimal_block_delay": { "$ref": "#/definitions/int64" }
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance Hashable ProtoInfo
@@ -57,6 +56,7 @@ instance FromJSON ProtoInfo where
     _protoInfo_blocksPerVotingPeriod <- v .:? "blocks_per_voting_period"
     _protoInfo_cyclesPerVotingPeriod <- v .:? "cycles_per_voting_period"
     _protoInfo_minimalStake          <- v .: "minimal_stake"
+    _protoInfo_minimalFrozenStake    <- v .: "minimal_frozen_stake"
     _protoInfo_minimalBlockDelay     <- v .: "minimal_block_delay"
     pure $ ProtoInfo {..}
 

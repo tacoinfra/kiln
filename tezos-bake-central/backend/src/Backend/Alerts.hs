@@ -386,6 +386,51 @@ clearInsufficientFunds baker = do
     RETURNING t.log |]
   for_ lids notifyDefault
 
+reportNotEnoughStakedBalance
+  :: ( Monad m, MonadIO m, MonadReader a m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => Baker -> m ()
+reportNotEnoughStakedBalance baker = do
+  let pkh = _baker_publicKeyHash baker
+  chainId <- _appConfig_chainId <$> askAppConfig
+  existingLog :: Maybe (Id ErrorLog, Id ErrorLogNotEnoughStakedBalance) <- listToMaybe <$> [queryQ|
+    SELECT el.id, t.log
+      FROM "ErrorLog" el
+      JOIN "ErrorLogNotEnoughStakedBalance" t ON t.log = el.id
+      JOIN "Baker" b ON b."publicKeyHash" = t."baker#publicKeyHash"
+     WHERE NOT b."data#deleted"
+       AND el.stopped IS NULL
+       AND el."chainId" = ?chainId
+     ORDER BY el."lastSeen" DESC, el.started DESC
+     LIMIT 1
+    |]
+  now <- getTime
+  case existingLog of
+    Just (logId, _specificLogId) -> updateErrorLogBy logId ErrorLogNotEnoughStakedBalance_logField
+      [ ErrorLogNotEnoughStakedBalance_detectedField =. now ]
+    Nothing -> do
+      void $ insertErrorLog $ \logId ->
+        ErrorLogNotEnoughStakedBalance logId (Id pkh) now
+
+clearNotEnoughStakedBalance
+  :: ( Monad m, MonadIO m, MonadReader a m
+     , PersistBackend m, PostgresLargeObject m, HasAppConfig a
+     )
+  => Baker -> m ()
+clearNotEnoughStakedBalance baker = do
+  let pkh = _baker_publicKeyHash baker
+  chainId <- _appConfig_chainId <$> askAppConfig
+  lids :: [Id ErrorLogNotEnoughStakedBalance] <- stripOnly <$> [queryQ|
+    UPDATE "ErrorLog" el SET stopped = NOW()
+      FROM "ErrorLogNotEnoughStakedBalance" t
+      WHERE t.log = el.id
+      AND t."baker#publicKeyHash" = ?pkh
+      AND el.stopped IS NULL
+      AND el."chainId" = ?chainId
+    RETURNING t.log |]
+  for_ lids notifyDefault
+
 reportInaccessibleNodeError
   :: ( Monad m, PersistBackend m, PostgresLargeObject m, MonadIO m
      , HasAppConfig a, MonadReader a m, SqlDb (PhantomDb m)

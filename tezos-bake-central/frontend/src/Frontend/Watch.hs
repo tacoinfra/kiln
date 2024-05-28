@@ -88,6 +88,12 @@ watchLatestHead =
     { _bakeViewSelector_latestHead = viewJust 1
     }
 
+watchAICycle :: MonadAppWidget js t m => m (Dynamic t (Maybe Cycle))
+watchAICycle =
+  (fmap . fmap) (getMaybeView . _bakeView_AICycle) $ watchViewSelector $ pure $ mempty
+    { _bakeViewSelector_AICycle = viewJust 1
+    }
+
 watchInternalBaker :: MonadAppWidget js t m => m (Dynamic t (Maybe (PublicKeyHash, BakerInternalData)))
 watchInternalBaker = do
   theView <- watchViewSelector . pure $ mempty

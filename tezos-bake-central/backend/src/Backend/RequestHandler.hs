@@ -61,7 +61,7 @@ import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Process.Common (updateProcessState)
 import Backend.Workers.TezosClient
   (importSecretKey, isKnownLedgerPkh, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
-  showLedger, submitVote, updateConnectedLedgerViaGetConnectedLedger)
+  showLedger, stake, submitVote, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -308,6 +308,7 @@ requestHandler appConfig nds =
                 BakerLogTag_BakerDeactivationRisk -> deleteLogsPkh tag ErrorLogBakerDeactivationRisk_publicKeyHashField
                 BakerLogTag_BakerAccused -> deleteLogsId tag ErrorLogBakerAccused_bakerField
                 BakerLogTag_InsufficientFunds -> deleteLogsId tag ErrorLogInsufficientFunds_bakerField
+                BakerLogTag_NotEnoughStakedBalance -> deleteLogsId tag ErrorLogNotEnoughStakedBalance_bakerField
                 BakerLogTag_VotingReminder -> deleteLogsId tag ErrorLogVotingReminder_bakerField
                 BakerLogTag_MissedEndorsementBonus -> deleteLogsId tag ErrorLogBakerMissedEndorsementBonus_bakerField
                 BakerLogTag_NeedToResetHWM -> deleteLogsId tag ErrorLogBakerNeedToResetHWM_bakerField
@@ -498,6 +499,9 @@ requestHandler appConfig nds =
         queryLedger $ submitVote appConfig db nds sk ph b
 
       PublicRequest_RestartKilnBaker -> inDb restartBakerDaemon
+
+      PublicRequest_Stake sk amount ->
+        queryLedger $ stake appConfig db sk amount
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

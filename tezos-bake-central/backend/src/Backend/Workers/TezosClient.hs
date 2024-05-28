@@ -611,6 +611,17 @@ setHighWaterMark appConfig db sk bl = LedgerQuery LedgerQueryType_SetHWM $
     clearLedgerNeedToResetHWM db appConfig
     pure $ fromLeft SetHWMStep_Done e
 
+stake :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> SecretKey -> Integer -> LedgerQuery m
+stake appConfig db sk amount = LedgerQuery LedgerQueryType_Stake $
+  ledgerSetupStep appConfig db sk (mempty { _setupState_stake = Just $ First StakeStep_Prompting  }) (\res -> mempty { _setupState_stake = Just $ First res }) $ do
+    e <- runExceptT $ runClientCommand appConfig noTimeout ["stake", show amount, "for", T.unpack kilnLedgerAlias] $ \warnings errors -> if
+      | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left StakeStep_Declined
+      | "Ledger Transport level error:" : _ <- errors -> Left StakeStep_Disconnected
+      | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left StakeStep_Disconnected
+      | any (\e -> "Underflowing subtraction of" `T.isInfixOf` e) warnings -> Left StakeStep_NotEnoughBalance
+      | otherwise -> Left $ StakeStep_Failed $ T.unlines errors
+    pure $ fromLeft StakeStep_Done e
+
 {-# ANN submitVote ("HLint: ignore Evaluate" :: String) #-}
 submitVote
   :: (MonadLoggerIO m)

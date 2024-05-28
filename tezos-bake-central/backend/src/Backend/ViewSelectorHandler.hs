@@ -163,6 +163,8 @@ viewSelectorHandler frontendConfig nds appConfig = QueryHandler $ \vs -> runLogg
   config <- maybeViewHandler _bakeViewSelector_config $ pure $ Just frontendConfig
   latestHead <- maybeViewHandler _bakeViewSelector_latestHead $ liftIO $ atomically $ dataSourceFinalHead nds
 
+  aiCycle <- maybeViewHandler _bakeViewSelector_AICycle $ liftIO $ atomically $ dataSourceAICycle nds
+
   snapshotMeta <- maybeViewHandler _bakeViewSelector_snapshotMeta $ selectSingle CondEmpty
 
   let amendmentVS = _bakeViewSelector_amendment vs
@@ -330,6 +332,7 @@ viewSelectorHandler frontendConfig nds appConfig = QueryHandler $ \vs -> runLogg
     , _bakeView_bakerDetails = bakerDetails
     , _bakeView_errors = errors
     , _bakeView_latestHead = latestHead
+    , _bakeView_AICycle = aiCycle
     , _bakeView_amendment = amendment
     , _bakeView_proposals = periodProposals
     , _bakeView_bakerVote = bakerVote
@@ -785,6 +788,9 @@ getBakerAddresses nds bid = do
           WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
         ) +
         ( SELECT COUNT(e.id) FROM "ErrorLogInsufficientFunds" elbm JOIN "ErrorLog" e on e.id = elbm.log
+          WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
+        ) +
+        ( SELECT COUNT(e.id) FROM "ErrorLogNotEnoughStakedBalance" elbm JOIN "ErrorLog" e on e.id = elbm.log
           WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
         ),
         EXISTS ( SELECT 1

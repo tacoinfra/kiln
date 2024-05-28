@@ -384,6 +384,7 @@ backendImpl cfg serve = do
 
     dataSrc <- liftIO $ do
       latestFinalHead <- newTVarIO Nothing
+      aiCycle <- newTVarIO Nothing
       ioQueue <- newTQueueIO
       ledgerIOQueue <- newTQueueIO
       return NodeDataSource
@@ -396,6 +397,7 @@ backendImpl cfg serve = do
         , _nodeDataSource_ledgerIOQueue = ledgerIOQueue
         , _nodeDataSource_kilnNodeUri = kilnNodeRpcURI appConfig
         , _nodeDataSource_nodeForQuery = Nothing
+        , _nodeDataSource_AICycle = aiCycle
         }
 
     withTermination $ \addFinalizer -> do

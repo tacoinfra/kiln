@@ -82,7 +82,7 @@ import Common.Alerts (AlertsFilter (..), BakerErrorDescriptions (..), badNodeHea
                       bakerGroupedMissedDescriptions, bakerInsufficientFundsDescriptions,
                       bakerLedgerDisconnectedDescriptions, bakerMissedDescriptions,
                       bakerMissedEndorsementBonusDescriptions, bakerVotingReminderDescriptions,
-                      bakerNeedToResetHWMDescriptions, standardTimeFormat)
+                      bakerNeedToResetHWMDescriptions, standardTimeFormat, bakerNotEnoughStakedBalanceDescriptions)
 import Common.Api
 import Common.App
 import Common.AppendIntervalMap (ClosedInterval (..), WithInfinity (..))
@@ -797,6 +797,7 @@ instance HasAlertMetaData (BakerLogTag a) where
     BakerLogTag_BakerAccused ->
       def { _alertMetaData_isEventBased = True, _alertMetaData_isUserResolvable = True }
     BakerLogTag_InsufficientFunds -> def { _alertMetaData_severity = AlertSeverity_Warning }
+    BakerLogTag_NotEnoughStakedBalance -> def
     BakerLogTag_VotingReminder -> def
       { _alertMetaData_isEventBased = True
       , _alertMetaData_isUserResolvable = True
@@ -1045,6 +1046,9 @@ liveErrorsWidget = void $ do
           BakerLogTag_InsufficientFunds -> do
               dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
               dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError (bakerInsufficientFundsDescriptions mMinimalStake log) pkh
+          BakerLogTag_NotEnoughStakedBalance -> renderBakerError
+              bakerNotEnoughStakedBalanceDescriptions
+              pkh
           BakerLogTag_VotingReminder ->
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining -> do
               let dsc = bakerVotingReminderDescriptions log <$> remaining
@@ -1295,6 +1299,102 @@ respondToPrompt prompt = do
     text "Respond to the prompt on your Ledger Device..."
   divClass "centered explanation" $ text "Your Ledger Device should show the following prompt:"
   elClass "h6" "ui header prompt-text" prompt
+
+stakeModal :: forall r t m js.
+    ( MonadAppWidget js t m
+    , MonadReader r m
+    , HasFrontendConfig r
+    , MonadJSM (Performable m)
+    , HasTimer t r, HasTimeZone r
+    )
+  => SecretKey -> PublicKeyHash -> Event t () -> m (Event t ())
+stakeModal sk _pkh close = ffor (workflow stake) $ \e -> close <> switch (current e)
+  where
+    walletAppExtraText = el "p" $ text
+      "If you are using Tezos Wallet app of version 3.0.0 or higher, you need to enable \"expert mode\" in the Tezos Wallet app settings on the Ledger device."
+    waitForWalletApp = waitForWalletAppFlow "Staking" walletAppExtraText sk
+
+    waitForBakingApp = waitForBakingAppFlow sk "The funds have been staked."
+
+    stake :: Workflow t m (Event t ())
+    stake = Workflow $ divClass "vote-buttons" $ do
+      divClass "header" $ text "Stake tez for Kiln Baker"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "After the activation of adaptive issuance, the delegate's baking and voting power depends on its staked balance which can be increased using 'stake' operation. Please read more details in the "
+        hrefLink "https://tezos.gitlab.io/paris/adaptive_issuance.html#new-staking-mechanism" $ text "documentation"
+      dynEiTez <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem stakeTezField
+      let disabledButton = uiButton "primary disabled" "Stake" $> never
+      stake' :: Event t (Workflow t m (Event t ())) <- switchHold never <=< dyn $ ffor dynEiTez $ \case
+          Left _ -> disabledButton
+          Right Nothing -> disabledButton
+          Right (Just tz) -> do
+            stakeBtn <- (tz <$) <$> uiButton "primary" "Stake"
+            pure $ ffor stakeBtn $ \t -> confirmStakeFlow False t mempty
+      pure (never, waitForWalletApp <$> stake')
+
+    confirmStakeFlow
+      :: Bool
+      -> Integer
+      -> Text
+      -> Workflow t m (Event t ())
+    confirmStakeFlow isTimedOut stakeTez errLog = Workflow $ divClass "vote-buttons" $ do
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
+      when isTimedOut $ do
+        divClass "ui message" $ do
+          el "div" $ do
+            icon "icon-x red"
+          divClass "title" $ do
+            text "The Ledger prompt was rejected or timed out. Please try again."
+        unless (T.null errLog) $ do
+          divClass "bigtitle" $ text "Octez-client error log:"
+          elClass "div" "vote-error-log monospaced-text" $ text errLog
+      divClass "bigtitle" $ text $ "Stake " <> tshow stakeTez  <> "ꜩ for Kiln Baker?"
+      stakeBtn <- uiDynButton (pure "primary") $ text "Stake"
+      _ <- requestingIdentity $ public (PublicRequest_Stake sk stakeTez) <$ stakeBtn
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+          retryFlow = waitForWalletApp $ confirmStakeFlow isTimedOut stakeTez errLog
+      pure (never, leftmost [respondToPromptFlow retryFlow stakeTez <$ stakeBtn, ledgerDisconnectedFlow sk retryFlow <$ appLost])
+
+    respondToPromptFlow
+      :: Workflow t m (Event t ())
+      -- ^ Workflow to return to after retry
+      -> Integer -> Workflow t m (Event t ())
+    respondToPromptFlow retryFlow stakeTez = Workflow $ do
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
+      pb <- getPostBuild
+      promptStep <- watchPrompting sk
+      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
+          next = fforMaybe changed $ \case
+            Just ss | Just (First stakeStep) <- _setupState_stake ss -> case stakeStep of
+              StakeStep_Prompting -> Nothing
+              StakeStep_Done -> Just $ waitForBakingApp $ stakeSuccessFlow $ Left ()
+              StakeStep_Declined -> Just $ confirmStakeFlow True stakeTez mempty
+              StakeStep_Disconnected -> Just $ ledgerDisconnectedFlow sk retryFlow
+              StakeStep_NotEnoughBalance -> Just $ notEnoughBalanceFlow stakeTez $ Left ()
+              StakeStep_Failed errLog -> Just $ confirmStakeFlow True stakeTez errLog
+            _ -> Nothing
+      divClass "bigtitle" $ do
+        elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
+        text "Respond to the prompt on your Ledger Device..."
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+      pure (never, leftmost [next, ledgerDisconnectedFlow sk retryFlow <$ appLost])
+
+    stakeSuccessFlow
+      :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
+      -> Workflow t m (Event t ())
+    stakeSuccessFlow whereToGo = Workflow $ divClass "vote-buttons" $ do
+      divClass "bigtitle" $ text "Staking completed succesfully."
+      divClass "bigtitle" $
+        text "Kiln Baker will be automatically restarted to continue bake and attest blocks."
+      closeButton <- uiDynButton (pure "primary") $ text "Close"
+      pure $ fanEither $ whereToGo <$ closeButton
+
+    notEnoughBalanceFlow stakeTez whereToGo = Workflow $ divClass "vote-buttons" $ do
+      divClass "bigtitle" $ text $ "Kiln Baker doesn't have enough balance to stake " <> tshow stakeTez <> "ꜩ."
+      divClass "bigtitle" $
+        text "Please try again with smaller amount of funds."
+      closeButton <- uiDynButton (pure "primary") $ text "Close"
+      pure $ fanEither $ whereToGo <$ closeButton
 
 authorizeLedgerToBakeModal
   :: MonadAppWidget js t m
@@ -2522,6 +2622,8 @@ bakersTab =
                     BakerLogTag_InsufficientFunds -> Just $ do
                         dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
                         dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError $ bakerInsufficientFundsDescriptions mMinimalStake log
+                    BakerLogTag_NotEnoughStakedBalance -> Just $
+                      renderBakerError bakerNotEnoughStakedBalanceDescriptions
                     BakerLogTag_VotingReminder -> Nothing
                   Right (BakerAlert_GroupedAlert GroupedBakerAlert{..}) ->
                     Just $ el "span" $ do
@@ -2632,6 +2734,8 @@ bakersTab =
           BakerLogTag_InsufficientFunds -> do
               dMinimalStake <- _protoInfo_minimalStake <$$$> watchLatestProtoInfo
               dyn_ $ ffor dMinimalStake $ \mMinimalStake -> renderBakerError ev (pure $ bakerInsufficientFundsDescriptions mMinimalStake log) pkh
+          BakerLogTag_NotEnoughStakedBalance ->
+            renderBakerError ev (pure bakerNotEnoughStakedBalanceDescriptions) pkh
           BakerLogTag_VotingReminder ->
             withAmendmentPeriodProgress (_errorLogVotingReminder_votingPeriod log) $ \remaining ->
               renderBakerError ev (bakerVotingReminderDescriptions log <$> remaining) pkh
@@ -2824,6 +2928,13 @@ bakersTab =
                   ["This baker will not be able to sign blocks or attestations once removed and all related baker data will be deleted."]
                   "Remove Baker"
               removeEntry removeInternalBakerModal
+
+              mbLatestHeadDyn <- watchLatestHead
+              mbAiCycleDyn <- watchAICycle
+              whenAIActivated mbLatestHeadDyn mbAiCycleDyn $ do
+                stakeBtn <- tileMenuEntry "Stake"
+                let openStakeEv = ffor stakeBtn $ \() -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . stakeModal sk pkh
+                tellModal openStakeEv
 
         divClass "title" $ do
           let bakerStatusDyn = (\b bd n -> bakerStatus $ (b, bd) <$ n) <$> bakerDyn <*> details' <*> dCollectiveNodesStatus
@@ -3047,3 +3158,15 @@ withAmendmentPeriodProgress expectedVotingPeriod w = do
             True -> liftA2 Time.diffUTCTime thisPeriodEndTime currentTime
             False -> pure 0 -- The latest period is not the same as the expected one, so we assume it's over.
       w periodEndsIn
+
+-- | Only show the given widget if adaptive issuance is activated.
+whenAIActivated
+  :: MonadAppWidget js t m
+  => Dynamic t (Maybe BranchInfo)
+  -> Dynamic t (Maybe Cycle)
+  -> m ()
+  -> m ()
+whenAIActivated mbLatestHeadDyn mbAiCycleDyn contents =
+  dyn_ $ ffor2 mbLatestHeadDyn mbAiCycleDyn $ \mbHeadBlock mbAiCycle ->
+    whenJust mbHeadBlock $ \headBlock -> whenJust mbAiCycle $ \aiCycle ->
+      when (_branchInfo_cycle headBlock >= aiCycle) contents

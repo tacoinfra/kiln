@@ -634,6 +634,19 @@ minConnectionsField = validatedInput (Validator.optional $ Validator.validateNum
                      text "Minimum Peer Connections"
                      divClass "explanation" $ text "Kiln will fire an alert if the node is connected to fewer than this many peers.")
 
+stakeTezField
+  :: ( DomBuilder t m
+     , PostBuild t m
+     , DomBuilderSpace m ~ GhcjsDomSpace
+     )
+  => m (Dynamic t (Either Text (Maybe Integer)))
+stakeTezField = validatedInput (Validator.optional $ Validator.validateNumeric mempty (Just 1, Nothing) Nothing) $ def
+  & Txt.setPlaceholder ("e.g. " <> "600")
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ do
+                     text "Enter the amount of tez to stake"
+                     divClass "explanation" $ text "This amount of tez will be added to the staked balance of Kiln Baker.")
+
 zipFields :: (Applicative m, Reflex t)
           => m (Dynamic t (Either Text a))
           -> m (Dynamic t (Either Text b))

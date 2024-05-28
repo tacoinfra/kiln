@@ -124,6 +124,9 @@ data NodeQuery a where
   NodeQuery_DelegateInfo      :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
   NodeQuery_ParticipationInfo :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
   NodeQuery_Balance           :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery Tez
+  -- TODO: remove 'Maybe' here when ParisB is activated on mainnet.
+  NodeQuery_StakedBalance     :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery (Maybe Tez)
+  NodeQuery_AILaunchCycle     :: BlockQuery -> NodeQuery (Maybe Cycle)
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
   NodeQuery_Round             :: BlockQuery -> NodeQuery Int32
 deriving instance Show (NodeQuery a)
@@ -149,6 +152,8 @@ nodeQuery_BlockHeader       :: ToBlockQuery blk => blk -> NodeQuery BlockHeader
 nodeQuery_DelegateInfo      :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
 nodeQuery_ParticipationInfo :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
 nodeQuery_Balance           :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery Tez
+nodeQuery_StakedBalance     :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery (Maybe Tez)
+nodeQuery_AILaunchCycle     :: ToBlockQuery blk => blk -> NodeQuery (Maybe Cycle)
 nodeQuery_Round             :: ToBlockQuery blk => blk -> NodeQuery Int32
 nodeQuery_ProtocolConstants = NodeQuery_ProtocolConstants . toBlockQuery
 nodeQuery_BakingRights blk = NodeQuery_BakingRights (toBlockQuery blk)
@@ -166,6 +171,8 @@ nodeQuery_BlockHeader blk = NodeQuery_BlockHeader (toBlockQuery blk)
 nodeQuery_DelegateInfo blk = NodeQuery_DelegateInfo (toBlockQuery blk)
 nodeQuery_ParticipationInfo blk = NodeQuery_ParticipationInfo (toBlockQuery blk)
 nodeQuery_Balance blk = NodeQuery_Balance (toBlockQuery blk)
+nodeQuery_StakedBalance blk = NodeQuery_StakedBalance (toBlockQuery blk)
+nodeQuery_AILaunchCycle blk = NodeQuery_AILaunchCycle (toBlockQuery blk)
 nodeQuery_Round blk = NodeQuery_Round (toBlockQuery blk)
 
 data NodeQueryIx a where
@@ -225,6 +232,7 @@ data NodeDataSource = NodeDataSource
   , _nodeDataSource_ledgerIOQueue :: TQueue (LedgerQuery (LoggingT IO))
   , _nodeDataSource_kilnNodeUri :: URI
   , _nodeDataSource_nodeForQuery :: Maybe URI -- Override the node selection algo, and do RPC using this node
+  , _nodeDataSource_AICycle :: TVar (Maybe Cycle)
   } deriving (Typeable, Generic)
 makeLenses 'NodeDataSource
 
@@ -613,6 +621,11 @@ dataSourceFinalHead
   => nds -> m (Maybe BranchInfo)
 dataSourceFinalHead nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_latestFinalHead)
 
+dataSourceAICycle
+  :: forall nds m. (HasNodeDataSource nds, MonadSTM m)
+  => nds -> m (Maybe Cycle)
+dataSourceAICycle nds = readTVar' (nds ^. nodeDataSource . nodeDataSource_AICycle)
+
 roundChunkSize :: Num a => a
 roundChunkSize = 64
 
@@ -803,6 +816,8 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_ParticipationInfo branch _lvl pkh -> nodeRPC' $ rParticipationInfo pkh chainId branch
   NodeQuery_Balance branch _lvl pkh -> nodeRPC' $ rBalance pkh chainId branch
+  NodeQuery_StakedBalance branch _lvl pkh -> nodeRPC' $ rStakedBalance pkh chainId branch
+  NodeQuery_AILaunchCycle branch -> nodeRPC' $ rAILaunchCycle chainId branch
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)

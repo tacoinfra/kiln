@@ -227,17 +227,19 @@ data SetupState = SetupState
   , _setupState_setup :: Maybe (First SetupLedgerToBakeStep)
   , _setupState_register :: Maybe (First RegisterStep)
   , _setupState_setHWM :: Maybe (First SetHWMStep)
+  , _setupState_stake :: Maybe (First StakeStep)
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON SetupState
 instance ToJSON SetupState
 instance Monoid SetupState where
-  mempty = SetupState Nothing Nothing Nothing Nothing
+  mempty = SetupState Nothing Nothing Nothing Nothing Nothing
 instance Semigroup SetupState where
   ss1 <> ss2 = SetupState
     { _setupState_import = _setupState_import ss1 <> _setupState_import ss2
     , _setupState_setup = _setupState_setup ss1 <> _setupState_setup ss2
     , _setupState_register = _setupState_register ss1 <> _setupState_register ss2
     , _setupState_setHWM = _setupState_setHWM ss1 <> _setupState_setHWM ss2
+    , _setupState_stake = _setupState_stake ss1 <> _setupState_stake ss2
     }
 
 data ImportSecretKeyStep
@@ -286,6 +288,17 @@ data SetHWMStep
 instance FromJSON SetHWMStep
 instance ToJSON SetHWMStep
 
+data StakeStep
+  = StakeStep_Prompting
+  | StakeStep_Done
+  | StakeStep_Declined
+  | StakeStep_Disconnected
+  | StakeStep_NotEnoughBalance
+  | StakeStep_Failed Text -- Anything else
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON StakeStep
+instance ToJSON StakeStep
+
 data VoteStep
   = VoteStep_Prompting
   | VoteStep_Done
@@ -329,6 +342,7 @@ data BakeViewSelector a = BakeViewSelector
   , _bakeViewSelector_latestTezosRelease :: MaybeSelector (Maybe MajorMinorVersion) a
   , _bakeViewSelector_parameters :: MapSelector ProtocolHash ProtocolIndex a
   , _bakeViewSelector_latestHead :: MaybeSelector BranchInfo a
+  , _bakeViewSelector_AICycle :: MaybeSelector Cycle a
   , _bakeViewSelector_amendment :: RangeSelector VotingPeriodKind (Deletable Amendment) a
   , _bakeViewSelector_proposals :: RangeSelector' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a
   , _bakeViewSelector_bakerVote :: MaybeSelector (Maybe BakerVote) a
@@ -373,6 +387,7 @@ data BakeView a = BakeView
   , _bakeView_latestTezosRelease :: MaybeView (Maybe MajorMinorVersion) a
   , _bakeView_parameters :: Common.Vassal.View (MapSelector ProtocolHash ProtocolIndex) a
   , _bakeView_latestHead :: MaybeView BranchInfo a
+  , _bakeView_AICycle :: MaybeView Cycle a
   , _bakeView_amendment :: RangeView VotingPeriodKind (Deletable Amendment) a
   , _bakeView_proposals :: RangeView' (Id PeriodProposal) (Deletable (PeriodProposal, Maybe Bool)) a
   , _bakeView_bakerVote :: MaybeView (Maybe BakerVote) a
@@ -441,6 +456,7 @@ bakerIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_publicKeyHash
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
   BakerLogTag_InsufficientFunds -> unId . _errorLogInsufficientFunds_baker
+  BakerLogTag_NotEnoughStakedBalance -> unId . _errorLogNotEnoughStakedBalance_baker
   BakerLogTag_VotingReminder -> unId . _errorLogVotingReminder_baker
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
@@ -453,6 +469,7 @@ errorLogIdForBakerLogTag = \case
   BakerLogTag_BakerDeactivationRisk -> _errorLogBakerDeactivationRisk_log
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
   BakerLogTag_InsufficientFunds -> _errorLogInsufficientFunds_log
+  BakerLogTag_NotEnoughStakedBalance -> _errorLogNotEnoughStakedBalance_log
   BakerLogTag_VotingReminder -> _errorLogVotingReminder_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog
@@ -495,6 +512,7 @@ cropBakeView vs v = BakeView
   , _bakeView_mailServer = cropView (_bakeViewSelector_mailServer vs) (_bakeView_mailServer v)
   , _bakeView_errors = MMap.intersectionWith cropView (_bakeViewSelector_errors vs) (_bakeView_errors v)
   , _bakeView_latestHead = cropView (_bakeViewSelector_latestHead vs) (_bakeView_latestHead v)
+  , _bakeView_AICycle = cropView (_bakeViewSelector_AICycle vs) (_bakeView_AICycle v)
   , _bakeView_amendment = cropView (_bakeViewSelector_amendment vs) (_bakeView_amendment v)
   , _bakeView_proposals = cropView (_bakeViewSelector_proposals vs) (_bakeView_proposals v)
   , _bakeView_bakerVote = cropView (_bakeViewSelector_bakerVote vs) (_bakeView_bakerVote v)
@@ -529,6 +547,7 @@ instance Filterable BakeViewSelector where
     , _bakeViewSelector_nodeVersions = mapMaybe f $ _bakeViewSelector_nodeVersions a
     , _bakeViewSelector_errors = (fmap.mapMaybe) f $ _bakeViewSelector_errors a
     , _bakeViewSelector_latestHead = mapMaybe f $ _bakeViewSelector_latestHead a
+    , _bakeViewSelector_AICycle = mapMaybe f $ _bakeViewSelector_AICycle a
     , _bakeViewSelector_amendment = mapMaybe f $ _bakeViewSelector_amendment a
     , _bakeViewSelector_proposals = mapMaybe f $ _bakeViewSelector_proposals a
     , _bakeViewSelector_bakerVote = mapMaybe f $ _bakeViewSelector_bakerVote a
@@ -563,6 +582,7 @@ instance Filterable BakeView where
     , _bakeView_nodeVersions = mapMaybe f $ _bakeView_nodeVersions a
     , _bakeView_errors = (fmap.mapMaybe) f $ _bakeView_errors a
     , _bakeView_latestHead = mapMaybe f $ _bakeView_latestHead a
+    , _bakeView_AICycle = mapMaybe f $ _bakeView_AICycle a
     , _bakeView_amendment = mapMaybe f $ _bakeView_amendment a
     , _bakeView_proposals = mapMaybe f $ _bakeView_proposals a
     , _bakeView_bakerVote = mapMaybe f $ _bakeView_bakerVote a
@@ -602,6 +622,7 @@ instance Semigroup a => Semigroup (BakeViewSelector a) where
     , _bakeViewSelector_nodeVersions = (<>) (_bakeViewSelector_nodeVersions u) (_bakeViewSelector_nodeVersions v)
     , _bakeViewSelector_errors = (<>) (_bakeViewSelector_errors u) (_bakeViewSelector_errors v)
     , _bakeViewSelector_latestHead = (<>) (_bakeViewSelector_latestHead u) (_bakeViewSelector_latestHead v)
+    , _bakeViewSelector_AICycle = (<>) (_bakeViewSelector_AICycle u) (_bakeViewSelector_AICycle v)
     , _bakeViewSelector_amendment = (<>) (_bakeViewSelector_amendment u) (_bakeViewSelector_amendment v)
     , _bakeViewSelector_proposals = (<>) (_bakeViewSelector_proposals u) (_bakeViewSelector_proposals v)
     , _bakeViewSelector_bakerVote = (<>) (_bakeViewSelector_bakerVote u) (_bakeViewSelector_bakerVote v)
@@ -636,6 +657,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeViewSelector a) where
     , _bakeViewSelector_nodeVersions = mempty
     , _bakeViewSelector_errors = mempty
     , _bakeViewSelector_latestHead = mempty
+    , _bakeViewSelector_AICycle = mempty
     , _bakeViewSelector_amendment = mempty
     , _bakeViewSelector_proposals = mempty
     , _bakeViewSelector_bakerVote = mempty
@@ -676,6 +698,7 @@ instance (Semigroup a, Monoid a) => Monoid (BakeView a) where
     , _bakeView_nodeVersions = mempty
     , _bakeView_errors = mempty
     , _bakeView_latestHead = mempty
+    , _bakeView_AICycle = mempty
     , _bakeView_amendment = mempty
     , _bakeView_proposals = mempty
     , _bakeView_bakerVote = mempty
@@ -712,6 +735,7 @@ instance Semigroup a => Semigroup (BakeView a) where
     , _bakeView_nodeVersions = _bakeView_nodeVersions u <> _bakeView_nodeVersions v
     , _bakeView_errors = _bakeView_errors u <> _bakeView_errors v
     , _bakeView_latestHead = _bakeView_latestHead u <> _bakeView_latestHead v
+    , _bakeView_AICycle = _bakeView_AICycle u <> _bakeView_AICycle v
     , _bakeView_amendment = _bakeView_amendment u <> _bakeView_amendment v
     , _bakeView_proposals = _bakeView_proposals u <> _bakeView_proposals v
     , _bakeView_bakerVote = _bakeView_bakerVote u <> _bakeView_bakerVote v

@@ -885,6 +885,23 @@ data ErrorLogInsufficientFunds = ErrorLogInsufficientFunds
 instance HasId ErrorLogInsufficientFunds where
   type IdData ErrorLogInsufficientFunds = Id ErrorLog
 
+-- | After the activation of adaptive issuance feaature in ParisB protocol,
+-- it's required to have at least {minimal_frozen_stake} staked balance to
+-- get the consensus rights, apart from having {minimal_stake} total balance
+--
+-- The latter belongs to 'ErrorLogInsufficientFunds' alerts, while this
+-- alert is about the former.
+--
+-- See https://tezos.gitlab.io/active/proof_of_stake.html#delegation-and-staking
+-- for the reference.
+data ErrorLogNotEnoughStakedBalance = ErrorLogNotEnoughStakedBalance
+  { _errorLogNotEnoughStakedBalance_log :: Id ErrorLog
+  , _errorLogNotEnoughStakedBalance_baker :: Id Baker
+  , _errorLogNotEnoughStakedBalance_detected :: UTCTime
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNotEnoughStakedBalance where
+  type IdData ErrorLogNotEnoughStakedBalance = Id ErrorLog
+
 data ErrorLogVotingReminder = ErrorLogVotingReminder
   { _errorLogVotingReminder_log :: Id ErrorLog
   , _errorLogVotingReminder_baker :: Id Baker
@@ -1114,6 +1131,7 @@ data BakerLogTag a where
   BakerLogTag_BakerDeactivationRisk :: BakerLogTag ErrorLogBakerDeactivationRisk
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
   BakerLogTag_InsufficientFunds :: BakerLogTag ErrorLogInsufficientFunds
+  BakerLogTag_NotEnoughStakedBalance :: BakerLogTag ErrorLogNotEnoughStakedBalance
   BakerLogTag_VotingReminder :: BakerLogTag ErrorLogVotingReminder
   BakerLogTag_NeedToResetHWM :: BakerLogTag ErrorLogBakerNeedToResetHWM
 
@@ -1151,6 +1169,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
+  , ''ErrorLogNotEnoughStakedBalance
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInsufficientPeers
@@ -1212,6 +1231,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogBakerNoHeartbeat
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogInsufficientFunds
+  , 'ErrorLogNotEnoughStakedBalance
   , 'ErrorLogInternalNodeFailed
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
@@ -1282,6 +1302,7 @@ instance UniverseSome BakerLogTag where
     , Some BakerLogTag_BakerAccused
     , Some BakerLogTag_BakerLedgerDisconnected
     , Some BakerLogTag_InsufficientFunds
+    , Some BakerLogTag_NotEnoughStakedBalance
     , Some BakerLogTag_VotingReminder
     ]
 -- need Cale to fix this
@@ -1319,6 +1340,7 @@ errorLogNames =
   , ''ErrorLogBakerNoHeartbeat
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
+  , ''ErrorLogNotEnoughStakedBalance
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInsufficientPeers
