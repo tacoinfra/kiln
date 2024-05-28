@@ -1307,8 +1307,11 @@ unstakeModal :: forall r t m js.
     , MonadJSM (Performable m)
     , HasTimer t r, HasTimeZone r
     )
-  => SecretKey -> PublicKeyHash -> Event t () -> m (Event t ())
-unstakeModal sk _pkh close = ffor (workflow unstake) $ \e -> close <> switch (current e)
+  => SecretKey
+  -> Dynamic t (Maybe BakerDetails)
+  -> Event t ()
+  -> m (Event t ())
+unstakeModal sk detailsDyn close = ffor (workflow unstake) $ \e -> close <> switch (current e)
   where
     walletAppExtraText = el "p" $ text
       "If you are using Tezos Wallet app of version 3.0.0 or higher, you need to enable \"expert mode\" in the Tezos Wallet app settings on the Ledger device."
@@ -1322,6 +1325,14 @@ unstakeModal sk _pkh close = ffor (workflow unstake) $ \e -> close <> switch (cu
       elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
         text "The staked funds can be unstaked and added to baker's unfrozen balance. After unstaking, the funds will remain frozen for 4 cycles, and then can be unfrozen with 'finalize unstake' operation. Please read more details in the "
         hrefLink "https://tezos.gitlab.io/paris/adaptive_issuance.html#new-staking-mechanism" $ text "documentation"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "The current staked balance is "
+        let dmStakedBalance = fmap join $ _bakerDetails_stakedBalance <$$> detailsDyn
+        withPlaceholder . ffor dmStakedBalance . fmap $ \t -> do
+          let (w, p, tz) = tez' t
+          text $ w <> p
+          elClass "span" "monospaced-text tez" $ text tz
+
       dynEiTez <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem unstakeTezField
       let disabledButton = uiButton "primary disabled" "Unstake" $> never
       unstake' :: Event t (Workflow t m (Event t ())) <- switchHold never <=< dyn $ ffor dynEiTez $ \case
@@ -1397,8 +1408,11 @@ stakeModal :: forall r t m js.
     , MonadJSM (Performable m)
     , HasTimer t r, HasTimeZone r
     )
-  => SecretKey -> PublicKeyHash -> Event t () -> m (Event t ())
-stakeModal sk _pkh close = ffor (workflow stake) $ \e -> close <> switch (current e)
+  => SecretKey
+  -> Dynamic t (Maybe BakerDetails)
+  -> Event t ()
+  -> m (Event t ())
+stakeModal sk detailsDyn close = ffor (workflow stake) $ \e -> close <> switch (current e)
   where
     walletAppExtraText = el "p" $ text
       "If you are using Tezos Wallet app of version 3.0.0 or higher, you need to enable \"expert mode\" in the Tezos Wallet app settings on the Ledger device."
@@ -1412,6 +1426,13 @@ stakeModal sk _pkh close = ffor (workflow stake) $ \e -> close <> switch (curren
       elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
         text "After the activation of adaptive issuance, the delegate's baking and voting power depends on its staked balance which can be increased using 'stake' operation. Please read more details in the "
         hrefLink "https://tezos.gitlab.io/paris/adaptive_issuance.html#new-staking-mechanism" $ text "documentation"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "The current available balance is "
+        let dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> detailsDyn
+        withPlaceholder . ffor dmDelegateInfo . fmap $ \t -> do
+          let (w, p, tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
+          text $ w <> p
+          elClass "span" "monospaced-text tez" $ text tz
       dynEiTez <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem stakeTezField
       let disabledButton = uiButton "primary disabled" "Stake" $> never
       stake' :: Event t (Workflow t m (Event t ())) <- switchHold never <=< dyn $ ffor dynEiTez $ \case
@@ -3028,7 +3049,7 @@ bakersTab =
               whenAIActivated mbLatestHeadDyn mbAiCycleDyn $ do
                 let
                   openModalEv btn modal = ffor btn $ \() ->
-                    cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . modal sk pkh
+                    cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . modal sk details'
 
                 stakeBtn <- tileMenuEntry "Stake"
                 let openStakeEv = openModalEv stakeBtn stakeModal
