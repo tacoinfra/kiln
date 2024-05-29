@@ -228,11 +228,12 @@ data SetupState = SetupState
   , _setupState_register :: Maybe (First RegisterStep)
   , _setupState_setHWM :: Maybe (First SetHWMStep)
   , _setupState_stake :: Maybe (First StakeStep)
+  , _setupState_unstake :: Maybe (First UnstakeStep)
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON SetupState
 instance ToJSON SetupState
 instance Monoid SetupState where
-  mempty = SetupState Nothing Nothing Nothing Nothing Nothing
+  mempty = SetupState Nothing Nothing Nothing Nothing Nothing Nothing
 instance Semigroup SetupState where
   ss1 <> ss2 = SetupState
     { _setupState_import = _setupState_import ss1 <> _setupState_import ss2
@@ -240,6 +241,7 @@ instance Semigroup SetupState where
     , _setupState_register = _setupState_register ss1 <> _setupState_register ss2
     , _setupState_setHWM = _setupState_setHWM ss1 <> _setupState_setHWM ss2
     , _setupState_stake = _setupState_stake ss1 <> _setupState_stake ss2
+    , _setupState_unstake = _setupState_unstake ss1 <> _setupState_unstake ss2
     }
 
 data ImportSecretKeyStep
@@ -298,6 +300,16 @@ data StakeStep
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON StakeStep
 instance ToJSON StakeStep
+
+data UnstakeStep
+  = UnstakeStep_Prompting
+  | UnstakeStep_Done
+  | UnstakeStep_Declined
+  | UnstakeStep_Disconnected
+  | UnstakeStep_Failed Text -- Anything else
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON UnstakeStep
+instance ToJSON UnstakeStep
 
 data VoteStep
   = VoteStep_Prompting

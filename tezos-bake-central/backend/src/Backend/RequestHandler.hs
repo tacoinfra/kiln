@@ -61,7 +61,7 @@ import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Process.Common (updateProcessState)
 import Backend.Workers.TezosClient
   (importSecretKey, isKnownLedgerPkh, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
-  showLedger, stake, submitVote, updateConnectedLedgerViaGetConnectedLedger)
+  showLedger, stake, submitVote, unstake, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -502,6 +502,9 @@ requestHandler appConfig nds =
 
       PublicRequest_Stake sk amount ->
         queryLedger $ stake appConfig db sk amount
+
+      PublicRequest_Unstake sk amount ->
+        queryLedger $ unstake appConfig db sk amount
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

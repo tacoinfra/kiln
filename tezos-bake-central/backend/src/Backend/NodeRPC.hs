@@ -125,7 +125,9 @@ data NodeQuery a where
   NodeQuery_ParticipationInfo :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
   NodeQuery_Balance           :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery Tez
   -- TODO: remove 'Maybe' here when ParisB is activated on mainnet.
-  NodeQuery_StakedBalance     :: BlockQuery -> RawLevel -> PublicKeyHash -> NodeQuery (Maybe Tez)
+  NodeQuery_StakedBalance     :: BlockQuery -> PublicKeyHash -> NodeQuery (Maybe Tez)
+  NodeQuery_UnstakedFrozenBalance :: BlockQuery -> PublicKeyHash -> NodeQuery (Maybe Tez)
+  NodeQuery_UnstakedFinalizableBalance :: BlockQuery -> PublicKeyHash -> NodeQuery (Maybe Tez)
   NodeQuery_AILaunchCycle     :: BlockQuery -> NodeQuery (Maybe Cycle)
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
   NodeQuery_Round             :: BlockQuery -> NodeQuery Int32
@@ -152,7 +154,9 @@ nodeQuery_BlockHeader       :: ToBlockQuery blk => blk -> NodeQuery BlockHeader
 nodeQuery_DelegateInfo      :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery CacheDelegateInfo
 nodeQuery_ParticipationInfo :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery ParticipationInfo
 nodeQuery_Balance           :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery Tez
-nodeQuery_StakedBalance     :: ToBlockQuery blk => blk -> RawLevel -> PublicKeyHash -> NodeQuery (Maybe Tez)
+nodeQuery_StakedBalance     :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Maybe Tez)
+nodeQuery_UnstakedFrozenBalance :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Maybe Tez)
+nodeQuery_UnstakedFinalizableBalance :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Maybe Tez)
 nodeQuery_AILaunchCycle     :: ToBlockQuery blk => blk -> NodeQuery (Maybe Cycle)
 nodeQuery_Round             :: ToBlockQuery blk => blk -> NodeQuery Int32
 nodeQuery_ProtocolConstants = NodeQuery_ProtocolConstants . toBlockQuery
@@ -172,6 +176,8 @@ nodeQuery_DelegateInfo blk = NodeQuery_DelegateInfo (toBlockQuery blk)
 nodeQuery_ParticipationInfo blk = NodeQuery_ParticipationInfo (toBlockQuery blk)
 nodeQuery_Balance blk = NodeQuery_Balance (toBlockQuery blk)
 nodeQuery_StakedBalance blk = NodeQuery_StakedBalance (toBlockQuery blk)
+nodeQuery_UnstakedFrozenBalance blk = NodeQuery_UnstakedFrozenBalance (toBlockQuery blk)
+nodeQuery_UnstakedFinalizableBalance blk = NodeQuery_UnstakedFinalizableBalance (toBlockQuery blk)
 nodeQuery_AILaunchCycle blk = NodeQuery_AILaunchCycle (toBlockQuery blk)
 nodeQuery_Round blk = NodeQuery_Round (toBlockQuery blk)
 
@@ -816,7 +822,9 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
   NodeQuery_DelegateInfo branch _lvl pkh -> fmap (fmap toCacheDelegateInfo) $ nodeRPC' $ rDelegateInfo pkh chainId branch
   NodeQuery_ParticipationInfo branch _lvl pkh -> nodeRPC' $ rParticipationInfo pkh chainId branch
   NodeQuery_Balance branch _lvl pkh -> nodeRPC' $ rBalance pkh chainId branch
-  NodeQuery_StakedBalance branch _lvl pkh -> nodeRPC' $ rStakedBalance pkh chainId branch
+  NodeQuery_StakedBalance branch pkh -> nodeRPC' $ rStakedBalance pkh chainId branch
+  NodeQuery_UnstakedFrozenBalance branch pkh -> nodeRPC' $ rUnstakedFrozenBalance pkh chainId branch
+  NodeQuery_UnstakedFinalizableBalance branch pkh -> nodeRPC' $ rUnstakedFinalizableBalance pkh chainId branch
   NodeQuery_AILaunchCycle branch -> nodeRPC' $ rAILaunchCycle chainId branch
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)

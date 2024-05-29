@@ -1300,6 +1300,107 @@ respondToPrompt prompt = do
   divClass "centered explanation" $ text "Your Ledger Device should show the following prompt:"
   elClass "h6" "ui header prompt-text" prompt
 
+unstakeModal :: forall r t m js.
+    ( MonadAppWidget js t m
+    , MonadReader r m
+    , HasFrontendConfig r
+    , MonadJSM (Performable m)
+    , HasTimer t r, HasTimeZone r
+    )
+  => SecretKey
+  -> Dynamic t (Maybe BakerDetails)
+  -> Event t ()
+  -> m (Event t ())
+unstakeModal sk detailsDyn close = ffor (workflow unstake) $ \e -> close <> switch (current e)
+  where
+    walletAppExtraText = el "p" $ text
+      "If you are using Tezos Wallet app of version 3.0.0 or higher, you need to enable \"expert mode\" in the Tezos Wallet app settings on the Ledger device."
+    waitForWalletApp = waitForWalletAppFlow "Unstaking" walletAppExtraText sk
+
+    waitForBakingApp = waitForBakingAppFlow sk "The funds have been unstaked."
+
+    unstake :: Workflow t m (Event t ())
+    unstake = Workflow $ divClass "vote-buttons" $ do
+      divClass "header" $ text "Unstake tez from Kiln Baker's staked balance"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "The staked funds can be unstaked and added to baker's unfrozen balance. After unstaking, the funds will remain frozen for 4 cycles, and then can be unfrozen with 'finalize unstake' operation. Please read more details in the "
+        hrefLink "https://tezos.gitlab.io/paris/adaptive_issuance.html#new-staking-mechanism" $ text "documentation"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "The current staked balance is "
+        let dmStakedBalance = fmap join $ _bakerDetails_stakedBalance <$$> detailsDyn
+        withPlaceholder . ffor dmStakedBalance . fmap $ \t -> do
+          let (w, p, tz) = tez' t
+          text $ w <> p
+          elClass "span" "monospaced-text tez" $ text tz
+
+      dynEiTez <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem unstakeTezField
+      let disabledButton = uiButton "primary disabled" "Unstake" $> never
+      unstake' :: Event t (Workflow t m (Event t ())) <- switchHold never <=< dyn $ ffor dynEiTez $ \case
+          Left _ -> disabledButton
+          Right Nothing -> disabledButton
+          Right (Just tz) -> do
+            unstakeBtn <- (tz <$) <$> uiButton "primary" "Unstake"
+            pure $ ffor unstakeBtn $ \t -> confirmUnstakeFlow False t mempty
+      pure (never, waitForWalletApp <$> unstake')
+
+    confirmUnstakeFlow
+      :: Bool
+      -> Integer
+      -> Text
+      -> Workflow t m (Event t ())
+    confirmUnstakeFlow isTimedOut unstakeTez errLog = Workflow $ divClass "vote-buttons" $ do
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
+      when isTimedOut $ do
+        divClass "ui message" $ do
+          el "div" $ do
+            icon "icon-x red"
+          divClass "title" $ do
+            text "The Ledger prompt was rejected or timed out. Please try again."
+        unless (T.null errLog) $ do
+          divClass "bigtitle" $ text "Octez-client error log:"
+          elClass "div" "vote-error-log monospaced-text" $ text errLog
+      divClass "bigtitle" $ text $ "Unstake " <> tshow unstakeTez  <> "ꜩ from Kiln Baker's staked balance?"
+      unstakeBtn <- uiDynButton (pure "primary") $ text "Unstake"
+      _ <- requestingIdentity $ public (PublicRequest_Unstake sk unstakeTez) <$ unstakeBtn
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+          retryFlow = waitForWalletApp $ confirmUnstakeFlow isTimedOut unstakeTez errLog
+      pure (never, leftmost [respondToPromptFlow retryFlow unstakeTez <$ unstakeBtn, ledgerDisconnectedFlow sk retryFlow <$ appLost])
+
+    respondToPromptFlow
+      :: Workflow t m (Event t ())
+      -- ^ Workflow to return to after retry
+      -> Integer -> Workflow t m (Event t ())
+    respondToPromptFlow retryFlow unstakeTez = Workflow $ do
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
+      pb <- getPostBuild
+      promptStep <- watchPrompting sk
+      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
+          next = fforMaybe changed $ \case
+            Just ss | Just (First unstakeStep) <- _setupState_unstake ss -> case unstakeStep of
+              UnstakeStep_Prompting -> Nothing
+              UnstakeStep_Done -> Just $ waitForBakingApp $ unstakeSuccessFlow $ Left ()
+              UnstakeStep_Declined -> Just $ confirmUnstakeFlow True unstakeTez mempty
+              UnstakeStep_Disconnected -> Just $ ledgerDisconnectedFlow sk retryFlow
+              UnstakeStep_Failed errLog -> Just $ confirmUnstakeFlow True unstakeTez errLog
+            _ -> Nothing
+      divClass "bigtitle" $ do
+        elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
+        text "Respond to the prompt on your Ledger Device..."
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+      pure (never, leftmost [next, ledgerDisconnectedFlow sk retryFlow <$ appLost])
+
+    unstakeSuccessFlow
+      :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
+      -> Workflow t m (Event t ())
+    unstakeSuccessFlow whereToGo = Workflow $ divClass "vote-buttons" $ do
+      divClass "bigtitle" $ text "Unstaking completed succesfully."
+      el "p" $ text
+        "The unstaked funds will remain frozen for the time being. After 4 cycles, you can unfreeze them with 'finalize unstake' operation. Kiln will notify you when these funds can be unfrozen."
+      divClass "bigtitle" $
+        text "Kiln Baker will be automatically restarted to continue bake and attest blocks."
+      closeButton <- uiDynButton (pure "primary") $ text "Close"
+      pure $ fanEither $ whereToGo <$ closeButton
+
 stakeModal :: forall r t m js.
     ( MonadAppWidget js t m
     , MonadReader r m
@@ -1307,8 +1408,11 @@ stakeModal :: forall r t m js.
     , MonadJSM (Performable m)
     , HasTimer t r, HasTimeZone r
     )
-  => SecretKey -> PublicKeyHash -> Event t () -> m (Event t ())
-stakeModal sk _pkh close = ffor (workflow stake) $ \e -> close <> switch (current e)
+  => SecretKey
+  -> Dynamic t (Maybe BakerDetails)
+  -> Event t ()
+  -> m (Event t ())
+stakeModal sk detailsDyn close = ffor (workflow stake) $ \e -> close <> switch (current e)
   where
     walletAppExtraText = el "p" $ text
       "If you are using Tezos Wallet app of version 3.0.0 or higher, you need to enable \"expert mode\" in the Tezos Wallet app settings on the Ledger device."
@@ -1322,6 +1426,13 @@ stakeModal sk _pkh close = ffor (workflow stake) $ \e -> close <> switch (curren
       elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
         text "After the activation of adaptive issuance, the delegate's baking and voting power depends on its staked balance which can be increased using 'stake' operation. Please read more details in the "
         hrefLink "https://tezos.gitlab.io/paris/adaptive_issuance.html#new-staking-mechanism" $ text "documentation"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "The current available balance is "
+        let dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> detailsDyn
+        withPlaceholder . ffor dmDelegateInfo . fmap $ \t -> do
+          let (w, p, tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
+          text $ w <> p
+          elClass "span" "monospaced-text tez" $ text tz
       dynEiTez <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem stakeTezField
       let disabledButton = uiButton "primary disabled" "Stake" $> never
       stake' :: Event t (Workflow t m (Event t ())) <- switchHold never <=< dyn $ ffor dynEiTez $ \case
@@ -2823,6 +2934,12 @@ bakersTab =
     tile title pkh subtitle mkRemoveReq errors' bakerDyn details' dCollectiveNodesStatus = do
       let connected = isRight <$> dCollectiveNodesStatus
           dmDelegateInfo = preview (_Just . bakerDetails_delegateInfo . _Just . to unJson) <$> details'
+          dmStakedBalance = fmap join $ _bakerDetails_stakedBalance <$$> details'
+          dmUnstakedFrozenBalance = fmap join $ _bakerDetails_unstakedFrozenBalance <$$> details'
+
+      mbLatestHeadDyn <- watchLatestHead
+      mbAiCycleDyn <- watchAICycle
+
       divClass "ui card dashboard-tile baker-tile" $ divClass "content" $ do
 
         tooltipAndBadge :: Dynamic t (Maybe (Dynamic t (m (), Text))) <- do
@@ -2929,12 +3046,18 @@ bakersTab =
                   "Remove Baker"
               removeEntry removeInternalBakerModal
 
-              mbLatestHeadDyn <- watchLatestHead
-              mbAiCycleDyn <- watchAICycle
               whenAIActivated mbLatestHeadDyn mbAiCycleDyn $ do
+                let
+                  openModalEv btn modal = ffor btn $ \() ->
+                    cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . modal sk details'
+
                 stakeBtn <- tileMenuEntry "Stake"
-                let openStakeEv = ffor stakeBtn $ \() -> cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . stakeModal sk pkh
+                let openStakeEv = openModalEv stakeBtn stakeModal
                 tellModal openStakeEv
+
+                unstakeBtn <- tileMenuEntry "Unstake"
+                let openUnstakeEv = openModalEv unstakeBtn unstakeModal
+                tellModal openUnstakeEv
 
         divClass "title" $ do
           let bakerStatusDyn = (\b bd n -> bakerStatus $ (b, bd) <$ n) <$> bakerDyn <*> details' <*> dCollectiveNodesStatus
@@ -3003,8 +3126,9 @@ bakersTab =
                 dyn_ $ ffor etaDyn $ maybe blank localHumanizedTimestampBasicWithoutTZ
 
         elClass "table" "baker-balance" $ do
+          let availableBalanceTooltip = divClass "detail" $ text "The spendable balance, excluding frozen deposists."
           el "tr" $ do
-            el "td" (text "Available Balance")
+            el "td" $ tooltipped TooltipPos_TopLeft availableBalanceTooltip (text "Available Balance")
             elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
               let (w, _p, _tz) = tez' $ _cacheDelegateInfo_balance t - _cacheDelegateInfo_frozenBalance t
               text w
@@ -3013,8 +3137,32 @@ bakersTab =
               text p
               elClass "span" "tez" $ text tz
 
+          whenAIActivated mbLatestHeadDyn mbAiCycleDyn $ do
+            let stakedBalanceTooltip = divClass "detail" $ text "The staked balance."
+            el "tr" $ do
+              el "td" $ tooltipped TooltipPos_TopLeft stakedBalanceTooltip (text "Staked Balance")
+              elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmStakedBalance $ fmap $ \t -> do
+                let (w, _p, _tz) = tez' t
+                text w
+              elClass "td" "baker-balance-part monospaced-text" $ withPlaceholder' "" $ ffor dmStakedBalance $ fmap $ \t -> do
+                let (_w, p, tz) = tez' t
+                text p
+                elClass "span" "tez" $ text tz
+
+            let unstakedFrozenBalanceTooltip = divClass "detail" $ text "The unstaked balance which is still frozen."
+            el "tr" $ do
+              el "td" $ tooltipped TooltipPos_TopLeft unstakedFrozenBalanceTooltip (text "Unstaked Frozen Balance")
+              elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmUnstakedFrozenBalance $ fmap $ \t -> do
+                let (w, _p, _tz) = tez' t
+                text w
+              elClass "td" "baker-balance-part monospaced-text" $ withPlaceholder' "" $ ffor dmUnstakedFrozenBalance $ fmap $ \t -> do
+                let (_w, p, tz) = tez' t
+                text p
+                elClass "span" "tez" $ text tz
+
+          let stakingBalanceTooltip = divClass "detail" $ text "The total balance including delegated funds, balance of delegate itself and frozen deposits."
           el "tr" $ do
-            el "td" (text "Staking Balance")
+            el "td" $ tooltipped TooltipPos_TopLeft stakingBalanceTooltip (text "Staking Balance")
             elClass "td" "baker-balance-whole monospaced-text" $ withPlaceholder $ ffor dmDelegateInfo $ fmap $ \t -> do
               let (w, _p, _tz) = tez' $ _cacheDelegateInfo_stakingBalance t
               text w
