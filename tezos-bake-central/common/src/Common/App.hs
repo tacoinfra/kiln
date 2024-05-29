@@ -469,6 +469,7 @@ bakerIdForBakerLogTag = \case
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
   BakerLogTag_InsufficientFunds -> unId . _errorLogInsufficientFunds_baker
   BakerLogTag_NotEnoughStakedBalance -> unId . _errorLogNotEnoughStakedBalance_baker
+  BakerLogTag_NeedToFinalizeUnstake -> unId . _errorLogNeedToFinalizeUnstake_baker
   BakerLogTag_VotingReminder -> unId . _errorLogVotingReminder_baker
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
@@ -482,6 +483,7 @@ errorLogIdForBakerLogTag = \case
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
   BakerLogTag_InsufficientFunds -> _errorLogInsufficientFunds_log
   BakerLogTag_NotEnoughStakedBalance -> _errorLogNotEnoughStakedBalance_log
+  BakerLogTag_NeedToFinalizeUnstake -> _errorLogNeedToFinalizeUnstake_log
   BakerLogTag_VotingReminder -> _errorLogVotingReminder_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog

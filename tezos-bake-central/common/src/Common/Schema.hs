@@ -905,6 +905,15 @@ data ErrorLogNotEnoughStakedBalance = ErrorLogNotEnoughStakedBalance
 instance HasId ErrorLogNotEnoughStakedBalance where
   type IdData ErrorLogNotEnoughStakedBalance = Id ErrorLog
 
+data ErrorLogNeedToFinalizeUnstake = ErrorLogNeedToFinalizeUnstake
+  { _errorLogNeedToFinalizeUnstake_log :: Id ErrorLog
+  , _errorLogNeedToFinalizeUnstake_baker :: Id Baker
+  , _errorLogNeedToFinalizeUnstake_detected :: UTCTime
+  , _errorLogNeedToFinalizeUnstake_amount :: Tez
+  } deriving (Eq, Ord, Generic, Typeable, Show)
+instance HasId ErrorLogNeedToFinalizeUnstake where
+  type IdData ErrorLogNeedToFinalizeUnstake = Id ErrorLog
+
 data ErrorLogVotingReminder = ErrorLogVotingReminder
   { _errorLogVotingReminder_log :: Id ErrorLog
   , _errorLogVotingReminder_baker :: Id Baker
@@ -1135,6 +1144,7 @@ data BakerLogTag a where
   BakerLogTag_BakerAccused :: BakerLogTag ErrorLogBakerAccused
   BakerLogTag_InsufficientFunds :: BakerLogTag ErrorLogInsufficientFunds
   BakerLogTag_NotEnoughStakedBalance :: BakerLogTag ErrorLogNotEnoughStakedBalance
+  BakerLogTag_NeedToFinalizeUnstake :: BakerLogTag ErrorLogNeedToFinalizeUnstake
   BakerLogTag_VotingReminder :: BakerLogTag ErrorLogVotingReminder
   BakerLogTag_NeedToResetHWM :: BakerLogTag ErrorLogBakerNeedToResetHWM
 
@@ -1173,6 +1183,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogNotEnoughStakedBalance
+  , ''ErrorLogNeedToFinalizeUnstake
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInsufficientPeers
@@ -1235,6 +1246,7 @@ fmap concat $ sequence (map (deriveJSON defaultTezosCompatJsonOptions)
   , 'ErrorLogInaccessibleNode
   , 'ErrorLogInsufficientFunds
   , 'ErrorLogNotEnoughStakedBalance
+  , 'ErrorLogNeedToFinalizeUnstake
   , 'ErrorLogInternalNodeFailed
   , 'ErrorLogNetworkUpdate
   , 'ErrorLogNodeInvalidPeerCount
@@ -1306,6 +1318,7 @@ instance UniverseSome BakerLogTag where
     , Some BakerLogTag_BakerLedgerDisconnected
     , Some BakerLogTag_InsufficientFunds
     , Some BakerLogTag_NotEnoughStakedBalance
+    , Some BakerLogTag_NeedToFinalizeUnstake
     , Some BakerLogTag_VotingReminder
     ]
 -- need Cale to fix this
@@ -1344,6 +1357,7 @@ errorLogNames =
   , ''ErrorLogInaccessibleNode
   , ''ErrorLogInsufficientFunds
   , ''ErrorLogNotEnoughStakedBalance
+  , ''ErrorLogNeedToFinalizeUnstake
   , ''ErrorLogInternalNodeFailed
   , ''ErrorLogNetworkUpdate
   , ''ErrorLogNodeInsufficientPeers
