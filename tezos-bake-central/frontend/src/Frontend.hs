@@ -1307,6 +1307,104 @@ respondToPrompt prompt = do
   divClass "centered explanation" $ text "Your Ledger Device should show the following prompt:"
   elClass "h6" "ui header prompt-text" prompt
 
+finalizeUnstakeModal :: forall r t m js.
+    ( MonadAppWidget js t m
+    , MonadReader r m
+    , HasFrontendConfig r
+    , MonadJSM (Performable m)
+    , HasTimer t r, HasTimeZone r
+    )
+  => SecretKey
+  -> Dynamic t (Maybe BakerDetails)
+  -> Event t ()
+  -> m (Event t ())
+finalizeUnstakeModal sk detailsDyn close = ffor (workflow finalizeUnstake) $ \e -> close <> switch (current e)
+  where
+    walletAppExtraText = el "p" $ text
+      "If you are using Tezos Wallet app of version 3.0.0 or higher, you need to enable \"expert mode\" and \"blind signing\" features in the Tezos Wallet app settings on the Ledger device."
+    waitForWalletApp = waitForWalletAppFlow "Finalizing unstake" walletAppExtraText sk
+
+    waitForBakingApp = waitForBakingAppFlow sk "The unstaked frozen funds have been finalized."
+
+    finalizeUnstake :: Workflow t m (Event t ())
+    finalizeUnstake = Workflow $ divClass "vote-buttons" $ do
+      let dmUnstakedFinalizableBalance = fmap join $ _bakerDetails_unstakedFinalizableBalance <$$> detailsDyn
+      divClass "header" $ text "Finalize unstaked funds"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "The previously unstaked funds needs to be finalized to become unfrozen. Please read more details in the "
+        hrefLink "https://tezos.gitlab.io/paris/adaptive_issuance.html#new-staking-mechanism" $ text "documentation"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "The finalizable unstaked balance is "
+        withPlaceholder . ffor dmUnstakedFinalizableBalance . fmap $ \t -> do
+          let (w, p, tz) = tez' t
+          text $ w <> p
+          elClass "span" "monospaced-text tez" $ text tz
+
+      let noFundsToFinalizeText = text "Kiln Baker currently doesn't have any unstaked finalizable funds. If some funds were previously unstaked, Kiln will produce a notification when they become finalizable."
+      finalizeUnstake' :: Event t (Workflow t m (Event t ())) <- switchHold never <=< dyn $ ffor dmUnstakedFinalizableBalance $ \case
+          Nothing -> noFundsToFinalizeText $> never
+          Just 0 -> noFundsToFinalizeText $> never
+          Just _ -> do
+            flnalizeUnstakeBtn <- uiButton "primary" "Finalize Unstake"
+            pure $ flnalizeUnstakeBtn $> confirmFinalizeUnstakeFlow False mempty
+
+      pure (never, waitForWalletApp <$> finalizeUnstake')
+
+    confirmFinalizeUnstakeFlow
+      :: Bool
+      -> Text
+      -> Workflow t m (Event t ())
+    confirmFinalizeUnstakeFlow isTimedOut errLog = Workflow $ divClass "vote-buttons" $ do
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
+      when isTimedOut $ do
+        divClass "ui message" $ do
+          el "div" $ do
+            icon "icon-x red"
+          divClass "title" $ do
+            text "The Ledger prompt was rejected or timed out. Please try again."
+        unless (T.null errLog) $ do
+          divClass "bigtitle" $ text "Octez-client error log:"
+          elClass "div" "vote-error-log monospaced-text" $ text errLog
+      divClass "bigtitle" $ text "Finalize unstaked funds?"
+      finalizeUnstakeBtn <- uiDynButton (pure "primary") $ text "Finalize Unstake"
+      _ <- requestingIdentity $ public (PublicRequest_FinalizeUnstake sk) <$ finalizeUnstakeBtn
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+          retryFlow = waitForWalletApp $ confirmFinalizeUnstakeFlow isTimedOut errLog
+      pure (never, leftmost [respondToPromptFlow retryFlow <$ finalizeUnstakeBtn, ledgerDisconnectedFlow sk retryFlow <$ appLost])
+
+    respondToPromptFlow
+      :: Workflow t m (Event t ())
+      -- ^ Workflow to return to after retry
+      -> Workflow t m (Event t ())
+    respondToPromptFlow retryFlow = Workflow $ do
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
+      pb <- getPostBuild
+      promptStep <- watchPrompting sk
+      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
+          next = fforMaybe changed $ \case
+            Just ss | Just (First finalizeUnstakeStep) <- _setupState_finalizeUnstake ss -> case finalizeUnstakeStep of
+              FinalizeUnstakeStep_Prompting -> Nothing
+              FinalizeUnstakeStep_Done -> Just $ waitForBakingApp $ finalizeUnstakeSuccessFlow $ Left ()
+              FinalizeUnstakeStep_Declined -> Just $ confirmFinalizeUnstakeFlow True mempty
+              FinalizeUnstakeStep_Disconnected -> Just $ ledgerDisconnectedFlow sk retryFlow
+              FinalizeUnstakeStep_Failed errLog -> Just $ confirmFinalizeUnstakeFlow True errLog
+            _ -> Nothing
+      divClass "bigtitle" $ do
+        elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
+        text "Respond to the prompt on your Ledger Device..."
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+      pure (never, leftmost [next, ledgerDisconnectedFlow sk retryFlow <$ appLost])
+
+    finalizeUnstakeSuccessFlow
+      :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
+      -> Workflow t m (Event t ())
+    finalizeUnstakeSuccessFlow whereToGo = Workflow $ divClass "vote-buttons" $ do
+      divClass "bigtitle" $ text "Finalizing unstake completed succesfully."
+      divClass "bigtitle" $
+        text "Kiln Baker will be automatically restarted to continue bake and attest blocks."
+      closeButton <- uiDynButton (pure "primary") $ text "Close"
+      pure $ fanEither $ whereToGo <$ closeButton
+
 unstakeModal :: forall r t m js.
     ( MonadAppWidget js t m
     , MonadReader r m
@@ -3068,6 +3166,10 @@ bakersTab =
                 unstakeBtn <- tileMenuEntry "Unstake"
                 let openUnstakeEv = openModalEv unstakeBtn unstakeModal
                 tellModal openUnstakeEv
+
+                finalizeUnstakeBtn <- tileMenuEntry "Finalize Unstake"
+                let openFinalizeUnstakeEv = openModalEv finalizeUnstakeBtn finalizeUnstakeModal
+                tellModal openFinalizeUnstakeEv
 
         divClass "title" $ do
           let bakerStatusDyn = (\b bd n -> bakerStatus $ (b, bd) <$ n) <$> bakerDyn <*> details' <*> dCollectiveNodesStatus

@@ -109,6 +109,9 @@ data PublicRequest a where
     :: SecretKey
     -> Integer
     -> PublicRequest ()
+  PublicRequest_FinalizeUnstake
+    :: SecretKey
+    -> PublicRequest ()
 
 
 data PrivateRequest a where

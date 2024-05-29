@@ -14,6 +14,7 @@ data LedgerQueryType
   | LedgerQueryType_Vote
   | LedgerQueryType_Stake
   | LedgerQueryType_Unstake
+  | LedgerQueryType_FinalizeUnstake
 
 data LedgerQuery m = LedgerQuery
   { _ledgerQuery_type :: LedgerQueryType
