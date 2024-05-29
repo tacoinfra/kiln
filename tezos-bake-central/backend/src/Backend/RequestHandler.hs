@@ -61,7 +61,7 @@ import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Process.Common (updateProcessState)
 import Backend.Workers.TezosClient
   (finalizeUnstake, importSecretKey, isKnownLedgerPkh, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
-  showLedger, stake, submitVote, unstake, updateConnectedLedgerViaGetConnectedLedger)
+  setDelegateParams, showLedger, stake, submitVote, unstake, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
 import Common.Schema
@@ -509,6 +509,10 @@ requestHandler appConfig nds =
 
       PublicRequest_FinalizeUnstake sk ->
         queryLedger $ finalizeUnstake appConfig db sk
+
+      PublicRequest_SetDelegateParams sk edgePercents limit ->
+        let edgeFraction = realToFrac $ fromIntegral @_ @Double edgePercents / 100.00
+        in queryLedger $ setDelegateParams appConfig db sk edgeFraction limit
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

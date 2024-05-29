@@ -660,6 +660,32 @@ unstakeTezField = validatedInput (Validator.optional $ Validator.validateNumeric
                      text "Enter the amount of tez to unstake"
                      divClass "explanation" $ text "The unstaked funds will remain frozen for the time being and then can be withdrawn from Kiln Baker's staked balance.")
 
+setBakingEdgeField
+  :: ( DomBuilder t m
+     , PostBuild t m
+     , DomBuilderSpace m ~ GhcjsDomSpace
+     )
+  => m (Dynamic t (Either Text (Maybe Integer)))
+setBakingEdgeField = validatedInput (Validator.optional $ Validator.validateNumeric mempty (Just 0, Just 100) Nothing) $ def
+  & Txt.setPlaceholder ("e.g. " <> "100")
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ do
+                     text "Enter the percentage of edge of baking over staking ratio"
+                     divClass "explanation" $ text "This parameter determines the fraction of the rewards that accrue to the delegate’s frozen deposit – the remainder is shared among its stakers.")
+
+stakingLimitField
+  :: ( DomBuilder t m
+     , PostBuild t m
+     , DomBuilderSpace m ~ GhcjsDomSpace
+     )
+  => m (Dynamic t (Either Text (Maybe Integer)))
+stakingLimitField = validatedInput (Validator.optional $ Validator.validateNumeric mempty (Just 0, Just 5) Nothing) $ def
+  & Txt.setPlaceholder ("e.g. " <> "0")
+  & Txt.setFluid
+  & Txt.addLabel (el "label" $ do
+                     text "Enter the limit of staking over baking"
+                     divClass "explanation" $ text "This parameter denoting the maximum portion of external stake by stakers over the delegate’s own staked funds.")
+
 zipFields :: (Applicative m, Reflex t)
           => m (Dynamic t (Either Text a))
           -> m (Dynamic t (Either Text b))
