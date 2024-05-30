@@ -123,13 +123,34 @@ data ParticipationInfo = ParticipationInfo
   , _participationInfo_expectedEndorsingRewards    :: Tez
   } deriving (Eq, Ord, Show)
 
+instance FromJSON ParticipationInfo where
+  parseJSON = withObject "ParticipationInfo" $ \o -> do
+    _participationInfo_expectedCycleActivity <- o .: "expected_cycle_activity"
+    _participationInfo_minimalCycleActivity <- o .: "minimal_cycle_activity"
+    _participationInfo_missedSlots <- o .: "missed_slots"
+    _participationInfo_missedLevels <- o .: "missed_levels"
+    _participationInfo_remainingAllowedMissedSlots <- o .: "remaining_allowed_missed_slots"
+    _participationInfo_expectedEndorsingRewards <- o .: "expected_endorsing_rewards" <|> o .: "expected_attesting_rewards"
+    pure $ ParticipationInfo {..}
+
+instance ToJSON ParticipationInfo where
+  toJSON ParticipationInfo {..} =
+    object
+      [ "expected_cycle_activity" .= _participationInfo_expectedCycleActivity
+      , "minimal_cycle_activity" .= _participationInfo_minimalCycleActivity
+      , "missed_slots" .= _participationInfo_missedSlots
+      , "missed_levels" .= _participationInfo_missedLevels
+      , "remaining_allowed_missed_slots" .= _participationInfo_remainingAllowedMissedSlots
+      , "expected_endorsing_rewards" .= _participationInfo_expectedEndorsingRewards
+      , "expected_attesting_rewards" .= _participationInfo_expectedEndorsingRewards
+      ]
+
 concat <$> traverse deriveTezosFromJson
   [ ''BakingRights
   ]
 
 concat <$> traverse deriveTezosJson
   [ ''EndorsingRights
-  , ''ParticipationInfo
   , ''PendingConsensusKey
   ]
 

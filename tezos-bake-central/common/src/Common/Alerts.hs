@@ -372,6 +372,26 @@ bakerNotEnoughStakedBalanceDescriptions = BakerErrorDescriptions
         , "This baker now has a large enough staked balance to receive baking rights.")
     }
 
+bakerNeedToFinalizeUnstakeDescriptions :: ErrorLogNeedToFinalizeUnstake -> BakerErrorDescriptions
+bakerNeedToFinalizeUnstakeDescriptions elog = BakerErrorDescriptions
+  { _bakerErrorDescriptions_title = "Baker needs to finalize unstake"
+  , _bakerErrorDescriptions_tile = "Needs to finalize unstake"
+  , _bakerErrorDescriptions_notification = "The baker has " <> amountText <> "ꜩ previously unstaked balance to be finalized."
+  , _bakerErrorDescriptions_problem = [ ErrorDescription_Plain $
+      "The baker has " <> amountText <> "ꜩ previously unstaked balance to be finalized."
+      ]
+  , _bakerErrorDescriptions_warning = Nothing
+  , _bakerErrorDescriptions_fix = "Open the menu on your Kiln Baker tile and click 'Finalize Unstake' to unstake these funds. Staknig and unstaking operations will automatically unfreeze these funds too."
+  , _bakerErrorDescriptions_resolved = \_ ->
+      ( "Resolved: Baker's finalizable unstaked balance has been unfrozen"
+      , "This baker now doesn't have finalizable unstaked balance"
+      )
+  }
+  where
+    amount = getMicroTez $ _errorLogNeedToFinalizeUnstake_amount elog
+    amountText = fromString $ formatCommas $ amount `div` 1000000
+    formatCommas = reverse . intercalate "," . chunksOf 3 . reverse . show
+
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
 bakerAccusedDescriptions elog = BakerErrorDescriptions
   { _bakerErrorDescriptions_title = "Baker has been accused of double " <> right

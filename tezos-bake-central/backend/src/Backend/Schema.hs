@@ -198,6 +198,7 @@ instance HasDefaultNotify (Id ErrorLogBakerNoHeartbeat)
 instance HasDefaultNotify (Id ErrorLogInaccessibleNode)
 instance HasDefaultNotify (Id ErrorLogInsufficientFunds)
 instance HasDefaultNotify (Id ErrorLogNotEnoughStakedBalance)
+instance HasDefaultNotify (Id ErrorLogNeedToFinalizeUnstake)
 instance HasDefaultNotify (Id ErrorLogInternalNodeFailed)
 instance HasDefaultNotify (Id ErrorLogNetworkUpdate)
 instance HasDefaultNotify (Id ErrorLogNodeInsufficientPeers)
@@ -235,6 +236,8 @@ instance HasNotification NotifyTag ErrorLogInsufficientFunds where
   notification _ = mkBakerNotify BakerLogTag_InsufficientFunds
 instance HasNotification NotifyTag ErrorLogNotEnoughStakedBalance where
   notification _ = mkBakerNotify BakerLogTag_NotEnoughStakedBalance
+instance HasNotification NotifyTag ErrorLogNeedToFinalizeUnstake where
+  notification _ = mkBakerNotify BakerLogTag_NeedToFinalizeUnstake
 instance HasNotification NotifyTag ErrorLogVotingReminder where
   notification _ = mkBakerNotify BakerLogTag_VotingReminder
 instance HasNotification NotifyTag ErrorLogBakerMissedEndorsementBonus where
@@ -1101,6 +1104,17 @@ mkRhyolitePersist (Just "migrateSchema") [groundhog|
           - name: ErrorLogNotEnoughStakedBalanceId
             type: primary
             fields: [_errorLogNotEnoughStakedBalance_log]
+  - entity: ErrorLogNeedToFinalizeUnstake
+    autoKey: null
+    keys:
+      - name: ErrorLogNeedToFinalizeUnstakeId
+        default: true
+    constructors:
+      - name: ErrorLogNeedToFinalizeUnstake
+        uniques:
+          - name: ErrorLogNeedToFinalizeUnstakeId
+            type: primary
+            fields: [_errorLogNeedToFinalizeUnstake_log]
   - entity: ErrorLogNodeWrongChain
     autoKey: null
     keys:
@@ -1303,6 +1317,9 @@ instance DefaultKeyId ErrorLogInsufficientFunds where
 instance DefaultKeyId ErrorLogNotEnoughStakedBalance where
   toIdData _ (ErrorLogNotEnoughStakedBalanceIdKey eid) = eid
   fromIdData _ = ErrorLogNotEnoughStakedBalanceIdKey
+instance DefaultKeyId ErrorLogNeedToFinalizeUnstake where
+  toIdData _ (ErrorLogNeedToFinalizeUnstakeIdKey eid) = eid
+  fromIdData _ = ErrorLogNeedToFinalizeUnstakeIdKey
 instance DefaultKeyId ErrorLogNodeWrongChain where
   toIdData _ (ErrorLogNodeWrongChainIdKey eid) = eid
   fromIdData _ = ErrorLogNodeWrongChainIdKey
@@ -1377,6 +1394,7 @@ bakerLogAssume = \case
   BakerLogTag_BakerAccused -> id
   BakerLogTag_InsufficientFunds -> id
   BakerLogTag_NotEnoughStakedBalance -> id
+  BakerLogTag_NeedToFinalizeUnstake -> id
   BakerLogTag_VotingReminder -> id
 
 logAssume :: LogTag e -> (LogTagConstraints e => x) -> x
@@ -1429,6 +1447,7 @@ bakerLogDep = \case
   BakerLogTag_BakerAccused -> depBakerAlert' ErrorLogBakerAccused_bakerField
   BakerLogTag_InsufficientFunds -> depBakerAlert' ErrorLogInsufficientFunds_bakerField
   BakerLogTag_NotEnoughStakedBalance -> depBakerAlert' ErrorLogNotEnoughStakedBalance_bakerField
+  BakerLogTag_NeedToFinalizeUnstake -> depBakerAlert' ErrorLogNeedToFinalizeUnstake_bakerField
   BakerLogTag_VotingReminder -> depBakerAlert' ErrorLogVotingReminder_bakerField
   BakerLogTag_MissedEndorsementBonus -> depBakerAlert' ErrorLogBakerMissedEndorsementBonus_bakerField
   BakerLogTag_NeedToResetHWM -> depBakerAlert' ErrorLogBakerNeedToResetHWM_bakerField
@@ -1461,6 +1480,7 @@ instance ArgDict c NotifyTag where
     , c (Id ErrorLogInaccessibleNode)
     , c (Id ErrorLogInsufficientFunds)
     , c (Id ErrorLogNotEnoughStakedBalance)
+    , c (Id ErrorLogNeedToFinalizeUnstake)
     , c (Id ErrorLogInternalNodeFailed)
     , c (Id ErrorLogNetworkUpdate)
     , c (Id ErrorLogNodeInsufficientPeers)
@@ -1516,6 +1536,7 @@ instance ArgDict c NotifyTag where
         BakerLogTag_BakerAccused -> Dict
         BakerLogTag_InsufficientFunds -> Dict
         BakerLogTag_NotEnoughStakedBalance -> Dict
+        BakerLogTag_NeedToFinalizeUnstake -> Dict
         BakerLogTag_VotingReminder -> Dict
         BakerLogTag_MissedEndorsementBonus -> Dict
         BakerLogTag_NeedToResetHWM -> Dict

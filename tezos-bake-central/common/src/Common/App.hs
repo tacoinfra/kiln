@@ -229,11 +229,12 @@ data SetupState = SetupState
   , _setupState_setHWM :: Maybe (First SetHWMStep)
   , _setupState_stake :: Maybe (First StakeStep)
   , _setupState_unstake :: Maybe (First UnstakeStep)
+  , _setupState_finalizeUnstake :: Maybe (First FinalizeUnstakeStep)
   } deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON SetupState
 instance ToJSON SetupState
 instance Monoid SetupState where
-  mempty = SetupState Nothing Nothing Nothing Nothing Nothing Nothing
+  mempty = SetupState Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 instance Semigroup SetupState where
   ss1 <> ss2 = SetupState
     { _setupState_import = _setupState_import ss1 <> _setupState_import ss2
@@ -242,6 +243,7 @@ instance Semigroup SetupState where
     , _setupState_setHWM = _setupState_setHWM ss1 <> _setupState_setHWM ss2
     , _setupState_stake = _setupState_stake ss1 <> _setupState_stake ss2
     , _setupState_unstake = _setupState_unstake ss1 <> _setupState_unstake ss2
+    , _setupState_finalizeUnstake = _setupState_finalizeUnstake ss1 <> _setupState_finalizeUnstake ss2
     }
 
 data ImportSecretKeyStep
@@ -310,6 +312,16 @@ data UnstakeStep
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON UnstakeStep
 instance ToJSON UnstakeStep
+
+data FinalizeUnstakeStep
+  = FinalizeUnstakeStep_Prompting
+  | FinalizeUnstakeStep_Done
+  | FinalizeUnstakeStep_Declined
+  | FinalizeUnstakeStep_Disconnected
+  | FinalizeUnstakeStep_Failed Text -- Anything else
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance FromJSON FinalizeUnstakeStep
+instance ToJSON FinalizeUnstakeStep
 
 data VoteStep
   = VoteStep_Prompting
@@ -469,6 +481,7 @@ bakerIdForBakerLogTag = \case
   BakerLogTag_BakerAccused -> unId . _errorLogBakerAccused_baker
   BakerLogTag_InsufficientFunds -> unId . _errorLogInsufficientFunds_baker
   BakerLogTag_NotEnoughStakedBalance -> unId . _errorLogNotEnoughStakedBalance_baker
+  BakerLogTag_NeedToFinalizeUnstake -> unId . _errorLogNeedToFinalizeUnstake_baker
   BakerLogTag_VotingReminder -> unId . _errorLogVotingReminder_baker
 
 errorLogIdForBakerLogTag :: BakerLogTag t -> t -> Id ErrorLog
@@ -482,6 +495,7 @@ errorLogIdForBakerLogTag = \case
   BakerLogTag_BakerAccused -> _errorLogBakerAccused_log
   BakerLogTag_InsufficientFunds -> _errorLogInsufficientFunds_log
   BakerLogTag_NotEnoughStakedBalance -> _errorLogNotEnoughStakedBalance_log
+  BakerLogTag_NeedToFinalizeUnstake -> _errorLogNeedToFinalizeUnstake_log
   BakerLogTag_VotingReminder -> _errorLogVotingReminder_log
 
 errorLogIdForNodeLogTag :: NodeLogTag t -> t -> Id ErrorLog

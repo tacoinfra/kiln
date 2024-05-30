@@ -790,6 +790,9 @@ getBakerAddresses nds bid = do
         ( SELECT COUNT(e.id) FROM "ErrorLogInsufficientFunds" elbm JOIN "ErrorLog" e on e.id = elbm.log
           WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
         ) +
+        ( SELECT COUNT(e.id) FROM "ErrorLogNeedToFinalizeUnstake" elbm JOIN "ErrorLog" e on e.id = elbm.log
+          WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
+        ) +
         ( SELECT COUNT(e.id) FROM "ErrorLogNotEnoughStakedBalance" elbm JOIN "ErrorLog" e on e.id = elbm.log
           WHERE e.stopped IS NULL AND b."data#data#publicKeyHash" = elbm."baker#publicKeyHash"
         ),

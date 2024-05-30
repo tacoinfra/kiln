@@ -60,7 +60,7 @@ import qualified Backend.Telegram as Telegram
 import Backend.Upgrade (updateUpstreamVersion)
 import Backend.Process.Common (updateProcessState)
 import Backend.Workers.TezosClient
-  (importSecretKey, isKnownLedgerPkh, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
+  (finalizeUnstake, importSecretKey, isKnownLedgerPkh, registerKeyAsDelegate, setHighWaterMark, setupLedgerToBake,
   showLedger, stake, submitVote, unstake, updateConnectedLedgerViaGetConnectedLedger)
 import Common.Api (PrivateRequest (..), PublicRequest (..))
 import Common.App
@@ -309,6 +309,7 @@ requestHandler appConfig nds =
                 BakerLogTag_BakerAccused -> deleteLogsId tag ErrorLogBakerAccused_bakerField
                 BakerLogTag_InsufficientFunds -> deleteLogsId tag ErrorLogInsufficientFunds_bakerField
                 BakerLogTag_NotEnoughStakedBalance -> deleteLogsId tag ErrorLogNotEnoughStakedBalance_bakerField
+                BakerLogTag_NeedToFinalizeUnstake -> deleteLogsId tag ErrorLogNeedToFinalizeUnstake_bakerField
                 BakerLogTag_VotingReminder -> deleteLogsId tag ErrorLogVotingReminder_bakerField
                 BakerLogTag_MissedEndorsementBonus -> deleteLogsId tag ErrorLogBakerMissedEndorsementBonus_bakerField
                 BakerLogTag_NeedToResetHWM -> deleteLogsId tag ErrorLogBakerNeedToResetHWM_bakerField
@@ -505,6 +506,9 @@ requestHandler appConfig nds =
 
       PublicRequest_Unstake sk amount ->
         queryLedger $ unstake appConfig db sk amount
+
+      PublicRequest_FinalizeUnstake sk ->
+        queryLedger $ finalizeUnstake appConfig db sk
 
     ApiRequest_Private _key r -> case r of
       PrivateRequest_NoOp -> return ()

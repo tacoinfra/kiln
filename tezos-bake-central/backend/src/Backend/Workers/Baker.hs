@@ -555,6 +555,18 @@ updateDelegateDetails nds protoInfo headBlock headCycle baker details isInternal
           then reportNotEnoughStakedBalance baker
           else clearNotEnoughStakedBalance baker
 
-      pure $ [deactivationAlerts, updateDetails] ++ [insufficientFundAlerts | isInternal] ++ [notEnoughStakedBalanceAlerts | isInternal]
+        needToFinalizeUnstakeAlerts :: AppSerializable ()
+        needToFinalizeUnstakeAlerts =
+          whenJust mbAdaptiveIssuanceLaunchCycle $ \aiCycle ->
+            whenJust mbUnstakedFinalizableBalance $ \unstakedFinalizableBalance ->
+              if headCycle >= aiCycle && unstakedFinalizableBalance > 0
+              then reportNeedToFinalizeUnstake baker unstakedFinalizableBalance
+              else clearNeedToFinalizeUnstake baker
+
+      pure
+        $  [deactivationAlerts, updateDetails]
+        ++ [insufficientFundAlerts | isInternal]
+        ++ [notEnoughStakedBalanceAlerts | isInternal]
+        ++ [needToFinalizeUnstakeAlerts | isInternal]
 
   return $ sequence_ selfDelegateActions
