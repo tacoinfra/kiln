@@ -129,6 +129,7 @@ data NodeQuery a where
   NodeQuery_UnstakedFrozenBalance :: BlockQuery -> PublicKeyHash -> NodeQuery (Maybe Tez)
   NodeQuery_UnstakedFinalizableBalance :: BlockQuery -> PublicKeyHash -> NodeQuery (Maybe Tez)
   NodeQuery_AILaunchCycle     :: BlockQuery -> NodeQuery (Maybe Cycle)
+  NodeQuery_DelegateParameters :: BlockQuery -> PublicKeyHash -> NodeQuery DelegateParametersCrossCompat
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
   NodeQuery_Round             :: BlockQuery -> NodeQuery Int32
 deriving instance Show (NodeQuery a)
@@ -158,6 +159,7 @@ nodeQuery_StakedBalance     :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQ
 nodeQuery_UnstakedFrozenBalance :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Maybe Tez)
 nodeQuery_UnstakedFinalizableBalance :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Maybe Tez)
 nodeQuery_AILaunchCycle     :: ToBlockQuery blk => blk -> NodeQuery (Maybe Cycle)
+nodeQuery_DelegateParameters :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery DelegateParametersCrossCompat
 nodeQuery_Round             :: ToBlockQuery blk => blk -> NodeQuery Int32
 nodeQuery_ProtocolConstants = NodeQuery_ProtocolConstants . toBlockQuery
 nodeQuery_BakingRights blk = NodeQuery_BakingRights (toBlockQuery blk)
@@ -179,6 +181,7 @@ nodeQuery_StakedBalance blk = NodeQuery_StakedBalance (toBlockQuery blk)
 nodeQuery_UnstakedFrozenBalance blk = NodeQuery_UnstakedFrozenBalance (toBlockQuery blk)
 nodeQuery_UnstakedFinalizableBalance blk = NodeQuery_UnstakedFinalizableBalance (toBlockQuery blk)
 nodeQuery_AILaunchCycle blk = NodeQuery_AILaunchCycle (toBlockQuery blk)
+nodeQuery_DelegateParameters blk pkh = NodeQuery_DelegateParameters (toBlockQuery blk) pkh
 nodeQuery_Round blk = NodeQuery_Round (toBlockQuery blk)
 
 data NodeQueryIx a where
@@ -826,6 +829,7 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
   NodeQuery_UnstakedFrozenBalance branch pkh -> nodeRPC' $ rUnstakedFrozenBalance pkh chainId branch
   NodeQuery_UnstakedFinalizableBalance branch pkh -> nodeRPC' $ rUnstakedFinalizableBalance pkh chainId branch
   NodeQuery_AILaunchCycle branch -> nodeRPC' $ rAILaunchCycle chainId branch
+  NodeQuery_DelegateParameters branch pkh -> nodeRPC' $ rDelegateParameters pkh chainId branch
   NodeQuery_Blocks branch length' -> do
     (RpcResult _ response) <- nodeRPC' $ rBlocks chainId length' (Set.singleton branch)
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)

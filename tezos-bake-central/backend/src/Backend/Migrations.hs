@@ -153,6 +153,7 @@ preMigrate chainId =
   >=> dropColumnIfExists (QualifiedIdentifier Nothing "ProtocolIndex") "firstBlockCycle"
   >=> migrateErrorLogBakerMissed
   >=> migrateBakerDetailsAddBalances
+  >=> migrateBakerDetailsAddDelegateParams
 
 migrateErrorLogNetworkUpdateCommitHash :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
 migrateErrorLogNetworkUpdateCommitHash ta = do
@@ -1203,6 +1204,18 @@ migrateBakerDetailsAddBalances ta = do
         ALTER TABLE "BakerDetails" ADD COLUMN "stakedBalance" BIGINT NULL;
         ALTER TABLE "BakerDetails" ADD COLUMN "unstakedFrozenBalance" BIGINT NULL;
         ALTER TABLE "BakerDetails" ADD COLUMN "unstakedFinalizableBalance" BIGINT NULL;
+      |]
+      getTableAnalysis
+    _ -> pure ta
+
+migrateBakerDetailsAddDelegateParams :: Migrate m => TableAnalysis m -> m (TableAnalysis m)
+migrateBakerDetailsAddDelegateParams ta = do
+  let table = (Nothing, "BakerDetails")
+  analyzeTable ta table >>= \case
+    Just analyzedTable | all ((/= "stakingLimit") . colName) $ tableColumns analyzedTable -> do
+      void [traceExecuteQ|
+        ALTER TABLE "BakerDetails" ADD COLUMN "stakingLimit" INT NOT NULL DEFAULT 0;
+        ALTER TABLE "BakerDetails" ADD COLUMN "bakingEdge" INT NOT NULL DEFAULT 0;
       |]
       getTableAnalysis
     _ -> pure ta

@@ -1328,18 +1328,31 @@ setDelegateParamsModal sk detailsDyn close = ffor (workflow setDelegateParams) $
 
     setDelegateParams :: Workflow t m (Event t ())
     setDelegateParams = Workflow $ divClass "vote-buttons" $ do
-      let dmUnstakedFinalizableBalance = fmap join $ _bakerDetails_unstakedFinalizableBalance <$$> detailsDyn
+      let dmBakingEdge = _bakerDetails_bakingEdge <$$> detailsDyn
+          dmStakingLimit = _bakerDetails_stakingLimit <$$> detailsDyn
       divClass "header" $ text "Set delegate parameters"
       elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
         text "Delegates can configure their staking policy by setting the following parameters. The new parameter values will be applied after 5 cycles. Please read more details in the "
         hrefLink "https://tezos.gitlab.io/paris/adaptive_issuance.html#staking-policy-configuration" $ text "documentation"
       elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
-        -- TODO replace with current values of delegate params
-        text "The finalizable unstaked balance is "
-        withPlaceholder . ffor dmUnstakedFinalizableBalance . fmap $ \t -> do
-          let (w, p, tz) = tez' t
-          text $ w <> p
-          elClass "span" "monospaced-text tez" $ text tz
+        -- In Kiln UI we display and set the edge of baking over staking
+        -- in percents and limit of staking over baking as integer for
+        -- convenience, despite the fact that 'octez-client' allows more
+        -- accurate fractional values.
+        --
+        -- If one needs to set these values with bigger precision,
+        -- they can still use 'octez-client' command for it.
+        el "p" $ text "The current active delegate parameters:"
+        el "p" $ do
+          text "Edge of Baking over Staking: "
+          withPlaceholder . ffor dmBakingEdge . fmap $ \e -> do
+            let edgePercents = e `div` 10000000
+            elClass "span" "monospaced-text" $ text $ tshow edgePercents <> "%"
+        el "p" $ do
+          text "Limit of Staking over Baking: "
+          withPlaceholder . ffor dmStakingLimit . fmap $ \l -> do
+            let limit = l `div` 1000000
+            elClass "span" "monospaced-text" $ text $ tshow limit
 
       dynEiBakingEdge <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem setBakingEdgeField
       dynEiStakingLimit <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem stakingLimitField

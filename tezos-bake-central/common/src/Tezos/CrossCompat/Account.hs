@@ -107,3 +107,21 @@ endorsingRightsCrossCompat_level = to $ \case
 endorsingRightsCrossCompat_delegates :: Getter EndorsingRightsCrossCompat (Seq.Seq PublicKeyHash)
 endorsingRightsCrossCompat_delegates = to $ \case
   EndorsingRightsBase e -> view Base.endorsingRightsDelegateInfo_delegate <$> e ^. Base.endorsingRights_delegates
+
+data DelegateParametersCrossCompat
+  = DelegateParametersBase Base.DelegateParameters
+
+instance FromJSON DelegateParametersCrossCompat where
+  parseJSON jv = DelegateParametersBase <$> parseJSON jv
+
+instance ToJSON DelegateParametersCrossCompat where
+  toJSON = \case
+    DelegateParametersBase dp -> toJSON dp
+
+delegateParametersCrossCompat_limit :: Getter DelegateParametersCrossCompat Int
+delegateParametersCrossCompat_limit = to $ \case
+  DelegateParametersBase dp -> dp ^. Base.delegateParameters_limitOfStakingOverBakingMillionth
+
+delegateParametersCrossCompat_edge :: Getter DelegateParametersCrossCompat Int
+delegateParametersCrossCompat_edge = to $ \case
+  DelegateParametersBase dp -> dp ^. Base.delegateParameters_edgeOfBakingOverStakingBillionth
