@@ -1,23 +1,23 @@
 { pkgs }:
 with pkgs;
 let
-  outer-version = "v20.0-rc1-1";
+  outer-version = "20.0-1";
   macos_version = "monterey";
     tezos-baker-PtParisB = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-PtParisB-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1f7ppgf724y2rhcsbyq510ybgrwn2ajgi148g0vdldrh2ixdfidp";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/octez-v${outer-version}/tezos-baker-PtParisB-v${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "0ycqs6ylcx8wz1xh6q3fdpyspjxbs3rb37k2l9dyxnyqhqbbz61s";
     };
     tezos-baker-Proxford = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-baker-Proxford-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "125d3wa35a07mp66hpaxk57jwqrx9npmynr25qdcn8fwdld8i0x0";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/octez-v${outer-version}/tezos-baker-Proxford-v${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "17bkxq7zl3viy34cr0b90h7428j6ga94v25ncp3k3izaa2vblszp";
     };
     tezos-client = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-client-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "0nva6zvhr7hnmiq6v8pc9mh685zm96cin4nzcaphsziwp84jadmj";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/octez-v${outer-version}/tezos-client-v${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "0j8x9sar5gh80jb5wczxzzhx4mrnn0g7a30i9gm4fr1glmhydyq9";
     };
     tezos-node = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/${outer-version}/tezos-node-${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "050kdk51m2wqnziyg1q8aq0f4q3zlaa047m8w3qjkz18n2c8y49p";
+      url = "https://github.com/serokell/tezos-packaging/releases/download/octez-v${outer-version}/tezos-node-v${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "1yv6srn60225w227db771b5vn7pvc1kjb2gqwqz7l5ddpikv2faq";
     };
 
 in stdenv.mkDerivation rec {
@@ -28,16 +28,16 @@ in stdenv.mkDerivation rec {
   installPhase = ''
   mkdir -p $out/bin
 
-  cp ${tezos-baker-PtParisB}/${outer-version}/bin/tezos-baker-PtParisB $out/bin/tezos-baker-PtParisB
+  cp ${tezos-baker-PtParisB}/v${outer-version}/bin/tezos-baker-PtParisB $out/bin/tezos-baker-PtParisB
   chmod +x $out/bin/tezos-baker-PtParisB
 
-  cp ${tezos-baker-Proxford}/${outer-version}/bin/tezos-baker-Proxford $out/bin/tezos-baker-Proxford
+  cp ${tezos-baker-Proxford}/v${outer-version}/bin/tezos-baker-Proxford $out/bin/tezos-baker-Proxford
   chmod +x $out/bin/tezos-baker-Proxford
 
-  cp ${tezos-client}/${outer-version}/bin/tezos-client $out/bin/tezos-client
+  cp ${tezos-client}/v${outer-version}/bin/tezos-client $out/bin/tezos-client
   chmod +x $out/bin/tezos-client
 
-  cp ${tezos-node}/${outer-version}/bin/tezos-node $out/bin/tezos-node
+  cp ${tezos-node}/v${outer-version}/bin/tezos-node $out/bin/tezos-node
   chmod +x $out/bin/tezos-node
   '';
 }

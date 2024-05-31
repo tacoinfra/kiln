@@ -110,7 +110,7 @@ instance FromJSON e => FromJSON a => FromJSON (Validation e a)
 instance ToJSON e => ToJSON a => ToJSON (Validation e a)
 
 pattern ParisBProtocolHash :: ProtocolHash
-pattern ParisBProtocolHash = ProtocolHash "PtParisBQscdCm6Cfow6ndeU6wKJyA3aV1j4D3gQBQMsTQyJCrz"
+pattern ParisBProtocolHash = ProtocolHash "PtParisBxoLz5gzMmn3d9WBQNoPSZakgnkMC2VNuQ3KXfUtUQeZ"
 
 pattern OxfordProtocolHash :: ProtocolHash
 pattern OxfordProtocolHash = ProtocolHash "ProxfordYmVfjWnRcgjWH36fW6PArwqykTFzotUxRs6gmTcZDuH"
