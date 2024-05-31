@@ -991,7 +991,19 @@ getProtocol latestHead = runExceptT @KilnRpcError $ do
     -- This will trigger daemon for the upcoming protocol to start, so we start them
     -- once the baker binary for the next protocol is available.
     nextProto = mbCurrentProposal >>= guard . (`elem` protos) >> mbCurrentProposal
-  return (currentProtocol, nextProto)
+
+    -- Given the fact that there is a hardfork of Paris protocol, and when 'PtParisBQs'
+    -- will be promoted, the 'PtParisBxo' will be activated on mainnet instead.
+    --
+    -- We use 'nextProto' to launch the 'octez-baker' binary for the next protocol
+    -- in advance. If we won't handle the hardfork here, the baker binary won't be started.
+    parisHardfork :: ProtocolHash -> ProtocolHash
+    parisHardfork (ProtocolHash "PtParisBQscdCm6Cfow6ndeU6wKJyA3aV1j4D3gQBQMsTQyJCrz") = ProtocolHash "PtParisBxoLz5gzMmn3d9WBQNoPSZakgnkMC2VNuQ3KXfUtUQeZ"
+    parisHardfork p = p
+
+    nextProto' = parisHardfork <$> nextProto
+
+  return (currentProtocol, nextProto')
 
 waitTillEndOfCycle
   :: ( MonadIO m
