@@ -34,7 +34,7 @@ showNamedChain = \case
   NamedChain_Mainnet -> "mainnet"
   NamedChain_Ghostnet -> "ghostnet"
   NamedChain_Oxfordnet -> "oxfordnet"
-  NamedChain_Parisnet -> "parisnet"
+  NamedChain_Parisnet -> "paris2net"
 
 parseNamedChain :: Text -> Maybe NamedChain
 parseNamedChain x = find (\namedChain -> showNamedChain namedChain == T.toLower x)
@@ -53,7 +53,7 @@ getNamedChainId = \case
   NamedChain_Mainnet -> Just "NetXdQprcVkpaWU"
   NamedChain_Ghostnet -> Just "NetXnHfVqm9iesp"
   NamedChain_Oxfordnet -> Just "NetXxWsskGahzQB"
-  NamedChain_Parisnet -> Just "NetXo8SqH1c38SS"
+  NamedChain_Parisnet -> Just "NetXR64bNAYkP4S"
 
 identifyChain :: ChainId -> Maybe NamedChain
 identifyChain cid = lookup cid namedChainAssoc
