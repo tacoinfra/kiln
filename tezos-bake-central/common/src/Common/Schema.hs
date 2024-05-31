@@ -627,6 +627,8 @@ data BakerDetails = BakerDetails
   , _bakerDetails_stakedBalance :: Maybe Tez
   , _bakerDetails_unstakedFrozenBalance :: Maybe Tez
   , _bakerDetails_unstakedFinalizableBalance :: Maybe Tez
+  , _bakerDetails_stakingLimit :: Int -- ^ Represents 'limit_of_staking_over_baking_millionth' from '/context/delegates/<pkh>/active_staking_parameters' RPC endpoint
+  , _bakerDetails_bakingEdge :: Int -- ^ Represents 'edge_of_baking_over_staking_billionth' from '/context/delegates/<pkh>/active_staking_parameters' RPC endpoint
   } deriving (Eq, Ord, Show, Generic, Typeable)
 instance HasId BakerDetails where
   type IdData BakerDetails = PublicKeyHash

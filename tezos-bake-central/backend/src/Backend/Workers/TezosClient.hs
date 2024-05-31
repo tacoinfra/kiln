@@ -27,6 +27,7 @@ import Control.Monad.Logger
 import Data.Either (fromLeft)
 import Data.Either.Combinators (whenLeft)
 import Data.Int (Int32)
+import Data.Fixed (Fixed, E2)
 import Data.Pool (Pool)
 import Data.Time (NominalDiffTime, UTCTime)
 import Database.Groundhog
@@ -641,6 +642,17 @@ finalizeUnstake appConfig db sk = LedgerQuery LedgerQueryType_FinalizeUnstake $
       | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left FinalizeUnstakeStep_Disconnected
       | otherwise -> Left $ FinalizeUnstakeStep_Failed $ T.unlines errors
     pure $ fromLeft FinalizeUnstakeStep_Done e
+
+setDelegateParams :: (MonadLoggerIO m) => AppConfig -> Pool Postgresql -> SecretKey -> Fixed E2 -> Integer -> LedgerQuery m
+setDelegateParams appConfig db sk edge limit = LedgerQuery LedgerQueryType_SetDelegateParams $
+  ledgerSetupStep appConfig db sk (mempty { _setupState_setDelegateParams = Just $ First SetDelegateParamsStep_Prompting  }) (\res -> mempty { _setupState_setDelegateParams = Just $ First res }) $ do
+    let cmd = ["set", "delegate", "parameters", "for", T.unpack kilnLedgerAlias, "--limit-of-staking-over-baking", show limit, "--edge-of-baking-over-staking", show edge]
+    e <- runExceptT $ runClientCommand appConfig noTimeout cmd  $ \_warnings errors -> if
+      | "Ledger Application level error (set_high_watermark): Conditions of use not satisfied" : _ <- errors -> Left SetDelegateParamsStep_Declined
+      | "Ledger Transport level error:" : _ <- errors -> Left SetDelegateParamsStep_Disconnected
+      | t : _ <- errors, Just _secretKey <- T.stripPrefix "No Ledger found for " t -> Left SetDelegateParamsStep_Disconnected
+      | otherwise -> Left $ SetDelegateParamsStep_Failed $ T.unlines errors
+    pure $ fromLeft SetDelegateParamsStep_Done e
 
 {-# ANN submitVote ("HLint: ignore Evaluate" :: String) #-}
 submitVote

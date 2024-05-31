@@ -1307,6 +1307,133 @@ respondToPrompt prompt = do
   divClass "centered explanation" $ text "Your Ledger Device should show the following prompt:"
   elClass "h6" "ui header prompt-text" prompt
 
+setDelegateParamsModal :: forall r t m js.
+    ( MonadAppWidget js t m
+    , MonadReader r m
+    , HasFrontendConfig r
+    , MonadJSM (Performable m)
+    , HasTimer t r, HasTimeZone r
+    )
+  => SecretKey
+  -> Dynamic t (Maybe BakerDetails)
+  -> Event t ()
+  -> m (Event t ())
+setDelegateParamsModal sk detailsDyn close = ffor (workflow setDelegateParams) $ \e -> close <> switch (current e)
+  where
+    walletAppExtraText = el "p" $ text
+      "If you are using Tezos Wallet app of version 3.0.0 or higher, you need to enable \"expert mode\" and \"blind signing\" features in the Tezos Wallet app settings on the Ledger device."
+    waitForWalletApp = waitForWalletAppFlow "Setting delegate parameters" walletAppExtraText sk
+
+    waitForBakingApp = waitForBakingAppFlow sk "Delegate parameters have been set."
+
+    setDelegateParams :: Workflow t m (Event t ())
+    setDelegateParams = Workflow $ divClass "vote-buttons" $ do
+      let dmBakingEdge = _bakerDetails_bakingEdge <$$> detailsDyn
+          dmStakingLimit = _bakerDetails_stakingLimit <$$> detailsDyn
+      divClass "header" $ text "Set delegate parameters"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        text "Delegates can configure their staking policy by setting the following parameters. The new parameter values will be applied after 5 cycles. Please read more details in the "
+        hrefLink "https://tezos.gitlab.io/paris/adaptive_issuance.html#staking-policy-configuration" $ text "documentation"
+      elAttr "div" ("class" =: "detail" <> "style" =: "margin-bottom: 20px") $ do
+        -- In Kiln UI we display and set the edge of baking over staking
+        -- in percents and limit of staking over baking as integer for
+        -- convenience, despite the fact that 'octez-client' allows more
+        -- accurate fractional values.
+        --
+        -- If one needs to set these values with bigger precision,
+        -- they can still use 'octez-client' command for it.
+        el "p" $ text "The current active delegate parameters:"
+        el "p" $ do
+          text "Edge of Baking over Staking: "
+          withPlaceholder . ffor dmBakingEdge . fmap $ \e -> do
+            let edgePercents = e `div` 10000000
+            elClass "span" "monospaced-text" $ text $ tshow edgePercents <> "%"
+        el "p" $ do
+          text "Limit of Staking over Baking: "
+          withPlaceholder . ffor dmStakingLimit . fmap $ \l -> do
+            let limit = l `div` 1000000
+            elClass "span" "monospaced-text" $ text $ tshow limit
+
+      dynEiBakingEdge <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem setBakingEdgeField
+      dynEiStakingLimit <- elAttr "div" ("style" =: "margin-bottom: 10px") $ formItem stakingLimitField
+      let params = liftA2 (,) dynEiBakingEdge dynEiStakingLimit
+
+      let disabledButton = uiButton "primary disabled" "Set" $> never
+      setDelegateParams' :: Event t (Workflow t m (Event t ())) <-
+        switchHold never <=< dyn $ ffor params $ \case
+            (Right (Just bakingEdge), Right (Just stakingLimit)) -> do
+              setDelegateParamsBtn <- uiButton "primary" "Set"
+              pure $ setDelegateParamsBtn $> confirmSetDelegateParamsFlow False bakingEdge stakingLimit mempty
+            _ -> disabledButton
+
+      pure (never, waitForWalletApp <$> setDelegateParams')
+
+    confirmSetDelegateParamsFlow
+      :: Bool
+      -> Integer
+      -> Integer
+      -> Text
+      -> Workflow t m (Event t ())
+    confirmSetDelegateParamsFlow isTimedOut bakingEdge stakingLimit errLog = Workflow $ divClass "vote-buttons" $ do
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
+      when isTimedOut $ do
+        divClass "ui message" $ do
+          el "div" $ do
+            icon "icon-x red"
+          divClass "title" $ do
+            text "The Ledger prompt was rejected or timed out. Please try again."
+        unless (T.null errLog) $ do
+          divClass "bigtitle" $ text "Octez-client error log:"
+          elClass "div" "vote-error-log monospaced-text" $ text errLog
+      divClass "bigtitle" $ text "Set delegate parameters?"
+      el "p" $ do
+          text "Edge of Baking over Staking: "
+          elClass "span" "monospaced-text" $ text $ tshow bakingEdge <> "%"
+      el "p" $ do
+        text "Limit of Staking over Baking: "
+        elClass "span" "monospaced-text" $ text $ tshow stakingLimit
+      el "p" $ text "The new parameter values will be applied after 5 cycles."
+      setBtn <- uiDynButton (pure "primary") $ text "Set"
+      _ <- requestingIdentity $ public (PublicRequest_SetDelegateParams sk bakingEdge stakingLimit) <$ setBtn
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+          retryFlow = waitForWalletApp $ confirmSetDelegateParamsFlow isTimedOut bakingEdge stakingLimit errLog
+      pure (never, leftmost [respondToPromptFlow retryFlow bakingEdge stakingLimit <$ setBtn, ledgerDisconnectedFlow sk retryFlow <$ appLost])
+
+    respondToPromptFlow
+      :: Workflow t m (Event t ())
+      -- ^ Workflow to return to after retry
+      -> Integer
+      -> Integer
+      -> Workflow t m (Event t ())
+    respondToPromptFlow retryFlow bakingEdge stakingLimit = Workflow $ do
+      ledgerStatus <- ledgerDeviceIcon LedgerApp_Wallet sk
+      pb <- getPostBuild
+      promptStep <- watchPrompting sk
+      let changed = leftmost [updated promptStep, tag (current promptStep) pb]
+          next = fforMaybe changed $ \case
+            Just ss | Just (First setDelegateParamsStep) <- _setupState_setDelegateParams ss -> case setDelegateParamsStep of
+              SetDelegateParamsStep_Prompting -> Nothing
+              SetDelegateParamsStep_Done -> Just $ waitForBakingApp $ setParamsSuccessFlow $ Left ()
+              SetDelegateParamsStep_Declined -> Just $ confirmSetDelegateParamsFlow True bakingEdge stakingLimit mempty
+              SetDelegateParamsStep_Disconnected -> Just $ ledgerDisconnectedFlow sk retryFlow
+              SetDelegateParamsStep_Failed errLog -> Just $ confirmSetDelegateParamsFlow True bakingEdge stakingLimit errLog
+            _ -> Nothing
+      divClass "bigtitle" $ do
+        elClass "span" "icon" $ elClass "span" "ui active inline loader small blue" blank
+        text "Respond to the prompt on your Ledger Device..."
+      let appLost = ffilter ((/=) (Just True)) $ updated ledgerStatus
+      pure (never, leftmost [next, ledgerDisconnectedFlow sk retryFlow <$ appLost])
+
+    setParamsSuccessFlow
+      :: Either () (Workflow t m (Event t ())) -- ^ Upon success, either close the dialog or redirect to another workflow
+      -> Workflow t m (Event t ())
+    setParamsSuccessFlow whereToGo = Workflow $ divClass "vote-buttons" $ do
+      divClass "bigtitle" $ text "Setting delegate parameters completed succesfully."
+      divClass "bigtitle" $
+        text "Kiln Baker will be automatically restarted to continue bake and attest blocks."
+      closeButton <- uiDynButton (pure "primary") $ text "Close"
+      pure $ fanEither $ whereToGo <$ closeButton
+
 finalizeUnstakeModal :: forall r t m js.
     ( MonadAppWidget js t m
     , MonadReader r m
@@ -3154,11 +3281,10 @@ bakersTab =
                   "Remove Baker"
               removeEntry removeInternalBakerModal
 
+              let
+                openModalEv btn modal = ffor btn $ \() ->
+                  cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . modal sk details'
               whenAIActivated mbLatestHeadDyn mbAiCycleDyn $ do
-                let
-                  openModalEv btn modal = ffor btn $ \() ->
-                    cancelableModalWithClasses $ fmap (pure ["vote-modal"],) . modal sk details'
-
                 stakeBtn <- tileMenuEntry "Stake"
                 let openStakeEv = openModalEv stakeBtn stakeModal
                 tellModal openStakeEv
@@ -3170,6 +3296,12 @@ bakersTab =
                 finalizeUnstakeBtn <- tileMenuEntry "Finalize Unstake"
                 let openFinalizeUnstakeEv = openModalEv finalizeUnstakeBtn finalizeUnstakeModal
                 tellModal openFinalizeUnstakeEv
+
+              -- Setting delegate parameters is available before Adaptive Issuance activation
+              -- so we always show this button
+              setParamsBtn <- tileMenuEntry "Set Delegate Parameters"
+              let openSetDelegateParamsEv = openModalEv setParamsBtn setDelegateParamsModal
+              tellModal openSetDelegateParamsEv
 
         divClass "title" $ do
           let bakerStatusDyn = (\b bd n -> bakerStatus $ (b, bd) <$ n) <$> bakerDyn <*> details' <*> dCollectiveNodesStatus

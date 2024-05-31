@@ -91,6 +91,7 @@ class QueryHistory repr where -- blockscale
   rUnstakedFrozenBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr (Maybe Tez)
   rUnstakedFinalizableBalance :: PublicKeyHash -> ChainId -> BlockQuery -> repr (Maybe Tez)
   rAILaunchCycle :: ChainId -> BlockQuery -> repr (Maybe Cycle)
+  rDelegateParameters :: PublicKeyHash -> ChainId -> BlockQuery -> repr DelegateParametersCrossCompat
   rDelegateInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr DelegateInfoCrossCompat
   rParticipationInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr ParticipationInfo
   rRound :: ChainId -> BlockQuery -> repr Int32
@@ -136,6 +137,7 @@ instance QueryHistory RpcQuery where
   rUnstakedFrozenBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/unstaked_frozen_balance"
   rUnstakedFinalizableBalance publicKeyHash = blockAPI $ "/context/contracts/" <> toPublicKeyHashText publicKeyHash <> "/unstaked_finalizable_balance"
   rAILaunchCycle = blockAPI "/context/adaptive_issuance_launch_cycle"
+  rDelegateParameters pkh = blockAPI $ "/context/delegates/" <> toPublicKeyHashText pkh <> "/active_staking_parameters"
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
   rParticipationInfo publicKeyHash = blockAPI $
       "/context/delegates/" <> toPublicKeyHashText publicKeyHash <> "/participation"

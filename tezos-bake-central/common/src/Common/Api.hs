@@ -112,6 +112,11 @@ data PublicRequest a where
   PublicRequest_FinalizeUnstake
     :: SecretKey
     -> PublicRequest ()
+  PublicRequest_SetDelegateParams
+    :: SecretKey
+    -> Integer
+    -> Integer
+    -> PublicRequest ()
 
 
 data PrivateRequest a where

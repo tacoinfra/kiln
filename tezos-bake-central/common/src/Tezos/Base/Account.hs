@@ -145,18 +145,25 @@ instance ToJSON ParticipationInfo where
       , "expected_attesting_rewards" .= _participationInfo_expectedEndorsingRewards
       ]
 
+data DelegateParameters = DelegateParameters
+  { _delegateParameters_limitOfStakingOverBakingMillionth :: Int
+  , _delegateParameters_edgeOfBakingOverStakingBillionth :: Int
+  } deriving (Eq, Ord, Show)
+
 concat <$> traverse deriveTezosFromJson
   [ ''BakingRights
   ]
 
 concat <$> traverse deriveTezosJson
   [ ''EndorsingRights
+  , ''DelegateParameters
   , ''PendingConsensusKey
   ]
 
 concat <$> traverse makeLenses
   [ 'BakingRights
   , 'DelegateInfo
+  , 'DelegateParameters
   , 'EndorsingRights
   , 'EndorsingRightsDelegateInfo
   , 'ParticipationInfo

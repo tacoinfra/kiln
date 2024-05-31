@@ -472,6 +472,7 @@ updateDelegateDetails nds protoInfo headBlock headCycle baker details isInternal
   mbUnstakedFrozenBalance <- nodeQueryDataSource (nodeQuery_UnstakedFrozenBalance headHash pkh)
   mbUnstakedFinalizableBalance <- nodeQueryDataSource (nodeQuery_UnstakedFinalizableBalance headHash pkh)
   mbAdaptiveIssuanceLaunchCycle <- nodeQueryDataSource (nodeQuery_AILaunchCycle headHash)
+  delegateParams <- nodeQueryDataSource (nodeQuery_DelegateParameters headHash pkh)
 
   let aiCycleTVar = _nodeDataSource_AICycle nds
   liftIO $ atomically $ do
@@ -513,6 +514,8 @@ updateDelegateDetails nds protoInfo headBlock headCycle baker details isInternal
               , _bakerDetails_stakedBalance = mbStakedBalance
               , _bakerDetails_unstakedFrozenBalance = mbUnstakedFrozenBalance
               , _bakerDetails_unstakedFinalizableBalance = mbUnstakedFinalizableBalance
+              , _bakerDetails_stakingLimit = delegateParams ^. delegateParametersCrossCompat_limit
+              , _bakerDetails_bakingEdge = delegateParams ^. delegateParametersCrossCompat_edge
               }
           case nonEmpty existingData of
             Nothing -> void $ insert (mkBakerDetails 0)
