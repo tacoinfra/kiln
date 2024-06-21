@@ -24,7 +24,8 @@ data NamedChain
   = NamedChain_Mainnet
   | NamedChain_Ghostnet
   | NamedChain_Oxfordnet
-  | NamedChain_Parisnet
+  | NamedChain_Paris2net
+  | NamedChain_ParisCnet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
 instance FromJSON NamedChain
 instance ToJSON NamedChain
@@ -34,7 +35,8 @@ showNamedChain = \case
   NamedChain_Mainnet -> "mainnet"
   NamedChain_Ghostnet -> "ghostnet"
   NamedChain_Oxfordnet -> "oxfordnet"
-  NamedChain_Parisnet -> "paris2net"
+  NamedChain_Paris2net -> "paris2net"
+  NamedChain_ParisCnet -> "pariscnet"
 
 parseNamedChain :: Text -> Maybe NamedChain
 parseNamedChain x = find (\namedChain -> showNamedChain namedChain == T.toLower x)
@@ -53,7 +55,8 @@ getNamedChainId = \case
   NamedChain_Mainnet -> Just "NetXdQprcVkpaWU"
   NamedChain_Ghostnet -> Just "NetXnHfVqm9iesp"
   NamedChain_Oxfordnet -> Just "NetXxWsskGahzQB"
-  NamedChain_Parisnet -> Just "NetXR64bNAYkP4S"
+  NamedChain_Paris2net -> Just "NetXR64bNAYkP4S"
+  NamedChain_ParisCnet -> Just "NetXXWAHLEvre9b"
 
 identifyChain :: ChainId -> Maybe NamedChain
 identifyChain cid = lookup cid namedChainAssoc
