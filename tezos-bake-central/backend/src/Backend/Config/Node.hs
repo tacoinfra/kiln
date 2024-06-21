@@ -184,7 +184,9 @@ asNamedChain = \case
   n@(NetworkOption_NamedChain nc)  -> case nc of
     c@NamedChain_Oxfordnet ->
       NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
-    c@NamedChain_Parisnet ->
+    c@NamedChain_Paris2net ->
+      NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
+    c@NamedChain_ParisCnet ->
       NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
     NamedChain_Mainnet -> pure n
     NamedChain_Ghostnet -> pure n
