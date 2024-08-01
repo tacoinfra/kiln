@@ -54,6 +54,7 @@ import Common.Api
 import Common.App
 import Common.Config (HasFrontendConfig)
 import Common.Schema
+import Common.Tez
 import ExtraPrelude
 import Frontend.Common
 import Frontend.Settings

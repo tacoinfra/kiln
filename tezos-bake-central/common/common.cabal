@@ -93,6 +93,7 @@ library
     Common.Route
     Common.Schema
     Common.Snapshot
+    Common.Tez
     Common.URI
     Common.Vassal
     Common.WrappedShow1
