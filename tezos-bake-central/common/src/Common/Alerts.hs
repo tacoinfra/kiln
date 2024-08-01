@@ -24,6 +24,7 @@ import Reflex (ffilter)
 
 import Common (nominalDiffTimeToSeconds)
 import Common.Schema
+import Common.Tez
 import ExtraPrelude
 
 data AlertsFilter = AlertsFilter_All | AlertsFilter_UnresolvedOnly | AlertsFilter_ResolvedOnly
@@ -378,7 +379,7 @@ bakerNeedToFinalizeUnstakeDescriptions elog = BakerErrorDescriptions
   , _bakerErrorDescriptions_tile = "Needs to finalize unstake"
   , _bakerErrorDescriptions_notification = "The baker has " <> amountText <> "ꜩ previously unstaked balance to be finalized."
   , _bakerErrorDescriptions_problem = [ ErrorDescription_Plain $
-      "The baker has " <> amountText <> "ꜩ previously unstaked balance to be finalized."
+      "The baker has " <> amountText <> " previously unstaked balance to be finalized."
       ]
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = "Open the menu on your Kiln Baker tile and click 'Finalize Unstake' to unstake these funds. Staknig and unstaking operations will automatically unfreeze these funds too."
@@ -388,9 +389,8 @@ bakerNeedToFinalizeUnstakeDescriptions elog = BakerErrorDescriptions
       )
   }
   where
-    amount = getMicroTez $ _errorLogNeedToFinalizeUnstake_amount elog
-    amountText = fromString $ formatCommas $ amount `div` 1000000
-    formatCommas = reverse . intercalate "," . chunksOf 3 . reverse . show
+    amount = _errorLogNeedToFinalizeUnstake_amount elog
+    amountText = tez amount
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
 bakerAccusedDescriptions elog = BakerErrorDescriptions

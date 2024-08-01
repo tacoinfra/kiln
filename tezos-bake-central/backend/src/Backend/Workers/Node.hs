@@ -987,40 +987,13 @@ getProtocol latestHead = runExceptT @KilnRpcError $ do
   mbCurrentProposal <- nodeQueryDataSource (nodeQuery_CurrentProposal queryBlockHash)
   mbCustomPaths <- asks (view $ getAppConfig . appConfig_binaryPaths)
 
-  -- let
-  --   protos = NE.map _bakerPath_proto $ maybe defaultBakerPaths _binaryPaths_bakerPaths mbCustomPaths
-  --   -- This will trigger daemon for the upcoming protocol to start, so we start them
-  --   -- once the baker binary for the next protocol is available.
-  --   nextProto = mbCurrentProposal >>= guard . (`elem` protos) >> mbCurrentProposal
-
-  --   -- Given the fact that there is a hardfork of Paris protocol, and when 'PtParisBQs'
-  --   -- will be promoted, the 'PtParisBxo' will be activated on mainnet instead.
-  --   --
-  --   -- We use 'nextProto' to launch the 'octez-baker' binary for the next protocol
-  --   -- in advance. If we won't handle the hardfork here, the baker binary won't be started.
-  --   parisHardfork :: ProtocolHash -> ProtocolHash
-  --   parisHardfork (ProtocolHash "PtParisBQscdCm6Cfow6ndeU6wKJyA3aV1j4D3gQBQMsTQyJCrz") = ProtocolHash "PtParisBxoLz5gzMmn3d9WBQNoPSZakgnkMC2VNuQ3KXfUtUQeZ"
-  --   parisHardfork p = p
-
-  --   nextProto' = parisHardfork <$> nextProto
-
-  -- There will be a user-activated protocol upgrade, and starting from
-  -- block 5,898,241 mainnet will use ParisC protocol.
-  --
-  -- We need to launch ParisC baker in advance to address this.
-  -- Given the fact that this is a user-activated protocol upgrade
-  -- which will happen without voting procedure, we need to override
-  -- the existing logic and temporarily replace it with harcoded value.
-  --
-  -- TODO: remove this logic and uncomment the lines above when 'ParisC'
-  -- will be activated on mainnet.
   let
-    nextProto' = case currentProtocol of
-      ProtocolHash "PtParisBxoLz5gzMmn3d9WBQNoPSZakgnkMC2VNuQ3KXfUtUQeZ" ->
-        Just $ ProtocolHash "PsParisCZo7KAh1Z1smVd9ZMZ1HHn5gkzbM94V3PLCpknFWhUAi"
-      _ -> Nothing
+    protos = NE.map _bakerPath_proto $ maybe defaultBakerPaths _binaryPaths_bakerPaths mbCustomPaths
+    -- This will trigger daemon for the upcoming protocol to start, so we start them
+    -- once the baker binary for the next protocol is available.
+    nextProto = mbCurrentProposal >>= guard . (`elem` protos) >> mbCurrentProposal
 
-  return (currentProtocol, nextProto')
+  return (currentProtocol, nextProto)
 
 waitTillEndOfCycle
   :: ( MonadIO m

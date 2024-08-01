@@ -96,6 +96,7 @@ import Common.HeadTag (headTag)
 import Common.Route
 import Common.Schema
 import Common.Snapshot
+import Common.Tez
 import ExtraPrelude
 import Frontend.Amendment
 import Frontend.Common

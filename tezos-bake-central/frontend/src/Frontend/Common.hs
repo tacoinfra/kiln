@@ -23,7 +23,6 @@ module Frontend.Common where
 import Control.Lens.TH (makeLenses)
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, asks)
-import Data.Fixed (divMod')
 import Data.List (intercalate)
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -62,6 +61,7 @@ import Common.Alerts (
 import Common.App
 import Common.Config (FrontendConfig, HasFrontendConfig (frontendConfig), frontendConfig_chain, parseBakerAddr)
 import Common.URI (appendPaths, mkRootUri)
+import Common.Tez
 import ExtraPrelude
 
 type MonadAppWidget js t m = (MonadRhyoliteFrontendWidget js (BakeViewSelector SelectedCount) (ApiRequest () PublicRequest PrivateRequest) t m)
@@ -105,31 +105,6 @@ hrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "
 
 blackhrefLink :: DomBuilder t m => Text -> m a -> m a
 blackhrefLink href = elAttr "a" ("href" =: href <> "target" =: "_blank" <> "rel" =: "noopener" <> "style" =: "color:  #000000")
-
-tez :: Tez -> Text
-tez t = let (w, p, tz) = tez' t
-         in w <> p <> tz
-
-tez' :: Tez -> (Text, Text, Text)
-tez' = tez'' False
-
-tezPadded :: Tez -> (Text, Text, Text)
-tezPadded = tez'' True
-
-tez'' :: Bool -> Tez -> (Text, Text, Text)
-tez'' pad (Tez n) = (T.pack wholes', padded, "ꜩ")
-  where (wholes :: Integer, parts) = n `divMod'` 1
-        wholes' = reverse $ f $ reverse $ show wholes
-        parts' = T.dropWhileEnd (== '.')
-                 $ T.dropAround (== '0')
-                 $ tshow parts
-        padded = T.pack . (T.unpack parts' &) $ if not pad then id else \case
-          [] -> ".00"
-          ['.', a] -> ['.', a, '0']
-          as -> as
-        f = \case
-          (a0 : a1 : a2 : as) | as /= [] -> a0 : a1 : a2 : ',' : f as
-          as -> as
 
 fancyTez :: DomBuilder t m => Tez -> m ()
 fancyTez t = let (w, p, tz) = tezPadded t in elClass "span" "fancy-tez" $ do

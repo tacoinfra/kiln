@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Common.Snapshot where
 
@@ -29,12 +30,16 @@ instance Default TzInitRegion where
 
 tzInitUri :: NamedChain -> TzInitRegion -> URI
 tzInitUri namedChain region  = let
+  -- The snapshots for 'pariscnet' are under 'parisnet' path
+  mapPariscnet c
+    | c == "pariscnet" = "parisnet"
+    | otherwise = c
   host = case region of
     TzInitAsia -> [Uri.host|snapshots.asia.tzinit.org|]
     TzInitEurope ->  [Uri.host|snapshots.eu.tzinit.org|]
     TzInitUs ->  [Uri.host|snapshots.us.tzinit.org|]
   chainNamePath = fromMaybe
-    (error "Chain name returned by 'showNamedChain' cannot be parsed as a url segment.") $ mkPathPiece $ showNamedChain namedChain
+    (error "Chain name returned by 'showNamedChain' cannot be parsed as a url segment.") $ mkPathPiece $ mapPariscnet $ showNamedChain namedChain
   in URI
       { uriScheme = Just [Uri.scheme|https|]
       , uriAuthority = Right $ Authority Nothing host Nothing
