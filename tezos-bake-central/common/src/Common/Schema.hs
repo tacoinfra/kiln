@@ -1033,8 +1033,7 @@ data SnapshotImportSource
   deriving (Eq, Generic, Ord, Show, Typeable)
 
 data KnownSnapshotProvider
-  = KnownSnapshotProvider_Marigold
-  | KnownSnapshotProvider_TzInit TzInitRegion
+  = KnownSnapshotProvider_TzInit TzInitRegion
   deriving (Eq, Ord, Show, Typeable, Generic)
 instance FromJSON KnownSnapshotProvider
 instance ToJSON KnownSnapshotProvider
