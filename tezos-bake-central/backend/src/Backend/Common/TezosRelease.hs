@@ -26,7 +26,7 @@ getReleaseTag = (^? key "tag_name" . _String) >=> hush . parseMajorMinorVersion
 
 parseMajorMinorVersion :: Text -> Either String MajorMinorVersion
 parseMajorMinorVersion = parseOnly $ do
-    option () (skip (== 'v'))
+    option () (choice [skip (== 'v'), void $ string "octez-v"])
     major <- decimal
     skip (== '.')
     minor <- decimal
