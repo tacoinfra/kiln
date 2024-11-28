@@ -650,12 +650,7 @@ removeFileLogging f = liftIO (removeFile f) `catch` \(e :: IOException) -> $(log
 
 snapshotProviderUri :: NamedChain -> KnownSnapshotProvider -> URI
 snapshotProviderUri namedChain = \case
-  KnownSnapshotProvider_Marigold -> marigoldMetadataUri
   KnownSnapshotProvider_TzInit region -> tzInitUri namedChain region
-
--- | URI of Marigold snapshot metadata.
-marigoldMetadataUri :: URI
-marigoldMetadataUri = [Uri.uri|https://snapshots.tezos.marigold.dev/api/tezos-snapshots.json|]
 
 -- | The path where the node snapshot is stored.
 snapshotStorePath :: AppConfig -> FilePath
@@ -827,12 +822,6 @@ handleDownloadSnapshotFromProviderAsync appConfig nds providers =
       try (handleSnapshotDownloadSync appConfig nds uri (smId, sm)) >>= \case
         Left (e :: SomeException) -> pure $ Left (e, smId)
         Right _ -> pure $ Right ()
-    downloadFromProvider_ KnownSnapshotProvider_Marigold = do
-      let uri = marigoldMetadataUri
-      (smId, _) <- initSnapshotMeta appConfig Nothing nds (Just uri)
-      try (handleDownloadSnapshotFromProviderSync appConfig nds uri smId DontReportError) >>= \case
-        Left (e :: SomeException) -> pure $ Left (e, smId)
-        Right _ -> pure  $ Right ()
 
 -- | Download the list of snapshot metadata from the given provider url.
 downloadSnapshotMetadata

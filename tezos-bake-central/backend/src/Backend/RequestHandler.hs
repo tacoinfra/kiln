@@ -161,7 +161,6 @@ requestHandler appConfig nds =
             [ KnownSnapshotProvider_TzInit TzInitAsia
             , KnownSnapshotProvider_TzInit TzInitEurope
             , KnownSnapshotProvider_TzInit TzInitUs
-            , KnownSnapshotProvider_Marigold
             ]
 
         case mNodeProcessState of

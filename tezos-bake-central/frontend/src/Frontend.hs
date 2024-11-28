@@ -1990,7 +1990,6 @@ data NodeBootstrapMethod
 
 data SnapshotProviderOption
   = TzInit (Maybe TzInitRegion)
-  | Marigold
   | Custom (Maybe URI)
   deriving (Show, Eq, Ord)
 
@@ -2027,19 +2026,17 @@ startNodeWorkflow backWF close = Workflow $ do
 
         let
           providerOptions =
-            [ Marigold
-            , TzInit Nothing
+            [ TzInit Nothing
             , Custom Nothing
             ]
 
           providerText = text . \case
             TzInit _ -> "Tzinit"
-            Marigold -> "Marigold"
             Custom _ -> "Custom snapshot provider URL"
 
         providerDropdown <- divClass "ui field" $ do
           el "label" $ text "Select snapshot provider"
-          ddDyn <- value <$> SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity Marigold) never (SemUi.TaggedStatic $
+          ddDyn <- value <$> SemUi.dropdown (def & SemUi.dropdownConfig_fluid SemUi.|~ True) (Identity (TzInit Nothing)) never (SemUi.TaggedStatic $
             Map.fromList $ ffor providerOptions $ \ p -> (p, providerText p))
           rsEvent <- dyn $ tzInitRegionSelect <$> ddDyn
           rsDyn <- switchHold never rsEvent >>= holdDyn (Just TzInitAsia)
@@ -2083,9 +2080,8 @@ startNodeWorkflow backWF close = Workflow $ do
         uriEv <- dyn $ ffor providerDropdown $ \(Identity v) -> case v of
           Custom _ -> do
             divClass "explanation" $  do
-              text "You can enter either the URL of the provider (e.g. "
-              hrefLink "https://snapshots.tezos.marigold.dev/api/tezos-snapshots.json" $ text "https://snapshots.tezos.marigold.dev/api/tezos-snapshots.json"
-              text ") or a link to a specific snapshot (e.g. "
+              text "You can enter either the URL of the provider's snapshot list file"
+              text " or a link to a specific snapshot (e.g. "
               hrefLink "https://snapshots.eu.tzinit.org/mainnet/rolling" $ text "https://snapshots.eu.tzinit.org/mainnet/rolling"
               text ").  "
               text "Kiln will download the latest rolling snapshot from the provider or a specific snapshot depending on the given URL."
@@ -2100,7 +2096,6 @@ startNodeWorkflow backWF close = Workflow $ do
           selectedProviderDyn' = ffor2 providerDropdown uriDyn $ \(Identity dd) u -> case dd of
             TzInit mRegion -> NodeBootstrapMethod_KnownSnapshotProvider $
               KnownSnapshotProvider_TzInit $ fromMaybe def mRegion
-            Marigold -> NodeBootstrapMethod_KnownSnapshotProvider KnownSnapshotProvider_Marigold
             Custom _ -> NodeBootstrapMethod_URI u
 
         pure selectedProviderDyn'
