@@ -1,23 +1,23 @@
 { pkgs }:
 with pkgs;
 let
-  outer-version = "20.3-1";
+  outer-version = "21.1-1";
   macos_version = "ventura";
-    tezos-baker-PtParisB = fetchTarball {
-      url = "https://github.com/serokell/tezos-packaging/releases/download/v${outer-version}/tezos-baker-PtParisB-v${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1l55qianv4vj02mg1qxfbk9hb918clnbp7wpgrlivn1ivvp43bvg";
+    tezos-baker-PsQuebec = fetchTarball {
+      url = "https://github.com/serokell/tezos-packaging/releases/download/v${outer-version}/tezos-baker-PsQuebec-v${outer-version}.${macos_version}.bottle.tar.gz";
+      sha256 = "1i8w44kwbybixdawvasq8mbg787vkl6g7yp9q1yj8qw15n7q7dh4";
     };
     tezos-baker-PsParisC = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v${outer-version}/tezos-baker-PsParisC-v${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "16zj0gq327qii5fn6485zsd50xmym2zaj5k47xsaimh5a8alxfqv";
+      sha256 = "0292ds4qx6rgagfss41jijr7vc1qr9k3zjvsgdn027qkb2d1dddm";
     };
     tezos-client = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v${outer-version}/tezos-client-v${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1jga1g1y872jvyahl1p8f108mklniygbsq2g8wm3i3n9xvjbv0jj";
+      sha256 = "1hsd54lq8y32s1j48p0an6r1mp56mjna6gcvzp05ynk9rwwmwfqm";
     };
     tezos-node = fetchTarball {
       url = "https://github.com/serokell/tezos-packaging/releases/download/v${outer-version}/tezos-node-v${outer-version}.${macos_version}.bottle.tar.gz";
-      sha256 = "1pd33b0vwllvpz3csp1d0x7wjrdci3x7mwixi66w6k0v6zzfn01a";
+      sha256 = "06rbcrad0b9dl03805ibcsl3bd1gcwn4bajyzybj4i041mhvfyay";
     };
 
 in stdenv.mkDerivation rec {
@@ -28,8 +28,8 @@ in stdenv.mkDerivation rec {
   installPhase = ''
   mkdir -p $out/bin
 
-  cp ${tezos-baker-PtParisB}/v${outer-version}/bin/tezos-baker-PtParisB $out/bin/tezos-baker-PtParisB
-  chmod +x $out/bin/tezos-baker-PtParisB
+  cp ${tezos-baker-PsQuebec}/v${outer-version}/bin/tezos-baker-PsQuebec $out/bin/tezos-baker-PsQuebec
+  chmod +x $out/bin/tezos-baker-PsQuebec
 
   cp ${tezos-baker-PsParisC}/v${outer-version}/bin/tezos-baker-PsParisC $out/bin/tezos-baker-PsParisC
   chmod +x $out/bin/tezos-baker-PsParisC
