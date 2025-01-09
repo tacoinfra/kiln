@@ -170,7 +170,7 @@ binaryPaths :: FilePath
 binaryPaths = "binary-paths"
 
 defaultRightsHistoryWindow :: Int
-defaultRightsHistoryWindow = 720
+defaultRightsHistoryWindow = 180
 
 rightsHistoryWindow :: FilePath
 rightsHistoryWindow = "rights-history-window"
