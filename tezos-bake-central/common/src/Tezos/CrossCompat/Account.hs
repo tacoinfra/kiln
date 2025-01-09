@@ -43,7 +43,7 @@ delegateInfoCrossCompat_balance = to $ \case
 
 delegateInfoCrossCompat_frozenBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_frozenBalance = to $ \case
-  DelegateInfoParis di -> di ^. Base.delegateInfoParis_frozenDeposits
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_currentFrozenDeposits
   DelegateInfoQuebec di -> di ^. Base.delegateInfoQuebec_totalStaked
 
 delegateInfoCrossCompat_stakingBalance :: Getter DelegateInfoCrossCompat Tez
