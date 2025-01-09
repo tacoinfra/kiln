@@ -85,33 +85,64 @@ data PendingConsensusKey = PendingConsensusKey
   , _pendingConsensusKey_pkh :: PublicKeyHash
   } deriving (Eq, Ord, Show)
 
-data DelegateInfo = DelegateInfo
-  { _delegateInfo_fullBalance           :: Tez
-  , _delegateInfo_currentFrozenDeposits :: Tez
-  , _delegateInfo_frozenDeposits        :: Tez
-  , _delegateInfo_stakingBalance        :: Tez
-  , _delegateInfo_delegatedBalance      :: Tez
-  , _delegateInfo_deactivated           :: Bool
-  , _delegateInfo_gracePeriod           :: Cycle
-  , _delegateInfo_activeConsensusKey    :: PublicKeyHash
-  , _delegateInfo_pendingConsensusKeys  :: [PendingConsensusKey]
+data DelegateInfoQuebec = DelegateInfoQuebec
+  { _delegateInfoQuebec_ownFullBalance :: Tez
+  , _delegateInfoQuebec_totalStaked :: Tez
+  , _delegateInfoQuebec_totalDelegated :: Tez
+  , _delegateInfoQuebec_externalStaked :: Tez
+  , _delegateInfoQuebec_externalDelegated :: Tez
+  , _delegateInfoQuebec_deactivated :: Bool
+  , _delegateInfoQuebec_gracePeriod :: Cycle
+  , _delegateInfoQuebec_activeConsensusKey    :: PublicKeyHash
+  , _delegateInfoQuebec_pendingConsensusKeys  :: [PendingConsensusKey]
   }
 
-instance FromJSON DelegateInfo where
-  parseJSON = withObject "DelegateInfo" $ \o -> do
-    _delegateInfo_fullBalance           <- o .: "full_balance"
-    _delegateInfo_currentFrozenDeposits <- o .: "current_frozen_deposits"
-    _delegateInfo_frozenDeposits        <- o .: "frozen_deposits"
-    _delegateInfo_stakingBalance        <- o .: "staking_balance"
-    _delegateInfo_delegatedBalance      <- o .: "delegated_balance"
-    _delegateInfo_deactivated           <- o .: "deactivated"
-    _delegateInfo_gracePeriod           <- o .: "grace_period"
-    _delegateInfo_activeConsensusKey    <- o .: "active_consensus_key"
+instance FromJSON DelegateInfoQuebec where
+  parseJSON = withObject "DelegateInfoQuebec" $ \o -> do
+    _delegateInfoQuebec_ownFullBalance <- o .: "own_full_balance"
+    _delegateInfoQuebec_totalStaked <- o .: "total_staked"
+    _delegateInfoQuebec_totalDelegated <- o .: "total_delegated"
+    _delegateInfoQuebec_externalStaked <- o .: "external_staked"
+    _delegateInfoQuebec_externalDelegated <- o .: "external_delegated"
+    _delegateInfoQuebec_deactivated <- o .: "deactivated"
+    _delegateInfoQuebec_gracePeriod <- o .: "grace_period"
+
+    consensusKey <- o .: "consensus_key"
+    activeConsensusKey <- consensusKey .: "active"
+    _delegateInfoQuebec_activeConsensusKey <- activeConsensusKey .: "pkh"
+
+    mbPendingConsensusKeys <- consensusKey .:? "pendings"
+    let _delegateInfoQuebec_pendingConsensusKeys = fromMaybe [] mbPendingConsensusKeys
+
+    pure $ DelegateInfoQuebec {..}
+
+data DelegateInfoParis = DelegateInfoParis
+  { _delegateInfoParis_fullBalance           :: Tez
+  , _delegateInfoParis_currentFrozenDeposits :: Tez
+  , _delegateInfoParis_frozenDeposits        :: Tez
+  , _delegateInfoParis_stakingBalance        :: Tez
+  , _delegateInfoParis_delegatedBalance      :: Tez
+  , _delegateInfoParis_deactivated           :: Bool
+  , _delegateInfoParis_gracePeriod           :: Cycle
+  , _delegateInfoParis_activeConsensusKey    :: PublicKeyHash
+  , _delegateInfoParis_pendingConsensusKeys  :: [PendingConsensusKey]
+  }
+
+instance FromJSON DelegateInfoParis where
+  parseJSON = withObject "DelegateInfoParis" $ \o -> do
+    _delegateInfoParis_fullBalance           <- o .: "full_balance"
+    _delegateInfoParis_currentFrozenDeposits <- o .: "current_frozen_deposits"
+    _delegateInfoParis_frozenDeposits        <- o .: "frozen_deposits"
+    _delegateInfoParis_stakingBalance        <- o .: "staking_balance"
+    _delegateInfoParis_delegatedBalance      <- o .: "delegated_balance"
+    _delegateInfoParis_deactivated           <- o .: "deactivated"
+    _delegateInfoParis_gracePeriod           <- o .: "grace_period"
+    _delegateInfoParis_activeConsensusKey    <- o .: "active_consensus_key"
 
     mbPendingConsensusKeys <- o .:? "pending_consensus_keys"
-    let _delegateInfo_pendingConsensusKeys = fromMaybe [] mbPendingConsensusKeys
+    let _delegateInfoParis_pendingConsensusKeys = fromMaybe [] mbPendingConsensusKeys
 
-    pure $ DelegateInfo {..}
+    pure $ DelegateInfoParis {..}
 
 
 data ParticipationInfo = ParticipationInfo
@@ -162,7 +193,8 @@ concat <$> traverse deriveTezosJson
 
 concat <$> traverse makeLenses
   [ 'BakingRights
-  , 'DelegateInfo
+  , 'DelegateInfoParis
+  , 'DelegateInfoQuebec
   , 'DelegateParameters
   , 'EndorsingRights
   , 'EndorsingRightsDelegateInfo

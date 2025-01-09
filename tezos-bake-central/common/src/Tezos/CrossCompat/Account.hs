@@ -1,11 +1,12 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | This module contains data types similat to the ones from 'Tezos.V*.Account'
+-- | This module contains data types similat to the ones from 'Tezos.*.Account'
 -- but represented as unions to provide cross compatibility between protocols
 -- in case of RPC schema changes.
 module Tezos.CrossCompat.Account where
 
+import Control.Applicative ((<|>))
 import Control.Lens (Getter, to, view, (^.))
 import Data.Aeson
 import qualified Data.Sequence as Seq
@@ -28,43 +29,58 @@ instance FromJSON AccountCrossCompat where
     AccountBase <$> parseJSON jv
 
 data DelegateInfoCrossCompat
-  = DelegateInfoBase Base.DelegateInfo
+  = DelegateInfoParis Base.DelegateInfoParis
+  | DelegateInfoQuebec Base.DelegateInfoQuebec
 
 instance FromJSON DelegateInfoCrossCompat where
   parseJSON jv =
-    DelegateInfoBase <$> parseJSON jv
+    DelegateInfoParis <$> parseJSON jv <|> DelegateInfoQuebec <$> parseJSON jv
 
 delegateInfoCrossCompat_balance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_balance = to $ \case
-  DelegateInfoBase di -> di ^. Base.delegateInfo_fullBalance
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_fullBalance
+  DelegateInfoQuebec di -> di ^. Base.delegateInfoQuebec_ownFullBalance
 
 delegateInfoCrossCompat_frozenBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_frozenBalance = to $ \case
-  DelegateInfoBase di -> di ^. Base.delegateInfo_frozenDeposits
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_frozenDeposits
+  DelegateInfoQuebec di -> di ^. Base.delegateInfoQuebec_totalStaked
 
 delegateInfoCrossCompat_stakingBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_stakingBalance = to $ \case
-  DelegateInfoBase di -> di ^. Base.delegateInfo_stakingBalance
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_stakingBalance
+  DelegateInfoQuebec di ->
+    let totalStaked = di ^. Base.delegateInfoQuebec_totalStaked
+        totalDelegated = di ^. Base.delegateInfoQuebec_totalDelegated
+    in totalStaked + totalDelegated
 
 delegateInfoCrossCompat_delegatedBalance :: Getter DelegateInfoCrossCompat Tez
 delegateInfoCrossCompat_delegatedBalance = to $ \case
-  DelegateInfoBase di -> di ^. Base.delegateInfo_delegatedBalance
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_delegatedBalance
+  DelegateInfoQuebec di ->
+    let externalStaked = di ^. Base.delegateInfoQuebec_externalStaked
+        externalDelegated = di ^. Base.delegateInfoQuebec_externalDelegated
+    in externalStaked + externalDelegated
 
 delegateInfoCrossCompat_gracePeriod :: Getter DelegateInfoCrossCompat Cycle
 delegateInfoCrossCompat_gracePeriod = to $ \case
-  DelegateInfoBase di -> di ^. Base.delegateInfo_gracePeriod
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_gracePeriod
+  DelegateInfoQuebec di -> di ^. Base.delegateInfoQuebec_gracePeriod
 
 delegateInfoCrossCompat_deactivated :: Getter DelegateInfoCrossCompat Bool
 delegateInfoCrossCompat_deactivated = to $ \case
-  DelegateInfoBase di -> di ^. Base.delegateInfo_deactivated
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_deactivated
+  DelegateInfoQuebec di -> di ^. Base.delegateInfoQuebec_deactivated
 
 delegateInfoCrossCompat_activeConsensusKey :: Getter DelegateInfoCrossCompat PublicKeyHash
 delegateInfoCrossCompat_activeConsensusKey = to $ \case
-  DelegateInfoBase di -> di ^. Base.delegateInfo_activeConsensusKey
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_activeConsensusKey
+  DelegateInfoQuebec di -> di ^. Base.delegateInfoQuebec_activeConsensusKey
 
 delegateInfoCrossCompat_pendingConsensusKeys :: Getter DelegateInfoCrossCompat [Base.PendingConsensusKey]
 delegateInfoCrossCompat_pendingConsensusKeys = to $ \case
-  DelegateInfoBase di -> di ^. Base.delegateInfo_pendingConsensusKeys
+  DelegateInfoParis di -> di ^. Base.delegateInfoParis_pendingConsensusKeys
+  DelegateInfoQuebec di -> di ^. Base.delegateInfoQuebec_pendingConsensusKeys
 
 data BakingRightsCrossCompat
   = BakingRightsBase Base.BakingRights
