@@ -182,9 +182,7 @@ mkTeztnetsUrl chainName = mkURI $ "https://teztnets.com/" <> chainName
 asNamedChain :: MonadThrow m => NetworkOption -> m NetworkOption
 asNamedChain = \case
   n@(NetworkOption_NamedChain nc)  -> case nc of
-    c@NamedChain_Oxfordnet ->
-      NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
-    c@NamedChain_Paris2net ->
+    c@NamedChain_Quebecnet ->
       NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
     c@NamedChain_ParisCnet ->
       NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
