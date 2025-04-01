@@ -112,8 +112,8 @@ instance ToJSON e => ToJSON a => ToJSON (Validation e a)
 pattern QuebecProtocolHash :: ProtocolHash
 pattern QuebecProtocolHash = ProtocolHash "PsQuebecnLByd3JwTiGadoG4nGWi3HYiLXUjkibeFV8dCFeVMUg"
 
-pattern ParisCProtocolHash :: ProtocolHash
-pattern ParisCProtocolHash = ProtocolHash "PsParisCZo7KAh1Z1smVd9ZMZ1HHn5gkzbM94V3PLCpknFWhUAi"
+pattern RioProtocolHash :: ProtocolHash
+pattern RioProtocolHash = ProtocolHash "PsRiotumaAMotcRoDWW1bysEhQy2n1M5fy8JgRp8jjRfHGmfeA7"
 
 data DaemonType
   = DaemonType_Node
