@@ -196,6 +196,7 @@ instance FromJSON OperationContents where
       "zk_rollup_origination"          -> pure OperationContents_Unknown
       "zk_rollup_publish"              -> pure OperationContents_Unknown
       "zk_rollup_update"               -> pure OperationContents_Unknown
+      "dal_publish_commitment"         -> pure OperationContents_Unknown
 
       unknown -> trace ("Warning: Unknown operation kind " <> T.unpack unknown) $ pure OperationContents_Unknown
 
