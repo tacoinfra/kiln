@@ -144,14 +144,11 @@ instance FromJSON OperationContents where
   parseJSON = withObject "Operation" $ \v -> do
     kind :: Text <- v .: "kind"
     case kind of
-      "endorsement"                    -> OperationContents_Endorsement                  <$> parseJSON (Object v)
       "attestation"                    -> OperationContents_Endorsement                  <$> parseJSON (Object v)
-      "double_endorsement_evidence"    -> OperationContents_DoubleEndorsementEvidence    <$> parseJSON (Object v)
+      "attestation_with_dal"           -> OperationContents_Endorsement                  <$> parseJSON (Object v)
       "double_attestation_evidence"    -> OperationContents_DoubleEndorsementEvidence    <$> parseJSON (Object v)
       "double_baking_evidence"         -> OperationContents_DoubleBakingEvidence         <$> parseJSON (Object v)
       "double_preattestation_evidence" -> OperationContents_DoublePreendorsementEvidence <$> parseJSON (Object v)
-      "double_preendorsement_evidence" -> OperationContents_DoublePreendorsementEvidence <$> parseJSON (Object v)
-      "preendorsement"                 -> pure OperationContents_Preendorsement
       "preattestation"                 -> pure OperationContents_Preendorsement
       "seed_nonce_revelation"          -> pure OperationContents_SeedNonceRevelation
       "activate_account"               -> pure OperationContents_ActivateAccount
@@ -165,8 +162,6 @@ instance FromJSON OperationContents where
       "register_global_constant"       -> pure OperationContents_RegisterGlobalConstant
       "set_deposits_limit"             -> pure OperationContents_SetDepositsLimit
 
-      "endorsement_with_dal"           -> pure OperationContents_Unknown
-      "attestation_with_dal"           -> pure OperationContents_Unknown
       "sc_rollup_add_messages"         -> pure OperationContents_Unknown
       "sc_rollup_cement"               -> pure OperationContents_Unknown
       "sc_rollup_publish"              -> pure OperationContents_Unknown
