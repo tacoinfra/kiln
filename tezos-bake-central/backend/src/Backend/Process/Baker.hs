@@ -68,15 +68,15 @@ getBakerPath paths mbProto =
     Just protoHash -> _bakerPath_path =<< find (\bp -> _bakerPath_proto bp == protoHash) paths
 
 defaultBakerPaths :: NonEmpty BakerPath
-defaultBakerPaths = NonEmpty.fromList [quebecPath, parisCPath]
+defaultBakerPaths = NonEmpty.fromList [quebecPath, rioPath]
   where
     quebecPath = BakerPath
       { _bakerPath_proto = QuebecProtocolHash
       , _bakerPath_path = Just $(staticWhich "tezos-baker-PsQuebec")
       }
-    parisCPath = BakerPath
-      { _bakerPath_proto = ParisCProtocolHash
-      , _bakerPath_path = Just $(staticWhich "tezos-baker-PsParisC")
+    rioPath = BakerPath
+      { _bakerPath_proto = RioProtocolHash
+      , _bakerPath_path = Just $(staticWhich "tezos-baker-PsRiotum")
       }
 
 bakerDaemonProcess
@@ -206,7 +206,7 @@ getBakerArgs = do
   $(logDebug) $ "Baker extra args: " <> tshow extraArgs
   let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
   bakerCustomArgs <- getKilnBakerCustomArgs
-  pure $ protocolAgnosticArgs <> bakerCustomArgs <> extraArgsCmd
+  pure $ protocolAgnosticArgs <> bakerCustomArgs <> extraArgsCmd <> ["--without-dal"]
 
 -- | Octez-node needs some time before it becomes able to respond to RPC queries.
 -- Due to this, daemons may fail with connection timeout. So we check that node
