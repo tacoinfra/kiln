@@ -172,6 +172,7 @@ createBakerProcess
 createBakerProcess paths mbProto = runExceptT $ do
   bakerPath <- liftEither $ getBakerPath paths mbProto
   bakerArgs <- lift getBakerArgs
+  $(logDebug) $ "Run " <> tshow bakerPath <> " with " <> tshow (unlines bakerArgs)
   pure $ proc bakerPath bakerArgs
 
 getBakerArgs
@@ -200,13 +201,16 @@ getBakerArgs = do
       , "run", "with", "local", "node", nodeDataDir appConfig
       , alias
       ]
+    dalNodeArgs = case _appConfig_dalNodeUri appConfig of
+      Nothing -> ["--without-dal"]
+      Just dalUri -> ["--dal-node", T.unpack $ render dalUri]
   extraArgs <- runTransaction $ select $
     BakerExtraArgs_publicKeyHashField ==. pkh &&.
     BakerExtraArgs_chainIdField ==. chainId
   $(logDebug) $ "Baker extra args: " <> tshow extraArgs
   let extraArgsCmd = fmap T.unpack $ concatMap toCmdArg extraArgs
   bakerCustomArgs <- getKilnBakerCustomArgs
-  pure $ protocolAgnosticArgs <> bakerCustomArgs <> extraArgsCmd <> ["--without-dal"]
+  pure $ protocolAgnosticArgs <> bakerCustomArgs <> extraArgsCmd <> dalNodeArgs
 
 -- | Octez-node needs some time before it becomes able to respond to RPC queries.
 -- Due to this, daemons may fail with connection timeout. So we check that node

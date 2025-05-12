@@ -53,6 +53,7 @@ data AppConfig = AppConfig
   , _appConfig_tezosNodeEnvVar :: Maybe FilePath
   , _appConfig_processRestartMaxDelay :: NominalDiffTime
   , _appConfig_resolvedAlertsTtl :: Int
+  , _appConfig_dalNodeUri :: Maybe URI
   }
 
 class HasAppConfig a where

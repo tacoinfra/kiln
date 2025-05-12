@@ -249,6 +249,9 @@ backendImpl cfg serve = do
       (_opts_resolvedAlertsTtl cfg)
       (getConfigFromFile (Just . read . T.unpack) $ configPath Config.resolvedAlertsTtl)
 
+  !(dalNodeUri :: Maybe URI) <- fmap ((<|>) (_opts_dalNodeUri cfg))
+    (getConfigFromFile (Just . Config.parseRootURIUnsafe) $ configPath Config.dalNodeUri)
+
   httpMgr <- Http.newManager Https.tlsManagerSettings
   let
     withLogger :: (LoggingEnv -> LoggingT IO a) -> IO a
@@ -380,6 +383,7 @@ backendImpl cfg serve = do
         , _appConfig_tezosNodeEnvVar = tezosNodeEnvVar
         , _appConfig_processRestartMaxDelay = processRestartMaxDelay
         , _appConfig_resolvedAlertsTtl = resolvedAlertsTtl
+        , _appConfig_dalNodeUri = dalNodeUri
         }
 
     dataSrc <- liftIO $ do
@@ -547,6 +551,7 @@ data Opts = Opts
   , _opts_checkLedgerConnection :: Maybe Bool
   , _opts_processRestartMaxDelay :: Maybe Int
   , _opts_resolvedAlertsTtl :: Maybe Int
+  , _opts_dalNodeUri :: Maybe URI
   }
 makeLenses ''Opts
 
@@ -574,6 +579,7 @@ instance Semigroup Opts where
     , _opts_checkLedgerConnection = rightBiased (<|>) _opts_checkLedgerConnection
     , _opts_processRestartMaxDelay = rightBiased (<|>) _opts_processRestartMaxDelay
     , _opts_resolvedAlertsTtl = rightBiased (<|>) _opts_resolvedAlertsTtl
+    , _opts_dalNodeUri = rightBiased (<|>) _opts_dalNodeUri
     }
     where
       rightBiased :: (b -> b -> c) -> (Opts -> b) -> c
@@ -603,6 +609,7 @@ instance Monoid Opts where
       , _opts_checkLedgerConnection = Nothing
       , _opts_processRestartMaxDelay = Nothing
       , _opts_resolvedAlertsTtl = Nothing
+      , _opts_dalNodeUri = Nothing
       }
 
 optsArgDescr :: [GetOpt.OptDescr Opts]
@@ -677,6 +684,9 @@ optsArgDescr =
   , mkReqArg Config.resolvedAlertsTtl "INT" (set opts_resolvedAlertsTtl . Just . read . T.unpack) $
       "Time in minutes after which resolved alerts are deleted. The value should be between 0 and 10080 (7 days). Defaults to " <>
       show Config.defaultResolvedAlertsTtl <> " minutes (3 days)."
+
+  , mkReqArg Config.dalNodeUri "URI" (set opts_dalNodeUri . pure . Config.parseRootURIUnsafe)
+      "Octez Data Availability Layer node URI. If not provided, a DAL node won't be used."
   ]
   where
     mkReqArg opt var f = GetOpt.Option [] [opt] (GetOpt.ReqArg (\x -> f (T.pack x) mempty) var)
