@@ -97,6 +97,10 @@ only if Kiln Baker has baking rights.
 
 Time in minutes after which resolved alerts are deleted. The value should be between 0 and 10080 (7 days). Defaults to 4320 minutes (3 days).
 
+## dal-node-uri URI
+
+Octez Data Availability Layer node URI. If not provided, a DAL node won't be used.
+
 ## binary-paths
 
 Create a file named `binary-paths` in the `config` directory adjacent

@@ -190,6 +190,9 @@ defaultProcessRestartMaxDelay = 600
 resolvedAlertsTtl :: FilePath
 resolvedAlertsTtl = "resolved-alerts-ttl"
 
+dalNodeUri :: FilePath
+dalNodeUri = "dal-node-uri"
+
 defaultResolvedAlertsTtl :: Int
 defaultResolvedAlertsTtl = 4320 -- 3 days
 

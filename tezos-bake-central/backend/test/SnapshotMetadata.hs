@@ -144,6 +144,7 @@ dummyAppConfig = AppConfig
   , _appConfig_tezosNodeEnvVar = Nothing
   , _appConfig_processRestartMaxDelay = 0
   , _appConfig_resolvedAlertsTtl = 0
+  , _appConfig_dalNodeUri = Nothing
   }
   where
     dummyNodeConfigFile = Left Null
