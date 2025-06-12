@@ -78,6 +78,40 @@ build-deb-package:
     paths:
       - debian/*
 
+build-darwin-octez-stable:
+  stage: build
+  tags: [darwin]
+  when: manual
+  rules: &if_develop
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+  variables:
+    PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/octez"
+    HEADER: "JOB-TOKEN: $CI_JOB_TOKEN"
+    HOMEBREW_DEVELOPER: "1"
+    FORMULA_URL: "https://packages.nomadic-labs.com/homebrew/Formula/octez.rb"
+  script: &build_darwin_octez
+    - nix-shell -p curl --run 'curl -q "$FORMULA_URL" -O'
+    - /usr/bin/arch -x86_64 brew install --formula --build-bottle ./octez.rb
+    - /usr/bin/arch -x86_64 brew bottle --force-core-tap --no-rebuild ./octez.rb
+    - export BOTTLE_NAME="$(basename "$(ls ./*.bottle.tar.gz)")"
+    - export OCTEZ_VERSION="$(sed -nE 's/.*version "(.*)".*/\1/p' octez.rb)"
+    - nix-shell -p curl --run 'curl --header "$HEADER" --upload-file "./$BOTTLE_NAME" "$PACKAGE_REGISTRY_URL/$OCTEZ_VERSION/$BOTTLE_NAME"'
+  after_script: &cleanup_darwin_octez
+    - /usr/bin/arch -x86_64 brew uninstall --formula ./octez.rb || true
+
+build-darwin-octez-rc:
+  stage: build
+  tags: [darwin]
+  when: manual
+  rules: *if_develop
+  variables:
+    PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/octez"
+    HEADER: "JOB-TOKEN: $CI_JOB_TOKEN"
+    HOMEBREW_DEVELOPER: "1"
+    FORMULA_URL: "https://packages.nomadic-labs.com/homebrew/RC/Formula/octez.rb"
+  script: *build_darwin_octez
+  after_script: *cleanup_darwin_octez
+
 build-darwin-package:
   stage: package
   tags: [darwin]
