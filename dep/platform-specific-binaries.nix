@@ -1,7 +1,7 @@
 { system ? if builtins.currentSystem == "aarch64-darwin" then "x86_64-darwin" else builtins.currentSystem, pkgs, source }:
 
 let system-binaries = {
-                x86_64-linux = pkgs.callPackage ./serokell-tezos-binaries {};
+                x86_64-linux = pkgs.callPackage ./linux-tezos-binaries {};
                 x86_64-darwin = pkgs.callPackage ./brew-tezos-binaries {};
                 };
 

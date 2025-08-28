@@ -27,7 +27,7 @@ fetch-linux-binaries:
   stage: fetch-binaries
   rules: *if_merge_request
   script:
-    - nix-build dep/serokell-tezos-binaries/build.nix
+    - nix-build dep/linux-tezos-binaries/build.nix
 
 fetch-macos-binaries:
   stage: fetch-binaries
