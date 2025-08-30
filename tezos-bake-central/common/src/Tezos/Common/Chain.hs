@@ -23,8 +23,8 @@ import Tezos.Common.Base58Check (ChainId, HashBase58Error, fromBase58, toBase58T
 data NamedChain
   = NamedChain_Mainnet
   | NamedChain_Ghostnet
+  | NamedChain_Seoulnet
   | NamedChain_Rionet
-  | NamedChain_Quebecnet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
 instance FromJSON NamedChain
 instance ToJSON NamedChain
@@ -34,7 +34,7 @@ showNamedChain = \case
   NamedChain_Mainnet -> "mainnet"
   NamedChain_Ghostnet -> "ghostnet"
   NamedChain_Rionet -> "rionet"
-  NamedChain_Quebecnet -> "quebecnet"
+  NamedChain_Seoulnet -> "seoulnet"
 
 parseNamedChain :: Text -> Maybe NamedChain
 parseNamedChain x = find (\namedChain -> showNamedChain namedChain == T.toLower x)
@@ -52,8 +52,8 @@ getNamedChainId :: NamedChain -> Maybe ChainId
 getNamedChainId = \case
   NamedChain_Mainnet -> Just "NetXdQprcVkpaWU"
   NamedChain_Ghostnet -> Just "NetXnHfVqm9iesp"
+  NamedChain_Seoulnet -> Just "NetXd56aBs1aeW3"
   NamedChain_Rionet -> Just "NetXPdgaoabtBth"
-  NamedChain_Quebecnet -> Just "NetXuTeGinLEqxp"
 
 identifyChain :: ChainId -> Maybe NamedChain
 identifyChain cid = lookup cid namedChainAssoc
