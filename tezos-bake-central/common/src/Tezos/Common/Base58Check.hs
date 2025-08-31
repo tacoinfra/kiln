@@ -73,6 +73,7 @@ type Secp256k1Signature = HashedValue 'HashType_Secp256k1Signature
 type GenericSignature = HashedValue 'HashType_GenericSignature
 type ChainId = HashedValue 'HashType_ChainId
 type P256PublicKeyHash = HashedValue 'HashType_P256PublicKeyHash
+type BLS12381PublicKeyHash = HashedValue 'HashType_BLS12381PublicKeyHash
 type P256PublicKey = HashedValue 'HashType_P256PublicKey
 type P256Signature = HashedValue 'HashType_P256Signature
 type PayloadHash = HashedValue 'HashType_PayloadHash
@@ -112,6 +113,7 @@ data HashType
   | HashType_NonceHash
   | HashType_BlindedPublicKeyHash
   | HashType_P256PublicKeyHash
+  | HashType_BLS12381PublicKeyHash
   | HashType_P256Signature
   | HashType_P256PublicKey
   | HashType_PayloadHash
