@@ -100,7 +100,7 @@ parseBakerAddr v = do
     e -> "An unknown error happened, please report this as a bug: " <> tshow e
   where
     okPrefixes :: NE.NonEmpty Text
-    okPrefixes = "tz1" :| ["tz2", "tz3"]
+    okPrefixes = "tz1" :| ["tz2", "tz3", "tz4"]
 
 parseRootURIUnsafe :: Text -> URI
 parseRootURIUnsafe = unsafeParse "URI" mkRootUri

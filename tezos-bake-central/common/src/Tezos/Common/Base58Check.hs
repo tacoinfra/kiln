@@ -335,6 +335,10 @@ instance IsBase58Hash 'HashType_P256PublicKey where
   prefix _ = "\003\178\139\127"
   hashSize _ = 33
 
+instance IsBase58Hash 'HashType_BLS12381PublicKeyHash where
+  prefix _ = "\006\161\166" -- https://gitlab.com/tezos/tezos/-/blob/193078e3a20142a799059d9cb9bbaaa5e770c319/src/lib_crypto/base58.ml#L385
+  hashSize _ = 20
+
 instance IsBase58Hash 'HashType_PayloadHash where
   prefix _ = "\001\106\242"
   hashSize _ = 32
