@@ -2,15 +2,15 @@
 
 stdenv.mkDerivation rec {
   name = "tezos-${version}";
-  version = "23.0";
+  version = "23.1";
 
   src = builtins.fetchTarball {
       # go to https://gitlab.com/tezos/tezos/-/releases/octez-v${version} and follow to "Static binaries"
       # package, find the link to 'octez-binaries-${version}-linux-x86_64.tar.gz' archive, and put it below
       # set sha256 to "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" to get the new hash from the error message
       # or use 'nix-prefetch-url <url>' to get it directly
-      url = "https://gitlab.com/tezos/tezos/-/package_files/222343526/download";
-      sha256 = "0rjiz2n1qsk23lanqn0czy0zamds1n5wkjz5csi9qf5sbmrsjg0p";
+      url = "https://gitlab.com/tezos/tezos/-/package_files/225463181/download";
+      sha256 = "04b3b8l8lhr7qdjng19wysng4bf1wr4sm2a6s10jc6z021xc7gmi";
       };
   binaries = ["octez-client" "octez-node" "octez-baker-*"];
   # Since 'tezos-*' binaries were renamed to 'octez-*' in v15.0 Octez release
