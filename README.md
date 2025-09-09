@@ -309,6 +309,21 @@ In case you want to run the baker with some additional arguments, e.g.
 you want to run a baker with a vote for/against the liquidity baking subsidy,
 you should use `--kiln-baker-custom-args` option.
 
+### Register baker failure
+
+If the baker fails to register on protocols starting from Seoulnet, ensure that
+you have revealed your key. It's expected that future Tezos Wallet app versions
+will fix the problem, possibly starting from version 3.0.8.
+
+To reveal your key manually, run the next command, replacing `<YOUR_KEY>` with
+your Tezos address:
+
+```bash
+octez-client reveal key for <YOUR_KEY>
+```
+
+Your device may ask you to sign an operation, in which case you may safely do so.
+
 ### Configuring liquidity baking toggle vote
 
 Liquidity baking toggle vote option is set on Kiln UI during the creation of Kiln baker. The corresponding `--liquidity-baking-toggle-vote` custom argument will be ignored by Kiln.
