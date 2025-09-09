@@ -73,6 +73,7 @@ type Secp256k1Signature = HashedValue 'HashType_Secp256k1Signature
 type GenericSignature = HashedValue 'HashType_GenericSignature
 type ChainId = HashedValue 'HashType_ChainId
 type P256PublicKeyHash = HashedValue 'HashType_P256PublicKeyHash
+type BLS12381PublicKeyHash = HashedValue 'HashType_BLS12381PublicKeyHash
 type P256PublicKey = HashedValue 'HashType_P256PublicKey
 type P256Signature = HashedValue 'HashType_P256Signature
 type PayloadHash = HashedValue 'HashType_PayloadHash
@@ -112,6 +113,7 @@ data HashType
   | HashType_NonceHash
   | HashType_BlindedPublicKeyHash
   | HashType_P256PublicKeyHash
+  | HashType_BLS12381PublicKeyHash
   | HashType_P256Signature
   | HashType_P256PublicKey
   | HashType_PayloadHash
@@ -334,6 +336,10 @@ instance IsBase58Hash 'HashType_P256Signature where
 instance IsBase58Hash 'HashType_P256PublicKey where
   prefix _ = "\003\178\139\127"
   hashSize _ = 33
+
+instance IsBase58Hash 'HashType_BLS12381PublicKeyHash where
+  prefix _ = "\006\161\166" -- https://gitlab.com/tezos/tezos/-/blob/193078e3a20142a799059d9cb9bbaaa5e770c319/src/lib_crypto/base58.ml#L385
+  hashSize _ = 20
 
 instance IsBase58Hash 'HashType_PayloadHash where
   prefix _ = "\001\106\242"

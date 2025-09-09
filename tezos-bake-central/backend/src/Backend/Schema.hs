@@ -635,6 +635,7 @@ instance PersistField PublicKeyHash where
   toPersistValues (PublicKeyHash_Ed25519 x) = primToPersistValue $ toBase58Text x
   toPersistValues (PublicKeyHash_Secp256k1 x) = primToPersistValue $ toBase58Text x
   toPersistValues (PublicKeyHash_P256 x) = primToPersistValue $ toBase58Text x
+  toPersistValues (PublicKeyHash_BLS12381 x) = primToPersistValue $ toBase58Text x
   fromPersistValues = (fmap.first) toPublicKeyHash . primFromPersistValue
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8
@@ -683,6 +684,7 @@ instance PrimitivePersistField PublicKeyHash where
   toPrimitivePersistValue a (PublicKeyHash_Ed25519 x) = toPrimitivePersistValue a $ toBase58Text x
   toPrimitivePersistValue a (PublicKeyHash_Secp256k1 x) = toPrimitivePersistValue a $ toBase58Text x
   toPrimitivePersistValue a (PublicKeyHash_P256 x) = toPrimitivePersistValue a $ toBase58Text x
+  toPrimitivePersistValue a (PublicKeyHash_BLS12381 x) = toPrimitivePersistValue a $ toBase58Text x
   fromPrimitivePersistValue a = toPublicKeyHash . fromPrimitivePersistValue a
     where
       toPublicKeyHash = either (error . show) id . tryFromBase58 publicKeyHashConstructorDecoders . T.encodeUtf8

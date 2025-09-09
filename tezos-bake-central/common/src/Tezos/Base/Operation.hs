@@ -44,6 +44,7 @@ data Operation = Operation
 -- | "operation.alpha.operation_contents_and_result": {
 data OperationContents
   = OperationContents_Endorsement                  OperationContentsEndorsement
+  | OperationContents_Endorsement_Aggregate        OperationContentsEndorsementAggregate
   | OperationContents_DoubleEndorsementEvidence    OperationContentsDoubleEndorsementEvidence
   | OperationContents_DoubleBakingEvidence         OperationContentsDoubleBakingEvidence
   | OperationContents_DoublePreendorsementEvidence OperationContentsDoublePreendorsementEvidence
@@ -60,7 +61,23 @@ data OperationContents
   | OperationContents_Preendorsement
   | OperationContents_SeedNonceRevelation
   | OperationContents_Unknown
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show)
+
+data OperationContentsEndorsementAggregate = OperationContentsEndorsementAggregate
+  { _operationContentsEndorsementAggregate_committee :: [Slot]
+  , _operationContentsEndorsementAggregate_consensusContent :: ConsensusContent
+  , _operationContentsEndorsementAggregate_metadata :: EndorsementAggMetadata
+  } deriving (Eq, Ord, Show, Typeable)
+
+data ConsensusContent = ConsensusContent
+  { _consensusContent_round :: RawLevel
+  , _consensusContent_blockPayloadHash :: PayloadHash
+  , _consensusContent_level :: RawLevel
+  } deriving (Eq, Ord, Show, Typeable)
+
+data Slot = Slot
+  { _slot_slot :: Word16
+  } deriving (Eq, Ord, Show, Typeable)
 
 -- | "kind": { "type": "string", "enum": [ "endorsement_with_slot" ] },
 data OperationContentsEndorsement = OperationContentsEndorsement
@@ -76,6 +93,11 @@ data EndorsementMetadata = EndorsementMetadata
   , _endorsementMetadata_endorsementPower :: Int32 --  "endorsement_power": integer ∈ [-2^30, 2^30]
   }
   deriving (Eq, Ord, Show, Typeable)
+
+data EndorsementAggMetadata = EndorsementAggMetadata
+  { _attAggMetadata_total_consensus_power :: Int32
+  , _attAggMetadata_committee :: [EndorsementMetadata]
+  } deriving (Eq, Ord, Show, Typeable)
 
 instance FromJSON EndorsementMetadata where
   parseJSON = withObject "EndorsementMetadata" $ \o -> do
@@ -145,11 +167,13 @@ instance FromJSON OperationContents where
     kind :: Text <- v .: "kind"
     case kind of
       "attestation"                    -> OperationContents_Endorsement                  <$> parseJSON (Object v)
+      "attestations_aggregate"         -> OperationContents_Endorsement_Aggregate        <$> parseJSON (Object v)
       "attestation_with_dal"           -> OperationContents_Endorsement                  <$> parseJSON (Object v)
       "double_attestation_evidence"    -> OperationContents_DoubleEndorsementEvidence    <$> parseJSON (Object v)
       "double_baking_evidence"         -> OperationContents_DoubleBakingEvidence         <$> parseJSON (Object v)
       "double_preattestation_evidence" -> OperationContents_DoublePreendorsementEvidence <$> parseJSON (Object v)
       "preattestation"                 -> pure OperationContents_Preendorsement
+      "preattestations_aggregate"      -> pure OperationContents_Preendorsement
       "seed_nonce_revelation"          -> pure OperationContents_SeedNonceRevelation
       "activate_account"               -> pure OperationContents_ActivateAccount
       "proposals"                      -> pure OperationContents_Proposals
@@ -161,6 +185,9 @@ instance FromJSON OperationContents where
       "failing_noop"                   -> pure OperationContents_FailingNoop
       "register_global_constant"       -> pure OperationContents_RegisterGlobalConstant
       "set_deposits_limit"             -> pure OperationContents_SetDepositsLimit
+
+      -- TODO: This is unhandled for the timebeing, https://gitlab.com/tezos-kiln/kiln/-/issues/241
+      "double_consensus_operation_evidence" -> pure OperationContents_Unknown
 
       "sc_rollup_add_messages"         -> pure OperationContents_Unknown
       "sc_rollup_cement"               -> pure OperationContents_Unknown
@@ -201,6 +228,10 @@ concat <$> traverse deriveTezosFromJson
   , ''OperationContentsDoubleEndorsementEvidence
   , ''OperationContentsDoublePreendorsementEvidence
   , ''OperationContentsEndorsement
+  , ''ConsensusContent
+  , ''Slot
+  , ''EndorsementAggMetadata
+  , ''OperationContentsEndorsementAggregate
   , ''InlinedEndorsementLike
   , ''EndorsementLikeContents
   , ''DoubleBakingEvidenceMetadata
@@ -213,6 +244,9 @@ concat <$> traverse makeLenses
   , 'OperationContentsDoubleEndorsementEvidence
   , 'OperationContentsDoublePreendorsementEvidence
   , 'OperationContentsEndorsement
+  , ''ConsensusContent
+  , ''Slot
+  , ''OperationContentsEndorsementAggregate
   , 'InlinedEndorsementLike
   , 'EndorsementMetadata
   , 'EndorsementLikeContents

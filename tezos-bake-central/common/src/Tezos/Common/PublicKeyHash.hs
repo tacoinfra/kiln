@@ -28,6 +28,7 @@ data PublicKeyHash
   = PublicKeyHash_Ed25519 Ed25519PublicKeyHash
   | PublicKeyHash_Secp256k1 Secp256k1PublicKeyHash
   | PublicKeyHash_P256 P256PublicKeyHash
+  | PublicKeyHash_BLS12381 BLS12381PublicKeyHash
   deriving (Eq, Ord, Generic, Typeable)
 instance NFData PublicKeyHash
 instance Hashable PublicKeyHash
@@ -38,6 +39,7 @@ publicKeyHashConstructorDecoders =
   [ TryDecodeBase58 PublicKeyHash_Ed25519
   , TryDecodeBase58 PublicKeyHash_Secp256k1
   , TryDecodeBase58 PublicKeyHash_P256
+  , TryDecodeBase58 PublicKeyHash_BLS12381
   ]
 
 tryReadPublicKeyHash :: BS.ByteString -> Either HashBase58Error PublicKeyHash
@@ -50,10 +52,12 @@ instance ToJSON PublicKeyHash where
   toJSON (PublicKeyHash_Ed25519 x) = toJSON x
   toJSON (PublicKeyHash_Secp256k1 x) = toJSON x
   toJSON (PublicKeyHash_P256 x) = toJSON x
+  toJSON (PublicKeyHash_BLS12381 x) = toJSON x
 
   toEncoding (PublicKeyHash_Ed25519 x) = toEncoding x
   toEncoding (PublicKeyHash_Secp256k1 x) = toEncoding x
   toEncoding (PublicKeyHash_P256 x) = toEncoding x
+  toEncoding (PublicKeyHash_BLS12381 x) = toEncoding x
 
 instance FromJSON PublicKeyHash where
   parseJSON x = do
@@ -67,6 +71,7 @@ toPublicKeyHashText = \case
   PublicKeyHash_Ed25519 x -> toBase58Text x
   PublicKeyHash_Secp256k1 x -> toBase58Text x
   PublicKeyHash_P256 x -> toBase58Text x
+  PublicKeyHash_BLS12381 x -> toBase58Text x
 
 instance FromJSONKey PublicKeyHash
 instance ToJSONKey PublicKeyHash
@@ -88,32 +93,10 @@ instance B.TezosBinary PublicKeyHash where
     PublicKeyHash_Ed25519 h -> B.build @Word8 0 <> B.build h
     PublicKeyHash_Secp256k1 h -> B.build @Word8 1 <> B.build h
     PublicKeyHash_P256 h -> B.build @Word8 2 <> B.build h
+    PublicKeyHash_BLS12381 h -> B.build @Word8 3 <> B.build h
   get = B.get @Word8 >>= \case
     0 -> PublicKeyHash_Ed25519 <$> B.get
     1 -> PublicKeyHash_Secp256k1 <$> B.get
     2 -> PublicKeyHash_P256 <$> B.get
+    3 -> PublicKeyHash_BLS12381 <$> B.get
     _ -> fail "PublicKeyHash: unknown tag"
-
-
--- TODO: bitrotted since RPC proposal; can i still get this info?
-rawContextLink :: PublicKeyHash -> Text
-rawContextLink pkh = T.intercalate "/"
-    [ "raw_context/contracts/index" , rawContextKeyPath pkh ]
-  where
-    b16 :: BS.ByteString -> Text
-    b16 x = T.decodeUtf8 $ BS16.encode x
-
-    rawContextKeyPath :: PublicKeyHash -> Text
-    rawContextKeyPath (PublicKeyHash_Ed25519 (HashedValue x)) = "ed25519/" <> hashedValueKeyPath (b16 $ fromShort x)
-    rawContextKeyPath (PublicKeyHash_Secp256k1 (HashedValue x)) = "secp256k1/" <> hashedValueKeyPath (b16 $ fromShort x)
-    rawContextKeyPath (PublicKeyHash_P256 (HashedValue x)) = "p256/" <> hashedValueKeyPath (b16 $ fromShort x)
-
-    hashedValueKeyPath :: Text -> Text
-    hashedValueKeyPath x = T.toLower $ T.intercalate "/"
-        [ T.drop 0 $ T.take 2 x
-        , T.drop 2 $ T.take 4 x
-        , T.drop 4 $ T.take 6 x
-        , T.drop 6 $ T.take 8 x
-        , T.drop 8 $ T.take 10 x
-        , T.drop 10 x
-        ]
