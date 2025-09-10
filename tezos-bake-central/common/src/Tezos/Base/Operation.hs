@@ -206,6 +206,7 @@ instance FromJSON OperationContents where
       "vdf_revelation"                 -> pure OperationContents_Unknown
       "event"                          -> pure OperationContents_Unknown
       "update_consensus_key"           -> pure OperationContents_Unknown
+      "update_companion_key"           -> pure OperationContents_Unknown
       "drain_delegate"                 -> pure OperationContents_Unknown
       "smart_rollup_originate"         -> pure OperationContents_Unknown
       "smart_rollup_add_messages"      -> pure OperationContents_Unknown
