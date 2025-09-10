@@ -9,13 +9,10 @@ import Control.DeepSeq (NFData)
 import Data.Aeson
 import qualified Data.ByteString as BS
 import Data.Word (Word8)
-import Tezos.Common.ShortByteString (fromShort)
-import qualified Data.ByteString.Base16 as BS16
 import Data.Hashable (Hashable)
 import Data.String
 import Data.Text (Text)
 import Data.Typeable (Typeable)
-import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import GHC.Generics (Generic)
 import qualified Text.ParserCombinators.ReadPrec as Read

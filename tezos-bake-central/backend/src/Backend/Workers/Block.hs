@@ -169,8 +169,9 @@ parseAndReportAccusations appConfig blockHash block = do
 -- | Withdrawing money from accused baker has 'freezer' kind and
 -- 'deposits' category. It's expected that there is only one such
 -- balance update in 'double_*_evidence' metadata.
-getAccusedBaker :: [BalanceUpdate] -> PublicKeyHash
-getAccusedBaker updates =
+getAccusedBaker :: Either [BalanceUpdate] PublicKeyHash -> PublicKeyHash
+getAccusedBaker (Right accused) = accused
+getAccusedBaker (Left updates) =
   let
     pkhsLostMoney = flip mapMaybe updates $ \case
       BalanceUpdate_Freezer (FreezerUpdate pkh change BalanceUpdateCategory_Deposits) | change < 0 -> Just pkh
