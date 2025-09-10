@@ -9,6 +9,7 @@ import Data.Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Foldable (toList)
 import Test.Tasty
+import Data.Either
 import Test.Tasty.HUnit
 
 import Backend.Workers.Block (getAccusedBaker)
@@ -36,13 +37,13 @@ baseAccusationTest testName getBalanceUpdates path expected = testCase testName 
   let
     op = either (error "Failed to decode operation contents") id $ eitherDecode @t raw
     balanceUpdates = getBalanceUpdates op
-    accusedBaker = getAccusedBaker balanceUpdates
+    accusedBaker = getAccusedBaker (Left balanceUpdates)
   accusedBaker @?= expected
 
 testDoubleBakingEvidence013 :: TestTree
 testDoubleBakingEvidence013 = baseAccusationTest
   "Double baking evidence"
-  (toList . Base._doubleBakingEvidenceMetadata_balanceUpdates . Base._operationContentsDoubleBakingEvidence_metadata)
+  (toList . fromLeft (error "Not a left value") . Base._doubleBakingEvidenceMetadata_accusedInfo . Base._operationContentsDoubleBakingEvidence_metadata)
   -- https://ithacanet.tzkt.io/opX2JykJaQ96Mt8dK4sTcjVuRbNJTJrJVBy36Xj6cGFUBne4uBX
   "test/resources/double_baking_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"
