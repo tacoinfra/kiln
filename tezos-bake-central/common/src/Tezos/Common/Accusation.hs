@@ -14,7 +14,7 @@ data AccusationType
   deriving (Eq, Ord, Enum, Read, Show)
 
 data AccusationInfo = AccusationInfo
-  { _accusationInfo_type :: AccusationType
+  { _accusationInfo_type :: Maybe AccusationType
   , _accusationInfo_accusedLevel :: RawLevel
   , _accusationInfo_opHash :: OperationHash
   , _accusationInfo_accusedInfo :: Either [BalanceUpdate] PublicKeyHash
