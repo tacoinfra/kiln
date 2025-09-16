@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -Wall -Werror #-}
@@ -20,7 +21,7 @@ import Prelude hiding (log, cycle)
 import Data.Dependent.Sum
 import Control.Lens ((<&>))
 import Control.Monad.Base (MonadBase)
-import Control.Monad.Logger (MonadLogger, MonadLoggerIO)
+import Control.Monad.Logger (MonadLogger, MonadLoggerIO, logInfo)
 import Data.Map (Map())
 import qualified Data.Map as Map
 import Data.List.NonEmpty (nonEmpty)
@@ -1049,8 +1050,9 @@ reportAccusation
      , SqlDb (PhantomDb m)
      , MonadBase Serializable m
      , MonadLogger m)
-  => OperationHash -> BlockHash -> AccusationType -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
-reportAccusation opHash blkHash accusationType pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
+  => OperationHash -> BlockHash -> Maybe AccusationType -> PublicKeyHash -> RawLevel -> Cycle -> RawLevel -> Cycle -> m ()
+reportAccusation _ _ Nothing _ _ _ _ _ = $(logInfo) "Unknown accusation kind, skip reporting."
+reportAccusation opHash blkHash (Just accusationType) pkh lvl cycle aLvl aCycle = when' (bakerNotDeleted pkh) $ do
   chainId <- _appConfig_chainId <$> askAppConfig
   accusedLog <- accusedBakeLog pkh chainId opHash blkHash
   for_ (Map.toList accusedLog) $ \(bid, eids) -> case nonEmpty eids of
