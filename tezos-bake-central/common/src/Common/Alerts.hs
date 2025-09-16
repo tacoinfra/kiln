@@ -394,8 +394,8 @@ bakerNeedToFinalizeUnstakeDescriptions elog = BakerErrorDescriptions
 
 bakerAccusedDescriptions :: ErrorLogBakerAccused -> BakerErrorDescriptions
 bakerAccusedDescriptions elog = BakerErrorDescriptions
-  { _bakerErrorDescriptions_title = "Baker has been accused of double " <> right
-  , _bakerErrorDescriptions_tile = "Accused of double " <> right <> "."
+  { _bakerErrorDescriptions_title = "Baker has been accused of " <> right
+  , _bakerErrorDescriptions_tile = "Accused of " <> right <> "."
   , _bakerErrorDescriptions_notification =
       plaintextErrorDescription firstParagraph
       <> "\nSecurity deposits and rewards may have been confiscated."
@@ -420,7 +420,7 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
   , _bakerErrorDescriptions_warning = Nothing
   , _bakerErrorDescriptions_fix = bool
       ("Because this accusation was made in a cycle following that in which "
-       <> "the double " <> rightI <> " occurred no further tez can be "
+       <> "the " <> rightI <> " occurred no further tez can be "
        <> "confiscated and it is safe to continue running your baker.")
       turnOffShort
       accusedInSameCycle
@@ -439,13 +439,15 @@ bakerAccusedDescriptions elog = BakerErrorDescriptions
     lvl = tshow $ unRawLevel $ _errorLogBakerAccused_level elog
     accusedLevel = tshow $ unRawLevel $ _errorLogBakerAccused_accusedLevel elog
     right = case _errorLogBakerAccused_accusationType elog of
-      AccusationType_DoubleBake -> "baking"
-      AccusationType_DoubleEndorsement -> "attestation"
-      AccusationType_DoublePreendorsement -> "preattestation"
+      AccusationType_DoubleBake -> "double baking"
+      AccusationType_DoubleEndorsement -> "double attestation"
+      AccusationType_DoublePreendorsement -> "double preattestation"
+      AccusationType_DalEntrapment -> "DAL entrapment"
     rightI = case _errorLogBakerAccused_accusationType elog of
-      AccusationType_DoubleBake -> "bake"
-      AccusationType_DoubleEndorsement -> "attestation"
-      AccusationType_DoublePreendorsement -> "preattestation"
+      AccusationType_DoubleBake -> "double bake"
+      AccusationType_DoubleEndorsement -> "double attestation"
+      AccusationType_DoublePreendorsement -> "double preattestation"
+      AccusationType_DalEntrapment -> "DAL entrapment"
     upTo = bool "" (" up to block level " <> accusedLevel) accusedInSameCycle
     accusedInSameCycle = liftA2 (==) _errorLogBakerAccused_cycle _errorLogBakerAccused_accusedCycle elog
 

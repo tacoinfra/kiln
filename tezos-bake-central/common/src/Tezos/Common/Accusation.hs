@@ -6,18 +6,26 @@ import Tezos.Common.BalanceUpdate
 import Tezos.Common.Base58Check
 import Tezos.Common.PublicKeyHash (PublicKeyHash)
 import Tezos.Common.Level
+import GHC.Word
 
 data AccusationType
   = AccusationType_DoubleBake
   | AccusationType_DoubleEndorsement
   | AccusationType_DoublePreendorsement
+  | AccusationType_DalEntrapment
   deriving (Eq, Ord, Enum, Read, Show)
+
+data AccusedInfo
+  = AccInfoBalanceUpdates [BalanceUpdate]
+  | ExplictDelegate PublicKeyHash
+  | SlotAndLevel Word16 RawLevel
+  deriving (Eq, Ord, Show)
 
 data AccusationInfo = AccusationInfo
   { _accusationInfo_type :: Maybe AccusationType
   , _accusationInfo_accusedLevel :: RawLevel
   , _accusationInfo_opHash :: OperationHash
-  , _accusationInfo_accusedInfo :: Either [BalanceUpdate] PublicKeyHash
+  , _accusationInfo_accusedInfo :: AccusedInfo
   -- In older protocol the accused information came in the form
   -- balance_updates, but starting from Oxford, it (the accused address) is
   -- explicitly included in the metadata. Hence the either type for this field.

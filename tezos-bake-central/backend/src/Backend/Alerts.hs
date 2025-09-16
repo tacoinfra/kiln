@@ -1072,12 +1072,13 @@ reportAccusation opHash blkHash (Just accusationType) pkh lvl cycle aLvl aCycle 
       queueAlert (Just eid) alert
   where
     alert = Alert Unresolved
-      ("Double " <> accusationTxt)
-      ("Baker with address:" <> toPublicKeyHashText pkh <> " Double " <> accusationTxt <> " at level " <> tshow (unRawLevel lvl))
+      accusationTxt
+      ("Baker with address:" <> toPublicKeyHashText pkh <> " " <> accusationTxt <> " at level " <> tshow (unRawLevel lvl))
     accusationTxt = case accusationType of
-      AccusationType_DoubleBake -> "baked"
-      AccusationType_DoubleEndorsement -> "attested"
-      AccusationType_DoublePreendorsement -> "preattested"
+      AccusationType_DoubleBake -> "Double baked"
+      AccusationType_DoubleEndorsement -> "Double attested"
+      AccusationType_DoublePreendorsement -> "Double preattested"
+      AccusationType_DalEntrapment -> "Accused of DAL entrapment"
 
 clearMissedBake :: (MonadLogger m, MonadReader r m, HasAppConfig r
                    , MonadBase Serializable m

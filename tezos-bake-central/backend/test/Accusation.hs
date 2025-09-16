@@ -37,13 +37,17 @@ baseAccusationTest testName getBalanceUpdates path expected = testCase testName 
   let
     op = either (error "Failed to decode operation contents") id $ eitherDecode @t raw
     balanceUpdates = getBalanceUpdates op
-    accusedBaker = getAccusedBaker (Left balanceUpdates)
+    accusedBaker = getAccusedBaker balanceUpdates
   accusedBaker @?= expected
+
+extractBalanceUpdates :: AccusedInfo -> [BalanceUpdate]
+extractBalanceUpdates (AccInfoBalanceUpdates b) = b
+extractBalanceUpdates _ = error "Not balance updates"
 
 testDoubleBakingEvidence013 :: TestTree
 testDoubleBakingEvidence013 = baseAccusationTest
   "Double baking evidence"
-  (toList . fromLeft (error "Not a left value") . Base._doubleBakingEvidenceMetadata_accusedInfo . Base._operationContentsDoubleBakingEvidence_metadata)
+  (toList . extractBalanceUpdates . Base._doubleBakingEvidenceMetadata_accusedInfo . Base._operationContentsDoubleBakingEvidence_metadata)
   -- https://ithacanet.tzkt.io/opX2JykJaQ96Mt8dK4sTcjVuRbNJTJrJVBy36Xj6cGFUBne4uBX
   "test/resources/double_baking_evidence.json"
   "tz3Q67aMz7gSMiQRcW729sXSfuMtkyAHYfqc"

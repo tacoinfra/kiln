@@ -19,7 +19,6 @@ import Data.Aeson
 import Data.Int (Int32)
 import Data.Maybe (mapMaybe)
 import Data.Sequence (Seq)
-import Data.Foldable (toList)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable
@@ -50,6 +49,7 @@ data OperationContents
   | OperationContents_DoubleBakingEvidence         OperationContentsDoubleBakingEvidence
   | OperationContents_DoublePreendorsementEvidence OperationContentsDoublePreendorsementEvidence
   | OperationContents_DoubleConsensusOperationEvidence OperationContentsDoubleConsensusOperationEvidence
+  | OperationContents_DalEntrapmentEvidence OperationContentsDalEntrapmentEvidence
   | OperationContents_ActivateAccount
   | OperationContents_Proposals
   | OperationContents_Ballot
@@ -116,8 +116,24 @@ data OperationContentsDoubleBakingEvidence = OperationContentsDoubleBakingEviden
   deriving (Eq, Ord, Show, Typeable)
 
 data DoubleBakingEvidenceMetadata = DoubleBakingEvidenceMetadata
-  { _doubleBakingEvidenceMetadata_accusedInfo :: Either (Seq BalanceUpdate) PublicKeyHash --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" } and ("punished_delegate" | "forbidden_delegate") : $Signature.Public_key_hash,
+  { _doubleBakingEvidenceMetadata_accusedInfo :: AccusedInfo --  "balance_updates": { "$ref": "#/definitions/operation_metadata.alpha.balance_updates" } and ("punished_delegate" | "forbidden_delegate") : $Signature.Public_key_hash,
 
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
+data OperationContentsDalEntrapmentEvidence = OperationContentsDalEntrapmentEvidence
+  { _operationContentsDalEntrapmentEvidence_metadata :: DalEntrapmentEvidenceMetadata
+  , _operationContentsDalEntrapmentEvidence_attestation :: ConsensusOperation
+  }
+  deriving (Eq, Ord, Show, Typeable)
+
+data ConsensusOperation = ConsensusOperation
+  { _consensusOperation_operations :: ConsensusContent
+  } deriving (Eq, Ord, Show, Typeable)
+
+
+data DalEntrapmentEvidenceMetadata = DalEntrapmentEvidenceMetadata
+  { _dalEntrapmentEvidenceMetadata_balanceUpdates :: Maybe (Seq BalanceUpdate)
   }
   deriving (Eq, Ord, Show, Typeable)
 
@@ -129,7 +145,7 @@ data DoubleConsensusOperationEvidenceMetadata = DoubleConsensusOperationEvidence
 
 instance FromJSON DoubleBakingEvidenceMetadata where
   parseJSON = withObject "DoubleBakingEvidenceMetadata" $ \o -> do
-    DoubleBakingEvidenceMetadata <$> ((Left <$> (o .: "balance_updates")) <|> (Right <$> (o .: "forbidden_delegate")) <|> (Right <$> (o .: "punished_delegate")))
+    DoubleBakingEvidenceMetadata <$> ((AccInfoBalanceUpdates <$> (o .: "balance_updates")) <|> (ExplictDelegate <$> (o .: "forbidden_delegate")) <|> (ExplictDelegate <$> (o .: "punished_delegate")))
 
 -- | Contents that is similar for endorsement and preendorsement operations, see
 -- '$012-Psithaca.inlined.endorsement_mempool.contents' and '$012-Psithaca.inlined.preendorsement.contents'.
@@ -209,6 +225,7 @@ instance FromJSON OperationContents where
       "double_attestation_evidence"    -> OperationContents_DoubleEndorsementEvidence    <$> parseJSON (Object v)
       "double_baking_evidence"         -> OperationContents_DoubleBakingEvidence         <$> parseJSON (Object v)
       "double_preattestation_evidence" -> OperationContents_DoublePreendorsementEvidence <$> parseJSON (Object v)
+      "dal_entrapment_evidence"        -> OperationContents_DalEntrapmentEvidence <$> parseJSON (Object v)
       "preattestation"                 -> pure OperationContents_Preendorsement
       "preattestations_aggregate"      -> pure OperationContents_Preendorsement
       "seed_nonce_revelation"          -> pure OperationContents_SeedNonceRevelation
@@ -273,6 +290,9 @@ concat <$> traverse deriveTezosFromJson
   , ''DoubleEndorsementEvidenceMetadata
   , ''DoublePreendorsementEvidenceMetadata
   , ''OperationContentsDoubleConsensusOperationEvidenceMetadataMisbehaviour
+  , ''ConsensusOperation
+  , ''DalEntrapmentEvidenceMetadata
+  , ''OperationContentsDalEntrapmentEvidence
   ]
 concat <$> traverse makeLenses
   [ 'Operation
@@ -292,6 +312,9 @@ concat <$> traverse makeLenses
   , 'DoubleConsensusOperationEvidenceMetadata
   , 'DoublePreendorsementEvidenceMetadata
   , 'OperationContentsDoubleConsensusOperationEvidenceMetadataMisbehaviour
+  , 'OperationContentsDalEntrapmentEvidence
+  , 'ConsensusOperation
+  , 'DalEntrapmentEvidenceMetadata
   ]
 makePrisms ''OperationContents
 
@@ -305,9 +328,7 @@ instance MayHaveAccusations Operation where
           accusedLevel = ev
             ^. operationContentsDoubleBakingEvidence_bh1
             . blockHeaderFull_level
-          accusedInfo = case _doubleBakingEvidenceMetadata_accusedInfo $ _operationContentsDoubleBakingEvidence_metadata ev of
-            Left balanceUpdates -> Left (toList balanceUpdates)
-            Right accused -> Right accused
+          accusedInfo = _doubleBakingEvidenceMetadata_accusedInfo $ _operationContentsDoubleBakingEvidence_metadata ev
         in Just $ AccusationInfo (Just AccusationType_DoubleBake) accusedLevel opHash accusedInfo
       OperationContents_DoubleEndorsementEvidence ev ->
         let
@@ -319,7 +340,14 @@ instance MayHaveAccusations Operation where
             ^.. operationContentsDoubleEndorsementEvidence_metadata
             . doubleEndorsementEvidenceMetadata_balanceUpdates
             . traversed
-        in Just $ AccusationInfo (Just AccusationType_DoubleEndorsement) accusedLevel opHash (Left balanceUpdates)
+        in Just $ AccusationInfo (Just AccusationType_DoubleEndorsement) accusedLevel opHash (AccInfoBalanceUpdates balanceUpdates)
+      OperationContents_DalEntrapmentEvidence ev ->
+        let
+          accusedLevel = ev
+            ^. operationContentsDalEntrapmentEvidence_attestation
+            . consensusOperation_operations
+            . consensusContent_level
+        in Just $ AccusationInfo (Just AccusationType_DalEntrapment) accusedLevel opHash (AccInfoBalanceUpdates mempty)
       OperationContents_DoublePreendorsementEvidence ev ->
         let
           accusedLevel = ev
@@ -330,7 +358,7 @@ instance MayHaveAccusations Operation where
             ^.. operationContentsDoublePreendorsementEvidence_metadata
             . doublePreendorsementEvidenceMetadata_balanceUpdates
             . traversed
-        in Just $ AccusationInfo (Just AccusationType_DoublePreendorsement) accusedLevel opHash (Left balanceUpdates)
+        in Just $ AccusationInfo (Just AccusationType_DoublePreendorsement) accusedLevel opHash (AccInfoBalanceUpdates balanceUpdates)
       OperationContents_DoubleConsensusOperationEvidence ev ->
         let
           metadata = ev ^. operationContentsDoubleConsensusOperationEvidence_metadata
@@ -340,9 +368,9 @@ instance MayHaveAccusations Operation where
             (doubleConsensusOperationEvidenceMetadata_misbehaviour . operationContentsDoubleConsensusOperationEvidenceMetadataMisbehaviour_kind)
           accused = _doubleConsensusOperationEvidenceMetadata_punishedDelegate metadata
         in case misbehaviorKind of
-          Attestation -> Just $ AccusationInfo (Just AccusationType_DoubleEndorsement) accusedLevel opHash (Right accused)
-          Baking -> Just $ AccusationInfo (Just AccusationType_DoubleBake) accusedLevel opHash (Right accused)
-          Preattestation -> Just $ AccusationInfo (Just AccusationType_DoublePreendorsement) accusedLevel opHash (Right accused)
-          UnknownMisbehaviour -> Just $ AccusationInfo Nothing accusedLevel opHash (Right accused)
+          Attestation -> Just $ AccusationInfo (Just AccusationType_DoubleEndorsement) accusedLevel opHash (ExplictDelegate accused)
+          Baking -> Just $ AccusationInfo (Just AccusationType_DoubleBake) accusedLevel opHash (ExplictDelegate accused)
+          Preattestation -> Just $ AccusationInfo (Just AccusationType_DoublePreendorsement) accusedLevel opHash (ExplictDelegate accused)
+          UnknownMisbehaviour -> Just $ AccusationInfo Nothing accusedLevel opHash (ExplictDelegate accused)
 
       _ -> Nothing

@@ -103,6 +103,7 @@ library
     Tezos.Unsafe
 
     Tezos.Common.Accusation
+    Tezos.Common.AttestationInfo
     Tezos.Common.BalanceUpdate
     Tezos.Common.Ballot
     Tezos.Common.Base16ByteString
