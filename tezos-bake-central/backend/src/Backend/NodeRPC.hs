@@ -132,6 +132,7 @@ data NodeQuery a where
   NodeQuery_DelegateParameters :: BlockQuery -> PublicKeyHash -> NodeQuery DelegateParametersCrossCompat
   NodeQuery_Blocks            :: BlockHash -> RawLevel -> NodeQuery (Seq BlockHash)
   NodeQuery_Round             :: BlockQuery -> NodeQuery Int32
+  NodeQuery_AttestationInfo   :: RawLevel -> NodeQuery [AttestationInfo]
 deriving instance Show (NodeQuery a)
 deriving instance Typeable (NodeQuery a)
 
@@ -160,6 +161,7 @@ nodeQuery_UnstakedFrozenBalance :: ToBlockQuery blk => blk -> PublicKeyHash -> N
 nodeQuery_UnstakedFinalizableBalance :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery (Maybe Tez)
 nodeQuery_AILaunchCycle     :: ToBlockQuery blk => blk -> NodeQuery (Maybe Cycle)
 nodeQuery_DelegateParameters :: ToBlockQuery blk => blk -> PublicKeyHash -> NodeQuery DelegateParametersCrossCompat
+nodeQuery_AttestationInfo ::  RawLevel -> NodeQuery [AttestationInfo]
 nodeQuery_Round             :: ToBlockQuery blk => blk -> NodeQuery Int32
 nodeQuery_ProtocolConstants = NodeQuery_ProtocolConstants . toBlockQuery
 nodeQuery_BakingRights blk = NodeQuery_BakingRights (toBlockQuery blk)
@@ -182,6 +184,7 @@ nodeQuery_UnstakedFrozenBalance blk = NodeQuery_UnstakedFrozenBalance (toBlockQu
 nodeQuery_UnstakedFinalizableBalance blk = NodeQuery_UnstakedFinalizableBalance (toBlockQuery blk)
 nodeQuery_AILaunchCycle blk = NodeQuery_AILaunchCycle (toBlockQuery blk)
 nodeQuery_DelegateParameters blk pkh = NodeQuery_DelegateParameters (toBlockQuery blk) pkh
+nodeQuery_AttestationInfo blk = NodeQuery_AttestationInfo blk
 nodeQuery_Round blk = NodeQuery_Round (toBlockQuery blk)
 
 data NodeQueryIx a where
@@ -835,6 +838,7 @@ nodeQueryImpl doNodeRPC toChain chainId ctx logger q = runExceptT $ runLoggingEn
     let blocks = branch Seq.<| fromMaybe mempty (Map.lookup branch response)
     pure $ RpcResult (Aeson.encode blocks) blocks
   NodeQuery_Round branch -> nodeRPC' $ rRound chainId branch
+  NodeQuery_AttestationInfo lv -> nodeRPC' $ rAttestationInfo chainId lv
   where
     nodeRPC' :: forall c. Aeson.FromJSON c => repr c -> ExceptT KilnRpcError IO (RpcResult c)
     nodeRPC' q' = runReaderT (runLoggingEnv logger $ doNodeRPC q') ctx

@@ -153,25 +153,32 @@ parseAndReportAccusations appConfig blockHash block = do
       BlockGenesis _ -> 0
       BlockBase b -> b ^. blockMetadata . blockMetadata_levelInfo . levelInfo_cycle
     accusations = getAccusations block
-  for_ accusations $ \(AccusationInfo aType aLevel aHash aBalanceUpdates) -> do
-    let accusedBaker = getAccusedBaker aBalanceUpdates
-    aCycle <- levelToCycle (blockHash, blockLevel) aLevel
-    flip runReaderT appConfig $ reportAccusation
-      aHash
-      blockHash
-      aType
-      accusedBaker
-      blockLevel
-      blockCycle
-      aLevel
-      aCycle
+  for_ accusations $ \(AccusationInfo aType aLevel aHash aAccusedInfo) -> do
+    mAccusedBaker <- case aAccusedInfo of
+      SlotAndLevel s l -> do
+          searchAttestationInfoForSlot s
+            <$> nodeQueryDataSourceSafe (nodeQuery_AttestationInfo l)
+      ExplictDelegate d -> pure $ Just d
+      AccInfoBalanceUpdates b -> pure $ Just $ getAccusedBaker b
+    case mAccusedBaker of
+      Nothing -> pure ()
+      Just accusedBaker -> do
+        aCycle <- levelToCycle (blockHash, blockLevel) aLevel
+        flip runReaderT appConfig $ reportAccusation
+          aHash
+          blockHash
+          aType
+          accusedBaker
+          blockLevel
+          blockCycle
+          aLevel
+          aCycle
 
 -- | Withdrawing money from accused baker has 'freezer' kind and
 -- 'deposits' category. It's expected that there is only one such
 -- balance update in 'double_*_evidence' metadata.
-getAccusedBaker :: Either [BalanceUpdate] PublicKeyHash -> PublicKeyHash
-getAccusedBaker (Right accused) = accused
-getAccusedBaker (Left updates) =
+getAccusedBaker :: [BalanceUpdate] -> PublicKeyHash
+getAccusedBaker updates =
   let
     pkhsLostMoney = flip mapMaybe updates $ \case
       BalanceUpdate_Freezer (FreezerUpdate pkh change BalanceUpdateCategory_Deposits) | change < 0 -> Just pkh

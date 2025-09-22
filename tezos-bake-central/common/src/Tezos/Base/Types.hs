@@ -12,6 +12,7 @@ import Tezos.Common.Base58Check as X
   Secp256k1PublicKeyHash, Secp256k1SecretKey, Secp256k1Signature,
   blockHashToBase58Text, protocolHashToBase58Text, toBase58Text)
 import Tezos.Common.Accusation as X
+import Tezos.Common.AttestationInfo as X
 import Tezos.Common.Block as X
 import Tezos.Common.BlockHeader as X
 import Tezos.Common.Chain as X

@@ -93,6 +93,7 @@ class QueryHistory repr where -- blockscale
   rAILaunchCycle :: ChainId -> BlockQuery -> repr (Maybe Cycle)
   rDelegateParameters :: PublicKeyHash -> ChainId -> BlockQuery -> repr DelegateParametersCrossCompat
   rDelegateInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr DelegateInfoCrossCompat
+  rAttestationInfo :: ChainId -> RawLevel -> repr [AttestationInfo]
   rParticipationInfo :: PublicKeyHash -> ChainId -> BlockQuery -> repr ParticipationInfo
   rRound :: ChainId -> BlockQuery -> repr Int32
 
@@ -139,6 +140,8 @@ instance QueryHistory RpcQuery where
   rAILaunchCycle = blockAPI "/context/adaptive_issuance_launch_cycle"
   rDelegateParameters pkh = blockAPI $ "/context/delegates/" <> toPublicKeyHashText pkh <> "/active_staking_parameters"
   rDelegateInfo publicKeyHash = blockAPI ("/context/delegates/" <> toPublicKeyHashText publicKeyHash)
+  rAttestationInfo chainId (RawLevel lv) = chainAPI ("/blocks/" <> T.pack (show lv) <> "/helpers/attestation_rights?level=" <> T.pack (show lv)) chainId
+
   rParticipationInfo publicKeyHash = blockAPI $
       "/context/delegates/" <> toPublicKeyHashText publicKeyHash <> "/participation"
   rRound = blockAPI "/helpers/round"
