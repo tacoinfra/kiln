@@ -582,8 +582,19 @@ importSnapshotData appConfig nds sm smId SnapshotImportOptions{..} = do
               isProgressLine = isRight . P.parseOnly progressLogParser
           when (isProgressLine line) $
             runLoggingEnv logger $ runDb (Identity db) $ updateSnapshotMetaImportLog line smId
-      createProcessWithStreams cp (return ()) (return ()) (CL.mapM_ $ \line ->
-        updateImportProgress line *> logStderrLine line)
+      createProcessWithStreams cp (return ())
+        (CL.mapM_ $ \line -> do
+          liftIO $ BS.putStr line
+          -- make sure the `line` is consumed by printing it, irrespective of
+          -- what follows. This is to ensure that this process will never block
+          -- because of the stdout/stderr buffers getting full. This is also why
+          -- we read updates from both stdout and stderr, because different tezos-node
+          -- versions might choose to write it to either stdout or stderr.
+          updateImportProgress line *> logStderrLine line)
+        (CL.mapM_ $ \line -> do
+          liftIO $ BS.putStr line
+          -- Same as above.
+          updateImportProgress line *> logStderrLine line)
 
 initSnapshotMeta
   :: MonadLoggerIO m
