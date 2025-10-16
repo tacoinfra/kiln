@@ -157,7 +157,7 @@ handleSnapshotUpload appConfig nds lockMVar = do
     logger = _nodeDataSource_logger nds
     uploadTmpLocation = _appConfig_kilnDataDir appConfig <> "/snapshots_tmp/"
     storeLocation = snapshotStorePath appConfig
-    partUploadPolicy _ = allowWithMaximumSize (10 * 1024 * 1024 * 1024) -- 10gb
+    partUploadPolicy _ = allowWithMaximumSize (50 * 1024 * 1024 * 1024) -- 50gb
     withLockRelease m = liftIO $ finally m (tryTakeMVar lockMVar)
 
     takeLock = liftIO $ tryPutMVar lockMVar ()
