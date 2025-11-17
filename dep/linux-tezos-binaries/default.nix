@@ -15,9 +15,11 @@ stdenv.mkDerivation rec {
   installPhase = ''
   mkdir -p $out/bin
   for bin in $binaries ; do
+    cp ${src}/$bin $out/bin/$bin
     tezos_bin=$(echo $bin | sed "s/octez/tezos/")
     cp ${src}/$bin $out/bin/$tezos_bin
     chmod +x $out/bin/$tezos_bin
+    chmod +x $out/bin/$bin
   done
   '';
   }
