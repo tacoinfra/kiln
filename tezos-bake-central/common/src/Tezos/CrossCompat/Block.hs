@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | This module contains data types similat to the ones from 'Tezos.V*.Block'
 -- but represented as unions to provide cross compatibility between protocols
 -- in case of RPC schema changes.
@@ -13,10 +14,10 @@ import Data.Aeson
 import Tezos.Common.Accusation
 import Tezos.Common.Block
 import Tezos.Common.BlockHeader
+import Tezos.Common.Chain (pattern RioProtocolHash, pattern SeoulProtocolHash, pattern TallinnProtocolHash)
 import qualified Tezos.Genesis.Block as Genesis
 import Tezos.Base.Block (HasBlockMetadata(..))
 import qualified Tezos.Base.Types as Base
-
 
 data BlockCrossCompat
   = BlockGenesis Genesis.Block
@@ -25,10 +26,11 @@ data BlockCrossCompat
 
 instance FromJSON BlockCrossCompat where
   parseJSON jv@(Object o) = do
-    pv :: String <- o .: "protocol"
+    pv <- o .: "protocol"
     case pv of
-      "PsRiotumaAMotcRoDWW1bysEhQy2n1M5fy8JgRp8jjRfHGmfeA7" -> BlockBase <$> parseJSON jv
-      "PtSeouLouXkxhg39oWzjxDWaCydNfR3RxCUrNe4Q9Ro8BTehcbh" -> BlockBase <$> parseJSON jv
+      RioProtocolHash -> BlockBase <$> parseJSON jv
+      SeoulProtocolHash -> BlockBase <$> parseJSON jv
+      TallinnProtocolHash -> BlockBase <$> parseJSON jv
       _ -> BlockGenesis <$> parseJSON jv
   parseJSON _ = mzero
 

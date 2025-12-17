@@ -186,6 +186,8 @@ asNamedChain = \case
       NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
     c@NamedChain_Rionet ->
       NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
+    c@NamedChain_Tallinnnet ->
+      NetworkOption_Url <$> mkTeztnetsUrl (showNamedChain c)
     NamedChain_Mainnet -> pure n
     NamedChain_Ghostnet -> pure n
   n -> pure n

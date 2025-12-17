@@ -19,7 +19,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -108,12 +107,6 @@ type Deletable' e a = Validation (First e) a
 
 instance FromJSON e => FromJSON a => FromJSON (Validation e a)
 instance ToJSON e => ToJSON a => ToJSON (Validation e a)
-
-pattern SeoulProtocolHash :: ProtocolHash
-pattern SeoulProtocolHash = ProtocolHash "PtSeouLouXkxhg39oWzjxDWaCydNfR3RxCUrNe4Q9Ro8BTehcbh"
-
-pattern RioProtocolHash :: ProtocolHash
-pattern RioProtocolHash = ProtocolHash "PsRiotumaAMotcRoDWW1bysEhQy2n1M5fy8JgRp8jjRfHGmfeA7"
 
 data DaemonType
   = DaemonType_Node
