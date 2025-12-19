@@ -21,9 +21,6 @@ import GHC.Generics (Generic)
 
 import Tezos.Common.Base58Check (ChainId, HashBase58Error, ProtocolHash (..), fromBase58, toBase58Text)
 
-pattern RioProtocolHash :: ProtocolHash
-pattern RioProtocolHash = ProtocolHash "PsRiotumaAMotcRoDWW1bysEhQy2n1M5fy8JgRp8jjRfHGmfeA7"
-
 pattern SeoulProtocolHash :: ProtocolHash
 pattern SeoulProtocolHash = ProtocolHash "PtSeouLouXkxhg39oWzjxDWaCydNfR3RxCUrNe4Q9Ro8BTehcbh"
 
@@ -34,7 +31,6 @@ data NamedChain
   = NamedChain_Mainnet
   | NamedChain_Ghostnet
   | NamedChain_Seoulnet
-  | NamedChain_Rionet
   | NamedChain_Tallinnnet
   deriving (Eq, Ord, Bounded, Enum, Generic, Typeable, Read, Show)
 instance FromJSON NamedChain
@@ -44,7 +40,6 @@ showNamedChain :: NamedChain -> Text
 showNamedChain = \case
   NamedChain_Mainnet -> "mainnet"
   NamedChain_Ghostnet -> "ghostnet"
-  NamedChain_Rionet -> "rionet"
   NamedChain_Seoulnet -> "seoulnet"
   NamedChain_Tallinnnet -> "tallinnnet"
 
@@ -65,7 +60,6 @@ getNamedChainId = \case
   NamedChain_Mainnet -> Just "NetXdQprcVkpaWU"
   NamedChain_Ghostnet -> Just "NetXnHfVqm9iesp"
   NamedChain_Seoulnet -> Just "NetXd56aBs1aeW3"
-  NamedChain_Rionet -> Just "NetXPdgaoabtBth"
   NamedChain_Tallinnnet -> Just "NetXe8DbhW9A1eS"
 
 identifyChain :: ChainId -> Maybe NamedChain

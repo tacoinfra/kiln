@@ -296,7 +296,7 @@ getKilnNodeVersion appConfig = do
       throwString $ T.unpack $ cmdText <> " failed with exit code " <> tshow ec <> ". stderr: " <> stderrText
   where
     -- Parses the output of 'octez-node --version' command. Example output:
-    -- 344d8da5 (2023-06-14 14:32:54 +0200) (17.1)
+    -- 60afd4da (2025-12-02 16:23:54 +0000) (Octez 24.0~rc1)
     nodeVersionParser :: P.Parser MajorMinorVersion
     nodeVersionParser = do
       let open  = P.char '('
@@ -304,6 +304,7 @@ getKilnNodeVersion appConfig = do
       P.skipSpace >> P.many1 (P.letter <|> P.digit) >> P.skipSpace
       open >> P.takeTill (== ')') >> close >> P.skipSpace
       open
+      optional $ P.string "Octez "
       major <- P.decimal
       P.char '.'
       minor <- P.decimal

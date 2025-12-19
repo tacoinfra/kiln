@@ -19,8 +19,8 @@ in stdenv.mkDerivation rec {
   cp ${src}/${outer-version}/bin/octez-baker-PtSeouLo $out/bin/tezos-baker-PtSeouLo
   chmod +x $out/bin/tezos-baker-PtSeouLo
 
-  cp ${src}/${outer-version}/bin/octez-baker-PsRiotum $out/bin/tezos-baker-PsRiotum
-  chmod +x $out/bin/tezos-baker-PsRiotum
+  cp ${src}/${outer-version}/bin/octez-baker-PtTALLiN $out/bin/tezos-baker-PtTALLiN
+  chmod +x $out/bin/tezos-baker-PtTALLiN
 
   cp ${src}/${outer-version}/bin/octez-client $out/bin/tezos-client
   chmod +x $out/bin/tezos-client

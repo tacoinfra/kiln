@@ -14,7 +14,7 @@ import Data.Aeson
 import Tezos.Common.Accusation
 import Tezos.Common.Block
 import Tezos.Common.BlockHeader
-import Tezos.Common.Chain (pattern RioProtocolHash, pattern SeoulProtocolHash, pattern TallinnProtocolHash)
+import Tezos.Common.Chain (pattern SeoulProtocolHash, pattern TallinnProtocolHash)
 import qualified Tezos.Genesis.Block as Genesis
 import Tezos.Base.Block (HasBlockMetadata(..))
 import qualified Tezos.Base.Types as Base
@@ -28,7 +28,6 @@ instance FromJSON BlockCrossCompat where
   parseJSON jv@(Object o) = do
     pv <- o .: "protocol"
     case pv of
-      RioProtocolHash -> BlockBase <$> parseJSON jv
       SeoulProtocolHash -> BlockBase <$> parseJSON jv
       TallinnProtocolHash -> BlockBase <$> parseJSON jv
       _ -> BlockGenesis <$> parseJSON jv
