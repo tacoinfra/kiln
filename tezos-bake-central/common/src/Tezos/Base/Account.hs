@@ -68,7 +68,7 @@ instance FromJSON EndorsingRightsDelegateInfo where
   parseJSON = withObject "EndorsingRightsDelegateInfo" $ \o -> do
     _endorsingRightsDelegateInfo_delegate        <- o .: "delegate"
     _endorsingRightsDelegateInfo_firstSlot       <- o .: "first_slot"
-    _endorsingRightsDelegateInfo_endorsingPower  <- o .: "endorsing_power" <|> o .: "attestation_power"
+    _endorsingRightsDelegateInfo_endorsingPower  <- o .: "endorsing_power" <|> o .: "attestation_power" <|> o .: "attesting_power"
     pure $ EndorsingRightsDelegateInfo {..}
 
 instance ToJSON EndorsingRightsDelegateInfo where
@@ -78,6 +78,7 @@ instance ToJSON EndorsingRightsDelegateInfo where
       , "first_slot" .= _endorsingRightsDelegateInfo_firstSlot
       , "endorsing_power" .= _endorsingRightsDelegateInfo_endorsingPower
       , "attestation_power" .= _endorsingRightsDelegateInfo_endorsingPower
+      , "attesting_power" .= _endorsingRightsDelegateInfo_endorsingPower
       ]
 
 data PendingConsensusKey = PendingConsensusKey
