@@ -2905,9 +2905,10 @@ bakersTab =
             bakerStatus' = ffor2 dCollectiveNodesStatus bakerSummaryDetails $ \cns ->
               fmap $ \(bs, bd) ->
                 bakerStatus $ (bs, bd) <$ cns
-            wantBakerData = (||)
-              <$> (elem MonitoredStatus_Unknown <$> bakerStatus')
-              <*> (any isNothing <$> joinDynThroughMap bakersDetails)
+            wantBakerData =
+              liftA2 (||)
+                (elem MonitoredStatus_Unknown <$> bakerStatus')
+                (any isNothing <$> joinDynThroughMap bakersDetails)
           (bakersBanner :: Dynamic t (Maybe BakersBanner)) <-
             holdUniqDyn $ ffor2 dCollectiveNodesStatus wantBakerData $ \case
               Left _ -> \_ -> Just BakersBanner_CannotGather
