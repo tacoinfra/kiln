@@ -1,14 +1,14 @@
 { pkgs }:
 with pkgs;
 let
-  outer-version = "24.0-rc1";
+  outer-version = "24.0-rc2";
 
 in stdenv.mkDerivation rec {
   name = "tezos-${outer-version}";
   src = builtins.fetchTarball {
-    # Taken from https://gitlab.com/tezos-kiln/kiln/-/packages/50312361
-    url = "https://gitlab.com/tezos-kiln/kiln/-/package_files/254003847/download";
-    sha256 = "0fhqmrlig2vg8xh8n9acnpni42cgkv6rwh40sjkb1xvsb3jhyalh";
+    # Taken from https://gitlab.com/tezos-kiln/kiln/-/packages/50693297
+    url = "https://gitlab.com/tezos-kiln/kiln/-/package_files/256151674/download";
+    sha256 = "0a21yhfb0qbwa83f3h5sgi6cms015yn9ccmynca5cvar578dhjba";
   };
 
   phases = [ "installPhase" ];
