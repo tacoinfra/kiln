@@ -92,19 +92,47 @@ data OperationContentsEndorsement = OperationContentsEndorsement
 
 data EndorsementMetadata = EndorsementMetadata
   { _endorsementMetadata_delegate :: PublicKeyHash--  "delegate": { "$ref": "#/definitions/Signature.Public_key_hash" },
-  , _endorsementMetadata_endorsementPower :: Int32 --  "endorsement_power": integer ∈ [-2^30, 2^30]
-  }
-  deriving (Eq, Ord, Show, Typeable)
-
+  , _endorsementMetadata_endorsementPower :: Word64 --   "consensus_power":
+  } deriving (Eq, Ord, Show, Typeable)             --     { "slots": integer ∈ [-2^30, 2^30],
+                                                   --     "baking_power": $int64 /* Some */ || null /* None */ }
 data EndorsementAggMetadata = EndorsementAggMetadata
-  { _attAggMetadata_total_consensus_power :: Int32
+  { _attAggMetadata_total_consensus_power :: Word64
   , _attAggMetadata_committee :: [EndorsementMetadata]
   } deriving (Eq, Ord, Show, Typeable)
+
+instance FromJSON EndorsementAggMetadata where
+  parseJSON = withObject "EndorsementAggMetadata" $ \o -> do
+    totalConsensusPower <-  unTezosConsensusPower <$> (o .: "total_consensus_power")
+    committee <- o .: "committee"
+    pure $ EndorsementAggMetadata totalConsensusPower committee
+
+newtype TezosConsensusPower = TezosConsensusPower { unTezosConsensusPower :: Word64 }
+
+-- To support both Tallinnnet and Seoul protocol we parse this from an integer field (Seoul)
+-- as well as from an object with slot, baking-power fields (Tallin).
+instance FromJSON TezosConsensusPower where
+  parseJSON v = TezosConsensusPower <$> (parseJSON v <|> (consensusPowerToEndorsementPower <$> parseJSON v))
+
+data ConsensusPower = ConsensusPower
+  { _consensusPower_slots :: Int32
+  , _consensusPower_baking_power :: Maybe Word64
+  } deriving (Eq, Ord, Show, Typeable)
+
+instance FromJSON ConsensusPower where
+  parseJSON = withObject "ConsensusPower" $ \o -> do
+    slots <- o .: "slots"
+    mbakingPower <- fmap unTezosWord64 <$> o .:? "baking_power"
+    pure $ ConsensusPower slots mbakingPower
+
+consensusPowerToEndorsementPower :: ConsensusPower -> Word64
+consensusPowerToEndorsementPower ConsensusPower { _consensusPower_baking_power = Just x } = x
+consensusPowerToEndorsementPower ConsensusPower { _consensusPower_slots = x } = fromIntegral x
 
 instance FromJSON EndorsementMetadata where
   parseJSON = withObject "EndorsementMetadata" $ \o -> do
     delegate <- o .: "delegate"
-    endorsementPower <- o .: "endorsement_power" <|> o .: "consensus_power"
+    endorsementPower <- o .: "endorsement_power"
+      <|> (unTezosConsensusPower <$> (o .: "consensus_power"))
     pure $ EndorsementMetadata delegate endorsementPower
 
 -- | "kind": { "type": "string", "enum": [ "double_baking_evidence" ] },
@@ -283,7 +311,6 @@ concat <$> traverse deriveTezosFromJson
   , ''OperationContentsEndorsement
   , ''ConsensusContent
   , ''Slot
-  , ''EndorsementAggMetadata
   , ''OperationContentsEndorsementAggregate
   , ''InlinedEndorsementLike
   , ''EndorsementLikeContents

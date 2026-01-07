@@ -1,14 +1,14 @@
 { pkgs }:
 with pkgs;
 let
-  outer-version = "23.2";
+  outer-version = "24.0-rc2";
 
 in stdenv.mkDerivation rec {
   name = "tezos-${outer-version}";
   src = builtins.fetchTarball {
-    # Take from https://gitlab.com/tezos-kiln/kiln/-/packages/45953303
-    url = "https://gitlab.com/tezos-kiln/kiln/-/package_files/230108484/download";
-    sha256 = "08sdn48bhjl3zhi0lh3wxw5ga19lqxqxb658c5jy76wpr4ms26ib";
+    # Taken from https://gitlab.com/tezos-kiln/kiln/-/packages/50693297
+    url = "https://gitlab.com/tezos-kiln/kiln/-/package_files/256151674/download";
+    sha256 = "0a21yhfb0qbwa83f3h5sgi6cms015yn9ccmynca5cvar578dhjba";
   };
 
   phases = [ "installPhase" ];
@@ -19,8 +19,8 @@ in stdenv.mkDerivation rec {
   cp ${src}/${outer-version}/bin/octez-baker-PtSeouLo $out/bin/tezos-baker-PtSeouLo
   chmod +x $out/bin/tezos-baker-PtSeouLo
 
-  cp ${src}/${outer-version}/bin/octez-baker-PsRiotum $out/bin/tezos-baker-PsRiotum
-  chmod +x $out/bin/tezos-baker-PsRiotum
+  cp ${src}/${outer-version}/bin/octez-baker-PtTALLiN $out/bin/tezos-baker-PtTALLiN
+  chmod +x $out/bin/tezos-baker-PtTALLiN
 
   cp ${src}/${outer-version}/bin/octez-client $out/bin/tezos-client
   chmod +x $out/bin/tezos-client
