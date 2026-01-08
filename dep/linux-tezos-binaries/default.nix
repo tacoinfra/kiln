@@ -2,11 +2,11 @@
 
 stdenv.mkDerivation rec {
   name = "tezos-${version}";
-  version = "24.0-rc2";
+  version = "24.0";
 
   src = builtins.fetchTarball {
     url = "https://octez.tezos.com/releases/octez-v${version}/binaries/x86_64/octez-v${version}.tar.gz";
-    sha256 = "13xmkhi0s9zrx7pbn1lalzhc96ykaq3n0r8gi6cislmdwgyfv3l4";
+    sha256 = "1r9lf66a9va301v1zn1z7ac4yq7g914akzynsa5bxhwvdvvk9cvi";
   };
   binaries = ["octez-client" "octez-node" "octez-baker-*"];
   # Since 'tezos-*' binaries were renamed to 'octez-*' in v15.0 Octez release
