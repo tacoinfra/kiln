@@ -72,11 +72,11 @@ defaultBakerPaths = NonEmpty.fromList [seoulPath, tallinnPath]
   where
     seoulPath = BakerPath
       { _bakerPath_proto = SeoulProtocolHash
-      , _bakerPath_path = Just $(staticWhich "tezos-baker-PtSeouLo")
+      , _bakerPath_path = Just $(staticWhich "octez-baker-PtSeouLo")
       }
     tallinnPath = BakerPath
       { _bakerPath_proto = TallinnProtocolHash
-      , _bakerPath_path = Just $(staticWhich "tezos-baker-PtTALLiN")
+      , _bakerPath_path = Just $(staticWhich "octez-baker-PtTALLiN")
       }
 
 bakerDaemonProcess

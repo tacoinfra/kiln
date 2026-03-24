@@ -63,7 +63,7 @@ needsCarthageStorageUpgrade :: Version -> Bool
 needsCarthageStorageUpgrade = (< Version [0,0,4] [])
 
 nixNodePath :: FilePath
-nixNodePath = $(staticWhich "tezos-node")
+nixNodePath = $(staticWhich "octez-node")
 
 internalNodeWorker
   :: ( MonadUnliftIO w

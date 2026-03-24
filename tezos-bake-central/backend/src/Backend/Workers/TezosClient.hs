@@ -130,7 +130,7 @@ updateConnectedLedgerViaGetConnectedLedger appConfig db = LedgerQuery LedgerQuer
 clientPath :: Maybe BinaryPaths -> FilePath
 clientPath = \case
   Just (BinaryPaths _ c _) -> c
-  Nothing -> $(staticWhich "tezos-client")
+  Nothing -> $(staticWhich "octez-client")
 
 {- Example output from `list connected ledgers`
 Found a Tezos Baking 1.5.0 (commit v1.4.3-19-g55cc026d) application running on Ledger Nano S at [0003:0007:00].
