@@ -1,5 +1,7 @@
 # Kiln
 
+**Kiln has been deprecated. Please consult the [manual baking guide](https://gitlab.com/tezos-kiln/kiln/-/blob/develop/manual-baking.md) to learn how to continue baking without Kiln.**
+
 Kiln is a tool for both baking and monitoring on the Tezos network. It
 provides a locally hosted graphical interface, binaries for
 tezos-client, tezos-node, tezos-baker, and it

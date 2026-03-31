@@ -248,6 +248,10 @@ appMain = do
       -- Accompanying content
       $ do
         e <- appHeader
+        _ <- elAttr' "div" ("style" =: "font-size: 15px; font-weight: bold; line-height: 20px; text-align: center; border: solid 1px red; margin: 10px; padding: 10px; background-color: #e9d2d2") $ divClass "" $ do
+                text "Kiln is deprecated and will be no longer maintained. Please consult "
+                elAttr "a" ("href" =: "https://gitlab.com/tezos-kiln/kiln/-/blob/develop/manual-baking.md" <> "target" =: "_blank" <> "rel" =: "noopener") $ text "this guide"
+                text " to learn how to migrate to Octez for baking."
         appContentArea
         pure e
     pure ()
@@ -1933,6 +1937,7 @@ addNodeModal close = ffor (workflow splash) $ \d ->
   where
     splash = Workflow $ do
       divClass "ui header" $ text "Add Nodes"
+
       divClass "ui grid stackable divided" $ do
         startNodeEv <- addInternal
         e <- addExternal
